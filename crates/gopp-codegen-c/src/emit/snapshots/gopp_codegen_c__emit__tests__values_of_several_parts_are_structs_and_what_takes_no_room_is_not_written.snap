@@ -1,0 +1,145 @@
+---
+source: crates/gopp-codegen-c/src/emit/tests.rs
+expression: "unit(\"a.gopp\", VALUES)"
+---
+
+_Static_assert(sizeof(void *) == 8, "the width of a pointer");
+_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
+
+typedef struct T3 T3; /* main.Point */
+typedef struct T5 T5; /* (i64, main.Point) */
+typedef struct T8 T8; /* main.Box */
+typedef struct T10 T10; /* string */
+typedef struct T11 T11; /* [3]i8 */
+typedef struct T17 T17; /* [2]f32 */
+typedef struct T18 T18; /* [2][2]f32 */
+typedef T5 (*T6)(T3); /* fn(main.Point) -> (i64, main.Point) */
+typedef void (*T12)(T8 *, int8_t, int64_t); /* fn(*main.Box, i8, i64) -> main.Nothing */
+typedef T8 (*T19)(T8 *, T18); /* fn(*main.Box, [2][2]f32) -> main.Box */
+typedef void (*T21)(void); /* fn() -> () */
+struct T3 {
+  int64_t f0;
+  int64_t f1;
+};
+struct T5 {
+  int64_t f0;
+  T3 f1;
+};
+struct T10 {
+  uint8_t *ptr;
+  uint64_t len;
+  uint8_t *backing;
+};
+struct T11 {
+  int8_t a[3];
+};
+struct T8 {
+  T3 f0;
+  T11 f1;
+  T10 f2;
+  T8 * f4;
+};
+struct T17 {
+  float a[2];
+};
+struct T18 {
+  T17 a[2];
+};
+_Static_assert(sizeof(T3) == 16 && _Alignof(T3) == 8, "the layout of T3");
+_Static_assert(sizeof(T5) == 24 && _Alignof(T5) == 8, "the layout of T5");
+_Static_assert(sizeof(T10) == 24 && _Alignof(T10) == 8, "the layout of T10");
+_Static_assert(sizeof(T11) == 3 && _Alignof(T11) == 1, "the layout of T11");
+_Static_assert(sizeof(T8) == 56 && _Alignof(T8) == 8, "the layout of T8");
+_Static_assert(sizeof(T17) == 8 && _Alignof(T17) == 4, "the layout of T17");
+_Static_assert(sizeof(T18) == 16 && _Alignof(T18) == 4, "the layout of T18");
+
+static const char gopp_s0[] = "box\012";
+int64_t gopp_g0 __asm__("main.total");
+T3 gopp_g1 __asm__("main.origin");
+
+T5 gopp_f0(T3 _1) __asm__("main.pair");
+void gopp_f1(T8 * _1, int8_t _2, int64_t _3) __asm__("main.Box.grow");
+T8 gopp_f2(T8 * _1, T18 _2) __asm__("main.build");
+void gopp_f3(void) __asm__("main.init.0");
+void gopp_f4(void) __asm__("main.main");
+
+T5 gopp_f0(T3 _1) {
+  [[maybe_unused]] T5 _0;
+  [[maybe_unused]] T3 _2;
+  _2 = ((T3){_1.f1, _1.f0});
+  _0 = ((T5){_1.f0, _2});
+  return _0;
+}
+
+void gopp_f1(T8 * _1, int8_t _2, int64_t _3) {
+  [[maybe_unused]] uint64_t _4;
+  [[maybe_unused]] bool _5;
+  [[maybe_unused]] T3 * _6;
+  [[maybe_unused]] int64_t * _7;
+  _4 = ((uint64_t)_3);
+  _5 = (_4 < 3ull);
+  if (__builtin_expect(!_5, 0)) _gopp_panic_bounds((uint64_t)_4, (uint64_t)3ull);
+  goto bb1;
+bb1:
+  (*_1).f1.a[_4] = ((int8_t)((*_1).f1.a[_4] + _2));
+  _6 = (&gopp_g1);
+  (*_1).f0 = (*_6);
+  _7 = (&gopp_g0);
+  (*_7) = ((int64_t)((*_7) + 1ll));
+  return;
+}
+
+T8 gopp_f2(T8 * _1, T18 _2) {
+  [[maybe_unused]] T8 _0;
+  [[maybe_unused]] T3 _3;
+  [[maybe_unused]] T5 _4;
+  [[maybe_unused]] int64_t _5;
+  [[maybe_unused]] T3 _6;
+  [[maybe_unused]] T11 _7;
+  [[maybe_unused]] T8 _8;
+  [[maybe_unused]] T8 * _9;
+  [[maybe_unused]] int8_t _10;
+  [[maybe_unused]] uint64_t _11;
+  [[maybe_unused]] int64_t _12;
+  [[maybe_unused]] void * _14;
+  [[maybe_unused]] void * _15;
+  _3 = ((T3){1ll, 2ll});
+  _4 = gopp_f0(_3);
+  goto bb1;
+bb1:
+  _5 = _4.f0;
+  _6 = _4.f1;
+  _7 = ((T11){{((int8_t)1), ((int8_t)0), ((int8_t)3)}});
+  _8 = ((T8){_6, _7, ((T10){(uint8_t *)gopp_s0, 4, 0}), _1});
+  _9 = (&_8);
+  _10 = ((int8_t)_5);
+  _11 = _8.f2.len;
+  _12 = ((int64_t)_11);
+  gopp_f1(_9, _10, _12);
+  goto bb2;
+bb2:
+  _14 = ((void *)&gopp_empty);
+  _15 = ((void *)&gopp_empty);
+  _2.a[1].a[0] = _2.a[0].a[1];
+  _0 = _8;
+  return _0;
+}
+
+void gopp_f3(void) {
+  [[maybe_unused]] int64_t * _1;
+  _1 = (&gopp_g0);
+  (*_1) = 7ll;
+  return;
+}
+
+void gopp_f4(void) {
+  return;
+}
+
+int main(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  gopp_f3();
+  gopp_f4();
+  return 0;
+}

@@ -303,6 +303,7 @@ codes! {
     415 OpSelect "err_op_select",
     439 GirUnsupported "err_gir_unsupported",
     440 GirVerify "err_gir_verify",
+    441 Codegen "err_codegen",
     442 GirExternBad "err_gir_extern_bad",
     445 GirExportBad "err_gir_export_bad",
     446 InstOption "err_inst_option",

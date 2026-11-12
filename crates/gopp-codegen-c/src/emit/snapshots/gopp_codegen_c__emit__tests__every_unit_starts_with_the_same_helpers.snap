@@ -1,0 +1,160 @@
+---
+source: crates/gopp-codegen-c/src/emit/tests.rs
+expression: whole
+---
+typedef __INT8_TYPE__ int8_t;
+typedef __INT16_TYPE__ int16_t;
+typedef __INT32_TYPE__ int32_t;
+typedef __INT64_TYPE__ int64_t;
+typedef __UINT8_TYPE__ uint8_t;
+typedef __UINT16_TYPE__ uint16_t;
+typedef __UINT32_TYPE__ uint32_t;
+typedef __UINT64_TYPE__ uint64_t;
+typedef __UINTPTR_TYPE__ uintptr_t;
+
+[[maybe_unused]] static char gopp_empty;
+
+[[noreturn]] void _gopp_panic_bounds(uint64_t index, uint64_t length);
+[[noreturn]] void _gopp_panic_slice_alen(uint64_t index, uint64_t length);
+[[noreturn]] void _gopp_panic_slice_acap(uint64_t index, uint64_t capacity);
+[[noreturn]] void _gopp_panic_slice_b(uint64_t low, uint64_t high);
+[[noreturn]] void _gopp_panic_slice3_alen(uint64_t index, uint64_t length);
+[[noreturn]] void _gopp_panic_slice3_acap(uint64_t index, uint64_t capacity);
+[[noreturn]] void _gopp_panic_slice3_b(uint64_t high, uint64_t max);
+[[noreturn]] void _gopp_panic_slice3_c(uint64_t low, uint64_t high);
+[[noreturn]] void _gopp_panic_slice_convert(uint64_t length, uint64_t wanted);
+[[noreturn]] void _gopp_panic_nil(void);
+[[noreturn]] void _gopp_panic_divide(void);
+[[noreturn]] void _gopp_panic_shift(void);
+
+[[maybe_unused]] static inline float gopp_f32(uint32_t bits) {
+  union { uint32_t bits; float value; } of = {.bits = bits};
+  return of.value;
+}
+[[maybe_unused]] static inline double gopp_f64(uint64_t bits) {
+  union { uint64_t bits; double value; } of = {.bits = bits};
+  return of.value;
+}
+[[maybe_unused]] static inline int8_t gopp_shl_i8(int8_t x, uint64_t count) {
+  return count >= 8 ? (int8_t)0 : (int8_t)((uint8_t)x << count);
+}
+[[maybe_unused]] static inline int8_t gopp_shr_i8(int8_t x, uint64_t count) {
+  return (int8_t)(x >> (count >= 8 ? 7 : count));
+}
+[[maybe_unused]] static inline int8_t gopp_div_i8(int8_t x, int8_t y) {
+  return y == -1 ? (int8_t)(0 - (uint8_t)x) : (int8_t)(x / y);
+}
+[[maybe_unused]] static inline int8_t gopp_rem_i8(int8_t x, int8_t y) {
+  return y == -1 ? (int8_t)0 : (int8_t)(x % y);
+}
+[[maybe_unused]] static inline int16_t gopp_shl_i16(int16_t x, uint64_t count) {
+  return count >= 16 ? (int16_t)0 : (int16_t)((uint16_t)x << count);
+}
+[[maybe_unused]] static inline int16_t gopp_shr_i16(int16_t x, uint64_t count) {
+  return (int16_t)(x >> (count >= 16 ? 15 : count));
+}
+[[maybe_unused]] static inline int16_t gopp_div_i16(int16_t x, int16_t y) {
+  return y == -1 ? (int16_t)(0 - (uint16_t)x) : (int16_t)(x / y);
+}
+[[maybe_unused]] static inline int16_t gopp_rem_i16(int16_t x, int16_t y) {
+  return y == -1 ? (int16_t)0 : (int16_t)(x % y);
+}
+[[maybe_unused]] static inline int32_t gopp_shl_i32(int32_t x, uint64_t count) {
+  return count >= 32 ? (int32_t)0 : (int32_t)((uint32_t)x << count);
+}
+[[maybe_unused]] static inline int32_t gopp_shr_i32(int32_t x, uint64_t count) {
+  return (int32_t)(x >> (count >= 32 ? 31 : count));
+}
+[[maybe_unused]] static inline int32_t gopp_div_i32(int32_t x, int32_t y) {
+  return y == -1 ? (int32_t)(0 - (uint32_t)x) : (int32_t)(x / y);
+}
+[[maybe_unused]] static inline int32_t gopp_rem_i32(int32_t x, int32_t y) {
+  return y == -1 ? (int32_t)0 : (int32_t)(x % y);
+}
+[[maybe_unused]] static inline int64_t gopp_shl_i64(int64_t x, uint64_t count) {
+  return count >= 64 ? (int64_t)0 : (int64_t)((uint64_t)x << count);
+}
+[[maybe_unused]] static inline int64_t gopp_shr_i64(int64_t x, uint64_t count) {
+  return (int64_t)(x >> (count >= 64 ? 63 : count));
+}
+[[maybe_unused]] static inline int64_t gopp_div_i64(int64_t x, int64_t y) {
+  return y == -1 ? (int64_t)(0 - (uint64_t)x) : (int64_t)(x / y);
+}
+[[maybe_unused]] static inline int64_t gopp_rem_i64(int64_t x, int64_t y) {
+  return y == -1 ? (int64_t)0 : (int64_t)(x % y);
+}
+[[maybe_unused]] static inline uint8_t gopp_shl_u8(uint8_t x, uint64_t count) {
+  return count >= 8 ? (uint8_t)0 : (uint8_t)((uint8_t)x << count);
+}
+[[maybe_unused]] static inline uint8_t gopp_shr_u8(uint8_t x, uint64_t count) {
+  return count >= 8 ? (uint8_t)0 : (uint8_t)(x >> count);
+}
+[[maybe_unused]] static inline uint16_t gopp_shl_u16(uint16_t x, uint64_t count) {
+  return count >= 16 ? (uint16_t)0 : (uint16_t)((uint16_t)x << count);
+}
+[[maybe_unused]] static inline uint16_t gopp_shr_u16(uint16_t x, uint64_t count) {
+  return count >= 16 ? (uint16_t)0 : (uint16_t)(x >> count);
+}
+[[maybe_unused]] static inline uint32_t gopp_shl_u32(uint32_t x, uint64_t count) {
+  return count >= 32 ? (uint32_t)0 : (uint32_t)((uint32_t)x << count);
+}
+[[maybe_unused]] static inline uint32_t gopp_shr_u32(uint32_t x, uint64_t count) {
+  return count >= 32 ? (uint32_t)0 : (uint32_t)(x >> count);
+}
+[[maybe_unused]] static inline uint64_t gopp_shl_u64(uint64_t x, uint64_t count) {
+  return count >= 64 ? (uint64_t)0 : (uint64_t)((uint64_t)x << count);
+}
+[[maybe_unused]] static inline uint64_t gopp_shr_u64(uint64_t x, uint64_t count) {
+  return count >= 64 ? (uint64_t)0 : (uint64_t)(x >> count);
+}
+[[maybe_unused]] static inline int8_t gopp_f32_to_i8(float x) {
+  return x != x ? (int8_t)0 : x >= 0x1p+7f ? ((int8_t)127) : x < -0x1p+7f ? ((int8_t)-128) : (int8_t)x;
+}
+[[maybe_unused]] static inline int16_t gopp_f32_to_i16(float x) {
+  return x != x ? (int16_t)0 : x >= 0x1p+15f ? ((int16_t)32767) : x < -0x1p+15f ? ((int16_t)-32768) : (int16_t)x;
+}
+[[maybe_unused]] static inline int32_t gopp_f32_to_i32(float x) {
+  return x != x ? (int32_t)0 : x >= 0x1p+31f ? ((int32_t)2147483647) : x < -0x1p+31f ? ((int32_t)-2147483648) : (int32_t)x;
+}
+[[maybe_unused]] static inline int64_t gopp_f32_to_i64(float x) {
+  return x != x ? (int64_t)0 : x >= 0x1p+63f ? 9223372036854775807ll : x < -0x1p+63f ? (-9223372036854775807ll - 1) : (int64_t)x;
+}
+[[maybe_unused]] static inline uint8_t gopp_f32_to_u8(float x) {
+  return x != x ? (uint8_t)0 : x >= 0x1p+8f ? ((uint8_t)255) : x < 0 ? (uint8_t)0 : (uint8_t)x;
+}
+[[maybe_unused]] static inline uint16_t gopp_f32_to_u16(float x) {
+  return x != x ? (uint16_t)0 : x >= 0x1p+16f ? ((uint16_t)65535) : x < 0 ? (uint16_t)0 : (uint16_t)x;
+}
+[[maybe_unused]] static inline uint32_t gopp_f32_to_u32(float x) {
+  return x != x ? (uint32_t)0 : x >= 0x1p+32f ? ((uint32_t)4294967295) : x < 0 ? (uint32_t)0 : (uint32_t)x;
+}
+[[maybe_unused]] static inline uint64_t gopp_f32_to_u64(float x) {
+  return x != x ? (uint64_t)0 : x >= 0x1p+64f ? 18446744073709551615ull : x < 0 ? (uint64_t)0 : (uint64_t)x;
+}
+[[maybe_unused]] static inline int8_t gopp_f64_to_i8(double x) {
+  return x != x ? (int8_t)0 : x >= 0x1p+7 ? ((int8_t)127) : x < -0x1p+7 ? ((int8_t)-128) : (int8_t)x;
+}
+[[maybe_unused]] static inline int16_t gopp_f64_to_i16(double x) {
+  return x != x ? (int16_t)0 : x >= 0x1p+15 ? ((int16_t)32767) : x < -0x1p+15 ? ((int16_t)-32768) : (int16_t)x;
+}
+[[maybe_unused]] static inline int32_t gopp_f64_to_i32(double x) {
+  return x != x ? (int32_t)0 : x >= 0x1p+31 ? ((int32_t)2147483647) : x < -0x1p+31 ? ((int32_t)-2147483648) : (int32_t)x;
+}
+[[maybe_unused]] static inline int64_t gopp_f64_to_i64(double x) {
+  return x != x ? (int64_t)0 : x >= 0x1p+63 ? 9223372036854775807ll : x < -0x1p+63 ? (-9223372036854775807ll - 1) : (int64_t)x;
+}
+[[maybe_unused]] static inline uint8_t gopp_f64_to_u8(double x) {
+  return x != x ? (uint8_t)0 : x >= 0x1p+8 ? ((uint8_t)255) : x < 0 ? (uint8_t)0 : (uint8_t)x;
+}
+[[maybe_unused]] static inline uint16_t gopp_f64_to_u16(double x) {
+  return x != x ? (uint16_t)0 : x >= 0x1p+16 ? ((uint16_t)65535) : x < 0 ? (uint16_t)0 : (uint16_t)x;
+}
+[[maybe_unused]] static inline uint32_t gopp_f64_to_u32(double x) {
+  return x != x ? (uint32_t)0 : x >= 0x1p+32 ? ((uint32_t)4294967295) : x < 0 ? (uint32_t)0 : (uint32_t)x;
+}
+[[maybe_unused]] static inline uint64_t gopp_f64_to_u64(double x) {
+  return x != x ? (uint64_t)0 : x >= 0x1p+64 ? 18446744073709551615ull : x < 0 ? (uint64_t)0 : (uint64_t)x;
+}
+
+_Static_assert(sizeof(void *) == 8, "the width of a pointer");
+_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");

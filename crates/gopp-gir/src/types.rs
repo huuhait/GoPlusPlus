@@ -103,6 +103,13 @@ impl Default for TypeInterner {
     }
 }
 
+impl TypeId {
+    /// Where the type is in the order of `TypeInterner::ids`.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 impl TypeInterner {
     pub const UNIT: TypeId = TypeId(0);
     pub const BOOL: TypeId = TypeId(1);
@@ -129,6 +136,11 @@ impl TypeInterner {
         self.types.push(ty.clone());
         self.ids.insert(ty, id);
         id
+    }
+
+    /// The number of types.
+    pub fn count(&self) -> usize {
+        self.types.len()
     }
 
     /// Every type, in the order in which they were made.
@@ -309,7 +321,25 @@ impl TypeInterner {
     /// The walk keeps what it has to do in a list: a type may be nested
     /// deeper than a stack takes.
     pub fn layout(&self, ty: TypeId, target: TargetLayout) -> Result<Layout, TypeError> {
-        let mut known: FxHashMap<TypeId, Layout> = FxHashMap::default();
+        self.layout_with(ty, target, &mut FxHashMap::default())
+    }
+
+    /// The layout of every type, in the order of `ids`: each type is
+    /// worked out once, whatever holds it.
+    pub fn layouts(&self, target: TargetLayout) -> Result<Vec<Layout>, TypeError> {
+        let mut known = FxHashMap::default();
+        self.ids()
+            .map(|ty| self.layout_with(ty, target, &mut known))
+            .collect()
+    }
+
+    /// `layout`, with the layouts that are known already.
+    fn layout_with(
+        &self,
+        ty: TypeId,
+        target: TargetLayout,
+        known: &mut FxHashMap<TypeId, Layout>,
+    ) -> Result<Layout, TypeError> {
         // A type is taken twice: to ask for its parts, and with them.
         let mut rest = vec![(ty, false)];
         let mut inside: FxHashSet<TypeId> = FxHashSet::default();

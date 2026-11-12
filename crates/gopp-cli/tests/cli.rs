@@ -718,3 +718,129 @@ fn check_accepts_the_samples_with_go_s_standard_library() {
         assert_eq!(checked(file, "1"), checked(file, "8"), "{}", file.display());
     }
 }
+
+const SUMS: &str = "package main
+
+var total int
+
+func add(a, b int) int { return a + b }
+
+func main() {
+	total = add(1, 2)
+}
+";
+
+#[test]
+fn build_prints_the_module_and_the_unit_of_c() {
+    let dir = TempDir::new().unwrap();
+    let file = write_source(&dir, "sums.gopp", SUMS);
+    let built = |flags: &[&str]| {
+        let output = run(gopp().arg("build").args(flags).arg(&file));
+        assert_eq!(stderr(&output), "");
+        assert_eq!(output.status.code(), Some(0));
+        stdout(&output)
+    };
+    let gir = built(&["-emit=gir"]);
+    assert!(gir.contains("fn command-line-arguments.add(_1: i64, _2: i64) -> i64"));
+    assert!(gir.contains("global var @command-line-arguments.total: i64"));
+    for target in ["linux/amd64", "windows/amd64"] {
+        let unit = built(&["-emit=c", &format!("-target={target}")]);
+        assert!(unit.contains("__asm__(\"command-line-arguments.add\")"));
+        assert!(unit.contains("int main(int argc, char **argv) {"));
+        assert_eq!(unit, built(&["-emit=c"]));
+    }
+    // With `-o` the text goes to the file.
+    let out = dir.path().join("sums.c");
+    assert_eq!(built(&["-emit=c", "-o", out.to_str().unwrap()]), "");
+    assert_eq!(fs::read_to_string(out).unwrap(), built(&["-emit=c"]));
+}
+
+#[test]
+fn build_says_what_stops_it() {
+    let dir = TempDir::new().unwrap();
+    let good = write_source(&dir, "sums.gopp", SUMS);
+    let failed = |command: &mut Command| {
+        let output = run(command);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(stdout(&output), "");
+        stderr(&output)
+    };
+    let other = failed(
+        gopp()
+            .args(["build", "-target=linux/arm64", "-emit=c"])
+            .arg(&good),
+    );
+    assert!(
+        other.contains("linux/arm64 is not supported in this version"),
+        "{other}"
+    );
+    let none = failed(
+        gopp()
+            .args(["build", "-target=plan9/mips", "-emit=c"])
+            .arg(&good),
+    );
+    assert!(none.starts_with("error: "), "{none}");
+    let wrong = write_source(
+        &dir,
+        "wrong.gopp",
+        "package main\n\nfunc main() { missing() }\n",
+    );
+    let unchecked = failed(gopp().args(["build", "-emit=c"]).arg(&wrong));
+    assert!(unchecked.contains("undefined: missing"), "{unchecked}");
+    let ranges = "package main\n\nfunc main() {\n\tfor range 3 {\n\t}\n}\n";
+    let later = write_source(&dir, "later.gopp", ranges);
+    let unsupported = failed(gopp().args(["build", "-emit=c"]).arg(&later));
+    assert!(unsupported.contains("error[E0439]"), "{unsupported}");
+    assert!(
+        unsupported.contains("not supported yet: a range loop"),
+        "{unsupported}"
+    );
+    fs::create_dir(dir.path().join("p")).unwrap();
+    write_source(&dir, "p/p.gopp", "package p\n");
+    let two = failed(
+        gopp()
+            .args(["build", "-emit=c"])
+            .arg(&good)
+            .arg(dir.path().join("p")),
+    );
+    assert!(two.contains("gopp build takes one package"), "{two}");
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "needs Clang 23, which the Windows test machine does not have yet"
+)]
+fn build_makes_an_object_for_each_target_and_links_for_its_own() {
+    let dir = TempDir::new().unwrap();
+    let file = write_source(&dir, "sums.gopp", SUMS);
+    let build = |flags: &[&str]| {
+        let mut command = gopp();
+        command.arg("build").args(flags).arg(&file);
+        run(command.current_dir(dir.path()))
+    };
+    let made = |flags: &[&str], name: &str| {
+        let output = build(flags);
+        assert_eq!(stderr(&output), "");
+        assert_eq!(output.status.code(), Some(0));
+        fs::read(dir.path().join(name)).unwrap()
+    };
+    let elf = made(&["-emit=obj", "-target=linux/amd64"], "sums.o");
+    assert_eq!(&elf[..4], b"\x7fELF");
+    let coff = made(&["-emit=obj", "-target=windows/amd64"], "sums.obj");
+    assert_eq!(&coff[..2], [0x64, 0x86]);
+    let assembly = made(&["-emit=asm", "-target=linux/amd64"], "sums.s");
+    assert!(String::from_utf8_lossy(&assembly).contains("command-line-arguments.add"));
+    let (own, other, program) = match cfg!(target_os = "linux") {
+        true => ("linux/amd64", "windows/amd64", "sums"),
+        false => ("windows/amd64", "linux/amd64", "sums.exe"),
+    };
+    let refused = build(&[&format!("-target={other}")]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(stderr(&refused).starts_with("error[E0441]: cannot link for "));
+    if cfg!(target_os = "linux") {
+        made(&[&format!("-target={own}")], program);
+        let ran = run(&mut Command::new(dir.path().join(program)));
+        assert_eq!(ran.status.code(), Some(0));
+    }
+}

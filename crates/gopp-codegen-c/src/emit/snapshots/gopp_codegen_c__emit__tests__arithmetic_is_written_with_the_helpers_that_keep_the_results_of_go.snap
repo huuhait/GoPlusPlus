@@ -1,0 +1,133 @@
+---
+source: crates/gopp-codegen-c/src/emit/tests.rs
+expression: "unit(\"a.gopp\", ARITHMETIC)"
+---
+
+_Static_assert(sizeof(void *) == 8, "the width of a pointer");
+_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
+
+typedef struct T7 T7; /* (f64, bool) */
+typedef struct T12 T12; /* (i8, f32, u64, i64, u16) */
+typedef int64_t (*T5)(int64_t, int64_t, uint8_t, uint64_t, int64_t); /* fn(i64, i64, u8, u64, i64) -> i64 */
+typedef T7 (*T9)(double, double, float); /* fn(f64, f64, f32) -> (f64, bool) */
+typedef T12 (*T14)(int64_t, uint8_t, double, float, int64_t *); /* fn(i64, u8, f64, f32, *i64) -> (i8, f32, u64, i64, u16) */
+struct T7 {
+  double f0;
+  bool f1;
+};
+struct T12 {
+  int8_t f0;
+  float f1;
+  uint64_t f2;
+  int64_t f3;
+  uint16_t f4;
+};
+_Static_assert(sizeof(T7) == 16 && _Alignof(T7) == 8, "the layout of T7");
+_Static_assert(sizeof(T12) == 32 && _Alignof(T12) == 8, "the layout of T12");
+
+
+int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) __asm__("main.ints");
+T7 gopp_f1(double _1, double _2, float _3) __asm__("main.floats");
+T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) __asm__("main.converts");
+
+int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) {
+  [[maybe_unused]] int64_t _0;
+  [[maybe_unused]] int64_t _6;
+  [[maybe_unused]] int64_t _7;
+  [[maybe_unused]] bool _8;
+  [[maybe_unused]] int64_t _9;
+  [[maybe_unused]] int64_t _10;
+  [[maybe_unused]] int64_t _11;
+  [[maybe_unused]] int64_t _12;
+  [[maybe_unused]] int64_t _13;
+  [[maybe_unused]] int64_t _14;
+  [[maybe_unused]] int64_t _15;
+  [[maybe_unused]] uint8_t _16;
+  [[maybe_unused]] bool _17;
+  [[maybe_unused]] int64_t _18;
+  [[maybe_unused]] uint8_t _19;
+  [[maybe_unused]] uint8_t _20;
+  [[maybe_unused]] uint8_t _21;
+  [[maybe_unused]] int64_t _22;
+  _6 = ((int64_t)(_2 * 3ll));
+  _7 = ((int64_t)(_1 + _6));
+  _8 = (_2 != 0ll);
+  if (__builtin_expect(!_8, 0)) _gopp_panic_divide();
+  goto bb1;
+bb1:
+  _9 = gopp_div_i64(_1, _2);
+  _10 = ((int64_t)(_7 - _9));
+  _11 = ((int64_t)(_10 & _2));
+  _12 = ((int64_t)(_11 | _1));
+  _13 = ((int64_t)(_2 & ~7ll));
+  _10 = ((int64_t)(_12 ^ _13));
+  _14 = ((int64_t)(-_10));
+  _15 = ((int64_t)(~_1));
+  _10 = ((int64_t)(_14 + _15));
+  _16 = gopp_shl_u8(_3, (uint64_t)_4);
+  _17 = (_5 >= 0ll);
+  if (__builtin_expect(!_17, 0)) _gopp_panic_shift();
+  goto bb2;
+bb2:
+  _18 = gopp_shr_i64(_1, (uint64_t)_5);
+  _19 = ((uint8_t)(_16 * ((uint8_t)3)));
+  _20 = ((uint8_t)(_19 / ((uint8_t)2)));
+  _21 = ((uint8_t)(_20 % ((uint8_t)5)));
+  _3 = ((uint8_t)(_3 + _21));
+  _22 = gopp_div_i64(_10, 8ll);
+  _0 = ((int64_t)(_22 + _18));
+  return _0;
+}
+
+T7 gopp_f1(double _1, double _2, float _3) {
+  [[maybe_unused]] T7 _0;
+  [[maybe_unused]] double _4;
+  [[maybe_unused]] double _5;
+  [[maybe_unused]] double _6;
+  [[maybe_unused]] double _7;
+  [[maybe_unused]] double _8;
+  [[maybe_unused]] bool _9;
+  [[maybe_unused]] bool _10;
+  [[maybe_unused]] bool _11;
+  _4 = (_1 / _2);
+  _5 = ((double)_3);
+  _6 = (_5 * 0x1.0000000000000p-1);
+  _7 = (_4 - _6);
+  _8 = (-_7);
+  _10 = (_7 < 0x1.7e43c8800759cp+996);
+  if (!_10) goto bb1;
+  goto bb2;
+bb1:
+  _11 = (_3 != 0x1.99999ap-4f);
+  if (!_11) goto bb3;
+  goto bb2;
+bb2:
+  _9 = true;
+  goto bb4;
+bb3:
+  _9 = false;
+  goto bb4;
+bb4:
+  _0 = ((T7){_8, _9});
+  return _0;
+}
+
+T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) {
+  [[maybe_unused]] T12 _0;
+  [[maybe_unused]] int8_t _6;
+  [[maybe_unused]] float _7;
+  [[maybe_unused]] uint64_t _8;
+  [[maybe_unused]] int64_t _9;
+  [[maybe_unused]] uint16_t _10;
+  [[maybe_unused]] uint16_t _11;
+  [[maybe_unused]] uint16_t _12;
+  _6 = ((int8_t)_1);
+  _7 = ((float)_3);
+  _8 = ((uint64_t)_2);
+  _9 = gopp_f64_to_i64(_3);
+  _10 = gopp_f32_to_u16(_4);
+  _11 = ((uint16_t)(*_5));
+  _12 = ((uint16_t)(_10 + _11));
+  _0 = ((T12){_6, _7, _8, _9, _12});
+  return _0;
+}

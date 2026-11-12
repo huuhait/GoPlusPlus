@@ -9,5 +9,19 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+gopp-gir = { path = "../gopp-gir" }
+gopp-target = { path = "../gopp-target" }
+itoa.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 which.workspace = true
+
+[dev-dependencies]
+gopp-diag = { path = "../gopp-diag" }
+gopp-sema = { path = "../gopp-sema" }
+gopp-span = { path = "../gopp-span" }
+gopp-syntax = { path = "../gopp-syntax" }
+gopp-testutil = { path = "../gopp-testutil" }
+insta.workspace = true
+lasso.workspace = true
+tempfile.workspace = true

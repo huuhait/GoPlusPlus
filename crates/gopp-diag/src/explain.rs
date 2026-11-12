@@ -1843,6 +1843,15 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Report it, with the program that shows it.",
             "// no program is meant to show this error",
         ),
+        Codegen => (
+            "The compiler could not turn the checked program into a file: Clang refused the \
+             code it was given, a file that linking needs is missing, or the program uses \
+             something that the code generator cannot write yet.",
+            "For a missing file, install the C library of the target or name where it is; \
+             to get the object file without linking, use `-emit=obj`.",
+            "gopp build -target=windows/amd64 -emit=exe main.gopp // error on Linux\n\
+             gopp build -target=windows/amd64 -emit=obj main.gopp // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

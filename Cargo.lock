@@ -376,6 +376,7 @@ dependencies = [
  "clap",
  "gopp-codegen-c",
  "gopp-diag",
+ "gopp-gir",
  "gopp-sema",
  "gopp-span",
  "gopp-syntax",
@@ -390,6 +391,18 @@ dependencies = [
 name = "gopp-codegen-c"
 version = "0.1.0"
 dependencies = [
+ "gopp-diag",
+ "gopp-gir",
+ "gopp-sema",
+ "gopp-span",
+ "gopp-syntax",
+ "gopp-target",
+ "gopp-testutil",
+ "insta",
+ "itoa",
+ "lasso",
+ "rayon",
+ "tempfile",
  "thiserror",
  "which",
 ]

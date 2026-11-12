@@ -1,0 +1,93 @@
+---
+source: crates/gopp-codegen-c/src/emit/tests.rs
+expression: "unit(\"a.gopp\", CONTROL)"
+---
+
+_Static_assert(sizeof(void *) == 8, "the width of a pointer");
+_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
+
+typedef int64_t (*T3)(int64_t, bool); /* fn(i64, bool) -> i64 */
+typedef void (*T4)(void); /* fn() -> () */
+
+
+int64_t gopp_f0(int64_t _1, bool _2) __asm__("main.pick");
+void gopp_f1(void) __asm__("main.main");
+
+int64_t gopp_f0(int64_t _1, bool _2) {
+  [[maybe_unused]] int64_t _0;
+  [[maybe_unused]] int64_t _3;
+  [[maybe_unused]] bool _4;
+  [[maybe_unused]] bool _5;
+  [[maybe_unused]] int64_t _6;
+  [[maybe_unused]] bool _7;
+  [[maybe_unused]] int64_t _8;
+  [[maybe_unused]] bool _9;
+  [[maybe_unused]] bool _10;
+  _3 = _1;
+  switch (_3) {
+  case 1ll: goto bb1;
+  case 2ll: goto bb1;
+  case (-1ll): goto bb2;
+  default: goto bb3;
+  }
+bb1:
+  _0 = 10ll;
+  return _0;
+bb2:
+  _1 = ((int64_t)(_1 + 1ll));
+  goto bb3;
+bb3:
+  _1 = ((int64_t)(_1 * 2ll));
+  goto bb4;
+bb4:
+  _4 = _2;
+  _5 = (_4 == true);
+  if (!_5) goto bb6;
+  goto bb5;
+bb5:
+  _1 = ((int64_t)(_1 - 1ll));
+  goto bb6;
+bb6:
+  _6 = 0ll;
+  goto bb7;
+bb7:
+  _7 = (_6 < _1);
+  if (!_7) goto bb13;
+  goto bb8;
+bb8:
+  _8 = gopp_rem_i64(_6, 2ll);
+  _9 = (_8 == 0ll);
+  if (!_9) goto bb10;
+  goto bb9;
+bb9:
+  if (!_2) goto bb10;
+  goto bb12;
+bb10:
+  _10 = (_1 > 100ll);
+  if (!_10) goto bb11;
+  goto bb12;
+bb11:
+  _1 = ((int64_t)(_1 - _6));
+  goto bb12;
+bb12:
+  _6 = ((int64_t)(_6 + 1ll));
+  goto bb7;
+bb13:
+  _0 = _1;
+  return _0;
+}
+
+void gopp_f1(void) {
+  [[maybe_unused]] int64_t _1;
+  _1 = gopp_f0(3ll, true);
+  goto bb1;
+bb1:
+  return;
+}
+
+int main(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  gopp_f1();
+  return 0;
+}

@@ -1,6 +1,7 @@
 //! The `gopp` command.
 
 mod args;
+mod build;
 mod check;
 mod diff;
 mod fmt;
@@ -75,6 +76,23 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Compile one package
+    Build {
+        /// The target, as `gopp targets` names it; the default is this
+        /// machine, or what GOPPOS and GOPPARCH say
+        #[arg(long)]
+        target: Option<String>,
+        /// What is made of the package
+        #[arg(long, value_enum, default_value = "exe")]
+        emit: EmitBuilt,
+        /// Where the result is written; `-emit=gir` and `-emit=c` print
+        /// it without this
+        #[arg(short)]
+        o: Option<PathBuf>,
+        /// A directory, which is the package, or the files of it
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
     /// Say what an error code means, how to fix it, and show an example
     Explain {
         /// List every code
@@ -92,6 +110,20 @@ enum Emit {
     Ast,
     /// The syntax tree as JSON, one file per line
     Json,
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum EmitBuilt {
+    /// The module of the package as text
+    Gir,
+    /// The unit of C that is given to Clang
+    C,
+    /// An object file
+    Obj,
+    /// The assembly of the target
+    Asm,
+    /// An executable
+    Exe,
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -126,6 +158,17 @@ fn run() -> ExitCode {
             fmt::run(&paths, mode, go)
         }
         Command::Check { json, emit, paths } => check::run(&paths, json, emit.is_some()),
+        Command::Build {
+            target,
+            emit,
+            o,
+            paths,
+        } => build::run(&build::Options {
+            target,
+            emit,
+            output: o,
+            paths,
+        }),
         Command::Explain { list: true, .. } => {
             print!("{}", gopp_diag::listed());
             ExitCode::SUCCESS

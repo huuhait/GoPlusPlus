@@ -23,26 +23,26 @@ use crate::{EXIT_ERRORS, exit_code};
 const MAX_JSON_DIAGNOSTICS: usize = 10_000;
 
 /// The files of one package, parsed.
-struct Parsed {
-    path: String,
-    files: Vec<(File, Arc<SourceFile>)>,
+pub(crate) struct Parsed {
+    pub path: String,
+    pub files: Vec<(File, Arc<SourceFile>)>,
 }
 
 /// The packages of Go's standard library that are checked, and for each
 /// package the paths that its imports stand for.
 #[derive(Default)]
-struct Standard {
-    checked: HashMap<String, Arc<Package>>,
+pub(crate) struct Standard {
+    pub checked: HashMap<String, Arc<Package>>,
 }
 
 /// Finds the packages that a package imports. A package of Go's standard
 /// library is the one that was checked from its sources; any other is a
 /// stand-in whose names are all taken to exist, until packages are built
 /// and loaded.
-struct Imports<'a> {
-    standard: &'a HashMap<String, Arc<Package>>,
+pub(crate) struct Imports<'a> {
+    pub standard: &'a HashMap<String, Arc<Package>>,
     /// What an import path stands for in the importing package.
-    import_map: HashMap<String, String>,
+    pub import_map: HashMap<String, String>,
 }
 
 impl PackageLoader for Imports<'_> {
@@ -140,7 +140,7 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
 
 /// The packages that the arguments name: each directory is one, with the
 /// source files in it; the files that are named are one together.
-fn grouped(paths: &[PathBuf]) -> Vec<Result<(String, Vec<PathBuf>), String>> {
+pub(crate) fn grouped(paths: &[PathBuf]) -> Vec<Result<(String, Vec<PathBuf>), String>> {
     let mut groups = Vec::new();
     let mut loose = Vec::new();
     for path in paths {
@@ -179,7 +179,7 @@ fn grouped(paths: &[PathBuf]) -> Vec<Result<(String, Vec<PathBuf>), String>> {
     groups
 }
 
-fn parse_package(
+pub(crate) fn parse_package(
     path: &str,
     files: &[PathBuf],
     sources: &SourceMap,
@@ -227,7 +227,11 @@ fn imports(package: &Parsed) -> impl Iterator<Item = String> + '_ {
 /// Checks the packages of Go's standard library that the packages
 /// import, with what those import, from the sources that `go list`
 /// names. Without `go`, none is checked.
-fn standard_library(packages: &[Parsed], names: &ThreadedRodeo, types: &Types) -> Standard {
+pub(crate) fn standard_library(
+    packages: &[Parsed],
+    names: &ThreadedRodeo,
+    types: &Types,
+) -> Standard {
     let mut standard = Standard::default();
     // A path whose first element has a dot is a module, one in angle
     // brackets or with a header extension is a header.
