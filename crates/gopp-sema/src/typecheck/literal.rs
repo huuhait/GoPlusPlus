@@ -19,11 +19,18 @@ impl<'a> Checker<'a> {
                 let literal = self.literal_type(cx, ty, elems);
                 (literal, literal, false)
             }
-            // `{…}` for a pointer type is `&T{…}`.
-            (None, Some(hint)) => match &*self.types.get(self.types.underlying(hint)) {
-                Type::Pointer(elem) => (hint, *elem, true),
-                _ => (hint, hint, true),
-            },
+            // `{…}` for a pointer type is `&T{…}`; for a type parameter,
+            // for the pointer type that all its types share.
+            (None, Some(hint)) => {
+                let under = match self.is_param(hint) {
+                    true => self.types.common_under(hint).unwrap_or(hint),
+                    false => self.types.underlying(hint),
+                };
+                match &*self.types.get(under) {
+                    Type::Pointer(elem) => (hint, *elem, true),
+                    _ => (hint, hint, true),
+                }
+            }
             (None, None) => {
                 let message = "missing type in composite literal".to_owned();
                 self.error(Code::LiteralMissingType, span, message);
@@ -40,7 +47,12 @@ impl<'a> Checker<'a> {
         // In a `.gopp` file a struct with parents has more than its own
         // fields.
         let strict = !self.types.extends(base);
-        let under = self.types.get(self.types.underlying(base));
+        // The literal of a type parameter is of what all its types share.
+        let shared = match self.is_param(base) && !self.open(base) {
+            true => self.types.common_under(base).ok(),
+            false => Some(self.types.underlying(base)),
+        };
+        let under = self.types.get(shared.unwrap_or(Types::INVALID));
         let grows = ty.is_some_and(|ty| {
             matches!(
                 cx.tree.exprs[ty].kind,
@@ -61,13 +73,15 @@ impl<'a> Checker<'a> {
                         _ => self.element(cx, element, None),
                     };
                 }
-                let unsettled =
-                    self.types.underlying(base) == Types::INVALID || self.types.has_param(base);
-                if !unsettled && strict {
+                if !self.open(base) && strict {
                     let message = format!(
-                        "invalid composite literal{} type {}",
+                        "invalid composite literal{} type {}{}",
                         if is_element { " element" } else { "" },
-                        self.type_string(literal)
+                        self.type_string(literal),
+                        match shared {
+                            Some(_) => "",
+                            None => " (no common underlying type)",
+                        }
                     );
                     self.error(Code::LiteralInvalidType, span, message);
                 }

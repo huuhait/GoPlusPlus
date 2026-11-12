@@ -2286,7 +2286,30 @@ impl<'a> Checker<'a> {
             }
             _ if callee.is_value() => {
                 self.called_or_received = true;
-                let plain = self.types.underlying(callee.ty);
+                // What is called is a function; of a type parameter, the
+                // function type that all its types share.
+                let shared = self.common_under(callee.ty, |this, of| match of {
+                    Some((ty, under)) if !matches!(&*this.types.get(under), Type::Func { .. }) => {
+                        Some(format!("{} is not a function", this.type_string(ty)))
+                    }
+                    _ => None,
+                });
+                let plain = match shared {
+                    Ok(shared) => shared,
+                    Err(cause) => {
+                        for &arg in args {
+                            self.operand(cx, arg);
+                        }
+                        if !self.open(callee.ty) && !self.may_overload(cx, callee.ty) {
+                            let message = format!(
+                                "invalid operation: cannot call {}: {cause}",
+                                self.describe(cx, fun, &callee)
+                            );
+                            self.error(Code::CannotCall, cx.tree.exprs[fun].span, message);
+                        }
+                        return Operand::UNKNOWN;
+                    }
+                };
                 let sig = match self.types.generic_func(callee.ty) {
                     // The type arguments that the call does not write
                     // are found from its arguments; in this call the

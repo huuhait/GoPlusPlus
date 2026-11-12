@@ -259,6 +259,7 @@ codes! {
     481 TypeArgUnsatisfied "err_type_arg_unsatisfied",
     482 CannotInfer "err_cannot_infer",
     483 NoteDeclaredHere "note_declared_here",
+    484 CannotCall "err_cannot_call",
 }
 
 impl Code {

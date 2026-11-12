@@ -5197,6 +5197,55 @@ func generic[P any](p []P) P { return first(p) }
     assert_eq!(found, expected);
 }
 
+#[test]
+fn literals_and_calls_of_type_parameters_are_checked_as_go_checks_them() {
+    let text = "package p
+
+type S struct{ f int }
+
+func lit[P ~[]int, Q ~struct{ f int }, R ~map[string]int, X []int | []string, A any, N ~int, Y S | struct{ f int }]() {
+	_ = P{1, 2}
+	_ = Q{f: 1}
+	_ = R{\"a\": 1}
+	_ = Y{f: 2}
+	_ = X{}
+	_ = A{}
+	_ = N{}
+	_ = []P{{1}, {2}}
+	_ = []X{{}}
+	_ = P{\"x\"}
+	_ = Q{g: 1}
+}
+
+func call[F func(int) string, G func() | func(int), A any, H ~func()](f F, g G, a A, h H) {
+	var _ string = f(1)
+	h()
+	f(\"x\")
+	g()
+	a()
+}
+
+func plain(n int, s struct{ x int }) {
+	n()
+	s.x(1)
+}
+";
+    let expected = [
+        "a.go:10:6: invalid composite literal type X (no common underlying type)",
+        "a.go:11:6: invalid composite literal type A (no common underlying type)",
+        "a.go:12:6: invalid composite literal type N",
+        "a.go:14:10: invalid composite literal element type X (no common underlying type)",
+        "a.go:15:8: cannot use \"x\" (untyped string constant) as int value in array or slice literal",
+        "a.go:16:8: unknown field g in struct literal of type Q",
+        "a.go:22:4: cannot use \"x\" (untyped string constant) as int value in argument to f",
+        "a.go:23:2: invalid operation: cannot call g (variable of type G constrained by func() | func(int)): func() and func(int) have different underlying types",
+        "a.go:24:2: invalid operation: cannot call a (variable of type A constrained by any): no specific type",
+        "a.go:28:2: invalid operation: cannot call n (variable of type int): int is not a function",
+        "a.go:29:2: invalid operation: cannot call s.x (variable of type int): int is not a function",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -6124,7 +6173,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2621;
+const EXPECTED_ERRORS_REPORTED: usize = 2631;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
