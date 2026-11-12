@@ -131,6 +131,9 @@ pub struct Body {
     /// owner, how. A place of a type that is copied by its bytes has no
     /// entry, nor has a temporary, which is given as it is.
     pub var_modes: FxHashMap<ExprId, Transfer>,
+    /// The names of option variables that are read as the value that the
+    /// option holds, because the option is known to be set there.
+    pub narrowed: FxHashSet<ExprId>,
     /// For a function literal, the variables of the functions around it
     /// that it uses, in the order of their declarations, each with the
     /// most that the literal or a literal inside it does to it.

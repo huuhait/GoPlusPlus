@@ -1518,6 +1518,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Use the type itself: its `nil` already says that nothing is there.",
             "var a Option[[]int] // error\nvar a []int         // ok: nil when empty",
         ),
+        OptionMaybeNil => (
+            "A variable was tested before a loop, and the loop assigns it. On a later turn of \
+             the loop the test no longer says anything.",
+            "Test the variable inside the loop, or do not assign it there.",
+            "if o == nil {\n\treturn\n}\nfor i := 0; i < n; i++ {\n\tuse(o.Name) // error\n\to = next()\n}",
+        ),
+        ValueUnchecked => (
+            "The value of a lookup or of a call is used where it may not be set. Its type has \
+             no zero value, so it is a value only where `ok` is true or `err` is nil.",
+            "Leave when the lookup or the call failed, and use the value after that.",
+            "u, ok := users[name]\nshow(u)   // error: u is set only where ok is true\nif !ok {\n\treturn\n}\nshow(u)   // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

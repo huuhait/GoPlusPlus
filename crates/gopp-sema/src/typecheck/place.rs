@@ -291,6 +291,11 @@ impl<'a> Checker<'a> {
                 return;
             }
             self.steps += 1;
+            // A literal may run at any time: what it writes is not known
+            // to hold anything where it is declared.
+            if how > CaptureUse::Read {
+                self.flow_unstable(local);
+            }
             // If the literal does as much already, so do those around it.
             match self.captures.insert((literal, local), how) {
                 Some(known) if known >= how => {

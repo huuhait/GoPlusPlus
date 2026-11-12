@@ -8,8 +8,8 @@ use super::*;
 impl<'a> Checker<'a> {
     /// The types that a value of the type `ty` is read as: its own, what
     /// a pointer points to, a pointer to what a `Unique` or `Shared` owns,
-    /// and what an option holds. An option is taken as checked: whether it
-    /// was is decided where the flow of the function is known.
+    /// and what an option holds. What an option holds is given only to a
+    /// place that takes nil too, which `fit_own` sees to.
     fn read_as(&self, ty: TypeId, out: &mut Vec<TypeId>) {
         if out.contains(&ty) {
             return;
@@ -29,9 +29,9 @@ impl<'a> Checker<'a> {
     }
 
     /// The operand as it is read where a pointer does not fit: what a
-    /// pointer, a `Unique` or a `Shared` points to, and what an option
-    /// holds, which is taken as checked. What a `Shared` holds is only
-    /// read.
+    /// pointer, a `Unique` or a `Shared` points to. What a `Shared` holds
+    /// is only read. An option is read as what it holds only where it is
+    /// known to be set, which its name says then (OWN-P10).
     pub(super) fn read(&self, cx: &Cx<'a>, mut x: Operand) -> Operand {
         if !self.own_rules(cx) || !x.is_value() {
             return x;
@@ -40,10 +40,6 @@ impl<'a> Checker<'a> {
             x = match &*self.types.get(self.types.underlying(x.ty)) {
                 Type::Pointer(elem) | Type::Unique(elem) => Operand::variable(*elem),
                 Type::Shared(elem) => Operand::value(*elem),
-                Type::Option(elem) => Operand {
-                    mode: x.mode,
-                    ty: *elem,
-                },
                 _ => break,
             };
         }
@@ -116,6 +112,27 @@ impl<'a> Checker<'a> {
             Type::Struct(fields) => fields.iter().any(|field| field.required),
             _ => false,
         }
+    }
+
+    /// Why an option does not fit a place that would take what it holds:
+    /// it may be nil.
+    pub(super) fn untested_option(
+        &self,
+        x: &Operand,
+        to: TypeId,
+    ) -> std::option::Option<super::implements::Cause> {
+        let Type::Option(elem) = &*self.types.get(self.types.underlying(x.ty)) else {
+            return None;
+        };
+        let held = Operand {
+            mode: x.mode.clone(),
+            ty: *elem,
+        };
+        self.fit_own(&held, to, false)?;
+        Some(super::implements::Cause {
+            text: "the option may be nil: test it against nil first".to_owned(),
+            have_want: None,
+        })
     }
 
     /// The temporary `x` of `expr` is given to a place of the type `to`:
@@ -323,7 +340,10 @@ impl<'a> Checker<'a> {
                 )
             }
             ExprKind::Selector { .. } => self.reaches_kept_set(cx, value),
-            ExprKind::Name(_) => matches!(cx.body.uses.get(&value), Some(Ref::Local(_))),
+            ExprKind::Name(_) => match cx.body.uses.get(&value) {
+                Some(&Ref::Local(local)) => self.flow_holds(local, flow::Known::Set, span),
+                _ => false,
+            },
             _ => false,
         };
         if made || !self.types.has_nil(x.ty, Dialect::Gopp) {
@@ -333,7 +353,7 @@ impl<'a> Checker<'a> {
             "cannot store {} in {place}: the field is @Required, and the value may be nil",
             self.expr_string(cx, value)
         );
-        let fix = "put it in a variable and test that against nil first".to_owned();
+        let fix = "put it in a variable and store it where that is not nil".to_owned();
         self.error_with_fix(
             Code::RequiredMaybeNil,
             span,
@@ -529,6 +549,15 @@ impl<'a> Checker<'a> {
         let mut read = Vec::new();
         self.read_as(x.ty, &mut read);
         let takes = self.takes(to, writes);
+        // An option that may be nil is given as it is, to an option, or
+        // to `error` or `any`, where nil stays nil.
+        let is_option =
+            |ty: TypeId| matches!(&*self.types.get(self.types.underlying(ty)), Type::Option(_));
+        let may_be_nil = is_option(x.ty);
+        let keeps_nil = is_option(to) || self.types.has_nil(to, Dialect::Gopp);
+        if may_be_nil && !keeps_nil {
+            read.truncate(1);
+        }
         read.iter().find_map(|&from| {
             let x = Operand {
                 mode: x.mode.clone(),

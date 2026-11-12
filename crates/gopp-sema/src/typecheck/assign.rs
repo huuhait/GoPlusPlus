@@ -134,7 +134,9 @@ impl<'a> Checker<'a> {
                 self.describe(cx, expr, &x),
                 self.type_string(to)
             );
-            let cause = self.unfit_cause(&x, to);
+            let cause = self
+                .unfit_cause(&x, to)
+                .or_else(|| self.untested_option(&x, to));
             self.error_with_cause(Code::CannotAssign, span, message, cause);
             return Operand::UNKNOWN;
         }
@@ -405,7 +407,9 @@ impl<'a> Checker<'a> {
             return None;
         }
         let outer = self.lookup_target.replace(inner);
+        let known = self.unnarrowed.replace(inner);
         let x = self.value(cx, lhs);
+        self.unnarrowed = known;
         self.lookup_target = outer;
         if x.mode == Mode::Unknown || x.ty == Types::INVALID {
             return Some(Types::INVALID);
@@ -431,12 +435,14 @@ impl<'a> Checker<'a> {
             }
             if self.read(cx, x.clone()).ty != x.ty {
                 self.wrote(cx, lhs);
+                self.flow_written(cx, lhs);
                 return Some(x.ty);
             }
         }
         if matches!(x.mode, Mode::Variable | Mode::MapIndex) {
             self.changed(cx, lhs, place::Change::Assigned);
             self.wrote(cx, lhs);
+            self.flow_written(cx, lhs);
             return Some(x.ty);
         }
         if let ExprKind::Selector { x: of, .. } = cx.tree.exprs[inner].kind
@@ -519,7 +525,13 @@ impl<'a> Checker<'a> {
             }
             return;
         }
+        let places: Vec<std::option::Option<LocalId>> = lhs
+            .iter()
+            .map(|&place| self.flow_local(cx, place))
+            .collect();
+        let mut types = Vec::new();
         for (&place, value) in lhs.iter().zip(values) {
+            types.push(value.ty);
             let to = self.lhs_var(cx, place);
             if let Some(to) = to {
                 self.note_write(cx, place, to, Some(&value));
@@ -538,6 +550,7 @@ impl<'a> Checker<'a> {
                 self.error(Code::CannotAssign, cx.tree.exprs[rhs[0]].span, message);
             }
         }
+        self.flow_guards(cx, &places, &types);
     }
 
     /// A declaration of `names` with the values `values` has as many

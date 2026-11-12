@@ -622,6 +622,15 @@ impl<'a> Checker<'a> {
                 let x = self.operand(cx, inner);
                 self.instantiated(cx, inner, x)
             }
+            // The address is that of the variable, whatever is known of
+            // it, and what gets the address may assign it.
+            UnaryOp::Addr => {
+                let outer = self.unnarrowed.replace(self.unparen(cx, inner));
+                let x = self.value(cx, inner);
+                self.unnarrowed = outer;
+                self.flow_written(cx, inner);
+                x
+            }
             _ => self.value(cx, inner),
         };
         if x.mode == Mode::Unknown {
@@ -934,14 +943,23 @@ impl<'a> Checker<'a> {
         left: ExprId,
         right: ExprId,
     ) -> Operand {
-        let (mut x, mut y) = (self.value(cx, left), self.value(cx, right));
+        let (mut x, mut y) = self.operands(cx, op, left, right);
         if !x.is_value() || !y.is_value() {
             return Operand::UNKNOWN;
         }
         // Two pointers are compared as pointers; anything else is done
         // to what a pointer points to.
-        let refers =
-            |this: &Self, x: &Operand| this.is_nil(x) || this.read(cx, x.clone()).ty != x.ty;
+        let refers = |this: &Self, x: &Operand| {
+            // An option of a pointer is compared like the pointer.
+            let held = match &*this.types.get(this.types.underlying(x.ty)) {
+                Type::Option(elem) => Operand {
+                    mode: x.mode.clone(),
+                    ty: *elem,
+                },
+                _ => x.clone(),
+            };
+            this.is_nil(x) || this.read(cx, held.clone()).ty != held.ty
+        };
         if !(is_comparison(op) && refers(self, &x) && refers(self, &y)) {
             (x, y) = (self.read(cx, x), self.read(cx, y));
         }

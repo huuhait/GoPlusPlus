@@ -2518,10 +2518,11 @@ func walk(n *List) int {
 	total := 0
 	for {
 		total += n.v
-		if n.next == nil {
+		next := n.next
+		if next == nil {
 			return total
 		}
-		n = n.next
+		n = next
 	}
 }
 
@@ -6439,7 +6440,7 @@ fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
         "ch <- v",
         "b := xs[0]; _ = b",
         "c := *p; _ = c",
-        "d, ok := m[\"a\"]; _, _ = d, ok",
+        "d, ok := m[\"a\"]; if ok { borrow(&d) }",
         "for _, e := range xs { keep(e) }",
         "_ = func() { keep(v) }",
         "return xs[0]",
@@ -6656,15 +6657,21 @@ func funcs(s *Server, f, g func(), p *func()) {
 	if h := s.OnStop; h != nil {
 		h()
 	}
-	b()
+	if b != nil {
+		b()
+	}
 	p()
-	s.OnStop()
 
 	_ = f == nil
 	_ = nil != f
 	_ = f == g
 	f = nil
 	s()
+	b()
+	s.OnStop()
+	if s.OnStop != nil {
+		s.OnStop()
+	}
 }
 
 func values(f File) {
@@ -6676,14 +6683,20 @@ func values(f File) {
 }
 ";
     let expected = [
-        "a.gopp:24:6: invalid operation: f == nil (a func() is never nil: use Option[func()])",
-        "a.gopp:25:13: invalid operation: nil != f (a func() is never nil: use Option[func()])",
-        "a.gopp:26:6: invalid operation: f == g (func values cannot be compared)",
-        "a.gopp:27:6: cannot use nil as func() value in assignment",
+        "a.gopp:25:6: invalid operation: f == nil (a func() is never nil: use Option[func()])",
+        "a.gopp:26:13: invalid operation: nil != f (a func() is never nil: use Option[func()])",
+        "a.gopp:27:6: invalid operation: f == g (func values cannot be compared)",
+        "a.gopp:28:6: cannot use nil as func() value in assignment",
         "    a func() is never nil: use Option[func()]",
-        "a.gopp:28:2: invalid operation: cannot call s (variable of struct type Server): Server is \
+        "a.gopp:29:2: invalid operation: cannot call s (variable of struct type Server): Server is \
          not a function",
-        "a.gopp:35:7: cannot copy f (variable of struct type File): File has a drop method and no \
+        "a.gopp:30:2: invalid operation: cannot call b (variable of type Option[func()]): \
+         Option[func()] is not a function",
+        "a.gopp:31:2: invalid operation: cannot call s.OnStop (variable of type Option[func()]): \
+         Option[func()] is not a function",
+        "a.gopp:33:3: invalid operation: cannot call s.OnStop (variable of type Option[func()]): \
+         Option[func()] is not a function",
+        "a.gopp:41:7: cannot copy f (variable of struct type File): File has a drop method and no \
          Clone() File",
         "    use move(f) to give the value, or &f to lend it",
     ];
@@ -7227,7 +7240,10 @@ func good(m map[string]User, ch chan User, users []User) {
 	for x := range ch {
 		_ = x
 	}
-	_, _, _, _, _, _, _, _, _, _ = t, xs, ys, zs, o, err, v, found, w, open
+	if found && open {
+		_, _ = v, w
+	}
+	_, _, _, _, _, _ = t, xs, ys, zs, o, err
 }
 
 func bad(m map[string]User, ch chan User, users []User, n int) (named User) {
@@ -7276,55 +7292,55 @@ func generic[T any, N ~int | ~string](n int) {
         "a.gopp:34:5: cannot declare boxed without a value: Box[User] has no zero value (the field \
          ID of User is @Required)",
         "    give boxed a value, or declare it as Option[Box[User]]",
-        "a.gopp:59:65: cannot name the result named: User has no zero value (the field ID of User \
+        "a.gopp:62:65: cannot name the result named: User has no zero value (the field ID of User \
          is @Required)",
         "    declare the result without a name",
-        "a.gopp:60:6: cannot declare a without a value: User has no zero value (the field ID of \
+        "a.gopp:63:6: cannot declare a without a value: User has no zero value (the field ID of \
          User is @Required)",
         "    give a a value, or declare it as Option[User]",
-        "a.gopp:61:6: cannot declare t without a value: Team has no zero value (the field ID of \
+        "a.gopp:64:6: cannot declare t without a value: Team has no zero value (the field ID of \
          User is @Required)",
         "    give t a value, or declare it as Option[Team]",
-        "a.gopp:62:6: cannot declare arr without a value: [3]User has no zero value (the field ID \
+        "a.gopp:65:6: cannot declare arr without a value: [3]User has no zero value (the field ID \
          of User is @Required)",
         "    give arr a value, or declare it as Option[[3]User]",
-        "a.gopp:63:6: cannot declare f without a value: func() has no zero value (a func() is \
+        "a.gopp:66:6: cannot declare f without a value: func() has no zero value (a func() is \
          never nil)",
         "    give f a value, or declare it as Option[func()]",
-        "a.gopp:64:6: cannot declare h without a value: Handler has no zero value (a Handler is \
+        "a.gopp:67:6: cannot declare h without a value: Handler has no zero value (a Handler is \
          never nil)",
         "    give h a value, or declare it as Option[Handler]",
-        "a.gopp:65:6: cannot declare p without a value: *Node has no zero value (a *Node is never \
+        "a.gopp:68:6: cannot declare p without a value: *Node has no zero value (a *Node is never \
          nil)",
         "    give p a value, or declare it as Option[*Node]",
-        "a.gopp:66:7: missing ID (@Required) in struct literal of type User",
-        "a.gopp:67:7: missing ID (@Required) in struct literal of type User",
-        "a.gopp:68:7: missing Owner (User has no zero value) in struct literal of type Team",
-        "a.gopp:69:7: missing Up (*Node has no zero value) in struct literal of type Node",
-        "a.gopp:70:8: cannot make a []User with a length: User has no zero value (the field ID of \
+        "a.gopp:69:7: missing ID (@Required) in struct literal of type User",
+        "a.gopp:70:7: missing ID (@Required) in struct literal of type User",
+        "a.gopp:71:7: missing Owner (User has no zero value) in struct literal of type Team",
+        "a.gopp:72:7: missing Up (*Node has no zero value) in struct literal of type Node",
+        "a.gopp:73:8: cannot make a []User with a length: User has no zero value (the field ID of \
          User is @Required)",
         "    use make([]User, 0, n) and append the elements",
-        "a.gopp:71:8: cannot leave out elements of the literal: User has no zero value (the field \
+        "a.gopp:74:8: cannot leave out elements of the literal: User has no zero value (the field \
          ID of User is @Required)",
         "    write every element",
-        "a.gopp:72:8: cannot leave out elements of the literal: User has no zero value (the field \
+        "a.gopp:75:8: cannot leave out elements of the literal: User has no zero value (the field \
          ID of User is @Required)",
         "    write every element",
-        "a.gopp:73:7: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
+        "a.gopp:76:7: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
          value (the field ID of User is @Required)",
         "    use v, ok := m[\"a\"]",
-        "a.gopp:74:7: cannot read <-ch alone: the channel may be closed, and User has no zero \
+        "a.gopp:77:7: cannot read <-ch alone: the channel may be closed, and User has no zero \
          value (the field ID of User is @Required)",
         "    use v, ok := <-ch",
-        "a.gopp:75:6: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
+        "a.gopp:78:6: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
          value (the field ID of User is @Required)",
         "    use v, ok := m[\"a\"]",
-        "a.gopp:76:8: cannot clear users: User has no zero value (the field ID of User is \
+        "a.gopp:79:8: cannot clear users: User has no zero value (the field ID of User is \
          @Required)",
         "    use users = users[:0], which drops the elements",
-        "a.gopp:82:6: cannot declare zero without a value: T may be a type with no zero value",
+        "a.gopp:85:6: cannot declare zero without a value: T may be a type with no zero value",
         "    give zero a value, or declare it as Option[T]",
-        "a.gopp:84:8: cannot make a []T with a length: T may be a type with no zero value",
+        "a.gopp:87:8: cannot make a []T with a length: T may be a type with no zero value",
         "    use make([]T, 0, n) and append the elements",
     ];
     assert_eq!(messages("a.gopp", text), expected);
@@ -7365,17 +7381,22 @@ func good(j *Job, other Job, ch chan bool) Job {
 	j.Err = Fail{}
 	j.Extra = 1
 	j.Done = other.Done
-	j.Done = ch
+	if ch != nil {
+		j.Done = ch
+	}
+	made := make(chan bool)
+	j.Done = made
 	j.Tags = nil
 	j.Later = nil
 	j.Later = pick()
 	old := mem.Replace(&j.Done, make(chan bool))
 	later := mem.Take(&j.Later)
 	_, _ = old, later
-	return Job{ID: 1, Done: ch, Seen: map[string]int{}, Err: Fail{}, Extra: \"x\", Tags: nil}
+	return Job{ID: 1, Done: other.Done, Seen: map[string]int{}, Err: Fail{}, Extra: \"x\", Tags: nil}
 }
 
-func bad(j *Job, other Job) {
+func bad(j *Job, other Job, ch chan bool) {
+	j.Done = ch
 	j.Done = nil
 	j.Done = pick()
 	j.Done = other.Later
@@ -7389,24 +7410,26 @@ func bad(j *Job, other Job) {
 ";
     let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     let expected = [
-        "a.gopp:38:11: cannot store nil in j.Done: the field is @Required",
+        "a.gopp:42:11: cannot store ch in j.Done: the field is @Required, and the value may be nil",
+        "    put it in a variable and store it where that is not nil",
+        "a.gopp:43:11: cannot store nil in j.Done: the field is @Required",
         "    store a value, or declare the field as Option[chan bool]",
-        "a.gopp:39:11: cannot store pick() in j.Done: the field is @Required, and the value may be \
+        "a.gopp:44:11: cannot store pick() in j.Done: the field is @Required, and the value may be \
          nil",
-        "    put it in a variable and test that against nil first",
-        "a.gopp:40:11: cannot store other.Later in j.Done: the field is @Required, and the value \
+        "    put it in a variable and store it where that is not nil",
+        "a.gopp:45:11: cannot store other.Later in j.Done: the field is @Required, and the value \
          may be nil",
-        "    put it in a variable and test that against nil first",
-        "a.gopp:41:10: cannot store nil in j.Err: the field is @Required",
+        "    put it in a variable and store it where that is not nil",
+        "a.gopp:46:10: cannot store nil in j.Err: the field is @Required",
         "    store a value, or declare the field as Option[error]",
-        "a.gopp:42:7: cannot take the address &j.Done: the field is @Required, so it is never nil",
+        "a.gopp:47:7: cannot take the address &j.Done: the field is @Required, so it is never nil",
         "    use mem.Replace to give it another value",
-        "a.gopp:43:16: cannot take j.Seen: the field is @Required, so it is never nil",
+        "a.gopp:48:16: cannot take j.Seen: the field is @Required, so it is never nil",
         "    use mem.Replace(&j.Seen, v)",
-        "a.gopp:44:28: cannot store pick() in j.Done: the field is @Required, and the value may be \
+        "a.gopp:49:28: cannot store pick() in j.Done: the field is @Required, and the value may be \
          nil",
-        "    put it in a variable and test that against nil first",
-        "a.gopp:45:24: cannot store nil in Done: the field is @Required",
+        "    put it in a variable and store it where that is not nil",
+        "a.gopp:50:24: cannot store nil in Done: the field is @Required",
         "    store a value, or declare the field as Option[chan bool]",
     ];
     assert_eq!(checked.messages, expected);
@@ -7653,7 +7676,10 @@ func good(u User, p *User, f func(), s Shape) {
 	var y any = d
 	var box Box[int]
 	_ = wrap(1)
-	_, _, _, _, _, _, _, _, _, _, _, _, _ = v, ok, w, ok2, k, keys, x, y, box, d, e, g, c
+	if ok2 {
+		_ = w
+	}
+	_, _, _, _, _, _, _, _, _, _, _, _ = v, ok, ok2, k, keys, x, y, box, d, e, g, c
 }
 
 func bad(a Option[int], t Option[string], bag, bag2 Option[Bag], u User) {
@@ -7706,39 +7732,243 @@ func ifaces(f Option[Fail], c Option[Circle], a Option[int]) {
 ";
     let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     let expected = [
-        "a.gopp:56:6: cannot use map[string]int for T: an Option of it is written, and \
+        "a.gopp:59:6: cannot use map[string]int for T: an Option of it is written, and \
          map[string]int has nil already",
-        "a.gopp:57:20: cannot use chan int for T: an Option of it is written, and chan int has nil \
+        "a.gopp:60:20: cannot use chan int for T: an Option of it is written, and chan int has nil \
          already",
-        "a.gopp:59:11: invalid operation: a == \"x\" (mismatched types int and untyped string)",
-        "a.gopp:60:11: invalid operation: a == t (mismatched types Option[int] and Option[string])",
-        "a.gopp:61:6: invalid operation: bag == bag2 (operator == not defined on Option[Bag])",
-        "a.gopp:65:17: cannot use a (variable of type Option[int]) as string value in variable \
+        "a.gopp:62:11: invalid operation: a == \"x\" (mismatched types Option[int] and untyped \
+         string)",
+        "a.gopp:63:11: invalid operation: a == t (mismatched types Option[int] and Option[string])",
+        "a.gopp:64:6: invalid operation: bag == bag2 (operator == not defined on Option[Bag])",
+        "a.gopp:65:6: invalid operation: a < 5 (operator < not defined on Option[int])",
+        "a.gopp:66:6: invalid operation: a + 1 (mismatched types Option[int] and int)",
+        "a.gopp:67:14: cannot use a (variable of type Option[int]) as int value in variable \
+         declaration: the option may be nil: test it against nil first",
+        "a.gopp:68:17: cannot use a (variable of type Option[int]) as string value in variable \
          declaration",
-        "a.gopp:66:16: cannot use a (variable of type Option[int]) as error value in variable \
+        "a.gopp:69:16: cannot use a (variable of type Option[int]) as error value in variable \
          declaration: Option[int] does not implement error (missing method Error)",
-        "a.gopp:67:8: u.IsNil undefined (type User has no field or method IsNil)",
-        "a.gopp:68:8: a.Missing undefined (type int has no field or method Missing)",
-        "a.gopp:69:9: invalid type Option[[]int]: []int has nil already",
+        "a.gopp:70:8: u.IsNil undefined (type User has no field or method IsNil)",
+        "a.gopp:71:8: a.Missing undefined (type Option[int] has no field or method Missing)",
+        "    a may be nil: put it in a variable and test that against nil first",
+        "a.gopp:72:9: invalid type Option[[]int]: []int has nil already",
         "    use []int",
-        "a.gopp:70:9: invalid type Option[map[string]int]: map[string]int has nil already",
+        "a.gopp:73:9: invalid type Option[map[string]int]: map[string]int has nil already",
         "    use map[string]int",
-        "a.gopp:71:9: invalid type Option[chan int]: chan int has nil already",
+        "a.gopp:74:9: invalid type Option[chan int]: chan int has nil already",
         "    use chan int",
-        "a.gopp:72:9: invalid type Option[any]: any has nil already",
+        "a.gopp:75:9: invalid type Option[any]: any has nil already",
         "    use any",
-        "a.gopp:73:9: invalid type Option[error]: error has nil already",
+        "a.gopp:76:9: invalid type Option[error]: error has nil already",
         "    use error",
-        "a.gopp:74:9: invalid type Option[Option[int]]: Option[int] has nil already",
+        "a.gopp:77:9: invalid type Option[Option[int]]: Option[int] has nil already",
         "    use Option[int]",
-        "a.gopp:75:9: invalid type Option[Maybe]: Maybe has nil already",
+        "a.gopp:78:9: invalid type Option[Maybe]: Maybe has nil already",
         "    use Maybe",
-        "a.gopp:76:13: cannot use []int for T: an Option of it is written, and []int has nil \
+        "a.gopp:79:13: cannot use []int for T: an Option of it is written, and []int has nil \
          already",
-        "a.gopp:77:6: cannot use []int for T: an Option of it is written, and []int has nil \
+        "a.gopp:80:6: cannot use []int for T: an Option of it is written, and []int has nil \
          already",
     ];
     assert_eq!(checked.messages, expected);
+}
+
+// rule: OWN-P10
+#[test]
+fn an_option_is_its_value_where_it_was_tested() {
+    let text = "package p
+
+type Tree struct {
+	L, R Option[Unique[Tree]]
+	V    int
+}
+
+type User struct {
+	ID   int @Required
+	Name string
+}
+
+type Server struct{ OnStop Option[func()] }
+
+func find(id int) (*User, error) { panic(id) }
+func show(u User)                {}
+func next() Option[*Tree]        { return nil }
+
+func sum(t Option[*Tree]) int {
+	if t == nil {
+		return 0
+	}
+	return t.V + sum(t.L) + sum(t.R)
+}
+
+func good(o Option[int], s *Server, m map[string]User, ch chan User, p Option[*Tree]) int {
+	if o != nil {
+		return o + 1
+	}
+	if !o.IsNil() {
+		var n int = o
+		return n
+	}
+	if o != nil && o > 3 {
+		return 1
+	}
+	if o == nil || o < 0 {
+		return 2
+	}
+	x := o
+	for p != nil {
+		_ = p.V
+		p = next()
+	}
+	for q := next(); q != nil; q = next() {
+		_ = q.V
+	}
+	if f := s.OnStop; f != nil {
+		f()
+	}
+	u, ok := m[\"a\"]
+	if !ok {
+		return 0
+	}
+	show(u)
+	if w, open := <-ch; open {
+		show(w)
+	}
+	v, err := find(1)
+	if err != nil {
+		return 0
+	}
+	_ = v.Name
+	o = nil
+	o = 7
+	return x
+}
+
+func bad(o Option[int], s *Server, m map[string]User, p Option[*Tree]) int {
+	_ = o + 1
+	var n int = o
+	_ = p.V
+	s.OnStop()
+	if o != nil {
+		o = nil
+		_ = o + 1
+	}
+	if s.OnStop != nil {
+		s.OnStop()
+	}
+	u, ok := m[\"a\"]
+	show(u)
+	v, err := find(1)
+	_ = v.Name
+	if p == nil {
+		return 0
+	}
+	for i := 0; i < 3; i++ {
+		_ = p.V
+		p = next()
+	}
+	if o != nil {
+		_ = func() int { return o + 1 }
+	}
+	_, _, _ = ok, err, n
+	return 0
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let expected = [
+        "a.gopp:70:6: invalid operation: o + 1 (mismatched types Option[int] and int)",
+        "a.gopp:71:14: cannot use o (variable of type Option[int]) as int value in variable \
+         declaration: the option may be nil: test it against nil first",
+        "a.gopp:72:8: p.V undefined (type Option[*Tree] has no field or method V)",
+        "    p may be nil: put it in a variable and test that against nil first",
+        "a.gopp:73:2: invalid operation: cannot call s.OnStop (variable of type Option[func()]): \
+         Option[func()] is not a function",
+        "a.gopp:76:7: invalid operation: o + 1 (mismatched types Option[int] and int)",
+        "a.gopp:79:3: invalid operation: cannot call s.OnStop (variable of type Option[func()]): \
+         Option[func()] is not a function",
+        "a.gopp:82:7: cannot use u here: User has no zero value, so u is set only where ok is true",
+        "    return or go on where !ok, and use u after that",
+        "a.gopp:84:6: cannot use v here: *User has no zero value, so v is set only where err is \
+         nil",
+        "    return or go on where err != nil, and use v after that",
+        "a.gopp:89:7: cannot rely on the test of p from before the loop: the loop assigns p",
+        "    test p inside the loop",
+        "a.gopp:93:27: invalid operation: o + 1 (mismatched types Option[int] and int)",
+    ];
+    assert_eq!(checked.messages, expected);
+    // The uses that read what the option holds, by their lines.
+    let file = &checked.files[0];
+    let mut lines: Vec<u32> = Vec::new();
+    for body in &checked.package.files[0].bodies {
+        for &expr in &body.narrowed {
+            let span = file.exprs[expr].span;
+            lines.push(checked.map.file(span.file).line_col(span.lo).line);
+        }
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    assert_eq!(lines, [23, 28, 31, 34, 37, 40, 42, 46, 49, 89]);
+    // A Go file has no options, and its values are Go's.
+    let text = "package p\ntype T struct{ p *T }\nfunc f(m map[int]*T) *T { v, ok := m[0]; _ = ok; return v.p }\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+#[test]
+fn the_steps_of_what_is_known_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    let header = "package p\nfunc next() Option[int] { return nil }\n";
+    // Tests one after the other, each with its own use and assignment.
+    let siblings = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("\tif o != nil && o > {i} {{\n\t\ttotal += o\n\t}}\n\to = next()\n"))
+            .collect();
+        format!("{header}func f(o Option[int]) int {{\n\ttotal := 0\n{all}\treturn total\n}}\n")
+    };
+    // A test inside a test, each of a variable of its own, with the
+    // uses of all of them at the bottom.
+    let nested = |depth: usize| {
+        let params: String = (0..depth).map(|i| format!("o{i} Option[int], ")).collect();
+        let open: String = (0..depth).map(|i| format!("if o{i} != nil {{\n")).collect();
+        let uses: String = (0..depth).map(|i| format!("total += o{i}\n")).collect();
+        format!(
+            "{header}func f({params}n int) int {{\ntotal := n\n{open}{uses}{}return total\n}}\n",
+            "}\n".repeat(depth)
+        )
+    };
+    // Early exits, and many variables that stay known to the end.
+    let exits = |count: usize| {
+        let params: String = (0..count).map(|i| format!("o{i} Option[int], ")).collect();
+        let tests: String = (0..count)
+            .map(|i| format!("\tif o{i} == nil {{\n\t\treturn 0\n\t}}\n"))
+            .collect();
+        let uses: String = (0..count).map(|i| format!("\ttotal += o{i}\n")).collect();
+        format!(
+            "{header}func f({params}n int) int {{\n\ttotal := n\n{tests}{uses}\treturn total\n}}\n"
+        )
+    };
+    // Loops in loops that use what was known before the outermost.
+    let loops = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("for i{i} := 0; i{i} < 2; i{i}++ {{\n"))
+            .collect();
+        let uses = "total += o\n".repeat(depth);
+        format!(
+            "{header}func f(o Option[int]) int {{\ntotal := 0\nif o == nil {{\nreturn 0\n}}\n{open}{uses}{}return total\n}}\n",
+            "}\n".repeat(depth)
+        )
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(exits(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
+    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(loops(n)));
 }
 
 // rule: OWN-R3a
@@ -9084,7 +9314,10 @@ func walk(points []Point, names map[string]*Point, done chan bool) (total float6
 	case string, int:
 		_ = v
 	}
-	_, _, _, _ = ok, found, has, add
+	if has {
+		_ = found
+	}
+	_, _, _ = ok, has, add
 	return total, nil
 }
 ";

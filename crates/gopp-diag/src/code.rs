@@ -242,6 +242,7 @@ codes! {
     303 BangOnConversion "err_bang_on_conversion",
     312 UnusedImport "err_unused_import",
     313 UnusedImportAs "err_unused_import_as",
+    329 OptionMaybeNil "err_option_maybe_nil",
     333 NoZeroValue "err_no_zero_value",
     334 NoZeroLookup "err_no_zero_lookup",
     335 RequiredMissing "err_required_missing",
@@ -302,6 +303,7 @@ codes! {
     488 AttrPlacement "err_attr_placement",
     489 AttrArgs "err_attr_args",
     492 OwnSharedWrite "err_own_shared_write",
+    493 ValueUnchecked "err_value_unchecked",
 }
 
 impl Code {

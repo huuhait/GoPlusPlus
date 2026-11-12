@@ -495,3 +495,4 @@ E0489 err_attr_args
 E0490 err_own_lost_write
 E0491 err_own_borrow_into_arena
 E0492 err_own_shared_write
+E0493 err_value_unchecked

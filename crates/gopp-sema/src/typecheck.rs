@@ -13,6 +13,7 @@ mod builtins;
 mod call;
 mod constraints;
 mod conversion;
+mod flow;
 mod implements;
 mod index;
 mod infer;
@@ -250,6 +251,15 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
+    /// While a body is walked: what is known of its variables.
+    flow: flow::Flow,
+    /// The name that is read as the variable it is, whatever is known of
+    /// it, while it is worked out: what is assigned to, compared with nil
+    /// or asked whether it is nil.
+    unnarrowed: Option<ExprId>,
+    /// While a body is walked: the option variables that are read as
+    /// what they hold.
+    narrowed: FxHashSet<ExprId>,
     /// The place that is assigned to, while it is worked out: an entry of
     /// a map is not read there.
     lookup_target: Option<ExprId>,
@@ -377,6 +387,7 @@ struct BodyTypes {
     self_moves: FxHashSet<ExprId>,
     captures: FxHashMap<ExprId, Vec<crate::object::Capture>>,
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
+    narrowed: FxHashSet<ExprId>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -439,6 +450,9 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
+        flow: flow::Flow::default(),
+        unnarrowed: None,
+        narrowed: FxHashSet::default(),
         lookup_target: None,
         required_fields: Vec::new(),
         options: Vec::new(),
@@ -528,6 +542,7 @@ pub fn declarations(
             body.self_moves = found.self_moves;
             body.captures = found.captures;
             body.method_values = found.method_values;
+            body.narrowed = found.narrowed;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
@@ -2128,7 +2143,11 @@ impl<'a> Checker<'a> {
                 },
                 None => {
                     self.read_variable(cx, expr);
-                    self.locals.get(&local).cloned().unwrap_or(Operand::UNKNOWN)
+                    let x = self.locals.get(&local).cloned().unwrap_or(Operand::UNKNOWN);
+                    match x.mode {
+                        Mode::Variable => self.flow_read(cx, expr, local, x),
+                        _ => x,
+                    }
                 }
             },
             Ref::Member { .. } => Operand::UNKNOWN,
@@ -2170,7 +2189,14 @@ impl<'a> Checker<'a> {
             return self.object_operand(&object.kind, object.ty, object.value.clone());
         }
         let base = x;
+        // `o.IsNil()` and `o.Get()` ask the option, whatever is known.
+        let asks = matches!(self.names.resolve(&sel.name), "IsNil" | "Get");
+        let outer = match asks {
+            true => self.unnarrowed.replace(self.unparen(cx, base)),
+            false => self.unnarrowed,
+        };
         let x = self.operand(cx, base);
+        self.unnarrowed = outer;
         let x = self.instantiated(cx, base, x);
         if x.mode == Mode::Unknown {
             return Operand::UNKNOWN;
@@ -2393,15 +2419,23 @@ impl<'a> Checker<'a> {
             }
         };
         let message = format!("{of}.{name} undefined ({reason})");
-        // What a `Weak` points to may be gone (ADR-0017).
-        let is_weak = matches!(&*self.types.get(self.types.underlying(x.ty)), Type::Weak(_));
-        match is_weak {
-            true => {
-                let fix = format!("use {of}.Lock(), which gives an Option of a Shared");
+        // What a `Weak` points to may be gone (ADR-0017), and an option
+        // may be nil (OWN-P10).
+        let fix = match &*self.types.get(self.types.underlying(x.ty)) {
+            Type::Weak(_) => Some(format!(
+                "use {of}.Lock(), which gives an Option of a Shared"
+            )),
+            Type::Option(_) => Some(format!(
+                "{of} may be nil: put it in a variable and test that against nil first"
+            )),
+            _ => None,
+        };
+        match fix {
+            Some(fix) => {
                 let fix = (Code::NoteOwnFixOption, fix);
                 self.error_with_fix(Code::UndefinedFieldOrMethod, sel.span, message, fix);
             }
-            false => self.error(Code::UndefinedFieldOrMethod, sel.span, message),
+            None => self.error(Code::UndefinedFieldOrMethod, sel.span, message),
         }
     }
 
@@ -2529,12 +2563,10 @@ impl<'a> Checker<'a> {
         self.callee = outer;
         self.method_values.remove(&called);
         let callee = self.instantiated(cx, fun, callee);
-        // In a `.gopp` file a function is called through an option, which
-        // is taken as checked, and through a pointer.
+        // In a `.gopp` file a function is called through a pointer; an
+        // option that is known to be set is the function already.
         let callee = match &*self.types.get(self.types.underlying(callee.ty)) {
-            Type::Option(_) | Type::Pointer(_) | Type::Unique(_) | Type::Shared(_) => {
-                self.read(cx, callee)
-            }
+            Type::Pointer(_) | Type::Unique(_) | Type::Shared(_) => self.read(cx, callee),
             _ => callee,
         };
         match callee.mode {
@@ -2885,6 +2917,7 @@ impl<'a> Checker<'a> {
             self.locals.clear();
             self.bindings.clear();
             self.read_only.clear();
+            self.flow = flow::Flow::default();
             self.local_groups.clear();
             self.shifted.clear();
             self.memo = Some(FxHashMap::default());
@@ -3002,6 +3035,7 @@ impl<'a> Checker<'a> {
                 self_moves: std::mem::take(&mut self.self_moves),
                 captures: self.captured_by_literal(),
                 method_values: std::mem::take(&mut self.method_values),
+                narrowed: std::mem::take(&mut self.narrowed),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
                 bangs: std::mem::take(&mut self.bangs),
@@ -3047,7 +3081,10 @@ impl<'a> Checker<'a> {
             .as_ref()
             .is_some_and(|results| results.types.len() > usize::from(fails));
         self.results.push(results);
+        // Nothing that the function around knows is known in this one.
+        let outer = self.flow_enter();
         self.stmts(cx, &body.stmts);
+        self.flow_leave(outer);
         self.results.pop();
         self.branches(cx, body, returns);
     }
@@ -3195,9 +3232,12 @@ impl<'a> Checker<'a> {
     }
 
     fn stmts(&mut self, cx: &Cx<'a>, stmts: &[StmtId]) {
+        // What a block finds out, it knows to its end.
+        let mark = self.flow_mark();
         for &stmt in stmts {
             gopp_syntax::with_stack(|| self.stmt(cx, stmt));
         }
+        self.flow_back(mark);
     }
 
     fn opt_stmt(&mut self, cx: &Cx<'a>, stmt: Option<StmtId>) {
@@ -3207,10 +3247,18 @@ impl<'a> Checker<'a> {
     }
 
     fn stmt(&mut self, cx: &Cx<'a>, id: StmtId) {
+        self.stmt_checked(cx, id);
+        self.flow_left(cx, id);
+    }
+
+    fn stmt_checked(&mut self, cx: &Cx<'a>, id: StmtId) {
         let tree = cx.tree;
         match &tree.stmts[id].kind {
             StmtKind::Bad | StmtKind::Empty | StmtKind::Branch { .. } => {}
-            StmtKind::Labeled { stmt, .. } => self.stmt(cx, *stmt),
+            StmtKind::Labeled { stmt, .. } => {
+                self.flow_label();
+                self.stmt(cx, *stmt);
+            }
             StmtKind::Block(block) => self.stmts(cx, &block.stmts),
             StmtKind::Expr(x) => self.expr_stmt(cx, *x),
             StmtKind::Go(x) => self.suspended(cx, "go", *x),
@@ -3312,10 +3360,12 @@ impl<'a> Checker<'a> {
                         self.error(Code::CannotAssignTo, tree.exprs[place].span, message);
                     }
                     self.wrote(cx, place);
+                    self.flow_written(cx, place);
                     places.push(assigned.then_some(declared.ty));
                 }
                 let types = self.init_vars(cx, &places, rhs, Init::Variables);
                 self.only_read(cx, &locals, rhs);
+                self.flow_defined(cx, lhs, rhs, &types);
                 for (local, ty) in locals.into_iter().zip(types) {
                     if let Some(local) = local {
                         self.locals.insert(local, Operand::variable(ty));
@@ -3365,10 +3415,31 @@ impl<'a> Checker<'a> {
                 then,
                 otherwise,
             } => {
+                // What the header declares and finds out ends with the
+                // statement; what an arm that leaves rules out holds after.
+                let outer = self.flow_mark();
                 self.opt_stmt(cx, *init);
                 self.condition(cx, *cond, "if");
+                let (mut held, mut ruled_out) = (Vec::new(), Vec::new());
+                self.flow_facts(cx, *cond, true, &mut held);
+                self.flow_facts(cx, *cond, false, &mut ruled_out);
+                let mark = self.flow_mark();
+                self.flow_add(&held);
                 self.stmts(cx, &then.stmts);
+                self.flow_back(mark);
+                self.flow_add(&ruled_out);
                 self.opt_stmt(cx, *otherwise);
+                self.flow_back(mark);
+                let then_leaves = self.flow_block_leaves(&then.stmts);
+                let else_leaves = otherwise.is_some_and(|arm| self.flow_leaves(arm));
+                if init.is_some() {
+                    self.flow_back(outer);
+                }
+                match (then_leaves, else_leaves) {
+                    (true, false) => self.flow_add(&ruled_out),
+                    (false, true) => self.flow_add(&held),
+                    _ => {}
+                }
             }
             StmtKind::For {
                 init,
@@ -3376,12 +3447,21 @@ impl<'a> Checker<'a> {
                 post,
                 body,
             } => {
+                let mark = self.flow_mark();
                 self.opt_stmt(cx, *init);
+                self.flow_loop(tree.stmts[id].span);
+                let mut held = Vec::new();
                 if let Some(cond) = cond {
                     self.condition(cx, *cond, "for");
+                    self.flow_facts(cx, *cond, true, &mut held);
                 }
-                self.opt_stmt(cx, *post);
+                // The condition holds in the body, and after it where the
+                // body left it alone.
+                self.flow_add(&held);
                 self.stmts(cx, &body.stmts);
+                self.opt_stmt(cx, *post);
+                self.flow_loop_end(cx);
+                self.flow_back(mark);
             }
             StmtKind::Range {
                 lhs,
@@ -3390,7 +3470,9 @@ impl<'a> Checker<'a> {
                 body,
             } => {
                 self.range_clause(cx, lhs, *define, *x);
+                self.flow_loop(tree.stmts[id].span);
                 self.stmts(cx, &body.stmts);
+                self.flow_loop_end(cx);
             }
             StmtKind::Switch { init, tag, clauses } => {
                 self.opt_stmt(cx, *init);
