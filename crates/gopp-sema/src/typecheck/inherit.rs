@@ -517,8 +517,8 @@ impl<'a> Checker<'a> {
                             None,
                             format!("want {}", self.type_string(sig)),
                         );
-                    if self.reported.insert((name.span, Code::OverrideSignature)) {
-                        self.sink.push(diagnostic);
+                    if self.report_once((name.span, Code::OverrideSignature)) {
+                        self.emit(diagnostic);
                     }
                 }
             }

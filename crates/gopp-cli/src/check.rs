@@ -73,8 +73,9 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
             }
         }
     }
-    // Each package is parsed and checked on its own; what it says is
-    // printed in the order of the arguments.
+    // Each package is parsed and checked on its own, with a copy of the
+    // type table to itself; what it says is printed in the order of the
+    // arguments.
     let sinks: Vec<Sink> = groups.iter().map(|_| Sink::new(cap)).collect();
     let loaded: Vec<Result<Parsed, String>> = groups
         .par_iter()
@@ -106,6 +107,7 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
                 standard: &standard.checked,
                 import_map: HashMap::new(),
             };
+            let types = types.fork();
             let checked = check(&package.path, &units, &loader, &names, &types, &sink);
             let text = match info {
                 true => {

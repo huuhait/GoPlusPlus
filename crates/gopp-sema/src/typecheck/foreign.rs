@@ -43,6 +43,42 @@ impl<'a> Checker<'a> {
         member
     }
 
+    /// Asks the headers for every name of theirs that the files use,
+    /// before the bodies are checked side by side: what a header makes
+    /// for a name is made once, in the table that all share.
+    pub(super) fn foreign_names(&mut self, units: &[Unit<'a>]) {
+        let package = self.package;
+        let header = |import: ObjId| match &package.object(import).kind {
+            ObjKind::Import { package, .. } => package.foreign.as_deref(),
+            _ => None,
+        };
+        let any = (0..package.objects.len()).any(|at| header(ObjId(at as u32)).is_some());
+        if !any {
+            return;
+        }
+        for (file, unit) in units.iter().enumerate() {
+            let mut named: FxHashMap<ExprId, ObjId> = FxHashMap::default();
+            for body in &package.files[file].bodies {
+                for (&expr, denotes) in &body.uses {
+                    if let Ref::Object(import) = *denotes
+                        && header(import).is_some()
+                    {
+                        named.insert(expr, import);
+                    }
+                }
+            }
+            for (_, node) in unit.file.exprs.iter() {
+                self.steps += 1;
+                if let ExprKind::Selector { x, sel } = node.kind
+                    && let Some(&import) = named.get(&x)
+                    && let Some(hooks) = header(import)
+                {
+                    self.foreign_member((import, hooks, sel));
+                }
+            }
+        }
+    }
+
     fn foreign_undefined(&mut self, cx: &Cx<'a>, expr: ExprId, name: Ident) {
         let message = format!("undefined: {}", self.expr_string(cx, expr));
         self.error(Code::Undefined, name.span, message);

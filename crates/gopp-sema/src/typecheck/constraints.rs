@@ -7,6 +7,7 @@ use crate::types::Marker;
 
 /// A generic type or function with type arguments, which are held to the
 /// constraints once every type is known.
+#[derive(Clone)]
 pub(super) struct Instance {
     pub params: Vec<TypeId>,
     pub args: Vec<TypeId>,
@@ -446,8 +447,8 @@ impl<'a> Checker<'a> {
                         .with_note(Code::NoteHave, None, format!("have {have}"))
                         .with_note(Code::NoteWant, None, format!("want {want}"));
                 }
-                if self.reported.insert((span, Code::TypeArgUnsatisfied)) {
-                    self.sink.push(diagnostic);
+                if self.report_once((span, Code::TypeArgUnsatisfied)) {
+                    self.emit(diagnostic);
                 }
                 return;
             }

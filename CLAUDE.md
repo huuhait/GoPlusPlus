@@ -107,4 +107,5 @@ A task is not done until:
 - Any loop that grows its input ("double N until measurable") needs hard bounds on size, rounds, CPU and wall time. Run size-scaling tests and repros under `ulimit -f` and `timeout`: /tmp is RAM, and an unbounded loop once filled it.
 - Before removing a worktree, check that no gate list, corpus or baseline points at files inside it (its build/ and .scratch/ too); a removed worktree once took 23,439 gate inputs with it.
 - A checker that accepts an output change must compare what the code does (the old body against the new one), never only names: a name-only classifier once passed two miscompiles on 189,674 files.
+- Parallel code is not done until it is timed with 1, 2, 4, 8 and all threads: workers that share one locked table got slower with every thread added. Give each worker its own copy of what it writes, and merge the results in source order.
 - Never use `git stash` in a worktree: the stash list is shared by all worktrees, and a pop once applied another task's changes. To test with a change reverted, use a throwaway worktree or a patch file in `.scratch/`.

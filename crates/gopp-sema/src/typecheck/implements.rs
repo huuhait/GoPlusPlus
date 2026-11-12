@@ -167,7 +167,7 @@ impl<'a> Checker<'a> {
             ),
         };
         let span = cx.tree.exprs[at].span;
-        if !self.reported.insert((span, Code::TypeAssertionImpossible)) {
+        if !self.report_once((span, Code::TypeAssertionImpossible)) {
             return;
         }
         let mut diagnostic = Diagnostic::new(Code::TypeAssertionImpossible, span, message)
@@ -181,7 +181,7 @@ impl<'a> Checker<'a> {
                 .with_note(Code::NoteHave, None, format!("have {have}"))
                 .with_note(Code::NoteWant, None, format!("want {want}"));
         }
-        self.sink.push(diagnostic);
+        self.emit(diagnostic);
     }
 
     /// Notes that the value `x` of `expr`, which fits a place of the type
@@ -346,7 +346,7 @@ impl<'a> Checker<'a> {
         message: String,
         cause: Cause,
     ) {
-        if !self.reported.insert((span, code)) {
+        if !self.report_once((span, code)) {
             return;
         }
         let mut diagnostic = Diagnostic::new(code, span, format!("{message} {}", cause.text));
@@ -355,7 +355,7 @@ impl<'a> Checker<'a> {
                 .with_note(Code::NoteHave, None, format!("have {have}"))
                 .with_note(Code::NoteWant, None, format!("want {want}"));
         }
-        self.sink.push(diagnostic);
+        self.emit(diagnostic);
     }
 
     /// Reports `message`, with the cause after it.
@@ -366,11 +366,11 @@ impl<'a> Checker<'a> {
         message: String,
         cause: Option<Cause>,
     ) {
-        if !self.reported.insert((span, code)) {
+        if !self.report_once((span, code)) {
             return;
         }
         let Some(cause) = cause else {
-            return self.sink.push(Diagnostic::new(code, span, message));
+            return self.emit(Diagnostic::new(code, span, message));
         };
         let mut diagnostic = Diagnostic::new(code, span, format!("{message}: {}", cause.text));
         if let Some((have, want)) = cause.have_want {
@@ -378,6 +378,6 @@ impl<'a> Checker<'a> {
                 .with_note(Code::NoteHave, None, format!("have {have}"))
                 .with_note(Code::NoteWant, None, format!("want {want}"));
         }
-        self.sink.push(diagnostic);
+        self.emit(diagnostic);
     }
 }

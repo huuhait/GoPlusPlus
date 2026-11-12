@@ -43,8 +43,8 @@ impl<'a> Checker<'a> {
     pub(super) fn error(&mut self, code: Code, span: Span, message: String) {
         // In a value that a constant repeats, an error is at the constant.
         let span = self.error_at.unwrap_or(span);
-        if self.reported.insert((span, code)) {
-            self.sink.push(Diagnostic::new(code, span, message));
+        if self.report_once((span, code)) {
+            self.emit(Diagnostic::new(code, span, message));
         }
     }
 
@@ -56,9 +56,9 @@ impl<'a> Checker<'a> {
         message: String,
         (fix, instead): (Code, String),
     ) {
-        if self.reported.insert((span, code)) {
+        if self.report_once((span, code)) {
             let diagnostic = Diagnostic::new(code, span, message);
-            self.sink.push(diagnostic.with_note(fix, None, instead));
+            self.emit(diagnostic.with_note(fix, None, instead));
         }
     }
 

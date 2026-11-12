@@ -229,8 +229,8 @@ impl<'a> Checker<'a> {
                     None,
                     format!("want {}", self.types_summary(params, variadic, false)),
                 );
-            if self.reported.insert((at, code)) {
-                self.sink.push(diagnostic);
+            if self.report_once((at, code)) {
+                self.emit(diagnostic);
             }
             return None;
         }

@@ -443,7 +443,7 @@ impl<'a> Checker<'a> {
                 self.types.set_constraint(new, constraint);
             }
             if let Some(&span) = self.param_spans.get(&param) {
-                self.param_spans.insert(new, span);
+                self.param_span(new, span, true);
             }
         }
         Generic {
@@ -765,7 +765,7 @@ impl<'a> Checker<'a> {
     }
 
     fn cannot_infer(&mut self, at: Span, within: &str, param: TypeId) {
-        if !self.reported.insert((at, Code::CannotInfer)) {
+        if !self.report_once((at, Code::CannotInfer)) {
             return;
         }
         let name = self.type_string(param);
@@ -775,7 +775,7 @@ impl<'a> Checker<'a> {
             let note = format!("{name} declared here");
             diagnostic = diagnostic.with_note(Code::NoteDeclaredHere, Some(declared), note);
         }
-        self.sink.push(diagnostic);
+        self.emit(diagnostic);
     }
 
     /// Notes that `expr` names a generic function or type with the type

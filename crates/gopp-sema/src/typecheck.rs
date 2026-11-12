@@ -33,6 +33,7 @@ use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, Span};
 use gopp_syntax::ast::{self, *};
 use lasso::{Spur, ThreadedRodeo};
+use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::basic::{Basic, representable};
@@ -43,7 +44,9 @@ use crate::object::{
 };
 use crate::package::Package;
 use crate::resolve::Unit;
-use crate::types::{ChanDir, DeclaredMethod, Field, Member, Method, Term, Type, TypeId, Types};
+use crate::types::{
+    ChanDir, DeclaredMethod, Field, Imported, Member, Method, Term, Type, TypeId, Types,
+};
 use crate::universe::{Predeclared, PredeclaredKind};
 use assign::Init;
 
@@ -186,6 +189,71 @@ impl Operand {
     }
 }
 
+impl BodyTypes {
+    /// Replaces every type in what was found by what `to` makes of it.
+    fn each_type(&mut self, to: &mut impl FnMut(TypeId) -> TypeId) {
+        for typed in self.exprs.values_mut() {
+            typed.ty = to(typed.ty);
+        }
+        for (_, ty) in &mut self.locals {
+            *ty = to(*ty);
+        }
+        for selection in self.selections.values_mut() {
+            selection.recv = to(selection.recv);
+            selection.holder = to(selection.holder);
+        }
+        for (from, into) in self.iface_conversions.values_mut() {
+            (*from, *into) = (to(*from), to(*into));
+        }
+        for instance in self.instances.values_mut() {
+            instance.ty = to(instance.ty);
+            for arg in &mut instance.args {
+                *arg = to(*arg);
+            }
+        }
+        let tables = [
+            &mut self.operators,
+            &mut self.op_assigns,
+            &mut self.index_stores,
+            &mut self.case_operators,
+        ];
+        for used in tables.into_iter().flat_map(|table| table.values_mut()) {
+            used.holder = to(used.holder);
+            used.sig = to(used.sig);
+        }
+        for used in self.foreign_uses.values_mut() {
+            used.ty = to(used.ty);
+            for arg in &mut used.explicit {
+                match arg {
+                    crate::foreign::TemplateArg::Type(ty)
+                    | crate::foreign::TemplateArg::Const(_, ty) => *ty = to(*ty),
+                }
+            }
+        }
+    }
+}
+
+/// A top-level declaration to check: its file, its place in the file,
+/// and how many values a constant without values of its own repeats.
+type Job = (usize, usize, usize);
+
+/// What was found in one declaration that was checked aside, what it
+/// reported and added, and the steps that took.
+type Checked = (BodyTypes, Aside, u64);
+
+/// What the check of one declaration reports and adds to what all the
+/// declarations share.
+#[derive(Clone, Default)]
+struct Aside {
+    diagnostics: Vec<Diagnostic>,
+    /// What was reported once for this declaration.
+    reported: FxHashSet<(Span, Code)>,
+    /// What the declaration needs: each `(from, object)`.
+    needs: Vec<(usize, usize)>,
+    mono: Vec<mono::Event>,
+}
+
+#[derive(Clone)]
 struct Checker<'a> {
     names: &'a ThreadedRodeo,
     types: &'a Types,
@@ -285,6 +353,10 @@ struct Checker<'a> {
     /// The type parameters of the function whose body is being checked,
     /// those that its receiver names too.
     around: Vec<TypeId>,
+    /// Where declarations are checked side by side: what the one being
+    /// checked reports and adds to what all share, to be taken in the
+    /// order of the source.
+    aside: Option<Aside>,
     /// What each header says of each name that was asked.
     foreign_members: FxHashMap<(ObjId, Spur), Option<crate::foreign::ForeignMember>>,
     /// For an expression that names a function of a header: which of its
@@ -449,7 +521,7 @@ struct BodyTypes {
 
 /// A group of constants inside a function: the index of its next constant,
 /// and the type and values that a constant without a value repeats.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LocalGroup {
     next: i64,
     ty: Option<ExprId>,
@@ -523,6 +595,7 @@ pub fn declarations(
         case_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
         around: Vec::new(),
+        aside: None,
         foreign_members: FxHashMap::default(),
         foreign_flags: FxHashMap::default(),
         foreign_uses: FxHashMap::default(),
@@ -599,11 +672,7 @@ pub fn declarations(
     // A type that needs instances without end is known before a body
     // follows its instances.
     checker.monomorph();
-    let types_of_files: Vec<_> = units
-        .iter()
-        .enumerate()
-        .map(|(file, unit)| checker.bodies(file, *unit))
-        .collect();
+    let types_of_files = checker.bodies_aside(units);
     checker.mono_report();
     let Checker {
         ty,
@@ -654,6 +723,166 @@ pub fn declarations(
         }
     }
     (needs, methods_declared, steps)
+}
+
+impl<'a> Checker<'a> {
+    /// Reports the diagnostic: at once, or with those of the declaration
+    /// that is being checked.
+    fn emit(&mut self, diagnostic: Diagnostic) {
+        match &mut self.aside {
+            Some(aside) => aside.diagnostics.push(diagnostic),
+            None => self.sink.push(diagnostic),
+        }
+    }
+
+    /// Whether nothing was said yet with the code at the place: once is
+    /// enough.
+    fn report_once(&mut self, key: (Span, Code)) -> bool {
+        match &mut self.aside {
+            Some(aside) => !self.reported.contains(&key) && aside.reported.insert(key),
+            None => self.reported.insert(key),
+        }
+    }
+
+    /// Checks the bodies of the top-level declarations of all files, side
+    /// by side: each worker has a copy of what the declarations gave, and
+    /// what a body reports and adds to what all share is taken in the
+    /// order of the source, so the result is the same for any number of
+    /// workers.
+    fn bodies_aside(&mut self, units: &[Unit<'a>]) -> Vec<Vec<BodyTypes>> {
+        /// The least source that one worker takes: checking it costs
+        /// more than a copy of the checker.
+        const SOURCE_EACH: usize = 64 * 1024;
+        /// How many bytes of source are checked in the time that one
+        /// type of the table is copied, with a margin.
+        const COPY_COST: usize = 4;
+        let jobs: Vec<Job> = units
+            .iter()
+            .enumerate()
+            .flat_map(|(file, unit)| Self::body_jobs(file, *unit))
+            .collect();
+        self.foreign_names(units);
+        let mut all: Vec<Vec<BodyTypes>> = units.iter().map(|_| Vec::new()).collect();
+        // A worker starts with a copy of the checker and of the type
+        // table, which costs as much as they are large; the bodies cost
+        // as much as there is source. Each worker gets enough source to
+        // be worth its copies, and little source has no worker.
+        let length = |&(file, index, _): &Job| {
+            let tree = units[file].file;
+            let span = tree.decl_nodes[tree.decls[index]].span;
+            (span.hi - span.lo) as usize
+        };
+        let source: usize = jobs.iter().map(length).sum();
+        let each = SOURCE_EACH.max(COPY_COST * self.types.count());
+        let workers = rayon::current_num_threads().min(source / each);
+        if workers < 2 {
+            for job in &jobs {
+                let checked = self.body_aside(units, job);
+                all[job.0].push(self.merged(checked));
+            }
+            self.incomplete = false;
+            return all;
+        }
+        // The declarations in the order of the source, cut into as many
+        // runs of about as much source as there are workers.
+        let mut runs: Vec<&[Job]> = Vec::new();
+        let (mut start, mut taken) = (0, 0);
+        for (at, job) in jobs.iter().enumerate() {
+            taken += length(job);
+            if taken >= source / workers && runs.len() + 1 < workers {
+                runs.push(&jobs[start..=at]);
+                (start, taken) = (at + 1, 0);
+            }
+        }
+        runs.push(&jobs[start..]);
+        let shared = &*self;
+        // No worker shares anything that is written: each has its own
+        // type table, and what it made there comes into the table of all
+        // in the order of the source.
+        let mut done: Vec<(Types, Vec<Checked>)> = runs
+            .par_iter()
+            .map(|run| {
+                let table = shared.types.fork();
+                let checked = {
+                    let mut worker: Checker<'_> = shared.clone();
+                    worker.types = &table;
+                    run.iter()
+                        .map(|job| worker.body_aside(units, job))
+                        .collect()
+                };
+                (table, checked)
+            })
+            .collect();
+        let mut job = jobs.iter();
+        for (table, checked) in &mut done {
+            let mut kept = Imported::default();
+            let main = self.types;
+            for (mut types, mut aside, steps) in std::mem::take(checked) {
+                let mut ty = |ty: TypeId| main.import(table, &mut kept, ty);
+                types.each_type(&mut ty);
+                for event in &mut aside.mono {
+                    event.each_type(&mut ty);
+                }
+                let mut named = |named| main.import_named(table, &mut kept, named);
+                for event in &mut aside.mono {
+                    event.each_named(&mut named);
+                }
+                if let Some(&(file, ..)) = job.next() {
+                    all[file].push(self.merged((types, aside, steps)));
+                }
+            }
+            self.types.add_steps(table.steps());
+        }
+        // The copies are as large as the table: they end side by side.
+        done.into_par_iter().for_each(drop);
+        self.incomplete = false;
+        all
+    }
+
+    /// Checks one declaration aside: what it reports and adds to what
+    /// all share comes back with what was found in it.
+    fn body_aside(&mut self, units: &[Unit<'a>], &(file, index, repeated): &Job) -> Checked {
+        self.aside = Some(Aside::default());
+        let before = self.steps;
+        let types = self.body(file, units[file], index, repeated);
+        let aside = self.aside.take().unwrap_or_default();
+        (types, aside, self.steps - before)
+    }
+
+    /// Takes what a declaration that was checked aside reported and
+    /// added. The declarations are taken in the order of the source.
+    fn merged(&mut self, (types, aside, steps): Checked) -> BodyTypes {
+        self.steps += steps;
+        // What an earlier declaration said at a place is not said again.
+        let mut said = Vec::new();
+        for diagnostic in aside.diagnostics {
+            let key = (diagnostic.span, diagnostic.code);
+            if !self.reported.contains(&key) {
+                said.push(key);
+                self.sink.push(diagnostic);
+            }
+        }
+        self.reported.extend(said);
+        self.reported.extend(aside.reported);
+        // Each was found once, by the declaration that needs it.
+        for (from, object) in aside.needs {
+            self.needed.insert((from, object));
+            self.needs[from].push(object);
+        }
+        self.mono_replay(aside.mono);
+        types
+    }
+
+    /// The type parameter `param` is declared at `span`; with `again`,
+    /// also where it has a place already.
+    fn param_span(&mut self, param: TypeId, span: Span, again: bool) {
+        if again || !self.param_spans.contains_key(&param) {
+            self.param_spans.insert(param, span);
+            if let Some(aside) = &mut self.aside {
+                aside.mono.push(mono::Event::Declared(param, span));
+            }
+        }
+    }
 }
 
 fn is_exported(name: &str) -> bool {
@@ -816,7 +1045,7 @@ impl<'a> Checker<'a> {
         let mut params = Vec::new();
         for param in type_params {
             let ty = self.types.param(param.name.name);
-            self.param_spans.insert(ty, param.name.span);
+            self.param_span(ty, param.name.span, true);
             params.push(ty);
         }
         params
@@ -975,8 +1204,8 @@ impl<'a> Checker<'a> {
                 diagnostic
             }
         };
-        if self.reported.insert((objects[at].span, diagnostic.code)) {
-            self.sink.push(diagnostic);
+        if self.report_once((objects[at].span, diagnostic.code)) {
+            self.emit(diagnostic);
         }
         if is_value_kind(&objects[object].kind) {
             return;
@@ -1253,13 +1482,13 @@ impl<'a> Checker<'a> {
         let Some(&(name, span)) = members.first() else {
             return;
         };
-        if !self.reported.insert((span, Code::InvalidRecursiveType)) {
+        if !self.report_once((span, Code::InvalidRecursiveType)) {
             return;
         }
         if members.len() == 1 {
             let message = format!("invalid recursive type: {name} refers to itself");
             let diagnostic = Diagnostic::new(Code::InvalidRecursiveTypeSelf, span, message);
-            return self.sink.push(diagnostic);
+            return self.emit(diagnostic);
         }
         let message = format!("invalid recursive type {name}");
         let mut diagnostic = Diagnostic::new(Code::InvalidRecursiveType, span, message);
@@ -1268,7 +1497,7 @@ impl<'a> Checker<'a> {
             let note = format!("{from} refers to {to}");
             diagnostic = diagnostic.with_note(Code::NoteRefersTo, Some(at), note);
         }
-        self.sink.push(diagnostic);
+        self.emit(diagnostic);
     }
 
     /// Works out one declaration; whether it declares a new type.
@@ -1447,6 +1676,10 @@ impl<'a> Checker<'a> {
         for at in 0..self.current.len() {
             let from = self.current[at];
             if self.needed.insert((from, object)) {
+                if let Some(aside) = &mut self.aside {
+                    aside.needs.push((from, object));
+                    continue;
+                }
                 self.needs[from].push(object);
             }
         }
@@ -3137,208 +3370,216 @@ impl<'a> Checker<'a> {
     /// Types every expression of the bodies of the file, statement by
     /// statement, so that each local variable has its type where it is
     /// used.
-    fn bodies(&mut self, file: usize, unit: Unit<'a>) -> Vec<BodyTypes> {
+    /// The top-level declarations of the file `file`, each with how many
+    /// values a constant without values of its own repeats, in its group.
+    fn body_jobs(file: usize, unit: Unit<'a>) -> Vec<Job> {
         let tree = unit.file;
-        let mut all = Vec::new();
-        // How many values a constant without values of its own repeats,
-        // in its group.
         let mut repeated_values: Option<(Option<u32>, usize)> = None;
+        let mut jobs = Vec::new();
         for (index, &decl) in tree.decls.iter().enumerate() {
-            let body = &self.package.files[file].bodies[index];
-            let form = Form::Var {
-                ty: None,
-                value: None,
-            };
-            let mut cx = self.cx(&Decl { unit, body, form }, None);
-            self.locals.clear();
-            self.bindings.clear();
-            self.read_only.clear();
-            self.flow = flow::Flow::default();
-            self.local_groups.clear();
-            self.shifted.clear();
-            self.memo = Some(FxHashMap::default());
-            self.current.clear();
-            if self.own_rules(&cx) {
-                self.decl_attributes(&cx, &tree.decl_nodes[decl]);
-            }
-            match &tree.decl_nodes[decl].kind {
-                DeclKind::Func {
-                    receiver,
-                    name,
-                    type_params,
-                    ty,
-                    body: Some(block),
-                    ..
-                } => {
-                    // What the body uses, the function or the method
-                    // needs; `init` is no object.
-                    let function = match receiver {
-                        Some(_) => self.method_nodes.get(&name.span),
-                        None => self.by_span.get(&name.span),
-                    };
-                    self.current.extend(function);
-                    let own = self.declare_params(&mut cx, type_params);
-                    // In the body the type parameters are those of the
-                    // function, by other names.
-                    let declared = self.by_span.get(&name.span).copied();
-                    let of_function = declared
-                        .filter(|_| receiver.is_none())
-                        .and_then(|object| self.types.generic_func(self.ty[object]));
-                    if let Some(of_function) = of_function {
-                        self.mono_same(&own, &of_function);
+            let mut repeated = 0;
+            if let DeclKind::Const { ty, values, .. } = &tree.decl_nodes[decl].kind {
+                let group = tree.decl_nodes[decl].group;
+                repeated = match (ty.is_none() && values.is_empty(), repeated_values) {
+                    (true, Some((last, count))) if last == group && group.is_some() => count,
+                    (true, _) => 0,
+                    (false, _) => {
+                        repeated_values = Some((group, values.len()));
+                        values.len()
                     }
-                    self.receiver_of = None;
-                    if let Some(receiver) = receiver {
-                        let named = self.receiver_params(&mut cx, receiver.ty);
-                        self.around.extend(&named);
-                        self.params(&cx, std::slice::from_ref(receiver));
-                        self.receiver_of = self.receiver_named(unit, receiver.ty);
-                        if let Some(Type::Named { id, .. }) =
-                            self.receiver_of.map(|ty| self.types.get(ty)).as_deref()
-                        {
-                            for &param in &named {
-                                self.param_spans.entry(param).or_insert(name.span);
-                            }
-                            match own.is_empty() {
-                                true => self.mono_canon(&named, *id),
-                                false => self.mono_method(name.span, &named, &own),
-                            }
-                        }
-                        self.base_declared(&cx);
-                    }
-                    // The body of a `@Const` function is held to what a
-                    // constant expression may do (EXP-33).
-                    let marks = self.marks(&cx, &tree.decl_nodes[decl].attrs);
-                    let is_const = self.own_rules(&cx) && marks.has(crate::types::Marks::CONST);
-                    self.const_fn = is_const.then_some(name.name);
-                    self.around.extend(&own);
-                    self.in_method_sig = receiver.is_some();
-                    self.signature_locals(&cx, *ty);
-                    let sig = self.typ(&cx, *ty);
-                    self.in_method_sig = false;
-                    self.function_body(&cx, *ty, sig, block);
-                    self.const_fn = None;
-                    self.around.clear();
-                    self.receiver_of = None;
-                }
-                // The value of a constant is worked out with its
-                // declaration; variables are walked here too, for the
-                // function literals in their values.
-                DeclKind::Var { names, ty, values } => {
-                    let declared = ty.map(|ty| self.var_type(&cx, ty));
-                    self.arity(&cx, names, values, None);
-                    if let (Some(declared), true) = (declared, values.is_empty()) {
-                        self.declared_unset(&cx, names, declared);
-                    }
-                    let objects = |this: &Self, names: &[Ident]| -> Vec<usize> {
-                        let object = |name: &Ident| this.by_span.get(&name.span).copied();
-                        names.iter().filter_map(object).collect()
-                    };
-                    // `a, b = f()` gives both the one value.
-                    if values.len() == 1 && names.len() > 1 {
-                        self.current = objects(self, names);
-                        self.var_decl(&cx, names, declared, values);
-                    } else {
-                        for (position, &value) in values.iter().enumerate() {
-                            let declared_here = names.get(position..=position).unwrap_or(&[]);
-                            self.current = objects(self, declared_here);
-                            match declared_here.is_empty() {
-                                true => drop(self.operand(&cx, value)),
-                                false => {
-                                    drop(self.var_decl(&cx, declared_here, declared, &[value]))
-                                }
-                            }
-                        }
-                    }
-                }
-                DeclKind::Const { names, ty, values } => {
-                    let group = tree.decl_nodes[decl].group;
-                    let repeated = match (ty.is_none() && values.is_empty(), repeated_values) {
-                        (true, Some((last, count))) if last == group && group.is_some() => count,
-                        (true, _) => 0,
-                        (false, _) => {
-                            repeated_values = Some((group, values.len()));
-                            values.len()
-                        }
-                    };
-                    self.arity(&cx, names, values, Some(repeated));
-                    // A function literal in the value of a constant has a
-                    // body, which declares what the value does not use.
-                    if !cx.body.locals.is_empty() {
-                        for name in names {
-                            let object = self.by_span.get(&name.span).copied();
-                            let Some(decl) = object.and_then(|object| self.decls[object]) else {
-                                continue;
-                            };
-                            if let Form::Const {
-                                value: Some(value),
-                                iota,
-                                ..
-                            } = decl.form
-                            {
-                                let within = self.cx(&decl, Some(iota));
-                                self.operand(&within, value);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-            let typed = |(expr, operand): (ExprId, Operand)| {
-                // A generic function that is not called has the type that
-                // what it is assigned to gives it, which is not followed
-                // yet.
-                if self.types.generic_func(operand.ty).is_some() {
-                    return None;
-                }
-                if !operand.is_value() {
-                    return None;
-                }
-                let value = match operand.mode {
-                    Mode::Const(value) => value,
-                    _ => Value::Unknown,
                 };
-                Some((
-                    expr,
-                    ExprType {
-                        ty: operand.ty,
-                        value,
-                    },
-                ))
-            };
-            self.addresses_of_required(&cx);
-            let memo = self.memo.take().unwrap_or_default();
-            let exprs = memo.into_iter().filter_map(typed).collect();
-            self.validate();
-            let locals = self
-                .locals
-                .drain()
-                .map(|(local, operand)| (local, operand.ty));
-            all.push(BodyTypes {
-                exprs,
-                locals: locals.collect(),
-                excused: std::mem::take(&mut self.excused),
-                selections: std::mem::take(&mut self.selections),
-                writes_through: std::mem::take(&mut self.writes_through),
-                var_modes: std::mem::take(&mut self.var_modes),
-                swaps: std::mem::take(&mut self.swaps),
-                self_moves: std::mem::take(&mut self.self_moves),
-                captures: self.captured_by_literal(),
-                method_values: std::mem::take(&mut self.method_values),
-                narrowed: std::mem::take(&mut self.narrowed),
-                iface_args: std::mem::take(&mut self.iface_args),
-                operators: std::mem::take(&mut self.operators),
-                op_assigns: std::mem::take(&mut self.op_assigns),
-                index_stores: std::mem::take(&mut self.index_stores),
-                case_operators: std::mem::take(&mut self.case_operators),
-                foreign_uses: std::mem::take(&mut self.foreign_uses),
-                iface_conversions: std::mem::take(&mut self.iface_conversions),
-                instances: std::mem::take(&mut self.instantiated),
-                bangs: std::mem::take(&mut self.bangs),
-            });
+            }
+            jobs.push((file, index, repeated));
         }
-        self.incomplete = false;
-        all
+        jobs
+    }
+
+    /// Checks the top-level declaration `index` of the file `file`: the
+    /// body of a function, the values of variables.
+    fn body(&mut self, file: usize, unit: Unit<'a>, index: usize, repeated: usize) -> BodyTypes {
+        let tree = unit.file;
+        let decl = tree.decls[index];
+        let body = &self.package.files[file].bodies[index];
+        let form = Form::Var {
+            ty: None,
+            value: None,
+        };
+        let mut cx = self.cx(&Decl { unit, body, form }, None);
+        self.locals.clear();
+        self.bindings.clear();
+        self.read_only.clear();
+        self.flow = flow::Flow::default();
+        self.local_groups.clear();
+        self.shifted.clear();
+        self.memo = Some(FxHashMap::default());
+        self.current.clear();
+        if self.own_rules(&cx) {
+            self.decl_attributes(&cx, &tree.decl_nodes[decl]);
+        }
+        match &tree.decl_nodes[decl].kind {
+            DeclKind::Func {
+                receiver,
+                name,
+                type_params,
+                ty,
+                body: Some(block),
+                ..
+            } => {
+                // What the body uses, the function or the method
+                // needs; `init` is no object.
+                let function = match receiver {
+                    Some(_) => self.method_nodes.get(&name.span),
+                    None => self.by_span.get(&name.span),
+                };
+                self.current.extend(function);
+                let own = self.declare_params(&mut cx, type_params);
+                // In the body the type parameters are those of the
+                // function, by other names.
+                let declared = self.by_span.get(&name.span).copied();
+                let of_function = declared
+                    .filter(|_| receiver.is_none())
+                    .and_then(|object| self.types.generic_func(self.ty[object]));
+                if let Some(of_function) = of_function {
+                    self.mono_same(&own, &of_function);
+                }
+                self.receiver_of = None;
+                if let Some(receiver) = receiver {
+                    let named = self.receiver_params(&mut cx, receiver.ty);
+                    self.around.extend(&named);
+                    self.params(&cx, std::slice::from_ref(receiver));
+                    self.receiver_of = self.receiver_named(unit, receiver.ty);
+                    if let Some(Type::Named { id, .. }) =
+                        self.receiver_of.map(|ty| self.types.get(ty)).as_deref()
+                    {
+                        for &param in &named {
+                            self.param_span(param, name.span, false);
+                        }
+                        match own.is_empty() {
+                            true => self.mono_canon(&named, *id),
+                            false => self.mono_method(name.span, &named, &own),
+                        }
+                    }
+                    self.base_declared(&cx);
+                }
+                // The body of a `@Const` function is held to what a
+                // constant expression may do (EXP-33).
+                let marks = self.marks(&cx, &tree.decl_nodes[decl].attrs);
+                let is_const = self.own_rules(&cx) && marks.has(crate::types::Marks::CONST);
+                self.const_fn = is_const.then_some(name.name);
+                self.around.extend(&own);
+                self.in_method_sig = receiver.is_some();
+                self.signature_locals(&cx, *ty);
+                let sig = self.typ(&cx, *ty);
+                self.in_method_sig = false;
+                self.function_body(&cx, *ty, sig, block);
+                self.const_fn = None;
+                self.around.clear();
+                self.receiver_of = None;
+            }
+            // The value of a constant is worked out with its
+            // declaration; variables are walked here too, for the
+            // function literals in their values.
+            DeclKind::Var { names, ty, values } => {
+                let declared = ty.map(|ty| self.var_type(&cx, ty));
+                self.arity(&cx, names, values, None);
+                if let (Some(declared), true) = (declared, values.is_empty()) {
+                    self.declared_unset(&cx, names, declared);
+                }
+                let objects = |this: &Self, names: &[Ident]| -> Vec<usize> {
+                    let object = |name: &Ident| this.by_span.get(&name.span).copied();
+                    names.iter().filter_map(object).collect()
+                };
+                // `a, b = f()` gives both the one value.
+                if values.len() == 1 && names.len() > 1 {
+                    self.current = objects(self, names);
+                    self.var_decl(&cx, names, declared, values);
+                } else {
+                    for (position, &value) in values.iter().enumerate() {
+                        let declared_here = names.get(position..=position).unwrap_or(&[]);
+                        self.current = objects(self, declared_here);
+                        match declared_here.is_empty() {
+                            true => drop(self.operand(&cx, value)),
+                            false => drop(self.var_decl(&cx, declared_here, declared, &[value])),
+                        }
+                    }
+                }
+            }
+            DeclKind::Const { names, values, .. } => {
+                self.arity(&cx, names, values, Some(repeated));
+                // A function literal in the value of a constant has a
+                // body, which declares what the value does not use.
+                if !cx.body.locals.is_empty() {
+                    for name in names {
+                        let object = self.by_span.get(&name.span).copied();
+                        let Some(decl) = object.and_then(|object| self.decls[object]) else {
+                            continue;
+                        };
+                        if let Form::Const {
+                            value: Some(value),
+                            iota,
+                            ..
+                        } = decl.form
+                        {
+                            let within = self.cx(&decl, Some(iota));
+                            self.operand(&within, value);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let typed = |(expr, operand): (ExprId, Operand)| {
+            // A generic function that is not called has the type that
+            // what it is assigned to gives it, which is not followed
+            // yet.
+            if self.types.generic_func(operand.ty).is_some() {
+                return None;
+            }
+            if !operand.is_value() {
+                return None;
+            }
+            let value = match operand.mode {
+                Mode::Const(value) => value,
+                _ => Value::Unknown,
+            };
+            Some((
+                expr,
+                ExprType {
+                    ty: operand.ty,
+                    value,
+                },
+            ))
+        };
+        self.addresses_of_required(&cx);
+        let memo = self.memo.take().unwrap_or_default();
+        let exprs = memo.into_iter().filter_map(typed).collect();
+        self.validate();
+        let locals = self
+            .locals
+            .drain()
+            .map(|(local, operand)| (local, operand.ty));
+        BodyTypes {
+            exprs,
+            locals: locals.collect(),
+            excused: std::mem::take(&mut self.excused),
+            selections: std::mem::take(&mut self.selections),
+            writes_through: std::mem::take(&mut self.writes_through),
+            var_modes: std::mem::take(&mut self.var_modes),
+            swaps: std::mem::take(&mut self.swaps),
+            self_moves: std::mem::take(&mut self.self_moves),
+            captures: self.captured_by_literal(),
+            method_values: std::mem::take(&mut self.method_values),
+            narrowed: std::mem::take(&mut self.narrowed),
+            iface_args: std::mem::take(&mut self.iface_args),
+            operators: std::mem::take(&mut self.operators),
+            op_assigns: std::mem::take(&mut self.op_assigns),
+            index_stores: std::mem::take(&mut self.index_stores),
+            case_operators: std::mem::take(&mut self.case_operators),
+            foreign_uses: std::mem::take(&mut self.foreign_uses),
+            iface_conversions: std::mem::take(&mut self.iface_conversions),
+            instances: std::mem::take(&mut self.instantiated),
+            bangs: std::mem::take(&mut self.bangs),
+        }
     }
 
     /// Walks the statements of a function of the type `sig`.
@@ -3621,12 +3862,12 @@ impl<'a> Checker<'a> {
                         let note =
                             format!("inner declaration of var {name} {}", self.type_string(ty));
                         let span = tree.stmts[id].span;
-                        if self.reported.insert((span, Code::ShadowedResult)) {
+                        if self.report_once((span, Code::ShadowedResult)) {
                             let diagnostic = Diagnostic::new(Code::ShadowedResult, span, message);
                             let inner = cx.body.locals[inner.0 as usize].span;
                             let diagnostic =
                                 diagnostic.with_note(Code::NoteInnerDeclaration, Some(inner), note);
-                            self.sink.push(diagnostic);
+                            self.emit(diagnostic);
                         }
                     }
                 }

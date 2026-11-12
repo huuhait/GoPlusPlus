@@ -30,12 +30,13 @@ struct Fact {
 
 /// A loop that is being walked, with the uses in it of facts from before
 /// it: each holds only if the loop does not assign the variable.
+#[derive(Clone)]
 struct Loop {
     span: Span,
     uses: Vec<(LocalId, Span)>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Flow {
     facts: FxHashMap<(LocalId, Known), Fact>,
     /// What each fact that was added replaced, the last one last.

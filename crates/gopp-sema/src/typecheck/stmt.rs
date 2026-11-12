@@ -167,11 +167,10 @@ impl<'a> Checker<'a> {
     }
 
     fn duplicate_case(&mut self, code: Code, span: Span, message: String, previous: Span) {
-        if self.reported.insert((span, code)) {
+        if self.report_once((span, code)) {
             let diagnostic = Diagnostic::new(code, span, message);
             let note = "previous case".to_owned();
-            self.sink
-                .push(diagnostic.with_note(Code::NotePreviousCase, Some(previous), note));
+            self.emit(diagnostic.with_note(Code::NotePreviousCase, Some(previous), note));
         }
     }
 

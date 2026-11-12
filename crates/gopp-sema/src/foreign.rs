@@ -52,7 +52,8 @@ pub trait ForeignPackage: Debug + Send + Sync {
     /// first ones, and for a call the types of the arguments `args`, from
     /// which the other template arguments are found; a constant without a
     /// type has the untyped type of its kind. `Err` says why there is no
-    /// such instance.
+    /// such instance. `types` may be a copy of the table that one worker
+    /// has to itself: no type made for one call is kept for another.
     fn instance(
         &self,
         name: &str,

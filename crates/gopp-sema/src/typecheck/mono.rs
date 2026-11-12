@@ -5,6 +5,60 @@
 
 use super::*;
 
+/// What a declaration adds to the graph, to be added in the order of
+/// the source where declarations are checked side by side.
+#[derive(Clone)]
+pub(super) enum Event {
+    Declared(TypeId, Span),
+    Canon(Vec<TypeId>, crate::types::NamedId),
+    Same(Vec<TypeId>, Vec<TypeId>),
+    Method(Span, Vec<TypeId>, Vec<TypeId>),
+    Local(crate::types::NamedId, Span, Vec<TypeId>),
+    Record(Vec<TypeId>, Vec<TypeId>, Vec<Span>, Span),
+}
+
+impl Event {
+    /// Replaces every type in the event by what `to` makes of it.
+    pub(super) fn each_type(&mut self, to: &mut impl FnMut(TypeId) -> TypeId) {
+        let mut all = |types: &mut Vec<TypeId>| {
+            for ty in types {
+                *ty = to(*ty);
+            }
+        };
+        match self {
+            Event::Declared(param, _) => {
+                let mut one = vec![*param];
+                all(&mut one);
+                *param = one[0];
+            }
+            Event::Canon(params, _) | Event::Local(_, _, params) => all(params),
+            Event::Same(params, canon) => {
+                all(params);
+                all(canon);
+            }
+            Event::Method(_, receiver, own) => {
+                all(receiver);
+                all(own);
+            }
+            Event::Record(params, args, ..) => {
+                all(params);
+                all(args);
+            }
+        }
+    }
+
+    /// Replaces every declared type that the event names.
+    pub(super) fn each_named(
+        &mut self,
+        to: &mut impl FnMut(crate::types::NamedId) -> crate::types::NamedId,
+    ) {
+        if let Event::Canon(_, named) | Event::Local(named, ..) = self {
+            *named = to(*named);
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Vertex {
     /// The weight of the heaviest known way to the vertex, the edge that
     /// ends it, and how many edges it has.
@@ -18,6 +72,7 @@ struct Vertex {
     local: std::option::Option<(crate::types::NamedId, Span)>,
 }
 
+#[derive(Clone)]
 struct Edge {
     dst: usize,
     src: usize,
@@ -33,7 +88,7 @@ struct Edge {
 /// generic function is another type for each instance of the function:
 /// it is a vertex too, with an edge of weight 1 from every type parameter
 /// around it.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Mono {
     vertices: Vec<Vertex>,
     edges: Vec<Edge>,
@@ -66,6 +121,9 @@ impl<'a> Checker<'a> {
     /// The receiver of a method names the type parameters of `named`
     /// `params`: each is the parameter of the type at its place.
     pub(super) fn mono_canon(&mut self, params: &[TypeId], named: crate::types::NamedId) {
+        if let Some(aside) = &mut self.aside {
+            return aside.mono.push(Event::Canon(params.to_vec(), named));
+        }
         let of_type = self.types.type_params(named);
         for (&param, &canon) in params.iter().zip(&of_type) {
             self.mono.canon.insert(param, canon);
@@ -74,6 +132,11 @@ impl<'a> Checker<'a> {
 
     /// The type parameters `params` stand for `canon`, each at its place.
     pub(super) fn mono_same(&mut self, params: &[TypeId], canon: &[TypeId]) {
+        if let Some(aside) = &mut self.aside {
+            return aside
+                .mono
+                .push(Event::Same(params.to_vec(), canon.to_vec()));
+        }
         for (&param, &canon) in params.iter().zip(canon) {
             self.mono.canon.insert(param, canon);
         }
@@ -84,6 +147,10 @@ impl<'a> Checker<'a> {
     /// where it is called, so the type parameters of its receiver are
     /// its own too, not those of the type.
     pub(super) fn mono_method(&mut self, name: Span, receiver: &[TypeId], own: &[TypeId]) {
+        if let Some(aside) = &mut self.aside {
+            let event = Event::Method(name, receiver.to_vec(), own.to_vec());
+            return aside.mono.push(event);
+        }
         match self.mono.methods.get(&name).cloned() {
             Some((of_receiver, of_method)) => {
                 self.mono_same(receiver, &of_receiver);
@@ -104,8 +171,30 @@ impl<'a> Checker<'a> {
         name: Span,
         around: &[TypeId],
     ) {
+        if let Some(aside) = &mut self.aside {
+            return aside.mono.push(Event::Local(named, name, around.to_vec()));
+        }
         if !around.is_empty() {
             self.mono.locals.insert(named, (name, around.to_vec()));
+        }
+    }
+
+    /// Adds what a declaration that was checked aside added to the
+    /// graph.
+    pub(super) fn mono_replay(&mut self, events: Vec<Event>) {
+        for event in events {
+            match event {
+                Event::Declared(param, span) => {
+                    self.param_spans.insert(param, span);
+                }
+                Event::Canon(params, named) => self.mono_canon(&params, named),
+                Event::Same(params, canon) => self.mono_same(&params, &canon),
+                Event::Method(name, receiver, own) => self.mono_method(name, &receiver, &own),
+                Event::Local(named, name, around) => self.mono_local(named, name, &around),
+                Event::Record(params, args, spans, at) => {
+                    self.mono_record(&params, &args, &spans, at);
+                }
+            }
         }
     }
 
@@ -170,6 +259,10 @@ impl<'a> Checker<'a> {
         spans: &[Span],
         at: Span,
     ) {
+        if let Some(aside) = &mut self.aside {
+            let event = Event::Record(params.to_vec(), args.to_vec(), spans.to_vec(), at);
+            return aside.mono.push(event);
+        }
         // A method with type parameters of its own is instantiated for
         // the type arguments of its receiver too.
         let receiver = params
@@ -389,6 +482,6 @@ impl<'a> Checker<'a> {
             );
             diagnostic = diagnostic.with_note(Code::NoteRefersTo, Some(edge.span), note);
         }
-        self.sink.push(diagnostic);
+        self.emit(diagnostic);
     }
 }

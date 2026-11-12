@@ -163,12 +163,11 @@ impl<'a> Checker<'a> {
         );
         let note = format!("other declaration of method {method}");
         let diagnostic = Diagnostic::new(Code::OpDuplicate, name.span, message);
-        self.sink
-            .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
+        self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
     }
 
     fn method_again(&mut self, named: NamedId, name: Ident, first: Span) {
-        if !self.reported.insert((name.span, Code::DuplicateMethod)) {
+        if !self.report_once((name.span, Code::DuplicateMethod)) {
             return;
         }
         let method = self.names.resolve(&name.name);
@@ -178,8 +177,7 @@ impl<'a> Checker<'a> {
         );
         let note = format!("other declaration of method {method}");
         let diagnostic = Diagnostic::new(Code::DuplicateMethod, name.span, message);
-        self.sink
-            .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
+        self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
     }
 
     /// `(*T[P])`: the base type name and what the brackets name. One star
@@ -327,7 +325,7 @@ impl<'a> Checker<'a> {
                 // The number of type arguments is wrong for this reason
                 // alone.
                 let whole = cx.tree.exprs[parts.named].span;
-                self.reported.insert((whole, Code::GotNTypeArgs));
+                self.report_once((whole, Code::GotNTypeArgs));
                 return self.error(Code::InvalidReceiverTypeParams, base_span, message);
             }
         }
@@ -417,7 +415,7 @@ impl<'a> Checker<'a> {
                 let Some(&method) = self.method_names.get(&(*id, field.name, field.package)) else {
                     continue;
                 };
-                if !self.reported.insert((method, Code::FieldAndMethod)) {
+                if !self.report_once((method, Code::FieldAndMethod)) {
                     continue;
                 }
                 let name = self.names.resolve(&field.name);
@@ -427,7 +425,7 @@ impl<'a> Checker<'a> {
                     let note = format!("other declaration of {name}");
                     diagnostic = diagnostic.with_note(Code::NoteOtherDeclaration, Some(span), note);
                 }
-                self.sink.push(diagnostic);
+                self.emit(diagnostic);
             }
         }
     }
@@ -466,7 +464,7 @@ impl<'a> Checker<'a> {
         // In the order of the source, whatever the order inside the sets.
         again.sort_by_key(|&(name, _, span)| (span.lo, names.resolve(&name)));
         for (name, package, span) in again {
-            if !self.reported.insert((span, Code::DuplicateMethodIface)) {
+            if !self.report_once((span, Code::DuplicateMethodIface)) {
                 continue;
             }
             // The first of the interface that has the name.
@@ -483,8 +481,7 @@ impl<'a> Checker<'a> {
             let message = format!("duplicate method {name}");
             let diagnostic = Diagnostic::new(Code::DuplicateMethodIface, span, message);
             let note = format!("other declaration of method {name}");
-            self.sink
-                .push(diagnostic.with_note(Code::NoteOtherDeclaration, other, note));
+            self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, other, note));
         }
     }
 
@@ -503,12 +500,11 @@ impl<'a> Checker<'a> {
             declared.insert(name, span);
             return;
         };
-        if self.reported.insert((span, Code::Redeclared)) {
+        if self.report_once((span, Code::Redeclared)) {
             let name = self.names.resolve(&name);
             let diagnostic = Diagnostic::new(Code::Redeclared, span, format!("{name} redeclared"));
             let note = format!("other declaration of {name}");
-            self.sink
-                .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(other), note));
+            self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, Some(other), note));
         }
     }
 

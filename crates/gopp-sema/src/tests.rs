@@ -10879,6 +10879,122 @@ fn the_steps_of_header_names_grow_with_the_uses_not_faster() {
     linear::assert_near_linear(&[250, 500, 1_000, 2_000], |n| steps(uses(n)));
 }
 
+/// A package that is large enough for several workers, with what the
+/// workers must give back in the order of the source: errors, types
+/// that only a body makes, calls of generic functions, operators, and
+/// variables that need functions.
+fn large_package(functions: usize) -> String {
+    let mut text = "package p
+
+type V struct{ x int }
+
+@Operator
+func (a V) Add(b V) V { return V{a.x + b.x} }
+
+type Box[T any] struct{ v T }
+
+func (b Box[T]) Get() T { return b.v }
+
+func pair[A, B Clone](a A, b B) struct {
+	a A
+	b B
+} {
+	return struct {
+		a A
+		b B
+	}{a, b}
+}
+"
+    .to_owned();
+    for i in 0..functions {
+        let before = i.saturating_sub(1);
+        text += &format!(
+            "
+var g{i} = f{before}(V{{{i}}}, V{{1}}, nil)
+
+func f{i}(a, b V, xs []int) int {{
+	type L{i} struct {{
+		n    int
+		next Option[*L{i}]
+	}}
+	type Pairs = map[string][{len}]L{i}
+	c := a + b
+	local := L{i}{{n: c.x}}
+	boxed := Box[[]L{i}]{{v: []L{i}{{local}}}}
+	total := len(boxed.Get()) + pair(c.x, \"s{i}\").a
+	seen := Pairs{{}}
+	for at, x := range xs {{
+		if x > {i} {{
+			total += x*at + len(seen)
+		}}
+	}}
+	add := func(n int) int {{ return n + total }}
+	var o Option[int] = add(total)
+	if v, ok := o.Get(); ok {{
+		return v + f{before}(c, a, xs)
+	}}
+	return total
+}}
+",
+            len = i % 7 + 1
+        );
+        // Some bodies are wrong, each in its own way.
+        match i % 9 {
+            3 => {
+                text += &format!("\nfunc wrong{i}() string {{ return f{i}(V{{}}, V{{}}, nil) }}\n")
+            }
+            6 => text += &format!("\nfunc wrong{i}(v V) {{ _ = v - v; _ = missing{i} }}\n"),
+            _ => {}
+        }
+    }
+    text
+}
+
+#[test]
+fn the_bodies_of_a_package_are_checked_side_by_side_with_the_same_result() {
+    let text = large_package(400);
+    // Enough source for several workers.
+    assert!(text.len() > 3 * 64 * 1024, "{}", text.len());
+    let checked_with = |threads: usize| {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let names = ThreadedRodeo::new();
+            let loader = Loader::default();
+            let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
+            let source = checked.map.file(checked.files[0].id);
+            let files = [(&checked.files[0], &*source)];
+            let types = loader.types.get().unwrap();
+            let info = crate::info_text(&checked.package, &files, types, &names);
+            let order: Vec<Vec<String>> = checked
+                .package
+                .init_order
+                .iter()
+                .map(|step| {
+                    let name = |&object| names.resolve(&checked.package.object(object).name);
+                    step.lhs.iter().map(name).map(str::to_owned).collect()
+                })
+                .collect();
+            (checked.messages, info, order)
+        })
+    };
+    let alone = checked_with(1);
+    assert_eq!(alone.0.len(), 133, "{:?}", &alone.0[..4]);
+    assert!(alone.1.contains("operator p.V.Add"), "{}", &alone.1[..2000]);
+    assert_eq!(alone.2.len(), 400);
+    for threads in [2, 5, 16] {
+        let together = checked_with(threads);
+        assert_eq!(together.0, alone.0, "{threads} threads");
+        assert!(
+            together.1 == alone.1,
+            "{threads} threads: the tables differ"
+        );
+        assert_eq!(together.2, alone.2, "{threads} threads");
+    }
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {

@@ -461,7 +461,7 @@ pub enum Member {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Named {
     name: Spur,
     /// The name of the declaring package; `None` for a predeclared type.
@@ -557,14 +557,14 @@ type AliasKey = (NamedId, Box<[(u32, u32)]>);
 
 /// One type as it is written without aliases, and as it is written with
 /// them in its parts.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Spellings {
     canonical: u32,
     written: Vec<u32>,
 }
 
 /// An alias as a program names it: `A`, or `A[int]` for a generic one.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Alias {
     named: NamedId,
     args: Box<[TypeId]>,
@@ -764,6 +764,8 @@ pub struct Types {
     clone_name: Spur,
     /// The work of looking up members, counted for the tests of speed.
     steps: AtomicU64,
+    /// For a copy of a table: how much of the table there was.
+    forked: fork::Sizes,
 }
 
 impl Types {
@@ -850,6 +852,7 @@ impl Types {
             any,
             clone_name: names.get_or_intern_static("Clone"),
             steps: AtomicU64::new(0),
+            forked: fork::Sizes::default(),
         }
     }
 
@@ -2809,6 +2812,7 @@ fn basic_name(basic: Basic) -> &'static str {
 
 mod category;
 mod constant;
+mod fork;
 mod hierarchy;
 mod label;
 mod methodset;
@@ -2819,6 +2823,7 @@ mod zero;
 
 pub use category::{Category, CopyRule, NotCopied};
 pub use constant::NotConstant;
+pub use fork::Imported;
 pub use hierarchy::PARENT;
 pub use label::{Labels, Unlabeled};
 pub use methodset::MethodSet;

@@ -423,9 +423,9 @@ impl<'a> Checker<'a> {
         match known {
             Some(other) => {
                 let message = format!("label {name} already declared");
-                if self.reported.insert((label.span, Code::LabelRedeclared)) {
+                if self.report_once((label.span, Code::LabelRedeclared)) {
                     let diagnostic = Diagnostic::new(Code::LabelRedeclared, label.span, message);
-                    self.sink.push(diagnostic.with_note(
+                    self.emit(diagnostic.with_note(
                         Code::NoteOtherDeclaration,
                         Some(labels.all[other].0.span),
                         format!("other declaration of {name}"),

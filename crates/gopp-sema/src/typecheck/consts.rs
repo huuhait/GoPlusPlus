@@ -365,8 +365,8 @@ impl<'a> Checker<'a> {
                     let note = format!("in {function}");
                     diagnostic = diagnostic.with_note(Code::NoteRefersTo, None, note);
                 }
-                if self.reported.insert((at, Code::ConstEval)) {
-                    self.sink.push(diagnostic);
+                if self.report_once((at, Code::ConstEval)) {
+                    self.emit(diagnostic);
                 }
                 Operand::UNKNOWN
             }

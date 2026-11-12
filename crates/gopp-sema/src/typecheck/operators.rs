@@ -243,8 +243,7 @@ impl<'a> Checker<'a> {
             );
             let note = format!("other declaration of method {name}");
             let diagnostic = Diagnostic::new(Code::OpDuplicate, at, message);
-            self.sink
-                .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
+            self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
             return;
         }
         let declared = self.operator_decls.entry(marked.named).or_default();
@@ -342,8 +341,7 @@ impl<'a> Checker<'a> {
             );
             let diagnostic = Diagnostic::new(Code::ConvertMisuse, at, message);
             let note = "the other @Convert method".to_owned();
-            self.sink
-                .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
+            self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
             return;
         }
         self.convert_decls
@@ -1163,6 +1161,7 @@ impl<'a> Checker<'a> {
 
 /// An `@Operator` method as it was declared, to find one that is
 /// declared again.
+#[derive(Clone)]
 pub(super) struct OperatorDecl {
     name: Spur,
     sig: TypeId,
