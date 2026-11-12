@@ -50,6 +50,19 @@ impl LockRegistry {
         let index = usize::from(number).checked_sub(1)?;
         self.names.get(index).map(String::as_str)
     }
+
+    /// The number of the row that has the name.
+    pub fn number(&self, name: &str) -> Option<u16> {
+        let index = self.names.iter().position(|known| known == name)?;
+        u16::try_from(index + 1).ok()
+    }
+
+    /// The file as this compiler was built with it.
+    pub fn built_in() -> Self {
+        let text = include_str!("../../../docs/errors/codes.lock");
+        // The registry test parses the same file.
+        Self::parse(text).unwrap_or(Self { names: Vec::new() })
+    }
 }
 
 fn parse_row(row: &str) -> Option<(u16, &str)> {

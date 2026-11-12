@@ -87,6 +87,39 @@ fn long_flags_take_one_dash() {
 }
 
 #[test]
+fn explain_says_what_a_code_means_and_lists_them_all() {
+    let output = run(gopp().args(["explain", "E0111"]));
+    assert_eq!(output.status.code(), Some(0));
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("E0111 err_undefined\n\nA name is used"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nFix: ") && text.contains("\nExample:\n\n    "),
+        "{text}"
+    );
+    assert_eq!(
+        stdout(&run(gopp().args(["explain", "err_undefined"]))),
+        text
+    );
+
+    let output = run(gopp().args(["explain", "-list"]));
+    assert_eq!(output.status.code(), Some(0));
+    let listed = stdout(&output);
+    assert!(listed.starts_with("E0001 err_too_many_errors\n"));
+    assert!(listed.contains("\nE0111 err_undefined\n"));
+
+    let output = run(gopp().args(["explain", "E9999"]));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        "error: E9999 is no error code; gopp explain --list lists them\n"
+    );
+    assert_eq!(run(gopp().arg("explain")).status.code(), Some(2));
+}
+
+#[test]
 fn host_toolchain_prints_the_pinned_tools() {
     let dir = TempDir::new().unwrap();
     let clang = fake_toolchain(&dir, "23.1.0", "23.1.0");

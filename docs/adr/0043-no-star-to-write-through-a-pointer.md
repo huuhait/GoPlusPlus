@@ -26,7 +26,7 @@ The owner decided: the star is not written to change what a pointer points to.
 3. **Where a pointer fits, it stays a pointer,** as in Go: `q := p` is a second pointer to the same variable, `g(p)` passes the pointer to a `*T` parameter, and `p == q` on two pointers compares the pointers.
 4. **Assigning a pointer to a pointer points it at the other variable,** as in Go: `n = n.next` walks a list. The type of the right side decides: a `*T` re-points, a `T` writes through. When the right side fits both (a `*any` assigned to a `*any`), it re-points.
 5. **`*p` is still an expression** and reads the value: `m := *p` gives `m` a copy, and `a, b = *b, *a` swaps two values through their pointers.
-6. **`*p` on the left of an assignment is a compile error in a `.gopp` file:** `*p = v`, `*p += v`, `*p++`. The fix-it removes the star. A `.go` file keeps Go's spelling.
+6. **`*p` on the left of an assignment is a compile error (`E0469`) in a `.gopp` file:** `*p = v`, `*p += v`, `*p++`. The fix-it removes the star. A `.go` file keeps Go's spelling.
 7. The same holds through `Unique[T]`. What a `Shared[T]` holds stays read-only ([ADR-0042](0042-shared-is-read-only.md)).
 
 ## Consequences

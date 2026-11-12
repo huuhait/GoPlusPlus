@@ -59,6 +59,15 @@ enum Command {
         /// with none, standard input is formatted to standard output
         paths: Vec<PathBuf>,
     },
+    /// Say what an error code means, how to fix it, and show an example
+    Explain {
+        /// List every code
+        #[arg(long)]
+        list: bool,
+        /// A code such as E0111, or the name of one
+        #[arg(required_unless_present = "list", conflicts_with = "list")]
+        code: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -89,6 +98,24 @@ fn run() -> ExitCode {
                 write: w,
             };
             fmt::run(&paths, mode, go)
+        }
+        Command::Explain { list: true, .. } => {
+            print!("{}", gopp_diag::listed());
+            ExitCode::SUCCESS
+        }
+        Command::Explain { code, .. } => explain(&code.unwrap_or_default()),
+    }
+}
+
+fn explain(code: &str) -> ExitCode {
+    match gopp_diag::explained(code) {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::from(EXIT_ERRORS)
         }
     }
 }

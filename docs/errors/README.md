@@ -15,10 +15,10 @@ example; `gopp explain --list` lists all codes.
   `custom` (a message given as a string by a tool or plugin) has no code.
 - The explanations live in `crates/gopp-diag/src/explain.rs`. Every explainable
   code carries what the error means, how to fix it, and a minimal example.
-- Messages built from the operands (types2's wording) share one code per part of
-  the checker (`err_sema_assign`, `err_sema_builtin`, `err_sema_call`,
-  `err_sema_decl`, `err_sema_expr`, `err_sema_index`, `err_sema_predicate`,
-  `err_sema_stmt`, `err_sema_typeset`, `err_sema_typexpr`). A message that
-  needs its own code becomes its own row.
+- Every message has a row of its own. Rows whose feature the language no longer
+  has (`err_view_*`, `err_unit_*`, `err_strict_*`, and the shared `err_sema_*`
+  rows of an earlier scheme) are *retired*: nothing is reported with them, and
+  their numbers are never used again. A row that this version reports nothing
+  with yet is *reserved*. `gopp explain --list` marks both.
 - Notes (`note_...`) have codes too but are printed without one: they belong to
   the diagnostic above them.
