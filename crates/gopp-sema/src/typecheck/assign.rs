@@ -30,16 +30,31 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown {
             return x;
         }
-        if self.own_rules(cx) {
-            if self.is_untyped(x.ty) {
-                let target = match to {
-                    Some(to) if !self.types.is_interface(to) => to,
-                    _ => self.types.default_type(x.ty),
-                };
-                self.convert_untyped(cx, expr, &mut x, target, false);
+        // In a `.gopp` file a place takes more than its own type, and an
+        // assignment may write through a pointer.
+        let own = self.own_rules(cx);
+        let writes = own && context == "assignment";
+        let place = to;
+        let to = match to {
+            Some(to) if own && x.ty == self.types.basic(Basic::UntypedNil) => {
+                if self.takes_nil(to, writes) {
+                    return x;
+                }
+                let shown = self.type_string(to);
+                let message = format!("cannot use nil as {shown} value in {context}");
+                match self.never_nil(to) {
+                    true => {
+                        let fix = format!("a {shown} is never nil: use Option[{shown}]");
+                        let fix = (Code::NoteOwnFixOption, fix);
+                        self.error_with_fix(Code::NilNeverNil, span, message, fix);
+                    }
+                    false => self.error(Code::CannotAssign, span, message),
+                }
+                return Operand::UNKNOWN;
             }
-            return x;
-        }
+            Some(to) if own && self.is_untyped(x.ty) => Some(self.own_target(to, writes)),
+            to => to,
+        };
         if x.mode == Mode::Value && matches!(&*self.types.get(x.ty), Type::Tuple(_)) {
             let message = format!(
                 "multiple-value {} in single-value context",
@@ -74,7 +89,7 @@ impl<'a> Checker<'a> {
                     let message = format!(
                         "cannot use {} as {} value in {context}{why}",
                         self.describe(cx, expr, &x),
-                        self.type_string(target)
+                        self.type_string(place.filter(|_| own).unwrap_or(target))
                     );
                     self.error(Code::CannotAssign, span, message);
                     return Operand::UNKNOWN;
@@ -92,7 +107,7 @@ impl<'a> Checker<'a> {
             }
         }
         if let Some(to) = to
-            && self.not_assignable(&x, to)
+            && self.unfit(cx, &x, to, writes)
         {
             let message = format!(
                 "cannot use {} as {} value in {context}",
@@ -105,10 +120,9 @@ impl<'a> Checker<'a> {
         x
     }
 
-    /// What a place takes in a `.gopp` file follows rules of its own: an
-    /// assignment may write through a pointer, a value is its own option,
-    /// a function that can fail returns its error by itself. There, only
-    /// the type of a value of no type is settled here.
+    /// Whether the rules of a `.gopp` file hold: a pointer is used like
+    /// what it points to, a value is its own option, a pointer is never
+    /// nil, and an operator may be a method.
     pub(super) fn own_rules(&self, cx: &Cx<'a>) -> bool {
         cx.dialect == Dialect::Gopp
     }
@@ -166,7 +180,7 @@ impl<'a> Checker<'a> {
             count => format!("{count} {unit}s"),
         };
         let (variables, values) = (measure(variables, "variable"), measure(values, "value"));
-        let Some(&first) = rhs.first().filter(|_| !self.own_rules(cx)) else {
+        let Some(&first) = rhs.first() else {
             return;
         };
         let message = match (rhs.len(), &cx.tree.exprs[self.unparen(cx, first)].kind) {
@@ -180,10 +194,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `not enough return values`, with what there is and what is wanted.
-    fn return_error(&mut self, cx: &Cx<'a>, at: Span, wanted: &[TypeId], given: &[(Span, TypeId)]) {
-        if self.own_rules(cx) {
-            return;
-        }
+    fn return_error(&mut self, at: Span, wanted: &[TypeId], given: &[(Span, TypeId)]) {
         let (code, qualifier, at) = match given.len() > wanted.len() {
             // At the first value that is too many, or at the last one.
             true => (Code::TooManyReturnValues, "too many", given[wanted.len()].0),
@@ -267,7 +278,7 @@ impl<'a> Checker<'a> {
                             .zip(&values)
                             .map(|(&value, operand)| (cx.tree.exprs[value].span, operand.ty))
                             .collect();
-                        self.return_error(cx, at, &wanted, &given);
+                        self.return_error(at, &wanted, &given);
                     }
                     Init::Variables => self.assign_error(cx, rhs, lhs.len(), rhs.len()),
                 }
@@ -289,7 +300,7 @@ impl<'a> Checker<'a> {
                     let span = cx.tree.exprs[rhs[0]].span;
                     let given: Vec<(Span, TypeId)> =
                         values.iter().map(|value| (span, value.ty)).collect();
-                    self.return_error(cx, at, &wanted, &given);
+                    self.return_error(at, &wanted, &given);
                 }
                 Init::Variables => self.assign_error(cx, rhs, lhs.len(), values.len()),
             }
@@ -318,7 +329,7 @@ impl<'a> Checker<'a> {
         // One of several results is assigned as it is: it has a type.
         if one_of_several {
             return match to {
-                Some(to) if !self.own_rules(cx) && self.not_assignable(&x, to) => {
+                Some(to) if self.unfit(cx, &x, to, false) => {
                     let message = format!(
                         "cannot use {} as {} value in {context}",
                         self.describe(cx, expr, &x),
@@ -350,11 +361,29 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown || x.ty == Types::INVALID {
             return Some(Types::INVALID);
         }
-        if matches!(x.mode, Mode::Variable | Mode::MapIndex) || self.own_rules(cx) {
-            return Some(x.ty);
-        }
         let span = cx.tree.exprs[lhs].span;
         let text = self.expr_string(cx, lhs);
+        // In a `.gopp` file a pointer is written through without a star,
+        // also one that is no variable itself.
+        if self.own_rules(cx) {
+            if let ExprKind::Unary {
+                op: UnaryOp::Star,
+                x: pointer,
+            } = cx.tree.exprs[inner].kind
+            {
+                let message = format!("cannot assign to {text}: a pointer is written without *");
+                let fix = format!("use {}", self.expr_string(cx, pointer));
+                let fix = (Code::NoteOwnFixNoStar, fix);
+                self.error_with_fix(Code::OwnStarOnLeft, span, message, fix);
+                return Some(Types::INVALID);
+            }
+            if self.read(cx, x.clone()).ty != x.ty {
+                return Some(x.ty);
+            }
+        }
+        if matches!(x.mode, Mode::Variable | Mode::MapIndex) {
+            return Some(x.ty);
+        }
         if let ExprKind::Selector { x: of, .. } = cx.tree.exprs[inner].kind
             && self.operand(cx, of).mode == Mode::MapIndex
         {
@@ -416,8 +445,7 @@ impl<'a> Checker<'a> {
         for (&place, value) in lhs.iter().zip(values) {
             if let Some(to) = self.lhs_var(cx, place)
                 && value.mode != Mode::Unknown
-                && !self.own_rules(cx)
-                && self.not_assignable(&value, to)
+                && self.unfit(cx, &value, to, true)
             {
                 let message = format!(
                     "cannot use {} as {} value in assignment",

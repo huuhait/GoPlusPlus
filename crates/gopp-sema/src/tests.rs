@@ -2360,6 +2360,292 @@ func g(p User, u Unique[User]) {
     assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
+/// What the spec shows as good code: pointers that are read and written
+/// through, options, handles that lend what they own.
+const GOOD_GOPP: &str = r#"package main
+
+type Node struct {
+	Name   string
+	Kids   []Shared[Node]
+	Parent Option[Weak[Node]]
+}
+
+func NewNode(name string, parent Option[Weak[Node]]) Shared[Node] {
+	return NewShared(Node{Name: name, Kids: []Shared[Node]{}, Parent: parent})
+}
+
+func Add(parent Shared[Node], child Shared[Node]) {
+	kids := parent.Kids
+	kids = append(kids, child)
+}
+
+type Tree struct {
+	L, R Option[Unique[Tree]]
+	V    int
+}
+
+func sum(t Option[*Tree]) int {
+	if t == nil {
+		return 0
+	}
+	return t.V + sum(t.L) + sum(t.R)
+}
+
+func build() Unique[Tree] {
+	return NewUnique(Tree{V: 1, L: NewUnique(Tree{V: 2})})
+}
+
+func addOne(xs *[]int) { xs[0]++ }
+
+func swap(a, b *int) { a, b = *b, *a }
+
+type List struct {
+	next Option[*List]
+	v    int
+}
+
+func walk(n *List) int {
+	total := 0
+	for {
+		total += n.v
+		if n.next == nil {
+			return total
+		}
+		n = n.next
+	}
+}
+
+func main() {
+	root := NewNode("root", nil)
+	Add(root, NewNode("a", NewWeak(root)))
+	b := NewNode("b", NewWeak(root))
+	Add(root, b)
+	if w, ok := b.Parent.Get(); ok {
+		if p := w.Lock(); p != nil {
+			println(p.Name)
+		}
+	}
+	nums := []int{1, 2}
+	addOne(&nums)
+	x, y := 1, 2
+	swap(&x, &y)
+	t := build()
+	println(sum(t), sum(nil))
+	var f func(int) int = func(i int) int { return i }
+	var g Option[func(int) int]
+	g = f
+	g = nil
+	_ = g
+}
+"#;
+
+#[test]
+fn a_place_of_a_gopp_file_takes_what_the_rules_of_gopp_say() {
+    assert_eq!(messages("good.gopp", GOOD_GOPP), [] as [&str; 0]);
+    let declared = "type User struct{ Name string }\ntype Vec struct{ X, Y int }\n\
+                    func (a Vec) Add(b Vec) Vec { return a }\nfunc take(u User)    {}\n\
+                    func borrow(u *User) {}\nfunc fail() error    { return nil }\n";
+    let params = "p *User, n *int, w Weak[User], s string, xs *[]int, f float64, v Vec, u User, \
+                  o Option[int], q *User";
+    let never = |ty: &str| format!("    a {ty} is never nil: use Option[{ty}]");
+    let cases: &[(&str, Vec<String>)] = &[
+        (
+            "var _ *User = nil",
+            vec![
+                "9:16: cannot use nil as *User value in variable declaration".to_owned(),
+                never("*User"),
+            ],
+        ),
+        (
+            "var _ func() = nil",
+            vec![
+                "9:17: cannot use nil as func() value in variable declaration".to_owned(),
+                never("func()"),
+            ],
+        ),
+        (
+            "var _ User = nil",
+            vec!["9:15: cannot use nil as User value in variable declaration".to_owned()],
+        ),
+        (
+            "var _ *int = 9",
+            vec![
+                "9:15: cannot use 9 (untyped int constant) as *int value in variable declaration"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "var _ Option[int] = \"a\"",
+            vec![
+                "9:22: cannot use \"a\" (untyped string constant) as Option[int] value in \
+                 variable declaration"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "var _ string = n",
+            vec![
+                "9:17: cannot use n (variable of type *int) as string value in variable \
+                 declaration"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "var _ *User = w",
+            vec![
+                "9:16: cannot use w (variable of type Weak[User]) as *User value in variable \
+                 declaration"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "var _ Unique[User] = p",
+            vec![
+                "9:23: cannot use p (variable of type *User) as Unique[User] value in variable \
+                 declaration"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "take(n)",
+            vec![
+                "9:7: cannot use n (variable of type *int) as User value in argument to take"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "borrow(1)",
+            vec![
+                "9:9: cannot use 1 (untyped int constant) as *User value in argument to borrow"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "n = \"a\"",
+            vec![
+                "9:6: cannot use \"a\" (untyped string constant) as *int value in assignment"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "n += \"a\"",
+            vec![
+                "9:2: invalid operation: n += \"a\" (mismatched types int and untyped string)"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "_ = n + s",
+            vec!["9:6: invalid operation: n + s (mismatched types int and string)".to_owned()],
+        ),
+        (
+            "_ = len(n)",
+            vec!["9:10: invalid argument: n (variable of type int) for built-in len".to_owned()],
+        ),
+        (
+            "_ = u + u",
+            vec![
+                "9:6: invalid operation: operator + not defined on u (variable of struct type \
+                 User)"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "_ = p.Age",
+            vec!["9:8: p.Age undefined (type User has no field or method Age)".to_owned()],
+        ),
+        (
+            "*n = 3",
+            vec![
+                "9:2: cannot assign to *n: a pointer is written without *".to_owned(),
+                "    use n".to_owned(),
+            ],
+        ),
+        (
+            "*n++",
+            vec![
+                "9:2: cannot assign to *n: a pointer is written without *".to_owned(),
+                "    use n".to_owned(),
+            ],
+        ),
+        (
+            "var x, y int\n\tx, y = 1\n\t_, _ = x, y",
+            vec!["10:9: assignment mismatch: 2 variables but 1 value".to_owned()],
+        ),
+        // What is right next to each of them.
+        (
+            "var _ Option[*User] = nil\n\tvar _ Option[int] = 1\n\tvar _ error = nil\n\
+             \tvar _ User = p\n\tvar _ int = n\n\tvar _ *User = q",
+            vec![],
+        ),
+        (
+            "take(p)\n\tborrow(q)\n\tn = 9\n\tn += 2\n\tn++\n\txs = append(xs, n)\n\txs[0] = n\n\
+             \txs = nil",
+            vec![],
+        ),
+        (
+            "_ = v + v\n\t_ = v == v\n\t_ = n + 1\n\t_ = p == q\n\t_ = o == nil\n\t_ = o == 3\n\
+             \t_ = *n + 1\n\t_ = len(xs) + len(p.Name)",
+            vec![],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _({params}) {{\n\t{body}\n}}\n");
+        let found = messages("a.gopp", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+}
+
+#[test]
+fn a_function_that_can_fail_returns_its_results_or_one_value_more() {
+    let text = "package p
+
+type User struct{ Name string }
+
+func fail() error { return nil }
+
+func one!() int               { return 1 }
+func two!() (int, string)     { return 1, \"a\" }
+func none!()                  { return }
+func failing!() int           { return 0, fail() }
+func failnone!()              { return fail() }
+func forward!() int           { return one() }
+func unwrap!() int            { return one!() }
+func unset!(p *User) *User {
+	if p.Name == \"\" {
+		return nil, fail()
+	}
+	return p
+}
+func generic[T any]!(x T) T   { return nil, fail() }
+func goform(p *User) (*User, error) { return p, nil }
+
+func few!() int               { return }
+func fewer!() (int, string)   { return 1 }
+func many!() int              { return 1, nil, 2 }
+func zero!() int              { return nil, fail() }
+func wrong!() int             { return \"a\" }
+";
+    let expected = [
+        "a.gopp:23:33: not enough return values",
+        "    have ()",
+        "    want (int, error)",
+        "a.gopp:24:40: not enough return values",
+        "    have (number)",
+        "    want (int, string, error)",
+        "a.gopp:25:48: too many return values",
+        "    have (number, nil, number)",
+        "    want (int, error)",
+        "a.gopp:26:40: cannot use nil as int value in return statement",
+        "a.gopp:27:40: cannot use \"a\" (untyped string constant) as int value in return statement",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();

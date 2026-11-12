@@ -181,6 +181,7 @@ codes! {
     312 UnusedImport "err_unused_import",
     313 UnusedImportAs "err_unused_import_as",
     341 MoveNonlocal "err_move_nonlocal",
+    347 NilNeverNil "err_nil_never_nil",
     377 StructEmbedding "err_struct_embedding",
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",
@@ -195,6 +196,9 @@ codes! {
     465 TildeOutsideConstraint "err_tilde_outside_constraint",
     466 NoteOwnFixHeapPointer "note_own_fix_heap_pointer",
     467 NoteOwnFixTake "note_own_fix_take",
+    468 NoteOwnFixOption "note_own_fix_option",
+    469 OwnStarOnLeft "err_own_star_on_left",
+    470 NoteOwnFixNoStar "note_own_fix_no_star",
 }
 
 impl Code {

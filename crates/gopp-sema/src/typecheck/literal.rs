@@ -14,8 +14,6 @@ impl<'a> Checker<'a> {
         hint: Option<TypeId>,
     ) -> Operand {
         let span = cx.tree.exprs[expr].span;
-        // In a `.gopp` file a struct has more than its own fields.
-        let strict = !self.own_rules(cx);
         let (literal, base, is_element) = match (ty, hint) {
             (Some(ty), _) => {
                 let literal = self.literal_type(cx, ty, elems);
@@ -39,6 +37,9 @@ impl<'a> Checker<'a> {
                 _ => Operand::value(literal),
             };
         }
+        // In a `.gopp` file a struct with parents has more than its own
+        // fields.
+        let strict = !(self.own_rules(cx) && self.has_parents(base));
         let under = self.types.get(self.types.underlying(base));
         let grows = ty.is_some_and(|ty| {
             matches!(

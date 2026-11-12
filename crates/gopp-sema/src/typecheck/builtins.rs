@@ -153,9 +153,19 @@ impl<'a> Checker<'a> {
         let outer = std::mem::replace(&mut self.called_or_received, false);
         let given = self.builtin_arguments(cx, call, name, arity, args, (spread, types_first));
         let is_static = !std::mem::replace(&mut self.called_or_received, outer);
-        let Some(given) = given else {
+        let Some(mut given) = given else {
             return Operand::UNKNOWN;
         };
+        // What works on a slice, a map or a number works on what a
+        // pointer to one points to.
+        let read = match builtin {
+            Append | Cap | Clear | Close | Delete | Len => 1,
+            ComplexFunc | Imag | Max | Min | Real => given.len(),
+            _ => 0,
+        };
+        for (_, x) in given.iter_mut().take(read) {
+            *x = self.read(cx, x.clone());
+        }
         let (int, any) = (self.types.basic(Basic::Int), self.types.any());
         let first = given.first().cloned();
         match (builtin, first) {

@@ -463,6 +463,16 @@ impl Types {
         self.read(|inner| inner.named[named.0 as usize].params.clone())
     }
 
+    /// Whether the type is a declared type with methods of its own.
+    pub fn declares_methods(&self, ty: TypeId) -> bool {
+        match &*self.get(ty) {
+            Type::Named { id, .. } => {
+                self.read(|inner| !inner.named[id.0 as usize].methods.is_empty())
+            }
+            _ => false,
+        }
+    }
+
     pub fn name_of(&self, named: NamedId) -> Spur {
         self.read(|inner| inner.named[named.0 as usize].name)
     }

@@ -555,6 +555,9 @@ impl<'a> Checker<'a> {
         if self.open(x.ty) || holds(self, x.ty) {
             return true;
         }
+        if self.may_overload(cx, x.ty) {
+            return false;
+        }
         let message = format!(
             "invalid operation: operator {op} not defined on {}",
             self.describe(cx, expr, x)
@@ -590,8 +593,13 @@ impl<'a> Checker<'a> {
                     },
                     _ if x.is_value() => match &*self.types.get(self.types.underlying(x.ty)) {
                         Type::Pointer(elem) => Operand::variable(*elem),
+                        Type::Unique(_) | Type::Shared(_) | Type::Option(_)
+                            if self.own_rules(cx) =>
+                        {
+                            self.read(cx, x)
+                        }
                         _ => {
-                            if !self.open(x.ty) && !self.own_rules(cx) {
+                            if !self.open(x.ty) {
                                 let message = format!(
                                     "invalid operation: cannot indirect {}",
                                     self.describe(cx, inner, &x)
@@ -655,6 +663,7 @@ impl<'a> Checker<'a> {
         if !x.is_value() {
             return Operand::UNKNOWN;
         }
+        let x = self.read(cx, x);
         // `~` belongs to constraints; on an integer, `^` was meant.
         let op = match op {
             UnaryOp::Tilde => {
@@ -794,6 +803,13 @@ impl<'a> Checker<'a> {
         if !x.is_value() || !y.is_value() {
             return Operand::UNKNOWN;
         }
+        // Two pointers are compared as pointers; anything else is done
+        // to what a pointer points to.
+        let refers =
+            |this: &Self, x: &Operand| this.is_nil(x) || this.read(cx, x.clone()).ty != x.ty;
+        if !(is_comparison(op) && refers(self, &x) && refers(self, &y)) {
+            (x, y) = (self.read(cx, x), self.read(cx, y));
+        }
         if is_shift(op) {
             return self.shift(cx, whole, op, (left, x), (right, y));
         }
@@ -805,7 +821,8 @@ impl<'a> Checker<'a> {
             return self.comparison(cx, op, (left, x), (right, y));
         }
         if !self.types.identical(x.ty, y.ty, self.names) {
-            if !self.open(x.ty) && !self.open(y.ty) {
+            let decided = !self.may_overload(cx, x.ty) && !self.may_overload(cx, y.ty);
+            if !self.open(x.ty) && !self.open(y.ty) && decided {
                 let written = match whole {
                     Some(expr) => self.expr_string(cx, expr),
                     None => format!(
@@ -921,7 +938,7 @@ impl<'a> Checker<'a> {
         let comparable = |this: &Self, ty: TypeId| this.open(ty) || this.types.comparable(ty);
         // The operand that the error is about, and what is wrong with it.
         let wrong: Option<(ExprId, &Operand, String, Code)> = {
-            let mismatched = self.not_assignable(&x, y.ty) && self.not_assignable(&y, x.ty);
+            let mismatched = self.unfit(cx, &x, y.ty, false) && self.unfit(cx, &y, x.ty, false);
             if mismatched {
                 let cause = format!(
                     "mismatched types {} and {}",
@@ -954,6 +971,9 @@ impl<'a> Checker<'a> {
                 None
             }
         };
+        if wrong.is_some() && (self.may_overload(cx, x.ty) || self.may_overload(cx, y.ty)) {
+            return Operand::UNKNOWN;
+        }
         if let Some((mut at, mut operand, mut cause, code)) = wrong {
             let is_param = |ty: TypeId| matches!(&*self.types.get(ty), Type::Param(_));
             if cause.is_empty() && (is_param(x.ty) || is_param(y.ty)) {

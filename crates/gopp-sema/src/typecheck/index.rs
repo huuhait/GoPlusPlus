@@ -89,6 +89,7 @@ impl<'a> Checker<'a> {
             }
             return Operand::UNKNOWN;
         }
+        let x = self.read(cx, x);
         let under = self.types.get(self.types.underlying(x.ty));
         let (length, element) = match &*under {
             // A generic function with its type arguments.
@@ -160,7 +161,8 @@ impl<'a> Checker<'a> {
         }
         // What a type parameter or a type in error can do is not said.
         let under = self.types.underlying(x.ty);
-        if under != Types::INVALID && !self.types.has_param(x.ty) {
+        let decided = !self.types.has_param(x.ty) && !self.may_overload(cx, x.ty);
+        if under != Types::INVALID && decided {
             let message = format!("cannot index {}", self.describe(cx, of, x));
             self.error(Code::CannotIndex, cx.tree.exprs[of].span, message);
         }
@@ -176,8 +178,11 @@ impl<'a> Checker<'a> {
         full: bool,
     ) -> Operand {
         let x = self.value(cx, of);
+        let x = self.read(cx, x);
         let span = cx.tree.exprs[of].span;
-        let open = self.types.underlying(x.ty) == Types::INVALID || self.types.has_param(x.ty);
+        let open = self.types.underlying(x.ty) == Types::INVALID
+            || self.types.has_param(x.ty)
+            || self.may_overload(cx, x.ty);
         if x.mode == Mode::Unknown || open {
             for bound in bounds.into_iter().flatten() {
                 self.operand(cx, bound);

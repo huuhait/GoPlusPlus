@@ -13,6 +13,7 @@ mod conversion;
 mod index;
 mod literal;
 mod ops;
+mod own;
 
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, Span};
@@ -194,8 +195,10 @@ struct Checker<'a> {
     fresh: bool,
     /// While a body is walked: the types of the results of the function
     /// that the statements are in, the innermost last.
-    /// With whether the results have names: `return` alone returns them.
-    results: Vec<Option<(Vec<TypeId>, bool)>>,
+    /// With whether the results have names: `return` alone returns them;
+    /// and whether the function can fail: its last result is the error
+    /// that `!` adds.
+    results: Vec<Option<(Vec<TypeId>, bool, bool)>>,
     /// Whether a function was called or a channel received from since the
     /// flag was last cleared: the length of an array is a constant only
     /// if neither happens to get the array.
@@ -1837,6 +1840,15 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown {
             return Operand::UNKNOWN;
         }
+        // In a `.gopp` file a field or a method is reached through every
+        // kind of pointer.
+        if self.own_rules(cx)
+            && x.is_value()
+            && let Some(method) = self.handle_method(&x, sel.name)
+        {
+            return method;
+        }
+        let x = self.read(cx, x);
         let found = self
             .types
             .lookup(x.ty, sel.name, self.path, self.names, false);
@@ -1931,7 +1943,7 @@ impl<'a> Checker<'a> {
             Type::Pointer(elem) if invalid(*elem)
         );
         let unsettled = invalid(x.ty) || pointee_invalid || self.types.has_param(x.ty);
-        if !known || unsettled || self.own_rules(cx) {
+        if !known || unsettled {
             return;
         }
         let (of, name) = (self.expr_string(cx, base), self.names.resolve(&sel.name));
@@ -2611,20 +2623,72 @@ impl<'a> Checker<'a> {
 
     /// Walks the statements of a function of the type `sig`.
     fn function_body(&mut self, cx: &Cx<'a>, ty: ExprId, sig: TypeId, stmts: &[StmtId]) {
-        let named = match &cx.tree.exprs[ty].kind {
-            ExprKind::FuncType { results, .. } => {
-                results.first().is_some_and(|result| result.name.is_some())
-            }
-            _ => false,
+        let (named, fails) = match &cx.tree.exprs[ty].kind {
+            ExprKind::FuncType { results, fails, .. } => (
+                results.first().is_some_and(|result| result.name.is_some()),
+                *fails,
+            ),
+            _ => (false, false),
         };
         // The results of a signature that is in error are not known.
         let results = match &*self.types.get(sig) {
-            Type::Func { results, .. } => Some((results.to_vec(), named)),
+            Type::Func { results, .. } => Some((results.to_vec(), named, fails)),
             _ => None,
         };
         self.results.push(results);
         self.stmts(cx, stmts);
         self.results.pop();
+    }
+
+    /// `return results` in a function with the results `wanted`. A
+    /// function that can fail returns its results and no error, or one
+    /// value more, which is the error (ERR-3).
+    fn returned(
+        &mut self,
+        cx: &Cx<'a>,
+        whole: Span,
+        wanted: &[TypeId],
+        fails: bool,
+        results: &[ExprId],
+    ) {
+        let given = match results {
+            [one] => match self.operand(cx, *one) {
+                Operand {
+                    mode: Mode::NoValue,
+                    ..
+                } => 0,
+                x => match &*self.types.get(x.ty) {
+                    Type::Tuple(types) if x.mode == Mode::Value => types.len(),
+                    _ => 1,
+                },
+            },
+            many => many.len(),
+        };
+        let places =
+            |types: &[TypeId]| -> Vec<Option<TypeId>> { types.iter().copied().map(Some).collect() };
+        let whole = Init::Return(whole);
+        if !fails || given != wanted.len() - 1 && results.len() != wanted.len() {
+            self.init_vars(cx, &places(wanted), results, whole);
+            return;
+        }
+        if given == wanted.len() - 1 {
+            self.init_vars(cx, &places(&wanted[..given]), results, whole);
+            return;
+        }
+        // A failing return writes `nil` for a result that has no zero
+        // value: that result is left unset.
+        for (at, (&result, &ty)) in results.iter().zip(wanted).enumerate() {
+            let mut name = result;
+            while let ExprKind::Paren(inner) = cx.tree.exprs[name].kind {
+                name = inner;
+            }
+            let nil = cx.body.uses.get(&name) == Some(&Ref::Universe(Predeclared::Nil));
+            let unset = at + 1 < wanted.len() && (self.never_nil(ty) || self.types.has_param(ty));
+            match nil && unset {
+                true => drop(self.operand(cx, result)),
+                false => drop(self.init_var(cx, result, None, Some(ty), "return statement")),
+            }
+        }
     }
 
     /// Declares the type parameters that the receiver `T[P, Q]` names.
@@ -2715,7 +2779,8 @@ impl<'a> Checker<'a> {
             }
             StmtKind::IncDec { x, inc } => {
                 let operand = self.value(cx, *x);
-                if operand.mode == Mode::Unknown || self.own_rules(cx) {
+                let operand = self.read(cx, operand);
+                if operand.mode == Mode::Unknown {
                     return;
                 }
                 if self.all_numeric(operand.ty) {
@@ -2749,10 +2814,8 @@ impl<'a> Checker<'a> {
             }
             StmtKind::Return(results) => match self.results.last().cloned().flatten() {
                 // `return` alone returns the results that have names.
-                Some((wanted, named)) if !(results.is_empty() && named) => {
-                    let wanted: Vec<Option<TypeId>> = wanted.into_iter().map(Some).collect();
-                    let whole = Init::Return(tree.stmts[id].span);
-                    self.init_vars(cx, &wanted, results, whole);
+                Some((wanted, named, fails)) if !(results.is_empty() && named) => {
+                    self.returned(cx, tree.stmts[id].span, &wanted, fails, results);
                 }
                 _ => {
                     for &result in results {
@@ -2784,7 +2847,7 @@ impl<'a> Checker<'a> {
                     // is not assigned to.
                     let declared = self.operand(cx, place);
                     let assigned = matches!(declared.mode, Mode::Variable | Mode::Unknown);
-                    if !assigned && !self.own_rules(cx) {
+                    if !assigned {
                         let message = format!("cannot assign to {}", self.expr_string(cx, place));
                         self.error(Code::CannotAssignTo, tree.exprs[place].span, message);
                     }
@@ -2807,7 +2870,7 @@ impl<'a> Checker<'a> {
                 op: AssignOp::Op(op),
                 lhs,
                 rhs,
-            } if !self.own_rules(cx) && lhs.len() == 1 && rhs.len() == 1 => {
+            } if lhs.len() == 1 && rhs.len() == 1 => {
                 if self.binary(cx, None, *op, lhs[0], rhs[0]).mode != Mode::Unknown {
                     self.lhs_var(cx, lhs[0]);
                 }
@@ -2863,6 +2926,7 @@ impl<'a> Checker<'a> {
                 body,
             } => {
                 let ranged = self.operand(cx, *x);
+                let ranged = self.read(cx, ranged);
                 let (key, value) = self.range_types(&ranged);
                 for (position, &target) in lhs.iter().enumerate() {
                     if !*define {
