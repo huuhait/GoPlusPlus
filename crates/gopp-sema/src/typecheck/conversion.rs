@@ -76,9 +76,18 @@ impl<'a> Checker<'a> {
             _ => self.convertible(&x, target).then(|| Operand::value(target)),
         };
         let Some(converted) = converted else {
+            // What is in an interface is taken out of it by an assertion.
+            let asserted = self.types.is_interface(x.ty)
+                && !self.types.is_interface(target)
+                && self.types.implements(target, x.ty, self.names);
             let message = format!(
-                "cannot convert {} to type {shown}",
-                self.describe(cx, arg, &x)
+                "cannot convert {} to type {shown}{}",
+                self.describe(cx, arg, &x),
+                if asserted {
+                    ": need type assertion"
+                } else {
+                    ""
+                }
             );
             self.error(Code::CannotConvert, span, message);
             return Operand::UNKNOWN;

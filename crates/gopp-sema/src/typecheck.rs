@@ -1753,6 +1753,14 @@ impl<'a> Checker<'a> {
                 mode: Mode::Type,
                 ty: self.typ(cx, expr),
             },
+            // `x.(type)` belongs to a type switch, which reads it itself.
+            ExprKind::TypeSwitchGuard { x, .. } => {
+                if self.value(cx, *x).mode != Mode::Unknown {
+                    let message = "use of .(type) outside type switch".to_owned();
+                    self.error(Code::TypeSwitchOutside, node.span, message);
+                }
+                Operand::UNKNOWN
+            }
             _ => Operand::UNKNOWN,
         }
     }
@@ -1870,6 +1878,14 @@ impl<'a> Checker<'a> {
         let x = self.operand(cx, base);
         let x = self.instantiated(cx, base, x);
         if x.mode == Mode::Unknown {
+            return Operand::UNKNOWN;
+        }
+        if matches!(x.mode, Mode::Builtin(_)) {
+            let message = format!(
+                "invalid use of {} in selector expression",
+                self.describe(cx, base, &x)
+            );
+            self.error(Code::BuiltinNotCalled, sel.span, message);
             return Operand::UNKNOWN;
         }
         // In a `.gopp` file a field or a method is reached through every
@@ -2896,6 +2912,26 @@ impl<'a> Checker<'a> {
                 // `return` alone returns the results that have names.
                 Some((wanted, named, fails)) if !(results.is_empty() && named) => {
                     self.returned(cx, tree.stmts[id].span, &wanted, fails, results);
+                }
+                // The results are returned by their names, which still
+                // denote them at the statement.
+                Some(_) => {
+                    let hidden = cx.body.hidden_results.get(&id);
+                    for &(result, inner) in hidden.into_iter().flatten() {
+                        let name = self.names.resolve(&cx.body.locals[result.0 as usize].name);
+                        let ty = self.locals.get(&result).map_or(Types::INVALID, |x| x.ty);
+                        let message = format!("result parameter {name} not in scope at return");
+                        let note =
+                            format!("inner declaration of var {name} {}", self.type_string(ty));
+                        let span = tree.stmts[id].span;
+                        if self.reported.insert((span, Code::ShadowedResult)) {
+                            let diagnostic = Diagnostic::new(Code::ShadowedResult, span, message);
+                            let inner = cx.body.locals[inner.0 as usize].span;
+                            let diagnostic =
+                                diagnostic.with_note(Code::NoteInnerDeclaration, Some(inner), note);
+                            self.sink.push(diagnostic);
+                        }
+                    }
                 }
                 _ => {
                     for &result in results {

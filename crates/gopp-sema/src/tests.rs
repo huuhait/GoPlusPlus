@@ -3357,6 +3357,111 @@ func f(a [3]int, p *[3]int, s []string, m map[string]bool, c chan int, send chan
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn returns_type_switches_and_values_of_interfaces_are_checked_as_go_checks_them() {
+    let text = r#"package p
+
+type E1 struct{ X int }
+type E2 struct{ X int }
+type T struct {
+	E1
+	E2
+}
+
+func f(t T, m map[int]int, x interface{}) (a, b int) {
+	_ = t.X
+	_ = T{}.X
+	_ = x.(type)
+	switch (x.(type)) {
+	}
+	for _ := range "" {
+	}
+	len.Println
+	_ = len.Println
+	if a > 0 {
+		a := 1
+		_ = a
+		return
+	}
+	{
+		b := 1
+		_ = b
+		{
+			return
+		}
+	}
+	return m[0]
+}
+
+func g(x interface{}) {
+	switch t := x.(type) {
+	case int:
+		var v bool = t
+		_ = v
+	case float32, complex64:
+		var v float32 = t
+		_ = v
+	default:
+		var v float32 = t
+		_ = v
+	}
+}
+
+type I interface{ m() }
+type C struct{}
+
+func (C) m() {}
+
+func h(e interface{}, i I, c C, pc *C) {
+	var _ int = e
+	var _ C = i
+	var _ *C = i
+	var _ string = i
+	_ = int(e)
+	_ = C(i)
+	c = i
+	i = c
+	e = i
+	e = c
+	_ = c == i
+	_ = e == 1
+	take(e)
+	take(i)
+}
+
+func take(c C) {}
+"#;
+    let expected = [
+        "a.go:11:8: ambiguous selector t.X",
+        "a.go:12:10: ambiguous selector T{}.X",
+        "a.go:13:6: use of .(type) outside type switch",
+        "a.go:14:10: use of .(type) outside type switch",
+        "a.go:16:8: no new variables on left side of :=",
+        "a.go:18:6: invalid use of len (built-in) in selector expression",
+        "a.go:19:10: invalid use of len (built-in) in selector expression",
+        "a.go:23:3: result parameter a not in scope at return",
+        "    a.go:21:3: inner declaration of var a int",
+        "a.go:29:4: result parameter b not in scope at return",
+        "    a.go:26:3: inner declaration of var b int",
+        "a.go:32:9: not enough return values",
+        "    have (int)",
+        "    want (int, int)",
+        "a.go:38:16: cannot use t (variable of type int) as bool value in variable declaration",
+        "a.go:41:19: cannot use t (variable of type any) as float32 value in variable declaration: need type assertion",
+        "a.go:44:19: cannot use t (variable of type any) as float32 value in variable declaration: need type assertion",
+        "a.go:55:14: cannot use e (variable of type any) as int value in variable declaration: need type assertion",
+        "a.go:56:12: cannot use i (variable of interface type I) as C value in variable declaration: need type assertion",
+        "a.go:57:13: cannot use i (variable of interface type I) as *C value in variable declaration: need type assertion",
+        "a.go:58:17: cannot use i (variable of interface type I) as string value in variable declaration",
+        "a.go:59:10: cannot convert e (variable of type any) to type int: need type assertion",
+        "a.go:60:8: cannot convert i (variable of interface type I) to type C: need type assertion",
+        "a.go:61:6: cannot use i (variable of interface type I) as C value in assignment: need type assertion",
+        "a.go:67:7: cannot use e (variable of type any) as C value in argument to take: need type assertion",
+        "a.go:68:7: cannot use i (variable of interface type I) as C value in argument to take: need type assertion",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -3975,7 +4080,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1956;
+const EXPECTED_ERRORS_REPORTED: usize = 1968;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

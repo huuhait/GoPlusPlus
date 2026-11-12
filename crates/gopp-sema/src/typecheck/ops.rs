@@ -916,8 +916,12 @@ impl<'a> Checker<'a> {
     /// Whether the operand `x` is surely no value of the type `to`. What
     /// an interface or a type parameter takes is not decided here yet.
     pub(super) fn not_assignable(&self, x: &Operand, to: TypeId) -> bool {
-        if self.open(x.ty) || self.open(to) || self.is_interface(x.ty) || self.is_interface(to) {
+        if self.open(x.ty) || self.open(to) || self.is_interface(to) {
             return false;
+        }
+        // What is in an interface is taken out of it by an assertion.
+        if self.is_interface(x.ty) {
+            return true;
         }
         if self.is_untyped(x.ty) {
             return self.implicit(x, to).is_err();

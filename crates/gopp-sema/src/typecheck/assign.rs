@@ -109,10 +109,17 @@ impl<'a> Checker<'a> {
         if let Some(to) = to
             && self.unfit(cx, &x, to, writes)
         {
+            let asserted =
+                self.types.is_interface(x.ty) && self.types.implements(to, x.ty, self.names);
             let message = format!(
-                "cannot use {} as {} value in {context}",
+                "cannot use {} as {} value in {context}{}",
                 self.describe(cx, expr, &x),
-                self.type_string(to)
+                self.type_string(to),
+                if asserted {
+                    ": need type assertion"
+                } else {
+                    ""
+                }
             );
             self.error(Code::CannotAssign, span, message);
             return Operand::UNKNOWN;
@@ -285,7 +292,13 @@ impl<'a> Checker<'a> {
             }
             return unknown;
         }
-        let values = self.multi_value(cx, rhs[0], lhs.len());
+        // `return m[k]` returns one value: only an assignment asks whether
+        // the key was there.
+        let asked = match init {
+            Init::Variables => lhs.len(),
+            Init::Return(_) => 0,
+        };
+        let values = self.multi_value(cx, rhs[0], asked);
         if values.len() == lhs.len() {
             let mut types = Vec::new();
             for (&to, value) in lhs.iter().zip(values) {

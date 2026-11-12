@@ -439,6 +439,7 @@ impl Context<'_> {
             scopes: Vec::new(),
             next_scope: 0,
             seen: FxHashSet::default(),
+            results: Vec::new(),
             lenient: false,
             used_imports: FxHashSet::default(),
             diagnostics: Vec::new(),
@@ -470,6 +471,9 @@ struct Resolver<'a> {
     next_scope: u32,
     /// The names on the left of the `:=` being resolved.
     seen: FxHashSet<Spur>,
+    /// The results with a name of each function that is being resolved,
+    /// the innermost last.
+    results: Vec<Vec<(Spur, LocalId)>>,
     /// Inside the arguments of a macro or an attribute, where a name may be
     /// a word of the macro's own: an unknown name is no error there.
     lenient: bool,
@@ -747,14 +751,20 @@ impl<'a> Resolver<'a> {
             (params, LocalKind::Param),
             (results, LocalKind::Result),
         ];
+        let mut named = Vec::new();
         for (list, kind) in kinds {
             for name in list.iter().filter_map(|param| param.name) {
-                self.declare(name, kind);
+                let local = self.declare(name, kind);
+                if let (LocalKind::Result, Some(local)) = (kind, local) {
+                    named.push((name.name, local));
+                }
             }
         }
+        self.results.push(named);
         if let Some(body) = body {
             self.stmts(&body.stmts);
         }
+        self.results.pop();
         self.close();
     }
 
@@ -1086,7 +1096,24 @@ impl<'a> Resolver<'a> {
                 self.exprs(lhs);
                 self.exprs(rhs);
             }
-            StmtKind::Return(results) => self.exprs(results),
+            StmtKind::Return(results) => {
+                self.exprs(results);
+                // `return` alone returns the results by their names, which
+                // must still denote them here.
+                let hidden: Vec<(LocalId, LocalId)> = match (&results[..], self.results.last()) {
+                    ([], Some(named)) => named
+                        .iter()
+                        .filter_map(|&(name, result)| {
+                            let now = self.visible.get(&name)?.local;
+                            (now != result).then_some((result, now))
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if !hidden.is_empty() {
+                    self.body.hidden_results.insert(id, hidden);
+                }
+            }
             StmtKind::If {
                 init,
                 cond,
@@ -1140,6 +1167,21 @@ impl<'a> Resolver<'a> {
                     } else {
                         self.target(target);
                     }
+                }
+                // `for _ := range x` declares nothing.
+                let blank = self.cx.blank;
+                let is_blank = |&target: &ExprId| matches!(file.exprs[target].kind, ExprKind::Name(name) if name == blank);
+                if let (true, Some(&last)) = (*define && lhs.iter().all(is_blank), lhs.last()) {
+                    let after = file.exprs[last].span.hi as usize;
+                    let operator =
+                        self.text[after..].find(":=").map_or(after, |at| after + at) as u32;
+                    let span = Span {
+                        lo: operator,
+                        hi: operator + 2,
+                        ..file.exprs[last].span
+                    };
+                    let message = "no new variables on left side of :=";
+                    self.error(Code::DefineNoNewVars, span, message);
                 }
                 self.block(body);
                 self.close();

@@ -110,6 +110,10 @@ pub struct Body {
     /// For a selector `x.sel` that is no name of a package, what it
     /// reaches.
     pub selections: FxHashMap<ExprId, Selection>,
+    /// For a `return` without values in a function whose results have
+    /// names: each result whose name denotes something else there, with
+    /// what it denotes.
+    pub hidden_results: FxHashMap<StmtId, Vec<(LocalId, LocalId)>>,
 }
 
 /// What a selector `x.sel` reaches, and the way to it.
