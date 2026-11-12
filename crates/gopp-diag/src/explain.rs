@@ -1831,6 +1831,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Give the function a body, or remove its type parameters.",
             "func f[T any](x T)       // error\nfunc f[T any](x T) {}    // ok",
         ),
+        GirUnsupported => (
+            "The program uses a part of the language that this version of the compiler \
+             cannot turn into code yet. The program is right; the compiler is not done.",
+            "Write the code another way for now, or wait for a later version.",
+            "func f(xs []int) { for range xs {} } // error: a range loop",
+        ),
+        GirVerify => (
+            "The compiler made code that breaks one of its own rules, or could not make it. \
+             This is a fault of the compiler, never of the program.",
+            "Report it, with the program that shows it.",
+            "// no program is meant to show this error",
+        ),
         _ => return None,
     };
     Some(Explanation {

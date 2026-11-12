@@ -1,0 +1,92 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\ntype Node struct {\n\tvalue int\n\tnext  *Node\n}\n\nfunc next() int { return 1 }\n\nfunc assigns(a, b, i int, arr [4]int, n, m *Node) int {\n\ta, b = b, a\n\tarr[i], i = 7, 2\n\tn.value, n = 3, m\n\tarr[next()] = next()\n\tarr[i] += next()\n\ta, _ = b, next()\n\tx, i := arr[i], 0\n\treturn x + i + a\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn main.next() -> i64 [go, external] {
+  let _0: i64
+  bb0:
+    _0 = const 1: i64  ; a.gopp:8:19
+    return  ; a.gopp:8:19
+}
+
+fn main.assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *main.Node, _6: *main.Node) -> i64 [go, external] {
+  let _0: i64
+  let _1: i64 "a"
+  let _2: i64 "b"
+  let _3: i64 "i"
+  let _4: [4]i64 "arr"
+  let _5: *main.Node "n"
+  let _6: *main.Node "m"
+  let _7: i64
+  let _8: i64
+  let _9: u64
+  let _10: bool
+  let _11: *main.Node
+  let _12: *main.Node
+  let _13: i64
+  let _14: u64
+  let _15: i64
+  let _16: bool
+  let _17: u64
+  let _18: bool
+  let _19: i64
+  let _20: i64
+  let _21: i64
+  let _22: i64
+  let _23: u64
+  let _24: bool
+  let _25: i64
+  let _26: i64 "x"
+  let _27: i64
+  bb0:
+    _7 = copy _2  ; a.gopp:11:2
+    _8 = copy _1  ; a.gopp:11:2
+    _1 = copy _7  ; a.gopp:11:2
+    _2 = copy _8  ; a.gopp:11:2
+    _9 = int_to_int(copy _3) as u64  ; a.gopp:12:2
+    _10 = lt(copy _9, const 4: u64)  ; a.gopp:12:2
+    assert(copy _10 == true, Bounds(copy _9, const 4: u64)) -> [success: bb1, unwind: continue]  ; a.gopp:12:2
+  bb1:
+    _4[_9] = const 7: i64  ; a.gopp:12:2
+    _3 = const 2: i64  ; a.gopp:12:2
+    _11 = copy _5  ; a.gopp:13:2
+    _12 = copy _6  ; a.gopp:13:2
+    (*_11).0 = const 3: i64  ; a.gopp:13:2
+    _5 = copy _12  ; a.gopp:13:2
+    _13 = call const fn @main.next() -> [return: bb2, unwind: continue]  ; a.gopp:14:6
+  bb2:
+    _14 = int_to_int(copy _13) as u64  ; a.gopp:14:2
+    _15 = call const fn @main.next() -> [return: bb3, unwind: continue]  ; a.gopp:14:16
+  bb3:
+    _16 = lt(copy _14, const 4: u64)  ; a.gopp:14:2
+    assert(copy _16 == true, Bounds(copy _14, const 4: u64)) -> [success: bb4, unwind: continue]  ; a.gopp:14:2
+  bb4:
+    _4[_14] = copy _15  ; a.gopp:14:2
+    _17 = int_to_int(copy _3) as u64  ; a.gopp:15:2
+    _18 = lt(copy _17, const 4: u64)  ; a.gopp:15:2
+    assert(copy _18 == true, Bounds(copy _17, const 4: u64)) -> [success: bb5, unwind: continue]  ; a.gopp:15:2
+  bb5:
+    _19 = copy _4[_17]  ; a.gopp:15:2
+    _20 = call const fn @main.next() -> [return: bb6, unwind: continue]  ; a.gopp:15:12
+  bb6:
+    _4[_17] = add(copy _19, copy _20)  ; a.gopp:15:2
+    _21 = copy _2  ; a.gopp:16:2
+    _22 = call const fn @main.next() -> [return: bb7, unwind: continue]  ; a.gopp:16:12
+  bb7:
+    _1 = copy _21  ; a.gopp:16:2
+    _23 = int_to_int(copy _3) as u64  ; a.gopp:17:2
+    _24 = lt(copy _23, const 4: u64)  ; a.gopp:17:10
+    assert(copy _24 == true, Bounds(copy _23, const 4: u64)) -> [success: bb8, unwind: continue]  ; a.gopp:17:10
+  bb8:
+    _25 = copy _4[_23]  ; a.gopp:17:2
+    storage_live(_26)  ; a.gopp:17:2
+    _26 = copy _25  ; a.gopp:17:2
+    _3 = const 0: i64  ; a.gopp:17:2
+    _27 = add(copy _26, copy _3)  ; a.gopp:18:2
+    _0 = add(copy _27, copy _1)  ; a.gopp:18:2
+    storage_dead(_26)  ; a.gopp:18:2
+    return  ; a.gopp:18:2
+}

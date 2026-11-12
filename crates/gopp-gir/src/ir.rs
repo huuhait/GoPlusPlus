@@ -407,6 +407,87 @@ pub enum ScopeKind {
     Inlined(FuncId),
 }
 
+impl TerminatorKind {
+    /// Where the end of a block leads, and whether by an unwind edge.
+    pub fn successors(&self) -> Vec<(BlockId, bool)> {
+        let unwind = |action: &UnwindAction| match action {
+            UnwindAction::Cleanup(block) => Some((*block, true)),
+            _ => None,
+        };
+        match self {
+            Self::Goto(target) => vec![(*target, false)],
+            Self::Switch {
+                cases, otherwise, ..
+            } => {
+                let mut all: Vec<_> = cases.iter().map(|&(_, target)| (target, false)).collect();
+                all.push((*otherwise, false));
+                all
+            }
+            Self::Call {
+                target,
+                unwind: action,
+                ..
+            } => {
+                let target = target.map(|target| (target, false));
+                target.into_iter().chain(unwind(action)).collect()
+            }
+            Self::Drop {
+                target,
+                unwind: action,
+                ..
+            }
+            | Self::Assert {
+                target,
+                unwind: action,
+                ..
+            } => std::iter::once((*target, false))
+                .chain(unwind(action))
+                .collect(),
+            Self::Return | Self::Unreachable | Self::Resume => Vec::new(),
+        }
+    }
+
+    /// Every block that the end of a block names, to be changed.
+    pub(crate) fn each_target(&mut self, mut each: impl FnMut(&mut BlockId)) {
+        let unwind = |action: &mut UnwindAction, each: &mut dyn FnMut(&mut BlockId)| {
+            if let UnwindAction::Cleanup(block) = action {
+                each(block);
+            }
+        };
+        match self {
+            Self::Goto(target) => each(target),
+            Self::Switch {
+                cases, otherwise, ..
+            } => {
+                cases.iter_mut().for_each(|(_, target)| each(target));
+                each(otherwise);
+            }
+            Self::Call {
+                target,
+                unwind: action,
+                ..
+            } => {
+                target.iter_mut().for_each(&mut each);
+                unwind(action, &mut each);
+            }
+            Self::Drop {
+                target,
+                unwind: action,
+                ..
+            }
+            | Self::Assert {
+                target,
+                unwind: action,
+                ..
+            } => {
+                each(target);
+                unwind(action, &mut each);
+            }
+            Self::Return | Self::Unreachable | Self::Resume => {}
+        }
+    }
+}
+
 impl Place {
     pub fn local(local: LocalId) -> Self {
         Self {

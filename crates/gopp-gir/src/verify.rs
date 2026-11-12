@@ -352,54 +352,13 @@ impl<'m> Verifier<'m> {
         block.cleanup || block.catch
     }
 
-    /// Where the end of a block leads, and whether by an unwind edge.
-    fn successors(term: &TerminatorKind) -> Vec<(BlockId, bool)> {
-        let unwind = |action: &UnwindAction| match action {
-            UnwindAction::Cleanup(block) => Some((*block, true)),
-            _ => None,
-        };
-        match term {
-            TerminatorKind::Goto(target) => vec![(*target, false)],
-            TerminatorKind::Switch {
-                cases, otherwise, ..
-            } => {
-                let mut all: Vec<_> = cases.iter().map(|&(_, target)| (target, false)).collect();
-                all.push((*otherwise, false));
-                all
-            }
-            TerminatorKind::Call {
-                target,
-                unwind: action,
-                ..
-            } => {
-                let target = target.map(|target| (target, false));
-                target.into_iter().chain(unwind(action)).collect()
-            }
-            TerminatorKind::Drop {
-                target,
-                unwind: action,
-                ..
-            }
-            | TerminatorKind::Assert {
-                target,
-                unwind: action,
-                ..
-            } => std::iter::once((*target, false))
-                .chain(unwind(action))
-                .collect(),
-            TerminatorKind::Return | TerminatorKind::Unreachable | TerminatorKind::Resume => {
-                Vec::new()
-            }
-        }
-    }
-
     /// Whether every edge leads to a block of the function.
     fn targets(&mut self, func: &Function) -> bool {
         let count = func.blocks.len() as u32;
         let mut valid = true;
         for (id, block) in func.blocks.iter() {
             self.steps += 1;
-            for (target, _) in Self::successors(&block.term.kind) {
+            for (target, _) in block.term.kind.successors() {
                 if raw(target) >= count {
                     self.at = Some((raw(id), block.stmts.len() as u32));
                     self.error(21, format!("no block bb{}", raw(target)));
@@ -426,7 +385,7 @@ impl<'m> Verifier<'m> {
             }
             let block = &func.blocks[id];
             self.at = Some((raw(id), block.stmts.len() as u32));
-            for (target, unwinds) in Self::successors(&block.term.kind) {
+            for (target, unwinds) in block.term.kind.successors() {
                 self.steps += 1;
                 let to = &func.blocks[target];
                 if raw(target) == 0 {

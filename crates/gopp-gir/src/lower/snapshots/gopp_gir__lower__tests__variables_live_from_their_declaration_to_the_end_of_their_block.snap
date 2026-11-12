@@ -1,0 +1,85 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\nfunc scopes(n int) int {\n\ta := 1\n\t{\n\t\ta := a + 1\n\t\tb := a\n\t\tif b > n {\n\t\t\tc := b\n\t\t\treturn c\n\t\t}\n\t\tfor d := 0; d < n; d++ {\n\t\t\te := d\n\t\t\tif e == 3 {\n\t\t\t\tbreak\n\t\t\t}\n\t\t\tvar f int\n\t\t\tf = e\n\t\t\t_ = f\n\t\t}\n\t}\n\tvar g, h int\n\treturn a + g + h\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn main.scopes(_1: i64) -> i64 [go, external] {
+  scope 1: block in 0  ; a.gopp:6:3
+  scope 2: block in 1  ; a.gopp:9:4
+  scope 3: block in 1  ; a.gopp:12:7
+  scope 4: block in 3  ; a.gopp:13:4
+  let _0: i64
+  let _1: i64 "n"
+  let _2: i64 "a"
+  let _3: i64 "a"
+  let _4: i64 "b"
+  let _5: bool
+  let _6: i64 "c"
+  let _7: i64 "d"
+  let _8: bool
+  let _9: i64 "e"
+  let _10: bool
+  let _11: i64 "f"
+  let _12: i64 "g"
+  let _13: i64 "h"
+  let _14: i64
+  bb0:
+    storage_live(_2)  ; a.gopp:4:2
+    _2 = const 1: i64  ; a.gopp:4:2
+    storage_live(_3)  ; a.gopp:6:3 scope 1
+    _3 = add(copy _2, const 1: i64)  ; a.gopp:6:3 scope 1
+    storage_live(_4)  ; a.gopp:7:3 scope 1
+    _4 = copy _3  ; a.gopp:7:3 scope 1
+    _5 = gt(copy _4, copy _1)  ; a.gopp:8:6 scope 1
+    switch copy _5 [0: bb2, otherwise: bb1]  ; a.gopp:8:6 scope 1
+  bb1:
+    storage_live(_6)  ; a.gopp:9:4 scope 2
+    _6 = copy _4  ; a.gopp:9:4 scope 2
+    _0 = copy _6  ; a.gopp:10:4 scope 2
+    storage_dead(_6)  ; a.gopp:10:4 scope 2
+    storage_dead(_4)  ; a.gopp:10:4 scope 2
+    storage_dead(_3)  ; a.gopp:10:4 scope 2
+    storage_dead(_2)  ; a.gopp:10:4 scope 2
+    return  ; a.gopp:10:4 scope 2
+  bb2:
+    storage_live(_7)  ; a.gopp:12:7 scope 3
+    _7 = const 0: i64  ; a.gopp:12:7 scope 3
+    goto bb3  ; a.gopp:12:7 scope 3
+  bb3:
+    _8 = lt(copy _7, copy _1)  ; a.gopp:12:15 scope 3
+    switch copy _8 [0: bb8, otherwise: bb4]  ; a.gopp:12:15 scope 3
+  bb4:
+    storage_live(_9)  ; a.gopp:13:4 scope 4
+    _9 = copy _7  ; a.gopp:13:4 scope 4
+    _10 = eq(copy _9, const 3: i64)  ; a.gopp:14:7 scope 4
+    switch copy _10 [0: bb6, otherwise: bb5]  ; a.gopp:14:7 scope 4
+  bb5:
+    storage_dead(_9)  ; a.gopp:15:5 scope 4
+    goto bb8  ; a.gopp:15:5 scope 4
+  bb6:
+    storage_live(_11)  ; a.gopp:17:4 scope 4
+    _11 = const zero: i64  ; a.gopp:17:4 scope 4
+    _11 = copy _9  ; a.gopp:18:4 scope 4
+    storage_dead(_11)  ; a.gopp:20:3 scope 4
+    storage_dead(_9)  ; a.gopp:20:3 scope 4
+    goto bb7  ; a.gopp:20:3 scope 3
+  bb7:
+    _7 = add(copy _7, const 1: i64)  ; a.gopp:12:22 scope 3
+    goto bb3  ; a.gopp:12:22 scope 3
+  bb8:
+    storage_dead(_7)  ; a.gopp:20:3 scope 3
+    storage_dead(_4)  ; a.gopp:21:2 scope 1
+    storage_dead(_3)  ; a.gopp:21:2 scope 1
+    storage_live(_12)  ; a.gopp:22:2
+    _12 = const zero: i64  ; a.gopp:22:2
+    storage_live(_13)  ; a.gopp:22:2
+    _13 = const zero: i64  ; a.gopp:22:2
+    _14 = add(copy _2, copy _12)  ; a.gopp:23:2
+    _0 = add(copy _14, copy _13)  ; a.gopp:23:2
+    storage_dead(_13)  ; a.gopp:23:2
+    storage_dead(_12)  ; a.gopp:23:2
+    storage_dead(_2)  ; a.gopp:23:2
+    return  ; a.gopp:23:2
+}

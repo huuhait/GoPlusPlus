@@ -1,0 +1,148 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\ntype Counter struct {\n\tn int\n}\n\nvar total int\n\nfunc bump() int {\n\ttotal++\n\treturn total\n}\n\nfunc (c Counter) add(a, b int) int { return c.n + a + b }\n\nfunc three(a, b, c int) int { return a + b + c }\n\nfunc order(c Counter, x int, p *int) int {\n\ta := x + bump()\n\tb := bump() + x\n\td := total + bump() + total\n\te := three(x, bump(), *p)\n\tf := c.add(bump(), c.n)\n\tg := Counter{x}.add(total, bump())\n\th := [3]int{total, bump(), total}\n\treturn a + b + d + e + f + g + h[0]\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+global var @main.total: i64 [external]
+
+fn main.bump() -> i64 [go, external] {
+  let _0: i64
+  let _1: *i64
+  let _2: *i64
+  bb0:
+    _1 = const global @main.total  ; a.gopp:10:2
+    (*_1) = add(copy (*_1), const 1: i64)  ; a.gopp:10:2
+    _2 = const global @main.total  ; a.gopp:11:2
+    _0 = copy (*_2)  ; a.gopp:11:2
+    return  ; a.gopp:11:2
+}
+
+fn main.Counter.add(_1: main.Counter, _2: i64, _3: i64) -> i64 [go, external] {
+  let _0: i64
+  let _1: main.Counter "c"
+  let _2: i64 "a"
+  let _3: i64 "b"
+  let _4: i64
+  bb0:
+    _4 = add(copy _1.0, copy _2)  ; a.gopp:14:38
+    _0 = add(copy _4, copy _3)  ; a.gopp:14:38
+    return  ; a.gopp:14:38
+}
+
+fn main.three(_1: i64, _2: i64, _3: i64) -> i64 [go, external] {
+  let _0: i64
+  let _1: i64 "a"
+  let _2: i64 "b"
+  let _3: i64 "c"
+  let _4: i64
+  bb0:
+    _4 = add(copy _1, copy _2)  ; a.gopp:16:31
+    _0 = add(copy _4, copy _3)  ; a.gopp:16:31
+    return  ; a.gopp:16:31
+}
+
+fn main.order(_1: main.Counter, _2: i64, _3: *i64) -> i64 [go, external] {
+  let _0: i64
+  let _1: main.Counter "c"
+  let _2: i64 "x"
+  let _3: *i64 "p"
+  let _4: i64
+  let _5: i64
+  let _6: i64 "a"
+  let _7: i64
+  let _8: i64 "b"
+  let _9: *i64
+  let _10: i64
+  let _11: i64
+  let _12: i64
+  let _13: *i64
+  let _14: i64 "d"
+  let _15: i64
+  let _16: i64
+  let _17: i64
+  let _18: i64 "e"
+  let _19: main.Counter
+  let _20: i64
+  let _21: i64
+  let _22: i64 "f"
+  let _23: main.Counter
+  let _24: *i64
+  let _25: i64
+  let _26: i64
+  let _27: i64
+  let _28: i64 "g"
+  let _29: *i64
+  let _30: i64
+  let _31: i64
+  let _32: *i64
+  let _33: [3]i64 "h"
+  let _34: i64
+  let _35: i64
+  let _36: i64
+  let _37: i64
+  let _38: i64
+  bb0:
+    _4 = copy _2  ; a.gopp:19:2
+    _5 = call const fn @main.bump() -> [return: bb1, unwind: continue]  ; a.gopp:19:11
+  bb1:
+    storage_live(_6)  ; a.gopp:19:2
+    _6 = add(copy _4, copy _5)  ; a.gopp:19:2
+    _7 = call const fn @main.bump() -> [return: bb2, unwind: continue]  ; a.gopp:20:7
+  bb2:
+    storage_live(_8)  ; a.gopp:20:2
+    _8 = add(copy _7, copy _2)  ; a.gopp:20:2
+    _9 = const global @main.total  ; a.gopp:21:2
+    _10 = copy (*_9)  ; a.gopp:21:2
+    _11 = call const fn @main.bump() -> [return: bb3, unwind: continue]  ; a.gopp:21:15
+  bb3:
+    _12 = add(copy _10, copy _11)  ; a.gopp:21:2
+    _13 = const global @main.total  ; a.gopp:21:2
+    storage_live(_14)  ; a.gopp:21:2
+    _14 = add(copy _12, copy (*_13))  ; a.gopp:21:2
+    _15 = copy _2  ; a.gopp:22:2
+    _16 = call const fn @main.bump() -> [return: bb4, unwind: continue]  ; a.gopp:22:16
+  bb4:
+    _17 = call const fn @main.three(copy _15, copy _16, copy (*_3)) -> [return: bb5, unwind: continue]  ; a.gopp:22:7
+  bb5:
+    storage_live(_18)  ; a.gopp:22:2
+    _18 = copy _17  ; a.gopp:22:2
+    _19 = copy _1  ; a.gopp:23:2
+    _20 = call const fn @main.bump() -> [return: bb6, unwind: continue]  ; a.gopp:23:13
+  bb6:
+    _21 = call const fn @main.Counter.add(copy _19, copy _20, copy _1.0) -> [return: bb7, unwind: continue]  ; a.gopp:23:7
+  bb7:
+    storage_live(_22)  ; a.gopp:23:2
+    _22 = copy _21  ; a.gopp:23:2
+    _23 = main.Counter {copy _2}  ; a.gopp:24:2
+    _24 = const global @main.total  ; a.gopp:24:2
+    _25 = copy (*_24)  ; a.gopp:24:2
+    _26 = call const fn @main.bump() -> [return: bb8, unwind: continue]  ; a.gopp:24:29
+  bb8:
+    _27 = call const fn @main.Counter.add(copy _23, copy _25, copy _26) -> [return: bb9, unwind: continue]  ; a.gopp:24:7
+  bb9:
+    storage_live(_28)  ; a.gopp:24:2
+    _28 = copy _27  ; a.gopp:24:2
+    _29 = const global @main.total  ; a.gopp:25:2
+    _30 = copy (*_29)  ; a.gopp:25:2
+    _31 = call const fn @main.bump() -> [return: bb10, unwind: continue]  ; a.gopp:25:21
+  bb10:
+    _32 = const global @main.total  ; a.gopp:25:2
+    storage_live(_33)  ; a.gopp:25:2
+    _33 = array i64 {copy _30, copy _31, copy (*_32)}  ; a.gopp:25:2
+    _34 = add(copy _6, copy _8)  ; a.gopp:26:2
+    _35 = add(copy _34, copy _14)  ; a.gopp:26:2
+    _36 = add(copy _35, copy _18)  ; a.gopp:26:2
+    _37 = add(copy _36, copy _22)  ; a.gopp:26:2
+    _38 = add(copy _37, copy _28)  ; a.gopp:26:2
+    _0 = add(copy _38, copy _33[0])  ; a.gopp:26:2
+    storage_dead(_33)  ; a.gopp:26:2
+    storage_dead(_28)  ; a.gopp:26:2
+    storage_dead(_22)  ; a.gopp:26:2
+    storage_dead(_18)  ; a.gopp:26:2
+    storage_dead(_14)  ; a.gopp:26:2
+    storage_dead(_8)  ; a.gopp:26:2
+    storage_dead(_6)  ; a.gopp:26:2
+    return  ; a.gopp:26:2
+}

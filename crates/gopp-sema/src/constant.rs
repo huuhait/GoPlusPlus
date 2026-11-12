@@ -569,6 +569,21 @@ impl Value {
         }
     }
 
+    /// The low 64 bits of an integer, as a machine word holds it.
+    pub fn low_bits(&self) -> Option<u64> {
+        match self {
+            Self::Int64(x) => Some(*x as u64),
+            Self::Int(x) => {
+                let low = x.iter_u64_digits().next().unwrap_or(0);
+                Some(match x.sign() {
+                    Sign::Minus => low.wrapping_neg(),
+                    _ => low,
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(x) => Some(*x),

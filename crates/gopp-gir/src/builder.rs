@@ -47,6 +47,8 @@ pub struct FuncBuilder<'m> {
     /// last.
     scopes: Vec<ScopeId>,
     loc: Span,
+    /// The blocks in the order in which they were chosen to be written.
+    written: Vec<usize>,
 }
 
 fn block_id(at: usize) -> BlockId {
@@ -102,11 +104,25 @@ impl<'m> FuncBuilder<'m> {
             current: None,
             scopes: Vec::new(),
             loc,
+            written: Vec::new(),
         })
     }
 
     pub fn types(&mut self) -> &mut TypeInterner {
         &mut self.module.types
+    }
+
+    /// The module that the function is built in, for what the body
+    /// needs of it: a function that it calls, a global that it reads.
+    pub fn module(&mut self) -> &mut Module {
+        self.module
+    }
+
+    /// Whether statements can be written: a block is chosen and has no
+    /// end yet.
+    pub fn is_open(&self) -> bool {
+        self.current
+            .is_some_and(|current| self.blocks[current].term.is_none())
     }
 
     pub fn set_no_unwind(&mut self) {
@@ -163,6 +179,10 @@ impl<'m> FuncBuilder<'m> {
         })
     }
 
+    pub fn local_kind(&self, local: LocalId) -> LocalKind {
+        self.func.locals[local].kind
+    }
+
     pub fn set_name(&mut self, local: LocalId, name: &str) {
         self.func.locals[local].name = Some(name.to_owned());
     }
@@ -174,6 +194,10 @@ impl<'m> FuncBuilder<'m> {
     /// Where in the source what is written next comes from.
     pub fn set_loc(&mut self, loc: Span) {
         self.loc = loc;
+    }
+
+    pub fn loc(&self) -> Span {
+        self.loc
     }
 
     /// Opens a debug scope inside the one that is open.
@@ -202,7 +226,9 @@ impl<'m> FuncBuilder<'m> {
     }
 
     pub fn switch_to(&mut self, block: BlockId) {
-        self.current = Some(block.into_raw().into_u32() as usize);
+        let at = block.into_raw().into_u32() as usize;
+        self.current = Some(at);
+        self.written.push(at);
     }
 
     pub fn set_cleanup(&mut self, block: BlockId) {
@@ -637,6 +663,102 @@ impl<'m> FuncBuilder<'m> {
             target,
             unwind,
         })
+    }
+
+    /// Takes away the blocks that nothing leads to from the first; such
+    /// a block needs no end. A block that only goes on to another is
+    /// passed by. The others come in the order in which they were
+    /// first written.
+    pub fn drop_unreached(&mut self) {
+        let count = self.blocks.len();
+        // Where each block leads at once if it is empty; a ring of
+        // empty blocks is left as it is.
+        let next = |blocks: &[Open], at: usize| match &blocks[at] {
+            Open {
+                stmts,
+                term: Some(term),
+                cleanup: false,
+                catch: false,
+                ..
+            } if stmts.is_empty() => match term.kind {
+                TerminatorKind::Goto(to) => Some(to.into_raw().into_u32() as usize),
+                _ => None,
+            },
+            _ => None,
+        };
+        let mut ends: Vec<Option<usize>> = vec![None; count];
+        for start in 0..count {
+            let mut path = Vec::new();
+            let mut at = start;
+            let end = loop {
+                if let Some(known) = ends[at] {
+                    break known;
+                }
+                match next(&self.blocks, at) {
+                    Some(to) if to < count && !path.contains(&at) && path.len() < count => {
+                        path.push(at);
+                        at = to;
+                    }
+                    _ => break at,
+                }
+            };
+            ends[at] = Some(end);
+            for passed in path {
+                ends[passed] = Some(end);
+            }
+        }
+        for block in &mut self.blocks {
+            if let Some(term) = &mut block.term {
+                term.kind.each_target(|to| {
+                    let at = to.into_raw().into_u32() as usize;
+                    if let Some(Some(end)) = ends.get(at) {
+                        *to = block_id(*end);
+                    }
+                });
+            }
+        }
+        let mut reached = vec![false; count];
+        let mut rest = vec![0];
+        while let Some(at) = rest.pop() {
+            if at >= count || std::mem::replace(&mut reached[at], true) {
+                continue;
+            }
+            if let Some(term) = &self.blocks[at].term {
+                let targets = term.kind.successors();
+                rest.extend(
+                    targets
+                        .iter()
+                        .map(|(to, _)| to.into_raw().into_u32() as usize),
+                );
+            }
+        }
+        let written = std::mem::take(&mut self.written);
+        let mut placed = vec![false; count];
+        let mut order = Vec::with_capacity(count);
+        for at in std::iter::once(0).chain(written).chain(0..count) {
+            if at < count && reached[at] && !std::mem::replace(&mut placed[at], true) {
+                order.push(at);
+            }
+        }
+        let mut new = vec![block_id(0); count];
+        for (to, &from) in order.iter().enumerate() {
+            new[from] = block_id(to);
+        }
+        let mut old: Vec<Option<Open>> = std::mem::take(&mut self.blocks)
+            .into_iter()
+            .map(Some)
+            .collect();
+        for from in order {
+            let Some(mut block) = old[from].take() else {
+                continue;
+            };
+            if let Some(term) = &mut block.term {
+                term.kind
+                    .each_target(|to| *to = new[to.into_raw().into_u32() as usize]);
+            }
+            self.blocks.push(block);
+        }
+        self.current = None;
     }
 
     /// The function in its module: every block has its end.

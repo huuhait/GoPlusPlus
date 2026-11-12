@@ -9,12 +9,19 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+gopp-diag = { path = "../gopp-diag" }
+gopp-sema = { path = "../gopp-sema" }
+gopp-span = { path = "../gopp-span" }
+gopp-syntax = { path = "../gopp-syntax" }
 gopp-target = { path = "../gopp-target" }
 la-arena.workspace = true
+lasso.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 smallvec.workspace = true
+stacker.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 gopp-testutil = { path = "../gopp-testutil" }

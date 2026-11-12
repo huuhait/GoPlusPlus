@@ -1,0 +1,95 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\ntype Point struct {\n\tx, y int\n}\n\ntype Box struct {\n\tat    Point\n\tsizes [3]int\n\tnext  *Box\n}\n\nfunc literals(a int, next *Box) Box {\n\tp := Point{y: a}\n\tsizes := [3]int{1, 2: a}\n\tgrid := [2][2]int{{1, a}, {}}\n\t_ = grid\n\tvar many [100]int8\n\tmany = [100]int8{5: 1, 2}\n\t_ = many\n\treturn Box{p, sizes, next}\n}\n\nfunc places(b *Box, i int, grid *[4][2]float64) float64 {\n\tb.at.x = b.sizes[i]\n\tb.next.sizes[2] = i\n\tp := &b.at\n\tp = Point{1, 2}\n\tp = Point{p.y, p.x}\n\tp.y++\n\tq := &b.sizes[i]\n\tq += len(b.sizes) + len(grid)\n\tq = *q * 2\n\tgrid[i][1] = grid[0][i]\n\tb = b.next\n\treturn (*grid)[3][0]\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn main.literals(_1: i64, _2: *main.Box) -> main.Box [go, external] {
+  let _0: main.Box
+  let _1: i64 "a"
+  let _2: *main.Box "next"
+  let _3: main.Point "p"
+  let _4: [3]i64 "sizes"
+  let _5: [2]i64
+  let _6: [2]i64
+  let _7: [2][2]i64 "grid"
+  let _8: [100]i8 "many"
+  let _9: [100]i8
+  bb0:
+    storage_live(_3)  ; a.gopp:14:2
+    _3 = main.Point {const zero: i64, copy _1}  ; a.gopp:14:2
+    storage_live(_4)  ; a.gopp:15:2
+    _4 = array i64 {const 1: i64, const zero: i64, copy _1}  ; a.gopp:15:2
+    _5 = array i64 {const 1: i64, copy _1}  ; a.gopp:16:2
+    _6 = array i64 {const zero: i64, const zero: i64}  ; a.gopp:16:2
+    storage_live(_7)  ; a.gopp:16:2
+    _7 = array [2]i64 {copy _5, copy _6}  ; a.gopp:16:2
+    storage_live(_8)  ; a.gopp:18:2
+    _8 = const zero: [100]i8  ; a.gopp:18:2
+    _9 = const zero: [100]i8  ; a.gopp:19:2
+    _9[5] = const 1: i8  ; a.gopp:19:2
+    _9[6] = const 2: i8  ; a.gopp:19:2
+    _8 = copy _9  ; a.gopp:19:2
+    _0 = main.Box {copy _3, copy _4, copy _2}  ; a.gopp:21:2
+    storage_dead(_8)  ; a.gopp:21:2
+    storage_dead(_7)  ; a.gopp:21:2
+    storage_dead(_4)  ; a.gopp:21:2
+    storage_dead(_3)  ; a.gopp:21:2
+    return  ; a.gopp:21:2
+}
+
+fn main.places(_1: *main.Box, _2: i64, _3: *[4][2]f64) -> f64 [go, external] {
+  let _0: f64
+  let _1: *main.Box "b"
+  let _2: i64 "i"
+  let _3: *[4][2]f64 "grid"
+  let _4: u64
+  let _5: bool
+  let _6: *main.Point "p"
+  let _7: main.Point
+  let _8: main.Point
+  let _9: u64
+  let _10: bool
+  let _11: *i64 "q"
+  let _12: u64
+  let _13: u64
+  let _14: bool
+  let _15: bool
+  bb0:
+    _4 = int_to_int(copy _2) as u64  ; a.gopp:25:2
+    _5 = lt(copy _4, const 3: u64)  ; a.gopp:25:11
+    assert(copy _5 == true, Bounds(copy _4, const 3: u64)) -> [success: bb1, unwind: continue]  ; a.gopp:25:11
+  bb1:
+    (*_1).0.0 = copy (*_1).1[_4]  ; a.gopp:25:2
+    (*(*_1).2).1[2] = copy _2  ; a.gopp:26:2
+    storage_live(_6)  ; a.gopp:27:2
+    _6 = &mut (*_1).0  ; a.gopp:27:2
+    _7 = main.Point {const 1: i64, const 2: i64}  ; a.gopp:28:2
+    (*_6) = copy _7  ; a.gopp:28:2
+    _8 = main.Point {copy (*_6).1, copy (*_6).0}  ; a.gopp:29:2
+    (*_6) = copy _8  ; a.gopp:29:2
+    (*_6).1 = add(copy (*_6).1, const 1: i64)  ; a.gopp:30:2
+    _9 = int_to_int(copy _2) as u64  ; a.gopp:31:2
+    _10 = lt(copy _9, const 3: u64)  ; a.gopp:31:8
+    assert(copy _10 == true, Bounds(copy _9, const 3: u64)) -> [success: bb2, unwind: continue]  ; a.gopp:31:8
+  bb2:
+    storage_live(_11)  ; a.gopp:31:2
+    _11 = &mut (*_1).1[_9]  ; a.gopp:31:2
+    (*_11) = add(copy (*_11), const 7: i64)  ; a.gopp:32:2
+    (*_11) = mul(copy (*_11), const 2: i64)  ; a.gopp:33:2
+    _12 = int_to_int(copy _2) as u64  ; a.gopp:34:2
+    _13 = int_to_int(copy _2) as u64  ; a.gopp:34:2
+    _14 = lt(copy _13, const 2: u64)  ; a.gopp:34:15
+    assert(copy _14 == true, Bounds(copy _13, const 2: u64)) -> [success: bb3, unwind: continue]  ; a.gopp:34:15
+  bb3:
+    _15 = lt(copy _12, const 4: u64)  ; a.gopp:34:2
+    assert(copy _15 == true, Bounds(copy _12, const 4: u64)) -> [success: bb4, unwind: continue]  ; a.gopp:34:2
+  bb4:
+    (*_3)[_12][1] = copy (*_3)[0][_13]  ; a.gopp:34:2
+    _1 = copy (*_1).2  ; a.gopp:35:2
+    _0 = copy (*_3)[3][0]  ; a.gopp:36:2
+    storage_dead(_11)  ; a.gopp:36:2
+    storage_dead(_6)  ; a.gopp:36:2
+    return  ; a.gopp:36:2
+}

@@ -421,12 +421,19 @@ dependencies = [
 name = "gopp-gir"
 version = "0.1.0"
 dependencies = [
+ "gopp-diag",
+ "gopp-sema",
+ "gopp-span",
+ "gopp-syntax",
  "gopp-target",
  "gopp-testutil",
+ "insta",
  "la-arena",
+ "lasso",
  "rayon",
  "rustc-hash",
  "smallvec",
+ "stacker",
  "thiserror",
 ]
 

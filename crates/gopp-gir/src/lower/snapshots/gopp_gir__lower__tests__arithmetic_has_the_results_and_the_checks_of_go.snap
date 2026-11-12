@@ -1,0 +1,122 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\nfunc ints(a, b int, u uint8, n uint, k int) int {\n\tc := a + b*3 - a/b\n\tc += a % 4\n\tc = c&b | a ^ b\n\tc &^= 7\n\tc = -c + ^a\n\tx := u << n\n\ty := a >> k\n\tz := a << 70\n\t_, _, _ = x, y, z\n\treturn c / 8\n}\n\nfunc floats(x, y float64, f float32) float64 {\n\tq := x / y\n\tq -= float64(f) * 0.5\n\treturn -q\n}\n\nfunc compares(a, b int, x float64, p, q *int) bool {\n\tok := a < b\n\tok = a >= b\n\tok = x != 1.5\n\tok = p == q\n\treturn !ok\n}\n\nfunc converts(a int, u uint8, x float64) (int8, float32, uint64, int) {\n\ttype Celsius float64\n\tc := Celsius(x)\n\treturn int8(a), float32(c), uint64(u), int(x)\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn main.ints(_1: i64, _2: i64, _3: u8, _4: u64, _5: i64) -> i64 [go, external] {
+  let _0: i64
+  let _1: i64 "a"
+  let _2: i64 "b"
+  let _3: u8 "u"
+  let _4: u64 "n"
+  let _5: i64 "k"
+  let _6: i64
+  let _7: i64
+  let _8: bool
+  let _9: i64
+  let _10: i64 "c"
+  let _11: i64
+  let _12: i64
+  let _13: i64
+  let _14: i64
+  let _15: i64
+  let _16: u8 "x"
+  let _17: bool
+  let _18: i64 "y"
+  let _19: i64 "z"
+  bb0:
+    _6 = mul(copy _2, const 3: i64)  ; a.gopp:4:2
+    _7 = add(copy _1, copy _6)  ; a.gopp:4:2
+    _8 = ne(copy _2, const 0: i64)  ; a.gopp:4:17
+    assert(copy _8 == true, DivByZero) -> [success: bb1, unwind: continue]  ; a.gopp:4:17
+  bb1:
+    _9 = div(copy _1, copy _2)  ; a.gopp:4:2
+    storage_live(_10)  ; a.gopp:4:2
+    _10 = sub(copy _7, copy _9)  ; a.gopp:4:2
+    _11 = rem(copy _1, const 4: i64)  ; a.gopp:5:2
+    _10 = add(copy _10, copy _11)  ; a.gopp:5:2
+    _12 = bitand(copy _10, copy _2)  ; a.gopp:6:2
+    _13 = bitor(copy _12, copy _1)  ; a.gopp:6:2
+    _10 = bitxor(copy _13, copy _2)  ; a.gopp:6:2
+    _10 = bitclear(copy _10, const 7: i64)  ; a.gopp:7:2
+    _14 = neg(copy _10)  ; a.gopp:8:2
+    _15 = bitnot(copy _1)  ; a.gopp:8:2
+    _10 = add(copy _14, copy _15)  ; a.gopp:8:2
+    storage_live(_16)  ; a.gopp:9:2
+    _16 = shl(copy _3, copy _4)  ; a.gopp:9:2
+    _17 = ge(copy _5, const 0: i64)  ; a.gopp:10:7
+    assert(copy _17 == true, NegativeShift) -> [success: bb2, unwind: continue]  ; a.gopp:10:7
+  bb2:
+    storage_live(_18)  ; a.gopp:10:2
+    _18 = shr(copy _1, copy _5)  ; a.gopp:10:2
+    storage_live(_19)  ; a.gopp:11:2
+    _19 = shl(copy _1, const 70: u64)  ; a.gopp:11:2
+    _0 = div(copy _10, const 8: i64)  ; a.gopp:13:2
+    storage_dead(_19)  ; a.gopp:13:2
+    storage_dead(_18)  ; a.gopp:13:2
+    storage_dead(_16)  ; a.gopp:13:2
+    storage_dead(_10)  ; a.gopp:13:2
+    return  ; a.gopp:13:2
+}
+
+fn main.floats(_1: f64, _2: f64, _3: f32) -> f64 [go, external] {
+  let _0: f64
+  let _1: f64 "x"
+  let _2: f64 "y"
+  let _3: f32 "f"
+  let _4: f64 "q"
+  let _5: f64
+  let _6: f64
+  bb0:
+    storage_live(_4)  ; a.gopp:17:2
+    _4 = div(copy _1, copy _2)  ; a.gopp:17:2
+    _5 = float_to_float(copy _3) as f64  ; a.gopp:18:2
+    _6 = mul(copy _5, const 0x3fe0000000000000: f64)  ; a.gopp:18:2
+    _4 = sub(copy _4, copy _6)  ; a.gopp:18:2
+    _0 = neg(copy _4)  ; a.gopp:19:2
+    storage_dead(_4)  ; a.gopp:19:2
+    return  ; a.gopp:19:2
+}
+
+fn main.compares(_1: i64, _2: i64, _3: f64, _4: *i64, _5: *i64) -> bool [go, external] {
+  let _0: bool
+  let _1: i64 "a"
+  let _2: i64 "b"
+  let _3: f64 "x"
+  let _4: *i64 "p"
+  let _5: *i64 "q"
+  let _6: bool "ok"
+  bb0:
+    storage_live(_6)  ; a.gopp:23:2
+    _6 = lt(copy _1, copy _2)  ; a.gopp:23:2
+    _6 = ge(copy _1, copy _2)  ; a.gopp:24:2
+    _6 = ne(copy _3, const 0x3ff8000000000000: f64)  ; a.gopp:25:2
+    _6 = eq(copy _4, copy _5)  ; a.gopp:26:2
+    _0 = not(copy _6)  ; a.gopp:27:2
+    storage_dead(_6)  ; a.gopp:27:2
+    return  ; a.gopp:27:2
+}
+
+fn main.converts(_1: i64, _2: u8, _3: f64) -> (i8, f32, u64, i64) [go, external] {
+  let _0: (i8, f32, u64, i64)
+  let _1: i64 "a"
+  let _2: u8 "u"
+  let _3: f64 "x"
+  let _4: f64 "c"
+  let _5: i8
+  let _6: f32
+  let _7: u64
+  let _8: i64
+  bb0:
+    storage_live(_4)  ; a.gopp:32:2
+    _4 = copy _3  ; a.gopp:32:2
+    _5 = int_to_int(copy _1) as i8  ; a.gopp:33:2
+    _6 = float_to_float(copy _4) as f32  ; a.gopp:33:2
+    _7 = int_to_int(copy _2) as u64  ; a.gopp:33:2
+    _8 = float_to_int(copy _3) as i64  ; a.gopp:33:2
+    _0 = tuple {copy _5, copy _6, copy _7, copy _8}  ; a.gopp:33:2
+    storage_dead(_4)  ; a.gopp:33:2
+    return  ; a.gopp:33:2
+}

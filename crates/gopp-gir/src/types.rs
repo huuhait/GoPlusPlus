@@ -93,6 +93,8 @@ pub struct TypeInterner {
     recs: Vec<RecDef>,
     /// The shell that stands for each shape of a type that holds itself.
     rec_shapes: FxHashMap<Vec<u64>, TypeId>,
+    /// The structs that were asked for by their names.
+    struct_names: FxHashMap<String, TypeId>,
 }
 
 impl Default for TypeInterner {
@@ -112,6 +114,7 @@ impl TypeInterner {
             structs: Vec::new(),
             recs: Vec::new(),
             rec_shapes: FxHashMap::default(),
+            struct_names: FxHashMap::default(),
         };
         interner.intern(Type::Unit);
         interner.intern(Type::Bool);
@@ -166,6 +169,17 @@ impl TypeInterner {
             field_names: Vec::new(),
         });
         self.intern(Type::Struct(id))
+    }
+
+    /// The struct that was asked for by this name before, or a new one,
+    /// and whether it is new: its fields are still to be said.
+    pub fn struct_named(&mut self, name: &str) -> (TypeId, bool) {
+        if let Some(&known) = self.struct_names.get(name) {
+            return (known, false);
+        }
+        let new = self.declare_struct(name);
+        self.struct_names.insert(name.to_owned(), new);
+        (new, true)
     }
 
     /// Says the fields of a struct, each with its name, once.

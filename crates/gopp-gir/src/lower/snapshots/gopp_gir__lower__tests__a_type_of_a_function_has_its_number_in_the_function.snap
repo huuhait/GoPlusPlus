@@ -1,0 +1,36 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\ntype T struct{ a int }\n\nfunc (T) f() int {\n\ttype T struct{ b bool }\n\t{\n\t\ttype T struct{ c float64 }\n\t\tx := T{1.5}\n\t\t_ = x\n\t}\n\ty := T{true}\n\t_ = y\n\treturn 0\n}\n\nfunc g() {\n\ttype T struct{ d int8 }\n\tvar z T\n\t_ = z\n\tvar anonymous struct {\n\t\tt T\n\t\tn int\n\t}\n\t_ = anonymous\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn main.T.f(_1: main.T) -> i64 [go, external] {
+  scope 1: block in 0  ; a.gopp:9:3
+  let _0: i64
+  let _2: main.T.f.T.2 "x"
+  let _3: main.T.f.T.1 "y"
+  bb0:
+    storage_live(_2)  ; a.gopp:9:3 scope 1
+    _2 = main.T.f.T.2 {const 0x3ff8000000000000: f64}  ; a.gopp:9:3 scope 1
+    storage_dead(_2)  ; a.gopp:11:2 scope 1
+    storage_live(_3)  ; a.gopp:12:2
+    _3 = main.T.f.T.1 {const true}  ; a.gopp:12:2
+    _0 = const 0: i64  ; a.gopp:14:2
+    storage_dead(_3)  ; a.gopp:14:2
+    return  ; a.gopp:14:2
+}
+
+fn main.g() -> () [go, external] {
+  let _0: ()
+  let _1: main.g.T.1 "z"
+  let _2: struct{t main.g.T.1; n i64} "anonymous"
+  bb0:
+    storage_live(_1)  ; a.gopp:19:2
+    _1 = const zero: main.g.T.1  ; a.gopp:19:2
+    storage_live(_2)  ; a.gopp:21:2
+    _2 = const zero: struct{t main.g.T.1; n i64}  ; a.gopp:21:2
+    storage_dead(_2)  ; a.gopp:26:1
+    storage_dead(_1)  ; a.gopp:26:1
+    return  ; a.gopp:26:1
+}

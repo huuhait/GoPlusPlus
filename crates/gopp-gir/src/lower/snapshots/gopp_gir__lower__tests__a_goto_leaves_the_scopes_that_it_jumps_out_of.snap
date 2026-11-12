@@ -1,0 +1,54 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\nfunc jumps(n int) int {\n\ti := 0\nagain:\n\tj := i * 2\n\tif j < n {\n\t\tk := j\n\t\ti += k + 1\n\t\tgoto again\n\t}\n\t{\n\t\tm := i\n\t\tif m > 5 {\n\t\t\tgoto done\n\t\t}\n\t\ti = m\n\t}\ndone:\n\treturn i\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn main.jumps(_1: i64) -> i64 [go, external] {
+  scope 1: block in 0  ; a.gopp:8:3
+  scope 2: block in 0  ; a.gopp:13:3
+  let _0: i64
+  let _1: i64 "n"
+  let _2: i64 "i"
+  let _3: i64 "j"
+  let _4: bool
+  let _5: i64 "k"
+  let _6: i64
+  let _7: i64 "m"
+  let _8: bool
+  bb0:
+    storage_live(_2)  ; a.gopp:4:2
+    _2 = const 0: i64  ; a.gopp:4:2
+    goto bb1  ; a.gopp:5:1
+  bb1:
+    storage_live(_3)  ; a.gopp:6:2
+    _3 = mul(copy _2, const 2: i64)  ; a.gopp:6:2
+    _4 = lt(copy _3, copy _1)  ; a.gopp:7:5
+    switch copy _4 [0: bb3, otherwise: bb2]  ; a.gopp:7:5
+  bb2:
+    storage_live(_5)  ; a.gopp:8:3 scope 1
+    _5 = copy _3  ; a.gopp:8:3 scope 1
+    _6 = add(copy _5, const 1: i64)  ; a.gopp:9:3 scope 1
+    _2 = add(copy _2, copy _6)  ; a.gopp:9:3 scope 1
+    storage_dead(_5)  ; a.gopp:10:3 scope 1
+    storage_dead(_3)  ; a.gopp:10:3 scope 1
+    goto bb1  ; a.gopp:10:3 scope 1
+  bb3:
+    storage_live(_7)  ; a.gopp:13:3 scope 2
+    _7 = copy _2  ; a.gopp:13:3 scope 2
+    _8 = gt(copy _7, const 5: i64)  ; a.gopp:14:6 scope 2
+    switch copy _8 [0: bb5, otherwise: bb4]  ; a.gopp:14:6 scope 2
+  bb4:
+    storage_dead(_7)  ; a.gopp:15:4 scope 2
+    goto bb6  ; a.gopp:15:4 scope 2
+  bb5:
+    _2 = copy _7  ; a.gopp:17:3 scope 2
+    storage_dead(_7)  ; a.gopp:18:2 scope 2
+    goto bb6  ; a.gopp:19:1
+  bb6:
+    _0 = copy _2  ; a.gopp:20:2
+    storage_dead(_3)  ; a.gopp:20:2
+    storage_dead(_2)  ; a.gopp:20:2
+    return  ; a.gopp:20:2
+}

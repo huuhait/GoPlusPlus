@@ -270,7 +270,7 @@ impl Verifier<'_> {
             .blocks
             .values()
             .map(|block| {
-                let all = Self::successors(&block.term.kind);
+                let all = block.term.kind.successors();
                 all.into_iter().map(|(target, _)| raw(target)).collect()
             })
             .collect();

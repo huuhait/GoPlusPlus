@@ -1,0 +1,444 @@
+//! From a checked package to its module (gir.md §1, §3, §15).
+//!
+//! The bodies are lowered side by side, in runs that each fill a module
+//! of their own; `merge` then makes one module of them, in which every
+//! type, string and function has the place that the order of the source
+//! gives it. So the module is the same for any number of threads.
+
+mod assign;
+mod expr;
+mod func;
+mod merge;
+mod stmt;
+mod types;
+
+#[cfg(test)]
+mod tests;
+
+use gopp_diag::{Code, Diagnostic, Sink};
+use gopp_sema::types::{NamedId, Type as CheckedType, TypeId as CheckedTypeId, Types};
+use gopp_sema::{Body, LocalKind, ObjId, ObjKind, Package, Ref};
+use gopp_span::SourceFile;
+use gopp_syntax::ast::{DeclId, DeclKind, ExprId, ExprKind, File, Param, UnaryOp};
+use gopp_target::TargetLayout;
+use lasso::{Spur, ThreadedRodeo};
+use rayon::prelude::*;
+use rustc_hash::FxHashMap;
+
+use crate::verify::verify_module;
+use crate::{Global, GlobalId, Linkage, Module, TypeId};
+
+/// A package as the checker left it.
+pub struct Checked<'a> {
+    pub package: &'a Package,
+    /// The files in the order in which they were checked.
+    pub files: &'a [(&'a File, &'a SourceFile)],
+    pub types: &'a Types,
+    pub names: &'a ThreadedRodeo,
+}
+
+/// The least source that one run takes: lowering it costs more than
+/// starting a run and merging what it made.
+const SOURCE_EACH: usize = 256 * 1024;
+
+/// The module of a package that the checker accepted. What the lowering
+/// does not support yet is reported to `sink` as `E0439`, each place
+/// once, and has a zero of its type in the module; the module is
+/// verified, and a rule that it breaks is reported as `E0440`.
+pub fn lower_package(checked: &Checked<'_>, layout: TargetLayout, sink: &Sink) -> Module {
+    let (module, diagnostics, _) = lower_counted(checked, layout, SOURCE_EACH);
+    for diagnostic in diagnostics {
+        sink.push(diagnostic);
+    }
+    module
+}
+
+/// `lower_package`, with what it reports and the steps that it took.
+/// A run takes `source_each` bytes of source or more.
+pub(crate) fn lower_counted(
+    checked: &Checked<'_>,
+    layout: TargetLayout,
+    source_each: usize,
+) -> (Module, Vec<Diagnostic>, u64) {
+    let shared = Shared::new(checked, layout);
+    let source: usize = shared.jobs.iter().map(|job| job.source).sum();
+    let runs = rayon::current_num_threads().min(source / source_each.max(1));
+    // Runs of about as much source each, in the order of the source.
+    let mut cut: Vec<&[Job]> = Vec::new();
+    let mut rest = &shared.jobs[..];
+    let mut left = source;
+    for runs_left in (1..=runs.max(1)).rev() {
+        let wanted = left / runs_left;
+        let mut taken = 0;
+        let mut count = 0;
+        while count < rest.len() && (taken < wanted || runs_left == 1) {
+            taken += rest[count].source;
+            count += 1;
+        }
+        let (run, after) = rest.split_at(count);
+        cut.push(run);
+        rest = after;
+        left -= taken;
+    }
+    let mut parts = vec![shared.globals()];
+    parts.par_extend(cut.par_iter().map(|run| shared.run(run)));
+    let mut diagnostics = Vec::new();
+    let mut steps = 0;
+    for part in &mut parts {
+        diagnostics.append(&mut part.diagnostics);
+        steps += part.steps;
+    }
+    let sources = parts.into_iter().map(|part| part.source).collect();
+    let (module, merged) = merge::merge(&shared, sources);
+    steps += merged;
+    // What is not supported has a zero in its place, so the module is
+    // whole: a rule that it breaks is a fault of the lowering. It is
+    // reported at the start of the package.
+    let start = shared.files.first().and_then(|(tree, _)| {
+        let first = tree.decl_nodes.iter().next().map(|(_, decl)| decl.span);
+        tree.package.map(|name| name.span).or(first)
+    });
+    if let (Err(errors), Some(span)) = (verify_module(&module), start) {
+        for error in errors.iter().take(MAX_VERIFY_ERRORS) {
+            let message = format!("the module of the package breaks a rule: {error}");
+            diagnostics.push(Diagnostic::new(Code::GirVerify, span, message));
+        }
+    }
+    (module, diagnostics, steps)
+}
+
+/// How many broken rules of one module are reported.
+const MAX_VERIFY_ERRORS: usize = 8;
+
+/// A function with a body.
+pub(crate) struct Job {
+    file: u32,
+    /// Which of the declarations of the file, and of its bodies.
+    at: usize,
+    decl: DeclId,
+    symbol: String,
+    /// The type of the function as the checker has it, the receiver
+    /// first.
+    receiver: Option<CheckedTypeId>,
+    sig: CheckedTypeId,
+    /// How many bytes of source it is.
+    source: usize,
+}
+
+/// A method of a type of the package.
+pub(crate) struct Method {
+    pub symbol: String,
+    /// The type of the receiver: the type, or a pointer to it.
+    pub receiver: CheckedTypeId,
+    /// The type of the method without its receiver.
+    pub sig: CheckedTypeId,
+}
+
+/// What every run reads and none writes.
+pub(crate) struct Shared<'a> {
+    pub package: &'a Package,
+    pub files: &'a [(&'a File, &'a SourceFile)],
+    pub types: &'a Types,
+    pub names: &'a ThreadedRodeo,
+    pub layout: TargetLayout,
+    /// The path of the package, as a name.
+    pub path: Spur,
+    /// The name `_`.
+    pub blank: Spur,
+    jobs: Vec<Job>,
+    pub methods: FxHashMap<(NamedId, Spur), Method>,
+    /// The name of each type that the package declares: at its top, or
+    /// in a function, where it has the number of its declaration among
+    /// those of the function.
+    pub named: FxHashMap<NamedId, String>,
+}
+
+/// A function that is called, as the source names it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum CalleeKey {
+    /// A function of the package.
+    Object(ObjId),
+    /// A function of an imported package: the import and the object.
+    Member(ObjId, ObjId),
+    /// A method of the type.
+    Method(CheckedTypeId, Spur),
+}
+
+/// A function that a run calls: where it is in the module of the run,
+/// and what it takes.
+#[derive(Clone)]
+pub(crate) struct Callee {
+    pub func: crate::FuncId,
+    pub sig: TypeId,
+    pub params: std::rc::Rc<[TypeId]>,
+    pub ret: TypeId,
+}
+
+/// What one run made.
+pub(crate) struct Part {
+    /// Its module, with what each function of it names.
+    source: merge::Source,
+    diagnostics: Vec<Diagnostic>,
+    steps: u64,
+}
+
+/// What a run keeps beside its module: what it has lowered and declared
+/// already.
+#[derive(Default)]
+pub(crate) struct Memo {
+    pub types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
+    /// The types that are being lowered: one that is met again holds
+    /// itself.
+    pub open: Vec<CheckedTypeId>,
+    pub funcs: FxHashMap<String, crate::FuncId>,
+    pub globals: FxHashMap<String, GlobalId>,
+    /// The type of GIR for each type that an expression or a variable
+    /// has: the empty type for a constant without a type.
+    pub expr_types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
+    /// What is known of each function that the run calls.
+    pub callees: FxHashMap<CalleeKey, Result<Callee, &'static str>>,
+    /// The text of the names that the run has asked for.
+    pub names: FxHashMap<Spur, Box<str>>,
+    /// Which field of a struct has a name.
+    pub fields: FxHashMap<(TypeId, Spur), Option<usize>>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub steps: u64,
+}
+
+impl Memo {
+    /// The text of the name, asked of the table of names once.
+    pub fn name(&mut self, shared: &Shared<'_>, name: Spur) -> &str {
+        self.names
+            .entry(name)
+            .or_insert_with(|| shared.names.resolve(&name).into())
+    }
+}
+
+impl<'a> Shared<'a> {
+    fn new(checked: &'a Checked<'a>, layout: TargetLayout) -> Self {
+        let mut shared = Self {
+            package: checked.package,
+            files: checked.files,
+            types: checked.types,
+            names: checked.names,
+            layout,
+            path: checked.names.get_or_intern(&checked.package.path),
+            blank: checked.names.get_or_intern_static("_"),
+            jobs: Vec::new(),
+            methods: FxHashMap::default(),
+            named: FxHashMap::default(),
+        };
+        for object in &shared.package.objects {
+            if let (ObjKind::Type, CheckedType::Named { id, .. }) =
+                (&object.kind, &*shared.types.get(object.ty))
+            {
+                let name = shared.names.resolve(&object.name);
+                shared
+                    .named
+                    .insert(*id, format!("{}.{name}", shared.package.path));
+            }
+        }
+        // The `init` functions count in the order of the names of their
+        // files, then of the source.
+        let mut inits: Vec<(u32, usize)> = Vec::new();
+        let files = shared.files;
+        for (file, (tree, _)) in files.iter().enumerate() {
+            for (at, &decl) in tree.decls.iter().enumerate() {
+                if let Some(job) = shared.job(file as u32, at, decl) {
+                    if job.symbol.is_empty() {
+                        inits.push((file as u32, at));
+                    }
+                    shared.jobs.push(job);
+                }
+            }
+        }
+        inits.sort_by_key(|&(file, at)| (files[file as usize].1.path(), at));
+        for (number, (file, at)) in inits.into_iter().enumerate() {
+            let mut found = shared.jobs.iter_mut();
+            if let Some(job) = found.find(|job| (job.file, job.at) == (file, at)) {
+                job.symbol = format!("{}.init.{number}", checked.package.path);
+            }
+        }
+        let mut named = std::mem::take(&mut shared.named);
+        for job in &shared.jobs {
+            let body = &shared.package.files[job.file as usize].bodies[job.at];
+            let mut number = 0;
+            for local in &body.locals {
+                if let (LocalKind::Type, CheckedType::Named { id, .. }) =
+                    (local.kind, &*shared.types.get(local.ty))
+                {
+                    number += 1;
+                    let name = shared.names.resolve(&local.name);
+                    named.insert(*id, format!("{}.{name}.{number}", job.symbol));
+                }
+            }
+        }
+        shared.named = named;
+        shared
+    }
+
+    /// The function that the declaration makes, if it has a body that
+    /// is lowered as it is: no type parameters, a name. An `init`
+    /// function has no symbol yet.
+    fn job(&mut self, file: u32, at: usize, decl: DeclId) -> Option<Job> {
+        let (package, types, names) = (self.package, self.types, self.names);
+        let (tree, _) = self.files[file as usize];
+        let node = &tree.decl_nodes[decl];
+        let DeclKind::Func {
+            is_macro: false,
+            receiver,
+            name,
+            type_params,
+            body: Some(_),
+            ..
+        } = &node.kind
+        else {
+            return None;
+        };
+        let text = names.resolve(&name.name);
+        if text == "_" || !type_params.is_empty() {
+            return None;
+        }
+        let source = (node.span.hi - node.span.lo) as usize;
+        let path = &package.path;
+        let job = |symbol: String, receiver, sig| Job {
+            file,
+            at,
+            decl,
+            symbol,
+            receiver,
+            sig,
+            source,
+        };
+        let Some(receiver) = receiver else {
+            if text == "init" {
+                return Some(job(String::new(), None, types.func(&[], &[], false)));
+            }
+            let object = package.object(*package.scope.get(&name.name)?);
+            return match object.kind {
+                ObjKind::Func if object.span == name.span => {
+                    Some(job(format!("{path}.{text}"), None, object.ty))
+                }
+                _ => None,
+            };
+        };
+        let body = &package.files[file as usize].bodies[at];
+        let (named, pointer) = self.receiver(tree, body, receiver)?;
+        let kind = types.get(named);
+        let CheckedType::Named { id, args } = &*kind else {
+            return None;
+        };
+        if !args.is_empty() || !types.type_params(*id).is_empty() {
+            return None;
+        }
+        let found = types.lookup(named, name.name, self.path, names, false);
+        let gopp_sema::types::Member::Method { sig, .. } = found.ok()?.member else {
+            return None;
+        };
+        let type_name = names.resolve(&types.name_of(*id));
+        let symbol = format!("{path}.{type_name}.{text}");
+        let receiver = match pointer {
+            true => types.pointer(named),
+            false => named,
+        };
+        let method = Method {
+            symbol: symbol.clone(),
+            receiver,
+            sig,
+        };
+        self.methods.insert((*id, name.name), method);
+        Some(job(symbol, Some(receiver), sig))
+    }
+
+    /// The declared type that a receiver names, and whether the
+    /// receiver is a pointer to it.
+    fn receiver(
+        &self,
+        tree: &File,
+        body: &Body,
+        receiver: &Param,
+    ) -> Option<(CheckedTypeId, bool)> {
+        let mut base = receiver.ty;
+        let mut pointer = false;
+        loop {
+            match tree.exprs[base].kind {
+                ExprKind::Paren(x) => base = x,
+                ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => (base, pointer) = (x, true),
+                _ => break,
+            }
+        }
+        match body.uses.get(&base)? {
+            Ref::Object(object) => Some((self.package.object(*object).ty, pointer)),
+            _ => None,
+        }
+    }
+
+    /// The symbol of a variable of the package.
+    pub fn global_symbol(&self, package: &Package, object: ObjId) -> String {
+        let name = self.names.resolve(&package.object(object).name);
+        format!("{}.{name}", package.path)
+    }
+
+    /// The variables of the package, in a module that is merged first.
+    fn globals(&self) -> Part {
+        let mut module = self.module();
+        let mut memo = Memo::default();
+        for (at, object) in self.package.objects.iter().enumerate() {
+            if !matches!(object.kind, ObjKind::Var) || object.name == self.blank {
+                continue;
+            }
+            let lowered = memo.lower_type(self, &mut module.types, object.ty);
+            if let Some(ty) = lowered.ok().filter(|&ty| ty != crate::TypeInterner::UNIT) {
+                module.globals.alloc(Global {
+                    name: self.global_symbol(self.package, ObjId(at as u32)),
+                    ty,
+                    link: Linkage::External,
+                    mutable: true,
+                });
+            }
+        }
+        Part {
+            source: merge::Source::new(module),
+            diagnostics: memo.diagnostics,
+            steps: memo.steps,
+        }
+    }
+
+    /// An empty module of the package.
+    pub fn module(&self) -> Module {
+        Module {
+            name: self.package.path.clone(),
+            files: self
+                .files
+                .iter()
+                .map(|(_, source)| source.path().display().to_string())
+                .collect(),
+            ..Module::default()
+        }
+    }
+
+    /// The functions of the run, in a module of their own.
+    fn run(&self, jobs: &[Job]) -> Part {
+        let mut module = self.module();
+        let mut memo = Memo::default();
+        for job in jobs {
+            func::lower_function(self, &mut module, &mut memo, job);
+        }
+        Part {
+            source: merge::Source::new(module),
+            diagnostics: memo.diagnostics,
+            steps: memo.steps,
+        }
+    }
+
+    /// The expression without the parentheses around it.
+    pub fn unparen(tree: &File, mut expr: ExprId) -> ExprId {
+        while let ExprKind::Paren(inner) = tree.exprs[expr].kind {
+            expr = inner;
+        }
+        expr
+    }
+}
