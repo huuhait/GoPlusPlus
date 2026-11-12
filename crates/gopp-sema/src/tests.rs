@@ -2763,7 +2763,11 @@ func wrong!() int             { return \"a\" }
 fn with_packages(names: &ThreadedRodeo, packages: &[(&str, &str)]) -> Loader {
     let mut loader = Loader::default();
     for &(path, text) in packages {
-        let file = format!("{path}.gopp");
+        // Package unsafe is declared without bodies, as Go declares it.
+        let file = match path {
+            "unsafe" => "unsafe.go".to_owned(),
+            _ => format!("{path}.gopp"),
+        };
         let checked = check_texts(path, &[(&file, text)], &loader, names);
         assert_eq!(checked.messages, [] as [&str; 0], "{path}");
         loader
@@ -5441,6 +5445,61 @@ type Self[P any] = *Self[P]
             "a.go:55:6: invalid recursive type: Self refers to itself",
         ]
     );
+}
+
+/// A type that holds the one before it twice is as large as two to the
+/// number of such types when it is written out, and is walked once.
+#[test]
+fn a_type_that_stands_in_many_places_is_walked_once() {
+    let steps = |text: String| {
+        let names = ThreadedRodeo::new();
+        let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
+        let loader = with_packages(&names, &[("unsafe", stub)]);
+        let checked = check_texts("p", &[("a.go", &text)], &loader, &names);
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let chain = |count: usize, first: &str, next: &dyn Fn(usize) -> String| {
+        let all: String = (1..=count).map(next).collect();
+        format!("package p\nimport \"unsafe\"\n{first}\n{all}")
+    };
+    let aliases = |count: usize| {
+        // Of no size, so that the last one has a size that can be told.
+        let types = chain(count, "type A0 = [0]int", &|i| {
+            format!("type A{i} = struct{{ a, b A{} }}\n", i - 1)
+        });
+        format!(
+            "{types}var v, w A{count}\nvar _ = v == w\nvar _ = map[A{count}]int{{}}\n\
+             var _ = unsafe.Sizeof(v)\nvar _ = any(v).(A{count})\n\
+             type T struct{{ A{count} }}\nvar _ = T{{}}.a.b\nvar _ = [2]A{count}{{v, w}}\n"
+        )
+    };
+    let generic_types = |count: usize| {
+        let types = chain(count, "type B0[P any] struct{ x P }", &|i| {
+            format!("type B{i}[P any] struct{{ a, b B{}[P] }}\n", i - 1)
+        });
+        format!(
+            "{types}var b B{count}[[0]int]\nvar _ = b == b\nvar _ = b.a.b\n\
+             var _ = unsafe.Sizeof(b)\nvar _ = map[B{count}[string]]int{{}}\n"
+        )
+    };
+    let generic_aliases = |count: usize| {
+        let types = chain(count, "type C0[P any] = [0]P", &|i| {
+            format!("type C{i}[P any] = struct{{ a, b C{}[P] }}\n", i - 1)
+        });
+        format!(
+            "{types}var c C{count}[int]\nvar _ = c == c\nvar _ = c.a.b\n\
+             var _ = unsafe.Sizeof(c)\n\
+             type D[P any] struct{{ c C{count}[P] }}\nvar _ D[string]\n"
+        )
+    };
+    let sizes = [20, 40, 80, 160];
+    linear::assert_near_linear(&sizes, |n| steps(aliases(n)));
+    linear::assert_near_linear(&sizes, |n| steps(generic_types(n)));
+    // A generic alias is written out again for each alias that holds
+    // it: the square of the number of aliases, not two to that number.
+    let steps = steps(generic_aliases(160));
+    assert!(steps < 100_000, "{steps} steps");
 }
 
 /// An alias with type arguments is written out as what it stands for, so

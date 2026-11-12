@@ -301,6 +301,9 @@ struct Checker<'a> {
     written_at: FxHashMap<TypeId, Span>,
     /// The types that are known to hold no value of themselves.
     valid: FxHashSet<TypeId>,
+    /// While that is asked: the types that were walked already inside
+    /// the declared types that the walk is in, by how many those are.
+    walked: Vec<FxHashSet<TypeId>>,
 }
 
 /// The results of a function.
@@ -410,6 +413,7 @@ pub fn declarations(
         map_keys: Vec::new(),
         written_at: FxHashMap::default(),
         valid: FxHashSet::default(),
+        walked: Vec::new(),
     };
     for (file, unit) in units.iter().enumerate() {
         checker.collect(file, *unit);
@@ -800,6 +804,7 @@ impl<'a> Checker<'a> {
         let mut next = 0;
         while let Some(&ty) = self.to_validate.get(next) {
             self.declared_as_itself(ty);
+            self.walked.clear();
             self.holds_itself_not(ty, &mut Vec::new(), &mut Vec::new());
             next += 1;
         }
@@ -909,7 +914,32 @@ impl<'a> Checker<'a> {
         nest: &mut Vec<TypeId>,
         path: &mut Vec<TypeId>,
     ) -> bool {
-        match &*self.types.get(ty) {
+        let node = self.types.get(ty);
+        // What a type holds is the same wherever it is met, unless it is
+        // written with a type parameter, which stands for another type
+        // in each place; then it is the same while the walk is inside
+        // the same declared types.
+        let anywhere = !self.types.has_param(ty);
+        let parts = matches!(
+            &*node,
+            Type::Array { .. }
+                | Type::Option(_)
+                | Type::Struct(_)
+                | Type::Union(_)
+                | Type::Interface { .. }
+        );
+        if parts {
+            if self.valid.contains(&ty) {
+                return true;
+            }
+            if self.walked.len() <= nest.len() {
+                self.walked.resize_with(nest.len() + 1, FxHashSet::default);
+            }
+            if !anywhere && !self.walked[nest.len()].insert(ty) {
+                return true;
+            }
+        }
+        let valid = match &*node {
             Type::Array { elem, .. } | Type::Option(elem) => {
                 self.holds_itself_not(*elem, nest, path)
             }
@@ -922,6 +952,23 @@ impl<'a> Checker<'a> {
             Type::Interface { embedded, .. } => embedded
                 .iter()
                 .all(|&embedded| self.holds_itself_not(embedded, nest, path)),
+            _ => return self.named_holds_itself_not(ty, nest, path),
+        };
+        if valid && anywhere {
+            self.valid.insert(ty);
+        }
+        valid
+    }
+
+    /// `holds_itself_not` for what has no parts of its own: a declared
+    /// type, which holds what it is declared as, and a type parameter.
+    fn named_holds_itself_not(
+        &mut self,
+        ty: TypeId,
+        nest: &mut Vec<TypeId>,
+        path: &mut Vec<TypeId>,
+    ) -> bool {
+        match &*self.types.get(ty) {
             Type::Named { id, .. } => {
                 if self.types.underlying(ty) == Types::INVALID {
                     return false;
@@ -941,14 +988,19 @@ impl<'a> Checker<'a> {
                 if let Some(&around) = nest.last() {
                     self.place(ty, around);
                 }
+                if self.walked.len() <= nest.len() + 1 {
+                    self.walked.resize_with(nest.len() + 2, FxHashSet::default);
+                }
+                if !self.walked[nest.len()].insert(ty) {
+                    return true;
+                }
                 nest.push(ty);
                 path.push(ty);
+                // Inside this type nothing was walked yet.
+                self.walked[nest.len()].clear();
                 let valid = self.holds_itself_not(declared_as, nest, path);
                 nest.pop();
                 path.pop();
-                // What a type holds is the same wherever it is met, unless
-                // it is written with a type parameter, which stands for
-                // another type in each place.
                 if valid && !self.types.has_param(ty) {
                     self.valid.insert(ty);
                 }

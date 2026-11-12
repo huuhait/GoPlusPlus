@@ -132,6 +132,36 @@ pub enum Type {
     Param(ParamId),
 }
 
+impl Type {
+    /// The types that the type is written with, each once for each place:
+    /// the type arguments of a declared type, not what it is declared as.
+    fn parts(&self) -> Vec<TypeId> {
+        match self {
+            Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => Vec::new(),
+            Type::Pointer(elem)
+            | Type::Unique(elem)
+            | Type::Shared(elem)
+            | Type::Weak(elem)
+            | Type::Option(elem)
+            | Type::Local(elem)
+            | Type::Slice(elem)
+            | Type::Array { elem, .. }
+            | Type::Chan { elem, .. } => vec![*elem],
+            Type::Map { key, value } => vec![*key, *value],
+            Type::Tuple(types) | Type::Named { args: types, .. } => types.to_vec(),
+            Type::Func {
+                params, results, ..
+            } => params.iter().chain(results.iter()).copied().collect(),
+            Type::Struct(fields) => fields.iter().map(|field| field.ty).collect(),
+            Type::Interface { methods, embedded } => {
+                let sigs = methods.iter().map(|method| method.sig);
+                sigs.chain(embedded.iter().copied()).collect()
+            }
+            Type::Union(terms) => terms.iter().map(|term| term.ty).collect(),
+        }
+    }
+}
+
 /// A method of a declared type.
 #[derive(Clone, Debug)]
 pub struct DeclaredMethod {
@@ -248,6 +278,8 @@ struct Named {
 struct Inner {
     types: Vec<Arc<Type>>,
     ids: FxHashMap<Arc<Type>, TypeId>,
+    /// For each type, whether a type parameter is written in it.
+    has_param: Vec<bool>,
     named: Vec<Named>,
     /// The name of each type parameter, and its constraint once known.
     params: Vec<(Spur, Option<TypeId>)>,
@@ -264,6 +296,12 @@ impl Inner {
             return id;
         }
         let id = TypeId(self.types.len() as u32);
+        let has_param = matches!(ty, Type::Param(_))
+            || ty
+                .parts()
+                .iter()
+                .any(|part| self.has_param[part.0 as usize]);
+        self.has_param.push(has_param);
         let ty = Arc::new(ty);
         self.types.push(Arc::clone(&ty));
         self.ids.insert(ty, id);
@@ -278,6 +316,15 @@ struct Spelling {
     canonical: bool,
     /// The name of the package whose types are written without it.
     within: Option<Spur>,
+}
+
+/// The layouts that one question about a layout has found: a type that
+/// stands in several places is laid out once.
+#[derive(Default)]
+struct Layouts {
+    /// The declared types that are being laid out, the innermost last.
+    nest: Vec<TypeId>,
+    known: FxHashMap<TypeId, Result<(u64, u64), NoLayout>>,
 }
 
 /// Why a type has no size here.
@@ -667,51 +714,35 @@ impl Types {
     /// same place of `to`.
     /// Whether a type parameter is written in the type.
     pub fn has_param(&self, ty: TypeId) -> bool {
-        self.any_param(ty, &|_| true)
+        self.read(|inner| inner.has_param[ty.0 as usize])
     }
 
     /// Whether the type is written with one of the type parameters
     /// `params`.
     pub fn mentions(&self, ty: TypeId, params: &[TypeId]) -> bool {
-        self.any_param(ty, &|param| params.contains(&param))
+        self.mentions_in(ty, params, &mut FxHashSet::default())
     }
 
-    fn any_param(&self, ty: TypeId, wanted: &dyn Fn(TypeId) -> bool) -> bool {
-        match &*self.get(ty) {
-            Type::Param(_) => wanted(ty),
-            _ => self
-                .parts(ty)
-                .into_iter()
-                .any(|part| self.any_param(part, wanted)),
+    /// `mentions`; a type that was `seen` is not walked again.
+    fn mentions_in(&self, ty: TypeId, params: &[TypeId], seen: &mut FxHashSet<TypeId>) -> bool {
+        if !self.has_param(ty) {
+            return false;
         }
+        let node = self.get(ty);
+        if matches!(&*node, Type::Param(_)) {
+            return params.contains(&ty);
+        }
+        seen.insert(ty)
+            && node
+                .parts()
+                .into_iter()
+                .any(|part| self.mentions_in(part, params, seen))
     }
 
     /// The types that the type is written with, each once for each place:
     /// the type arguments of a declared type, not what it is declared as.
     pub fn parts(&self, ty: TypeId) -> Vec<TypeId> {
-        match &*self.get(ty) {
-            Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => Vec::new(),
-            Type::Pointer(elem)
-            | Type::Unique(elem)
-            | Type::Shared(elem)
-            | Type::Weak(elem)
-            | Type::Option(elem)
-            | Type::Local(elem)
-            | Type::Slice(elem)
-            | Type::Array { elem, .. }
-            | Type::Chan { elem, .. } => vec![*elem],
-            Type::Map { key, value } => vec![*key, *value],
-            Type::Tuple(types) | Type::Named { args: types, .. } => types.to_vec(),
-            Type::Func {
-                params, results, ..
-            } => params.iter().chain(results.iter()).copied().collect(),
-            Type::Struct(fields) => fields.iter().map(|field| field.ty).collect(),
-            Type::Interface { methods, embedded } => {
-                let sigs = methods.iter().map(|method| method.sig);
-                sigs.chain(embedded.iter().copied()).collect()
-            }
-            Type::Union(terms) => terms.iter().map(|term| term.ty).collect(),
-        }
+        self.get(ty).parts()
     }
 
     /// The name of a type parameter.
@@ -765,12 +796,19 @@ impl Types {
         if let Some(&replaced) = done.borrow().get(&ty) {
             return replaced;
         }
+        let node = self.get(ty);
+        // A generic function becomes a plain one also where its type
+        // parameters are written nowhere in it.
+        let generic = matches!(&*node, Type::Func { type_params, .. } if !type_params.is_empty());
+        if !generic && !self.has_param(ty) {
+            return ty;
+        }
         let sub = |ty: TypeId| {
             gopp_syntax::with_stack(|| self.substitute_counted(ty, from, to, steps, done))
         };
         let list =
             |types: &[TypeId]| -> Box<[TypeId]> { types.iter().map(|&ty| sub(ty)).collect() };
-        let replaced = match &*self.get(ty) {
+        let replaced = match &*node {
             Type::Param(_) => {
                 let at = from.iter().position(|&param| param == ty);
                 return at.and_then(|at| to.get(at).copied()).unwrap_or(ty);
@@ -1094,12 +1132,12 @@ impl Types {
     /// compiler lays it out on a 64-bit machine. `None` for a type whose
     /// layout is not fixed here: a type parameter, a type of Go++ alone.
     pub fn layout(&self, ty: TypeId, names: &ThreadedRodeo) -> Option<(u64, u64)> {
-        self.layout_in(ty, names, &mut Vec::new()).ok()
+        self.layout_in(ty, names, &mut Layouts::default()).ok()
     }
 
     /// Whether a value of the type has more bytes than an `int64` counts.
     pub fn too_large(&self, ty: TypeId, names: &ThreadedRodeo) -> bool {
-        self.layout_in(ty, names, &mut Vec::new()) == Err(NoLayout::TooLarge)
+        self.layout_in(ty, names, &mut Layouts::default()) == Err(NoLayout::TooLarge)
     }
 
     /// `layout` inside the declared types `nest`: a type that holds a
@@ -1108,17 +1146,32 @@ impl Types {
         &self,
         ty: TypeId,
         names: &ThreadedRodeo,
-        nest: &mut Vec<TypeId>,
+        layouts: &mut Layouts,
     ) -> Result<(u64, u64), NoLayout> {
-        if !matches!(&*self.get(ty), Type::Named { .. }) {
-            return self.layout_of(ty, names, nest);
+        let node = self.get(ty);
+        // What has no value of another type inside is not worth keeping.
+        if !matches!(
+            &*node,
+            Type::Named { .. } | Type::Struct(_) | Type::Array { .. }
+        ) {
+            return self.layout_of(ty, names, layouts);
         }
-        if nest.contains(&ty) {
+        if let Some(&known) = layouts.known.get(&ty) {
+            return known;
+        }
+        let named = matches!(&*node, Type::Named { .. });
+        if named && layouts.nest.contains(&ty) {
             return Err(NoLayout::Unknown);
         }
-        nest.push(ty);
-        let layout = self.layout_of(ty, names, nest);
-        nest.pop();
+        if named {
+            layouts.nest.push(ty);
+        }
+        let layout = self.layout_of(ty, names, layouts);
+        if named {
+            layouts.nest.pop();
+        }
+        layouts.known.insert(ty, layout);
+        self.steps.fetch_add(1, Ordering::Relaxed);
         layout
     }
 
@@ -1126,7 +1179,7 @@ impl Types {
         &self,
         ty: TypeId,
         names: &ThreadedRodeo,
-        nest: &mut Vec<TypeId>,
+        layouts: &mut Layouts,
     ) -> Result<(u64, u64), NoLayout> {
         const WORD: u64 = 8;
         let sized = |size: Option<u64>| match size {
@@ -1151,7 +1204,7 @@ impl Types {
             Type::Slice(_) => (3 * WORD, WORD),
             Type::Interface { .. } => (2 * WORD, WORD),
             Type::Array { len, elem } => {
-                let (size, align) = self.layout_in(*elem, names, nest)?;
+                let (size, align) = self.layout_in(*elem, names, layouts)?;
                 (sized(size.checked_mul(*len))?, align)
             }
             Type::Struct(fields) => {
@@ -1166,7 +1219,7 @@ impl Types {
                 if marker {
                     return Ok((0, WORD));
                 }
-                let (offsets, end, align) = self.field_offsets(fields, names, nest)?;
+                let (offsets, end, align) = self.field_offsets(fields, names, layouts)?;
                 // A struct that is not empty does not end in a field of
                 // no size: a pointer past it would point outside it.
                 let last_is_empty = match (offsets.last(), fields.last()) {
@@ -1186,7 +1239,7 @@ impl Types {
         &self,
         fields: &[Field],
         names: &ThreadedRodeo,
-        nest: &mut Vec<TypeId>,
+        layouts: &mut Layouts,
     ) -> Result<(Vec<u64>, u64, u64), NoLayout> {
         let (mut offsets, mut next, mut max_align) = (Vec::new(), 0u64, 1u64);
         let sized = |size: Option<u64>| match size {
@@ -1194,7 +1247,7 @@ impl Types {
             _ => Err(NoLayout::TooLarge),
         };
         for field in fields {
-            let (size, align) = self.layout_in(field.ty, names, nest)?;
+            let (size, align) = self.layout_in(field.ty, names, layouts)?;
             next = sized(next.checked_next_multiple_of(align))?;
             offsets.push(next);
             next = sized(next.checked_add(size))?;
@@ -1215,13 +1268,14 @@ impl Types {
         let exported = names.resolve(&name).starts_with(char::is_uppercase);
         let mut level = vec![(ty, 0u64)];
         let mut seen = vec![ty];
+        let mut layouts = Layouts::default();
         while !level.is_empty() {
             let (mut found, mut next) = (Vec::new(), Vec::new());
             for &(current, base) in &level {
                 let Type::Struct(fields) = &*self.get(self.underlying(current)) else {
                     continue;
                 };
-                let (offsets, ..) = self.field_offsets(fields, names, &mut vec![current]).ok()?;
+                let (offsets, ..) = self.field_offsets(fields, names, &mut layouts).ok()?;
                 for (field, offset) in fields.iter().zip(offsets) {
                     if field.name == name && (exported || field.package == Some(package)) {
                         found.push(base + offset);
@@ -1364,28 +1418,52 @@ impl Types {
 
     /// Whether two types are identical.
     pub fn identical(&self, a: TypeId, b: TypeId) -> bool {
-        self.identical_in(a, b, true, &mut Vec::new())
+        a == b || self.identical_counted(a, b, true)
     }
 
     /// `identical`, but the tags of struct fields do not count: what a
     /// conversion asks of two struct types.
     pub fn identical_ignoring_tags(&self, a: TypeId, b: TypeId) -> bool {
-        self.identical_in(a, b, false, &mut Vec::new())
+        a == b || self.identical_counted(a, b, false)
+    }
+
+    fn identical_counted(&self, a: TypeId, b: TypeId, tags: bool) -> bool {
+        let mut pairs = FxHashSet::default();
+        let identical = self.identical_in(a, b, tags, &mut pairs);
+        self.steps.fetch_add(pairs.len() as u64, Ordering::Relaxed);
+        identical
     }
 
     /// Whether two types are identical, with or without the `tags` of
-    /// struct fields, inside the pairs of interfaces `pairs` that are
-    /// being compared: an interface may reach itself through the types of
-    /// its methods, and a pair that is met again is identical if nothing
-    /// else differs.
+    /// struct fields. `pairs` is what was compared already: a pair that
+    /// is met again is identical if nothing else differs. That is so for
+    /// an interface that reaches itself through the types of its
+    /// methods, and it compares a type that stands in several places
+    /// once.
     fn identical_in(
         &self,
         a: TypeId,
         b: TypeId,
         tags: bool,
-        pairs: &mut Vec<(TypeId, TypeId)>,
+        pairs: &mut FxHashSet<(TypeId, TypeId)>,
     ) -> bool {
         if a == b {
+            return true;
+        }
+        let (x, y) = (self.get(a), self.get(b));
+        // What has no parts is identical only to itself.
+        let differs = match (&*x, &*y) {
+            (Type::Basic(_), _)
+            | (Type::Param(_), _)
+            | (Type::Invalid, _)
+            | (Type::Marker(_), _) => true,
+            (Type::Named { id: a, .. }, Type::Named { id: b, .. }) => a != b,
+            _ => std::mem::discriminant(&*x) != std::mem::discriminant(&*y),
+        };
+        if differs {
+            return false;
+        }
+        if pairs.contains(&(b, a)) || !pairs.insert((a, b)) {
             return true;
         }
         // Only interfaces have more than one spelling: two types with
@@ -1394,15 +1472,11 @@ impl Types {
         let mut all = |a: &[TypeId], b: &[TypeId]| {
             a.len() == b.len() && a.iter().zip(b).all(|(&a, &b)| same(a, b))
         };
-        match (&*self.get(a), &*self.get(b)) {
+        match (&*x, &*y) {
             (Type::Interface { .. }, Type::Interface { .. }) => {
                 let (Some(x), Some(y)) = (self.method_set(a), self.method_set(b)) else {
                     return false;
                 };
-                if pairs.contains(&(a, b)) || pairs.contains(&(b, a)) {
-                    return true;
-                }
-                pairs.push((a, b));
                 let mut identical = x.len() == y.len();
                 x.for_each(&mut |method| {
                     identical = identical
@@ -1410,7 +1484,6 @@ impl Types {
                             self.identical_in(method.sig, other.sig, tags, pairs)
                         });
                 });
-                pairs.pop();
                 identical
             }
             (Type::Pointer(a), Type::Pointer(b))
@@ -1462,33 +1535,45 @@ impl Types {
 
     /// Whether values of the type can be compared with `==`.
     pub fn comparable(&self, id: TypeId) -> bool {
-        self.comparable_in(id, false, &mut Vec::new())
+        self.comparable_counted(id, false)
     }
 
     /// Whether values of the type compare without a panic: no interface
     /// is among its parts.
     pub fn strictly_comparable(&self, id: TypeId) -> bool {
-        self.comparable_in(id, true, &mut Vec::new())
+        self.comparable_counted(id, true)
     }
 
-    /// `comparable`, or `strictly_comparable` if `strict`, inside the
-    /// declared types `nest`: a type that holds a value of itself, which
-    /// is an error, says nothing against it.
-    fn comparable_in(&self, id: TypeId, strict: bool, nest: &mut Vec<TypeId>) -> bool {
-        if !matches!(&*self.get(id), Type::Named { .. }) {
-            return self.comparable_of(id, strict, nest);
-        }
-        if nest.contains(&id) {
-            return true;
-        }
-        nest.push(id);
-        let comparable = self.comparable_of(id, strict, nest);
-        nest.pop();
+    fn comparable_counted(&self, id: TypeId, strict: bool) -> bool {
+        let mut seen = FxHashSet::default();
+        let comparable = self.comparable_in(id, strict, &mut seen);
+        self.steps.fetch_add(seen.len() as u64, Ordering::Relaxed);
         comparable
     }
 
-    fn comparable_of(&self, id: TypeId, strict: bool, nest: &mut Vec<TypeId>) -> bool {
-        match &*self.get(self.underlying(id)) {
+    /// `comparable`, or `strictly_comparable` if `strict`. A type that
+    /// was `seen` says nothing against it: one that stands in several
+    /// places is asked once, and so is one that holds a value of itself,
+    /// which is an error.
+    fn comparable_in(
+        &self,
+        id: TypeId,
+        strict: bool,
+        seen: &mut FxHashSet<(TypeId, bool)>,
+    ) -> bool {
+        let under = self.get(self.underlying(id));
+        let parts = matches!(
+            &*under,
+            Type::Param(_)
+                | Type::Option(_)
+                | Type::Local(_)
+                | Type::Array { .. }
+                | Type::Struct(_)
+        );
+        if parts && !seen.insert((id, strict)) {
+            return true;
+        }
+        match &*under {
             Type::Basic(basic) => *basic != Basic::UntypedNil,
             // Pointers of every kind compare by address.
             Type::Pointer(_)
@@ -1502,17 +1587,19 @@ impl Types {
             // does.
             Type::Param(_) => self.param_set(id).is_some_and(|set| match &set.terms {
                 Some(terms) => {
-                    let compares = |term: &Term| self.comparable_in(term.ty, true, nest);
-                    !terms.is_empty() && terms.iter().all(compares)
+                    !terms.is_empty()
+                        && terms
+                            .iter()
+                            .all(|term| self.comparable_in(term.ty, true, seen))
                 }
                 None => set.comparable,
             }),
             Type::Option(elem) | Type::Local(elem) | Type::Array { elem, .. } => {
-                self.comparable_in(*elem, strict, nest)
+                self.comparable_in(*elem, strict, seen)
             }
             Type::Struct(fields) => fields
                 .iter()
-                .all(|field| self.comparable_in(field.ty, strict, nest)),
+                .all(|field| self.comparable_in(field.ty, strict, seen)),
             _ => false,
         }
     }

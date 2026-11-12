@@ -779,22 +779,28 @@ impl<'a> Checker<'a> {
     /// the type parameter itself, through what was found for others:
     /// replacing it would never end.
     fn kill_cycles(&self, params: &[TypeId], found: &mut [Option<TypeId>]) {
-        let mut on_path = FxHashSet::default();
+        let mut walk = (FxHashSet::default(), FxHashSet::default());
         for &param in params {
-            self.find_cycles(param, params, found, &mut on_path, 0);
+            self.find_cycles(param, params, found, &mut walk, 0);
         }
     }
 
+    /// `walk` is the types on the way to `ty` and the types that are
+    /// walked through: none of those comes back to itself.
     fn find_cycles(
         &self,
         ty: TypeId,
         params: &[TypeId],
         found: &mut [Option<TypeId>],
-        on_path: &mut FxHashSet<TypeId>,
+        walk: &mut (FxHashSet<TypeId>, FxHashSet<TypeId>),
         depth: u32,
     ) {
+        // Only a type parameter leads back to a type parameter.
+        if !self.types.has_param(ty) || walk.1.contains(&ty) {
+            return;
+        }
         let index = params.iter().position(|&param| param == ty);
-        if !on_path.insert(ty) {
+        if !walk.0.insert(ty) {
             if let Some(index) = index {
                 found[index] = None;
             }
@@ -805,17 +811,18 @@ impl<'a> Checker<'a> {
             match index {
                 Some(index) => {
                     if let Some(known) = found[index] {
-                        self.find_cycles(known, params, found, on_path, depth + 1);
+                        self.find_cycles(known, params, found, walk, depth + 1);
                     }
                 }
                 None => {
                     for part in self.types.parts(ty) {
-                        self.find_cycles(part, params, found, on_path, depth + 1);
+                        self.find_cycles(part, params, found, walk, depth + 1);
                     }
                 }
             }
         }
-        on_path.remove(&ty);
+        walk.0.remove(&ty);
+        walk.1.insert(ty);
     }
 
     /// A generic function that is used as a value: it has the type
