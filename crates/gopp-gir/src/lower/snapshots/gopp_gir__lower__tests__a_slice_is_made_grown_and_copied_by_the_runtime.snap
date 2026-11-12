@@ -1,0 +1,208 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\nfunc build(n int) []int {\n\txs := make([]int, n, n+2)\n\txs[0] = 7\n\txs = append(xs, 1, 2)\n\tys := []int{3, 1: 4}\n\txs = append(xs, ys...)\n\treturn xs\n}\n\nfunc owner(s []int, p *[]int) int {\n\tt := s\n\tt[0] = len(s) + cap(t)\n\tcopy(p, s)\n\tclear(t)\n\tif s == nil {\n\t\treturn 0\n\t}\n\treturn t[0]\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn _GPF4mainE5build(_1: i64) -> []i64 [go, external] {
+  let _0: []i64
+  let _1: i64 "n"
+  let _2: i64
+  let _3: i64
+  let _4: []i64
+  let _5: *[]i64
+  let _6: *u8
+  let _7: ()
+  let _8: []i64 "xs"
+  let _9: []i64
+  let _10: u64
+  let _11: i64
+  let _12: u64
+  let _13: bool
+  let _14: []i64
+  let _15: u64
+  let _16: *[]i64
+  let _17: *u8
+  let _18: ()
+  let _19: u64
+  let _20: u64
+  let _21: []i64
+  let _22: *[]i64
+  let _23: *u8
+  let _24: ()
+  let _25: []i64
+  let _26: u64
+  let _27: u64
+  let _28: []i64 "ys"
+  let _29: []i64
+  let _30: []i64
+  let _31: *[]i64
+  let _32: *u8
+  let _33: *[]i64
+  let _34: *u8
+  let _35: ()
+  let _36: []i64
+  let _37: *[]i64
+  let _38: *u8
+  let _39: ()
+  bb0:
+    _2 = copy _1  ; a.gopp:4:2
+    _3 = add(copy _1, const 2: i64)  ; a.gopp:4:2
+    _4 = const zero: []i64  ; a.gopp:4:2
+    _5 = &mut _4  ; a.gopp:4:2
+    _6 = ptr_to_ptr(copy _5) as *u8  ; a.gopp:4:2
+    _7 = call const fn @_gopp_slice_make(copy _6, copy _2, copy _3, const 8: u64) -> [return: bb1, unwind: continue]  ; a.gopp:4:2
+  bb1:
+    storage_live(_8)  ; a.gopp:4:2
+    _8 = copy _4  ; a.gopp:4:2
+    _9 = copy _8  ; a.gopp:5:2
+    _10 = len(_9)  ; a.gopp:5:2
+    _11 = const 0: i64  ; a.gopp:5:2
+    _12 = int_to_int(copy _11) as u64  ; a.gopp:5:2
+    _13 = lt(copy _12, copy _10)  ; a.gopp:5:2
+    assert(copy _13 == true, Bounds(copy _11, copy _10)) -> [success: bb2, unwind: continue]  ; a.gopp:5:2
+  bb2:
+    _9[_12] = const 7: i64  ; a.gopp:5:2
+    _14 = copy _8  ; a.gopp:6:2
+    _15 = len(_14)  ; a.gopp:6:2
+    _16 = &mut _14  ; a.gopp:6:2
+    _17 = ptr_to_ptr(copy _16) as *u8  ; a.gopp:6:2
+    _18 = call const fn @_gopp_slice_grow(copy _17, const 2: u64, const 8: u64, const true) -> [return: bb3, unwind: continue]  ; a.gopp:6:2
+  bb3:
+    _19 = add(copy _15, const 0: u64)  ; a.gopp:6:2
+    _14[_19] = const 1: i64  ; a.gopp:6:2
+    _20 = add(copy _15, const 1: u64)  ; a.gopp:6:2
+    _14[_20] = const 2: i64  ; a.gopp:6:2
+    _14.1 = add(copy _15, const 2: u64)  ; a.gopp:6:2
+    _8 = copy _14  ; a.gopp:6:2
+    _21 = const zero: []i64  ; a.gopp:7:2
+    _22 = &mut _21  ; a.gopp:7:2
+    _23 = ptr_to_ptr(copy _22) as *u8  ; a.gopp:7:2
+    _24 = call const fn @_gopp_slice_make(copy _23, const 2: i64, const 2: i64, const 8: u64) -> [return: bb4, unwind: continue]  ; a.gopp:7:2
+  bb4:
+    _25 = copy _21  ; a.gopp:7:2
+    _26 = const 0: u64  ; a.gopp:7:2
+    _25[_26] = const 3: i64  ; a.gopp:7:2
+    _27 = const 1: u64  ; a.gopp:7:2
+    _25[_27] = const 4: i64  ; a.gopp:7:2
+    storage_live(_28)  ; a.gopp:7:2
+    _28 = copy _25  ; a.gopp:7:2
+    _29 = copy _8  ; a.gopp:8:2
+    _30 = copy _28  ; a.gopp:8:2
+    _31 = &mut _29  ; a.gopp:8:2
+    _32 = ptr_to_ptr(copy _31) as *u8  ; a.gopp:8:2
+    _33 = &mut _30  ; a.gopp:8:2
+    _34 = ptr_to_ptr(copy _33) as *u8  ; a.gopp:8:2
+    _35 = call const fn @_gopp_slice_append(copy _32, copy _34, const 8: u64, const true) -> [return: bb5, unwind: continue]  ; a.gopp:8:2
+  bb5:
+    _8 = copy _29  ; a.gopp:8:2
+    _36 = copy _8  ; a.gopp:9:2
+    _37 = &mut _36  ; a.gopp:9:2
+    _38 = ptr_to_ptr(copy _37) as *u8  ; a.gopp:9:2
+    _39 = call const fn @_gopp_slice_copy(copy _38, const 8: u64) -> [return: bb6, unwind: continue]  ; a.gopp:9:2
+  bb6:
+    _0 = copy _36  ; a.gopp:9:2
+    storage_dead(_28)  ; a.gopp:9:2
+    storage_dead(_8)  ; a.gopp:9:2
+    return  ; a.gopp:9:2
+}
+
+fn _GPF4mainE5owner(_1: []i64, _2: *[]i64) -> i64 [go, external] {
+  let _0: i64
+  let _1: []i64 "s"
+  let _2: *[]i64 "p"
+  let _3: []i64
+  let _4: *[]i64
+  let _5: *u8
+  let _6: ()
+  let _7: []i64 "t"
+  let _8: []i64
+  let _9: u64
+  let _10: i64
+  let _11: u64
+  let _12: u64
+  let _13: i64
+  let _14: i64
+  let _15: bool
+  let _16: []i64
+  let _17: []i64
+  let _18: *[]i64
+  let _19: *u8
+  let _20: *[]i64
+  let _21: *u8
+  let _22: u64
+  let _23: []i64
+  let _24: *[]i64
+  let _25: *u8
+  let _26: ()
+  let _27: []i64
+  let _28: []i64
+  let _29: bool
+  let _30: u64
+  let _31: i64
+  let _32: u64
+  let _33: bool
+  bb0:
+    _3 = copy _1  ; a.gopp:13:2
+    _4 = &mut _3  ; a.gopp:13:2
+    _5 = ptr_to_ptr(copy _4) as *u8  ; a.gopp:13:2
+    _6 = call const fn @_gopp_slice_copy(copy _5, const 8: u64) -> [return: bb1, unwind: continue]  ; a.gopp:13:2
+  bb1:
+    storage_live(_7)  ; a.gopp:13:2
+    _7 = copy _3  ; a.gopp:13:2
+    _8 = copy _7  ; a.gopp:14:2
+    _9 = len(_8)  ; a.gopp:14:2
+    _10 = const 0: i64  ; a.gopp:14:2
+    _11 = int_to_int(copy _10) as u64  ; a.gopp:14:2
+    _12 = len(_1)  ; a.gopp:14:2
+    _13 = int_to_int(copy _12) as i64  ; a.gopp:14:2
+    _14 = int_to_int(copy _7.2) as i64  ; a.gopp:14:2
+    _15 = lt(copy _11, copy _9)  ; a.gopp:14:2
+    assert(copy _15 == true, Bounds(copy _10, copy _9)) -> [success: bb2, unwind: continue]  ; a.gopp:14:2
+  bb2:
+    _8[_11] = add(copy _13, copy _14)  ; a.gopp:14:2
+    _16 = copy (*_2)  ; a.gopp:15:2
+    _17 = copy _1  ; a.gopp:15:2
+    _18 = &mut _16  ; a.gopp:15:2
+    _19 = ptr_to_ptr(copy _18) as *u8  ; a.gopp:15:2
+    _20 = &mut _17  ; a.gopp:15:2
+    _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:15:2
+    _22 = call const fn @_gopp_slice_copy_into(copy _19, copy _21, const 8: u64) -> [return: bb3, unwind: continue]  ; a.gopp:15:2
+  bb3:
+    _23 = copy _7  ; a.gopp:16:2
+    _24 = &mut _23  ; a.gopp:16:2
+    _25 = ptr_to_ptr(copy _24) as *u8  ; a.gopp:16:2
+    _26 = call const fn @_gopp_slice_clear(copy _25, const 8: u64) -> [return: bb4, unwind: continue]  ; a.gopp:16:2
+  bb4:
+    _27 = copy _1  ; a.gopp:17:5
+    _28 = const zero: []i64  ; a.gopp:17:5
+    _29 = eq(copy _27.0, copy _28.0)  ; a.gopp:17:5
+    switch copy _29 [0: bb6, otherwise: bb5]  ; a.gopp:17:5
+  bb5:
+    _0 = const 0: i64  ; a.gopp:18:3
+    storage_dead(_7)  ; a.gopp:18:3
+    return  ; a.gopp:18:3
+  bb6:
+    _30 = len(_7)  ; a.gopp:20:2
+    _31 = const 0: i64  ; a.gopp:20:2
+    _32 = int_to_int(copy _31) as u64  ; a.gopp:20:2
+    _33 = lt(copy _32, copy _30)  ; a.gopp:20:9
+    assert(copy _33 == true, Bounds(copy _31, copy _30)) -> [success: bb7, unwind: continue]  ; a.gopp:20:9
+  bb7:
+    _0 = copy _7[_32]  ; a.gopp:20:2
+    storage_dead(_7)  ; a.gopp:20:2
+    return  ; a.gopp:20:2
+}
+
+declare fn _gopp_slice_make(_1: *u8, _2: i64, _3: i64, _4: u64) -> () [c, external]
+
+declare fn _gopp_slice_grow(_1: *u8, _2: u64, _3: u64, _4: bool) -> () [c, external]
+
+declare fn _gopp_slice_append(_1: *u8, _2: *u8, _3: u64, _4: bool) -> () [c, external]
+
+declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
+
+declare fn _gopp_slice_copy_into(_1: *u8, _2: *u8, _3: u64) -> u64 [c, external]
+
+declare fn _gopp_slice_clear(_1: *u8, _2: u64) -> () [c, external]

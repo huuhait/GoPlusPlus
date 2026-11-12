@@ -514,10 +514,19 @@ impl<'a> Checker<'a> {
     /// noted of a value that is copied by its bytes.
     pub(super) fn given(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand, ty: TypeId, how: Given) {
         let is_place = matches!(x.mode, Mode::Variable | Mode::MapIndex);
-        if !self.own_rules(cx) || self.memo.is_none() || !is_place {
+        if self.memo.is_none() || !is_place {
             return;
         }
         let expr = self.unparen(cx, expr);
+        // A Go file has the same copies and none of the other rules:
+        // every type that it can write is copied.
+        if !self.own_rules(cx) {
+            let copied = x.ty == ty && self.types.category(ty) == Category::Copyable;
+            if copied && self.place_of(cx, expr) != Place::Temporary {
+                self.var_modes.insert(expr, Transfer::Copy);
+            }
+            return;
+        }
         let direct = x.ty == ty;
         // What a pointer to a type with a type table points to may be a
         // child: a copy would be of the parent part only (EXP-15).

@@ -73,6 +73,17 @@ int64_t _gopp_string_compare(gopp_string a, gopp_string b) {
   return (a.len > b.len) - (a.len < b.len);
 }
 
+// `string(bytes)`: the bytes of the slice in a buffer of the string.
+gopp_string _gopp_string_from_bytes(const void *bytes) {
+  const gopp_slice *of = bytes;
+  if (of->len == 0) {
+    return (gopp_string){0, 0, 0};
+  }
+  gopp_string text = fresh(of->len);
+  __builtin_memcpy(text.ptr, of->ptr, of->len);
+  return text;
+}
+
 enum { GOPP_RUNE_ERROR = 0xfffd };
 
 // `string(r)`: the UTF-8 of the code point, or of U+FFFD for a number

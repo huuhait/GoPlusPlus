@@ -1,0 +1,6 @@
+2 10
+panic: runtime error: slice bounds out of range [:5] with length 2
+
+goroutine 1 [running]:
+main.main()
+	+0x?

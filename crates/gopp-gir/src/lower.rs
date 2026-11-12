@@ -9,6 +9,7 @@ mod assign;
 mod expr;
 mod func;
 mod merge;
+mod slice;
 mod stmt;
 mod types;
 

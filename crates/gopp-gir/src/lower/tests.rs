@@ -603,6 +603,88 @@ func runes(s string) int {
 }
 
 #[test]
+fn a_slice_is_made_grown_and_copied_by_the_runtime() {
+    insta::assert_snapshot!(gir("package main
+
+func build(n int) []int {
+	xs := make([]int, n, n+2)
+	xs[0] = 7
+	xs = append(xs, 1, 2)
+	ys := []int{3, 1: 4}
+	xs = append(xs, ys...)
+	return xs
+}
+
+func owner(s []int, p *[]int) int {
+	t := s
+	t[0] = len(s) + cap(t)
+	copy(p, s)
+	clear(t)
+	if s == nil {
+		return 0
+	}
+	return t[0]
+}
+"));
+}
+
+#[test]
+fn part_of_a_slice_is_a_copy_the_slice_itself_or_a_view() {
+    insta::assert_snapshot!(gir("package main
+
+func parts(s []int, a [4]int, i, j, k int) int {
+	copied := s[i:j]
+	s = s[i:j]
+	view := &s[1:]
+	three := s[i:j:k]
+	array := a[:j]
+	return len(copied) + len(view) + len(three) + len(array)
+}
+
+func bytes(text string, raw []byte) (string, []byte) {
+	return string(raw), []byte(text)
+}
+
+func walk(names []string) int {
+	total := 0
+	for i, name := range names {
+		total += i + len(name)
+	}
+	return total
+}
+"));
+}
+
+#[test]
+fn a_value_that_holds_a_slice_in_another_value_is_not_copied_yet() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main
+
+type Table struct{ rows []int }
+
+func copies(t Table, grid [][]int) int {
+	u := t
+	inner := grid
+	part := grid[1:]
+	return len(u.rows) + len(inner) + len(part)
+}
+",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        [
+            "a.gopp:6:7: not supported yet: a copy of a value that holds a slice in another value",
+            "a.gopp:7:11: not supported yet: a copy of a value that holds a slice in another value",
+            "a.gopp:8:10: not supported yet: a copy of elements that hold a slice",
+        ]
+    );
+}
+
+#[test]
 fn print_gives_each_value_to_the_runtime_after_all_are_worked_out() {
     insta::assert_snapshot!(gir("package main
 
@@ -830,6 +912,11 @@ fn the_steps_grow_with_the_source() {
     assert_near_linear(&[50, 100, 200, 400], |n| {
         steps_of(&many_functions(n).replace("\tdefer println(total)\n", ""))
     });
+}
+
+#[test]
+fn the_steps_grow_with_ranges_slices_and_strings() {
+    let sizes = [100, 200, 400, 800];
     // Range loops in range loops, over a number, an array and a string.
     assert_near_linear(&sizes, |n| {
         let open: String = (0..n)
@@ -844,6 +931,14 @@ fn the_steps_grow_with_the_source() {
             })
             .collect();
         steps_of(&function(&format!("{open}{}", "\t}\n".repeat(n))))
+    });
+    // Slices that are grown, cut and copied one after the other.
+    assert_near_linear(&sizes, |n| {
+        let grown: String = (0..n)
+            .map(|at| format!("\txs = append(xs, x, {at})\n\tys := xs[1:]\n\txs = xs[:len(ys)]\n\tx += ys[0]\n")
+                .replace("ys", &format!("y{at}")))
+            .collect();
+        steps_of(&function(&format!("\tvar xs []int\n{grown}")))
     });
     // Strings that are joined, cut and compared in one expression.
     assert_near_linear(&sizes, |n| {

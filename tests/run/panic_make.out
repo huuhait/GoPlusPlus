@@ -1,0 +1,4 @@
+3 0
+panic: runtime error: makeslice: len out of range
+
+goroutine 1 [running]:

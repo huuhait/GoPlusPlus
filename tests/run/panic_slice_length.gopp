@@ -1,0 +1,13 @@
+// exit: 2
+package main
+
+// The high bound of a slice may not pass its length, also where there
+// is room: past the length there are no elements. Go takes the
+// capacity here.
+func main() {
+	room := make([]int, 2, 10)
+	room = room[:2]
+	println(len(room), cap(room))
+	room = room[:5]
+	println("not reached")
+}

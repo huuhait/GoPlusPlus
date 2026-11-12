@@ -25,6 +25,12 @@ impl FuncCx<'_, '_> {
         if let (AssignOp::Op(op), [x], [y]) = (op, lhs, rhs) {
             return self.op_assign(*x, op, Some(*y));
         }
+        // `s = append(s, ...)` and `s = s[i:j]` work on `s` where it is:
+        // the slice on the right is not a copy.
+        self.reused = match (op, lhs, rhs) {
+            (AssignOp::Assign, [left], [right]) => self.reused_in(*left, *right),
+            _ => None,
+        };
         // What is evaluated after a place is worked out may change the
         // variables that it was reached through.
         let mut later = lhs.len() > 1;
@@ -59,6 +65,7 @@ impl FuncCx<'_, '_> {
             }
             values = held;
         }
+        self.reused = None;
         for (dest, value) in dests.into_iter().zip(values) {
             match dest {
                 Dest::Blank => {}
@@ -75,6 +82,30 @@ impl FuncCx<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// The expression inside `right` that names the place `left` again
+    /// and whose slice `right` takes over: the first argument of
+    /// `append`, or what is sliced.
+    fn reused_in(&self, left: ExprId, right: ExprId) -> Option<ExprId> {
+        let right = Shared::unparen(self.tree, right);
+        let again = match &self.tree.exprs[right].kind {
+            ExprKind::Slice { x, .. } => *x,
+            ExprKind::Call { fun, args, .. } => {
+                let fun = Shared::unparen(self.tree, *fun);
+                let append = matches!(
+                    self.body.uses.get(&fun),
+                    Some(gopp_sema::Ref::Universe(gopp_sema::Predeclared::Append))
+                );
+                match (append, args.first()) {
+                    (true, Some(&first)) => first,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let again = Shared::unparen(self.tree, again);
+        self.same_place(left, again).then_some(again)
     }
 
     /// Gives a variable of a range clause its value for one pass of the

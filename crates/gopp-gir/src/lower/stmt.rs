@@ -292,8 +292,23 @@ impl FuncCx<'_, '_> {
                 let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
                 (Walked::Text(whole), slot(len), word)
             }
+            // The elements of the slice as it is when the loop starts:
+            // the body may write them, and may not grow the slice.
+            Type::Slice(of) => {
+                if named && !self.flat(of) {
+                    self.unsupported(span, "a copy of elements that hold a slice");
+                    return self.close_scope(span);
+                }
+                let mut mode = PlaceMode::default();
+                let place = self.place(x, &mut mode)?;
+                let place = self.through(place, span, &mut mode)?;
+                let whole = self.b.assign_temp(Rvalue::Use(Operand::Copy(place)))?;
+                let whole = Place::local(whole);
+                let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
+                (Walked::Elements(whole), slot(len), word)
+            }
             _ => {
-                self.unsupported(span, "a range over a slice, a map, a channel or a function");
+                self.unsupported(span, "a range over a map, a channel or a function");
                 return self.close_scope(span);
             }
         };

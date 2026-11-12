@@ -1,0 +1,65 @@
+package main
+
+// A slice is a value: the new owner of one has its own elements, part
+// of one is a copy, and the same elements are asked for with `&`.
+
+func addOne(xs *[]int) { xs[0]++ }
+
+func total(xs []int) int {
+	sum := 0
+	for _, x := range xs {
+		sum += x
+	}
+	return sum
+}
+
+func double(xs []int) []int {
+	for i := range xs {
+		xs[i] *= 2
+	}
+	return xs
+}
+
+type List struct {
+	items []int
+	name  string
+}
+
+func main() {
+	s := []int{1, 2, 3}
+	t := s
+	t[0] = 100
+	println(s[0], t[0])
+	part := s[1:]
+	part[0] = 50
+	println(s[1], part[0], len(part), cap(part))
+	view := &s[1:]
+	view[0] = 60
+	println(s[1], len(view), cap(view))
+	addOne(&s)
+	println(s[0], total(s))
+	s = append(s, 4)
+	u := append(s, 5)
+	u[0] = -1
+	println(s[0], len(s), u[0], len(u))
+	n := copy(&s, []int{9, 9})
+	println(n, s[0], s[1], s[2])
+	d := double(s)
+	println(s[0], d[0])
+	var l List
+	l.items = s
+	l.items[0] = 0
+	l.items = append(l.items, 7)
+	println(s[0], len(s), l.items[0], len(l.items))
+	arr := [4]int{1, 2, 3, 4}
+	fromArr := arr[1:3]
+	fromArr[0] = 20
+	inArr := &arr[1:3]
+	inArr[1] = 30
+	println(arr[1], arr[2], fromArr[0], len(fromArr))
+	room := make([]int, 2, 10)
+	room = room[:2]
+	println(len(room), cap(room))
+	three := s[1:2:3]
+	println(len(three), cap(three) >= 1)
+}

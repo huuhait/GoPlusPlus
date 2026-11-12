@@ -9,7 +9,8 @@ Every Go++ program is linked with a runtime ([ADR-0035](../adr/0035-runtime-in-c
 | `runtime/rt.c` | `_gopp_rt_init`, which the generated `main` calls first, `_gopp_rt_exit`, where every program that does not return from `main` ends, and `_gopp_rt_funcs`, which takes the names of the functions of a unit |
 | `runtime/print.c` | `_gopp_print_<kind>`: the built-in `print` and `println` |
 | `runtime/panic.c` | `_gopp_panic_<kind>`: where a failed bounds, slice, nil, division or shift check of generated code ends, and `_gopp_panic_must` |
-| `runtime/string.c` | what the compiler calls for strings: `_gopp_string_concat`, `_gopp_string_eq`, `_gopp_string_compare`, `_gopp_string_from_rune`, `_gopp_string_decode`; and `_gopp_alloc`, which is `malloc` until the allocator of `P05.03` |
+| `runtime/string.c` | what the compiler calls for strings: `_gopp_string_concat`, `_gopp_string_eq`, `_gopp_string_compare`, `_gopp_string_from_rune`, `_gopp_string_decode`, `_gopp_string_from_bytes`; and `_gopp_alloc`, which is `malloc` until the allocator of `P05.03` |
+| `runtime/slice.c` | what the compiler calls for slices: `_gopp_slice_make`, `_gopp_slice_grow`, `_gopp_slice_append`, `_gopp_slice_copy`, `_gopp_slice_copy_into`, `_gopp_slice_clear`, `_gopp_bytes_from_string` |
 | `runtime/os_linux.c`, `runtime/os_windows.c` | what the runtime asks of the system: writing to the standard error stream and walking the stack. A target gets the one of its system |
 | `runtime/internal.h` | what these files share |
 | `gopp_rt.h` | generated, never written by hand (below) |
@@ -46,6 +47,21 @@ A string that a program makes while it runs (`a + b`, `string(r)`) has its bytes
 - `_gopp_string_eq` compares the lengths, then the bytes; `_gopp_string_compare` gives a number below zero, zero or above it, which the compiler compares with zero for `<`, `<=`, `>`, `>=`.
 - `_gopp_string_from_rune` is `string(r)`: the UTF-8 of the code point, or of U+FFFD for a number that is none.
 - `_gopp_string_decode(text, at)` is one step of `range` over a string: the code point in the low half of the result and its width in the high half. Bytes that are no UTF-8 give U+FFFD and a width of 1, exactly where Go's `range` gives them.
+
+## Slices
+
+A slice with a buffer of its own has its elements after a header `{alloc_cap, allocator}` (SLC-1); `backing` points to the header and is null for a nil or empty slice and for a view. A slice of no elements that is not nil points at one byte of the runtime.
+
+Every function takes a slice by the address of its four words, as a `void *`, because generated code has one struct for each element type; each gets the size of an element. The functions copy elements by their bytes, so the compiler calls them only for elements without a slice inside, until the copy glue of `P04.09`.
+
+- `_gopp_slice_make(slice, len, cap, size)` is `make`: zero elements, and Go's two messages for a length or a capacity out of range.
+- `_gopp_slice_grow(slice, more, size, no_pointers)` makes room for `more` elements after the length. A slice with a buffer of its own and enough room keeps it; any other gets a new buffer, and its old one is freed, since the slice was the one owner. The new capacity is the one that Go's `growslice` gives: twice the old one below 256 elements, a quarter more above, rounded up to a size class of Go's allocator (the table of classes is in the file; `no_pointers` says which rounding Go uses).
+- `_gopp_slice_append(slice, from, size, no_pointers)` is `append(s, t...)`; `from` is a slice or a string and may be the elements of the slice itself.
+- `_gopp_slice_copy(slice, size)` makes the slice a copy of itself in a buffer of its own: the copy that a new owner gets.
+- `_gopp_slice_copy_into(to, from, size)` is the built-in `copy`, and `_gopp_slice_clear` the built-in `clear`.
+- `_gopp_bytes_from_string` and `_gopp_string_from_bytes` are the two conversions; each copies the bytes.
+
+No buffer is freed when its owner ends yet (`P04.09`).
 
 ## `print` and `println`
 

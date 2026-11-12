@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 29] = [
+pub const FUNCS: [RuntimeFunc; 37] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -77,6 +77,31 @@ pub const FUNCS: [RuntimeFunc; 29] = [
         "_gopp_string_decode",
         "gopp_string text, uint64_t at",
     ),
+    gives(
+        "gopp_string",
+        "_gopp_string_from_bytes",
+        "const void *bytes",
+    ),
+    returns("_gopp_bytes_from_string", "void *slice, gopp_string text"),
+    returns(
+        "_gopp_slice_make",
+        "void *slice, int64_t len, int64_t cap, uint64_t size",
+    ),
+    returns(
+        "_gopp_slice_grow",
+        "void *slice, uint64_t more, uint64_t size, bool no_pointers",
+    ),
+    returns(
+        "_gopp_slice_append",
+        "void *slice, const void *from, uint64_t size, bool no_pointers",
+    ),
+    returns("_gopp_slice_copy", "void *slice, uint64_t size"),
+    gives(
+        "uint64_t",
+        "_gopp_slice_copy_into",
+        "const void *to, const void *from, uint64_t size",
+    ),
+    returns("_gopp_slice_clear", "const void *slice, uint64_t size"),
     ends(
         "_gopp_panic_bounds",
         "uint64_t index, uint64_t length, bool is_signed",
@@ -215,7 +240,7 @@ const INTERNAL: Source = ("internal.h", include_str!("../../../runtime/internal.
 
 /// The sources of the runtime for a system: every target has all but
 /// the last.
-fn sources(os: Os) -> [Source; 5] {
+fn sources(os: Os) -> [Source; 6] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",
@@ -228,6 +253,7 @@ fn sources(os: Os) -> [Source; 5] {
         ("print.c", include_str!("../../../runtime/print.c")),
         ("panic.c", include_str!("../../../runtime/panic.c")),
         ("string.c", include_str!("../../../runtime/string.c")),
+        ("slice.c", include_str!("../../../runtime/slice.c")),
         of_system,
     ]
 }

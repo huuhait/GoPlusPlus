@@ -77,6 +77,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// Whether evaluating an expression can change what another reads.
     effects: FxHashMap<ExprId, bool>,
     reported: FxHashSet<(u32, u32)>,
+    /// The place on the right of `s = append(s, ...)` and of
+    /// `s = s[i:j]`: its slice is used where it is, and not copied.
+    pub reused: Option<ExprId>,
 }
 
 /// Adds the function of the job to the module, or reports why not.
@@ -141,6 +144,7 @@ pub(super) fn lower_function<'a>(
             label: None,
             effects: FxHashMap::default(),
             reported: FxHashSet::default(),
+            reused: None,
         };
         cx.function(receiver.as_ref(), *ty, block)?;
         cx.b.drop_unreached();

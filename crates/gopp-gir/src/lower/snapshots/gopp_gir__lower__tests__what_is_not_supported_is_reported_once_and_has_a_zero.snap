@@ -2,56 +2,85 @@
 source: crates/gopp-gir/src/lower/tests.rs
 expression: "format!(\"{}\\n{}\", messages.join(\"\\n\"), print_module(&lowered.module))"
 ---
-a.gopp:7:2: not supported yet: a range over a slice, a map, a channel or a function
 a.gopp:10:7: not supported yet: a function literal
 a.gopp:14:10: not supported yet: a call of this function
 a.gopp:16:2: not supported yet: a defer statement
 a.gopp:17:9: not supported yet: a call of this function
-a.gopp:17:25: not supported yet: an index of a slice or a map
 module "main"
 file 0 "a.gopp"
 
 fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, external] {
+  scope 1: block in 0  ; a.gopp:7:9
   let _0: (i64, string)
   let _1: []i64 "xs"
   let _2: gopp.iface "s"
   let _3: string "name"
   let _4: i64 "sum"
-  let _5: (fn env(*u8) -> i64, *u8) "g"
-  let _6: ()
-  let _7: ()
-  let _8: gopp.iface "any"
-  let _9: f64 "area"
-  let _10: u64
-  let _11: i64
-  let _12: i64
-  let _13: i64
-  let _14: i64
-  let _15: string
+  let _5: []i64
+  let _6: u64
+  let _7: u64
+  let _8: bool
+  let _9: i64 "x"
+  let _10: (fn env(*u8) -> i64, *u8) "g"
+  let _11: ()
+  let _12: ()
+  let _13: gopp.iface "any"
+  let _14: f64 "area"
+  let _15: u64
+  let _16: i64
+  let _17: i64
+  let _18: u64
+  let _19: i64
+  let _20: u64
+  let _21: bool
+  let _22: i64
+  let _23: string
   bb0:
     storage_live(_4)  ; a.gopp:6:2
     _4 = const 0: i64  ; a.gopp:6:2
-    storage_live(_5)  ; a.gopp:10:2
-    _5 = const zero: (fn env(*u8) -> i64, *u8)  ; a.gopp:10:2
-    _6 = call const fn @_gopp_print_int(copy _4) -> [return: bb1, unwind: continue]  ; a.gopp:11:2
+    _5 = copy _1  ; a.gopp:7:20
+    _6 = len(_5)  ; a.gopp:7:20
+    _7 = const zero: u64  ; a.gopp:7:20
+    goto bb1  ; a.gopp:7:20
   bb1:
-    _7 = call const fn @_gopp_print_newline() -> [return: bb2, unwind: continue]  ; a.gopp:11:2
+    _8 = lt(copy _7, copy _6)  ; a.gopp:7:20
+    switch copy _8 [0: bb4, otherwise: bb2]  ; a.gopp:7:20
   bb2:
-    storage_live(_8)  ; a.gopp:12:2
-    _8 = copy _2  ; a.gopp:12:2
-    storage_live(_9)  ; a.gopp:14:2
-    _9 = add(const zero: f64, const 0x3ff0000000000000: f64)  ; a.gopp:14:2
-    _10 = len(_1)  ; a.gopp:17:2
-    _11 = int_to_int(copy _10) as i64  ; a.gopp:17:2
-    _12 = add(const zero: i64, copy _11)  ; a.gopp:17:2
-    _13 = const zero: i64  ; a.gopp:17:2
-    _14 = add(copy _12, copy _13)  ; a.gopp:17:2
-    _15 = call const fn @_gopp_string_concat(copy _3, const str#0 "!") -> [return: bb3, unwind: continue]  ; a.gopp:17:2
+    storage_live(_9)  ; a.gopp:7:20 scope 1
+    _9 = copy _5[_7]  ; a.gopp:7:20 scope 1
+    _4 = add(copy _4, copy _9)  ; a.gopp:8:3 scope 1
+    storage_dead(_9)  ; a.gopp:9:2 scope 1
+    goto bb3  ; a.gopp:9:2
   bb3:
-    _0 = tuple {copy _14, copy _15}  ; a.gopp:17:2
-    storage_dead(_9)  ; a.gopp:17:2
-    storage_dead(_8)  ; a.gopp:17:2
-    storage_dead(_5)  ; a.gopp:17:2
+    _7 = add(copy _7, const 1: u64)  ; a.gopp:9:2
+    goto bb1  ; a.gopp:9:2
+  bb4:
+    storage_live(_10)  ; a.gopp:10:2
+    _10 = const zero: (fn env(*u8) -> i64, *u8)  ; a.gopp:10:2
+    _11 = call const fn @_gopp_print_int(copy _4) -> [return: bb5, unwind: continue]  ; a.gopp:11:2
+  bb5:
+    _12 = call const fn @_gopp_print_newline() -> [return: bb6, unwind: continue]  ; a.gopp:11:2
+  bb6:
+    storage_live(_13)  ; a.gopp:12:2
+    _13 = copy _2  ; a.gopp:12:2
+    storage_live(_14)  ; a.gopp:14:2
+    _14 = add(const zero: f64, const 0x3ff0000000000000: f64)  ; a.gopp:14:2
+    _15 = len(_1)  ; a.gopp:17:2
+    _16 = int_to_int(copy _15) as i64  ; a.gopp:17:2
+    _17 = add(const zero: i64, copy _16)  ; a.gopp:17:2
+    _18 = len(_1)  ; a.gopp:17:2
+    _19 = const 0: i64  ; a.gopp:17:2
+    _20 = int_to_int(copy _19) as u64  ; a.gopp:17:2
+    _21 = lt(copy _20, copy _18)  ; a.gopp:17:25
+    assert(copy _21 == true, Bounds(copy _19, copy _18)) -> [success: bb7, unwind: continue]  ; a.gopp:17:25
+  bb7:
+    _22 = add(copy _17, copy _1[_20])  ; a.gopp:17:2
+    _23 = call const fn @_gopp_string_concat(copy _3, const str#0 "!") -> [return: bb8, unwind: continue]  ; a.gopp:17:2
+  bb8:
+    _0 = tuple {copy _22, copy _23}  ; a.gopp:17:2
+    storage_dead(_14)  ; a.gopp:17:2
+    storage_dead(_13)  ; a.gopp:17:2
+    storage_dead(_10)  ; a.gopp:17:2
     storage_dead(_4)  ; a.gopp:17:2
     return  ; a.gopp:17:2
 }

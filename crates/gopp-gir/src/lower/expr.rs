@@ -9,6 +9,7 @@ use gopp_span::{Dialect, Span as SourceSpan};
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind, UnaryOp};
 
 use super::func::{Built, FuncCx, deeper};
+use super::slice::Part;
 use super::{Callee, CalleeKey, Memo, Shared};
 use crate::{
     AggKind, AssertKind, BinOp, CallConv, CastKind, Constant, ConstantKind, FuncType, Global,
@@ -109,7 +110,7 @@ impl FuncCx<'_, '_> {
     }
 
     /// A zero in the place of what is not supported, which is reported.
-    fn placeholder(&mut self, span: SourceSpan, ty: TypeId, what: &str) -> Rvalue {
+    pub fn placeholder(&mut self, span: SourceSpan, ty: TypeId, what: &str) -> Rvalue {
         self.unsupported(span, what);
         Rvalue::Use(self.zero(ty))
     }
@@ -133,7 +134,7 @@ impl FuncCx<'_, '_> {
             other => self.b.rvalue_ty(other).unwrap_or(unit),
         };
         if own == ty || (ty == unit && self.b.rvalue_ty(&value).is_ok()) {
-            return Ok(value);
+            return self.given(expr, ty, value);
         }
         if own != unit && ty != unit {
             let span = self.tree.exprs[expr].span;
@@ -272,7 +273,20 @@ impl FuncCx<'_, '_> {
             ExprKind::BasicLit { .. } => Ok(self.placeholder(span, ty, "a complex number")),
             ExprKind::FuncLit { .. } => Ok(self.placeholder(span, ty, "a function literal")),
             ExprKind::Slice { x, lo, hi, max, .. } => {
-                self.substring(expr, ty, *x, [*lo, *hi, *max])
+                let of = self.ty_of(*x);
+                let of = self.pointee(of);
+                let bounds = [*lo, *hi, *max];
+                match self.kind(of) {
+                    Type::Slice(_) | Type::Array(..) => {
+                        let same = self.reused == Some(Shared::unparen(self.tree, *x));
+                        let part = match same {
+                            true => Part::InPlace,
+                            false => Part::Value,
+                        };
+                        self.slice_part(expr, ty, *x, bounds, part)
+                    }
+                    _ => self.substring(expr, ty, *x, bounds),
+                }
             }
             ExprKind::Assert { .. } => Ok(self.placeholder(span, ty, "a type assertion")),
             ExprKind::MacroCall { .. } => Ok(self.placeholder(span, ty, "a macro call")),
@@ -528,7 +542,7 @@ impl FuncCx<'_, '_> {
 
     /// Goes on only if the condition holds. The check is placed at
     /// `span`, which a panic names; what follows is placed as before.
-    fn assert(
+    pub fn assert(
         &mut self,
         span: SourceSpan,
         holds: Rvalue,
@@ -582,7 +596,12 @@ impl FuncCx<'_, '_> {
     }
 
     /// The place itself, or what it points to if it holds a pointer.
-    fn through(&mut self, place: Place, span: SourceSpan, mode: &mut PlaceMode) -> Built<Place> {
+    pub fn through(
+        &mut self,
+        place: Place,
+        span: SourceSpan,
+        mode: &mut PlaceMode,
+    ) -> Built<Place> {
         match self.kind(self.b.place_ty(&place)) {
             Type::Ptr(_) => self.deref(place, span, mode),
             _ => Ok(place),
@@ -599,13 +618,22 @@ impl FuncCx<'_, '_> {
     ) -> Built<Place> {
         let span = self.tree.exprs[expr].span;
         let base = self.place(x, mode)?;
-        let base = self.through(base, span, mode)?;
+        let mut base = self.through(base, span, mode)?;
         let len = match self.kind(self.b.place_ty(&base)) {
             Type::Array(_, len) => Length::Known(len),
             // A string is a value: its length is read where it is.
             Type::String => Length::Of(self.b.assign_temp(Rvalue::Len(base.clone()))?),
+            Type::Slice(_) => {
+                // An element that is stored to after more is worked out
+                // is one of the slice as it is now.
+                if mode.later.is_some() {
+                    let now = self.b.assign_temp(Rvalue::Use(Operand::Copy(base)))?;
+                    base = Place::local(now);
+                }
+                Length::Of(self.b.assign_temp(Rvalue::Len(base.clone()))?)
+            }
             _ => {
-                self.unsupported(span, "an index of a slice or a map");
+                self.unsupported(span, "an index of a map");
                 let ty = self.ty_of(expr);
                 return Ok(Place::local(
                     self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
@@ -630,7 +658,7 @@ impl FuncCx<'_, '_> {
     /// An index in two slots of its own: as a number without a sign,
     /// since a negative index is past every length, and as the program
     /// wrote it, for the message of a failure.
-    fn index_slots(&mut self, index: ExprId, span: SourceSpan) -> Built<(LocalId, LocalId)> {
+    pub fn index_slots(&mut self, index: ExprId, span: SourceSpan) -> Built<(LocalId, LocalId)> {
         let word = Memo::word(self.shared, self.b.types(), false);
         let given = self.operand(index)?;
         let from = self.b.operand_ty(&given);
@@ -733,6 +761,10 @@ impl FuncCx<'_, '_> {
                 let inner = Shared::unparen(self.tree, x);
                 if let ExprKind::CompositeLit { .. } = self.tree.exprs[inner].kind {
                     return Ok(self.placeholder(span, ty, "the address of a literal"));
+                }
+                // `&x[lo:hi]`: the same elements.
+                if let ExprKind::Slice { x, lo, hi, max, .. } = self.tree.exprs[inner].kind {
+                    return self.slice_part(inner, ty, x, [lo, hi, max], Part::View);
                 }
                 let place = self.place(x, &mut PlaceMode::default())?;
                 Ok(Rvalue::AddrOf(place, Mutability::Mut))
@@ -861,6 +893,10 @@ impl FuncCx<'_, '_> {
         if let (Type::String, Type::String) = (&kind, &count) {
             return self.string_op(span, lowered, first, second);
         }
+        // A slice is compared with nil and with nothing else.
+        if let (Type::Slice(_), BinOp::Eq | BinOp::Ne) = (&kind, lowered) {
+            return self.nil_slice(lowered, first, second);
+        }
         if !fits {
             let ty = match lowered {
                 BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -972,7 +1008,7 @@ impl FuncCx<'_, '_> {
         if !self.body.types.contains_key(&callee) {
             let converts = self.body.types.contains_key(&expr);
             return match (self.builtin_of(callee), &args[..]) {
-                (Some(called), _) => self.builtin(span, ty, called, args),
+                (Some(called), _) => self.builtin(span, ty, called, args, *spread),
                 (None, [value]) if converts => self.convert(span, *value, ty),
                 _ => Ok(self.placeholder(span, ty, "a call of what is not known")),
             };
@@ -1013,7 +1049,10 @@ impl FuncCx<'_, '_> {
         };
         let mut given = Vec::with_capacity(called.params.len());
         if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {
-            let mut value = self.receiver(span, x, path, wanted)?;
+            let value = self.receiver(span, x, path, wanted)?;
+            // A receiver by value is the method's own, like an argument.
+            let value = self.given(x, wanted, Rvalue::Use(value))?;
+            let mut value = self.operand_of(value)?;
             if args.iter().any(|&arg| self.has_effects(arg)) {
                 value = self.stable(value)?;
             }
@@ -1139,7 +1178,26 @@ impl FuncCx<'_, '_> {
         ty: TypeId,
         called: Predeclared,
         args: &[ExprId],
+        spread: bool,
     ) -> Built<Rvalue> {
+        match (called, args, self.kind(ty)) {
+            (Predeclared::Make, [_, sizes @ ..], Type::Slice(of)) => {
+                return self.make_slice(ty, of, sizes);
+            }
+            (Predeclared::Append, _, Type::Slice(_)) => {
+                return self.append(span, ty, args, spread);
+            }
+            (Predeclared::CopyFunc, [_, _], _) => return self.copy_into(span, ty, args),
+            (Predeclared::Clear, [of], _) if self.clear_slice(span, *of)? => {
+                return Ok(Rvalue::Use(self.zero(ty)));
+            }
+            (Predeclared::Cap, [of], _) => {
+                if let Some(cap) = self.cap(span, ty, *of)? {
+                    return Ok(cap);
+                }
+            }
+            _ => {}
+        }
         if let (Predeclared::Len, [of]) = (called, args) {
             let mut mode = PlaceMode::default();
             let place = self.place(*of, &mut mode)?;
@@ -1258,7 +1316,7 @@ impl FuncCx<'_, '_> {
 
     /// A call of the function `name` of the runtime, which gives
     /// nothing back.
-    fn runtime_call(&mut self, name: &str, params: &[TypeId], args: Vec<Operand>) -> Built {
+    pub fn runtime_call(&mut self, name: &str, params: &[TypeId], args: Vec<Operand>) -> Built {
         self.runtime(name, params, TypeInterner::UNIT, args)
             .map(drop)
     }
@@ -1309,7 +1367,10 @@ impl FuncCx<'_, '_> {
         if from == to {
             return Ok(Rvalue::Use(given));
         }
+        let byte = self.b.types().int(8, false);
         let cast = match (self.kind(from), self.kind(to)) {
+            (Type::String, Type::Slice(of)) if of == byte => return self.bytes_of(to, given),
+            (Type::Slice(of), Type::String) if of == byte => return self.text_of(to, given),
             // `string(r)`: the text of one code point.
             (Type::Int { signed, .. }, Type::String) => {
                 let wide = self.b.types().int(64, true);
@@ -1424,6 +1485,25 @@ impl FuncCx<'_, '_> {
                     self.b.assign(element, Rvalue::Use(value))?;
                 }
                 Ok(Rvalue::Use(Operand::Copy(whole)))
+            }
+            Type::Slice(of) => {
+                let mut set: Vec<(u64, ExprId)> = Vec::with_capacity(elems.len());
+                let (mut next, mut count) = (0, 0);
+                for &elem in elems {
+                    let (key, value) = value_of(self, elem);
+                    let known = key.and_then(|key| self.body.types.get(&key));
+                    if let Some(at) = known.and_then(|typed| typed.value.to_int().low_bits()) {
+                        next = at;
+                    }
+                    set.push((next, value));
+                    next += 1;
+                    count = count.max(next);
+                }
+                let exprs: Vec<ExprId> = set.iter().map(|&(_, value)| value).collect();
+                let wanted: Vec<_> = set.iter().map(|_| Some(of)).collect();
+                let values = self.values_each(&exprs, &wanted)?;
+                let set = set.iter().map(|&(at, _)| at).zip(values).collect();
+                self.slice_literal(ty, of, count, set)
             }
             _ => Ok(self.placeholder(span, ty, "this literal")),
         }

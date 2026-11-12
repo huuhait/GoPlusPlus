@@ -8,6 +8,14 @@ The table has the differences that the compiler implements today; it grows with 
 |---|---|---|---|---|
 | `for i, v := range arr` over an array whose elements are not copied by their bytes (strings, slices, …) | walks a copy of the array: the loop does not see what its body writes | walks the array itself: a later element that the body wrote is read as written. An array of numbers is still copied first | [RNG-6](../spec/08-slices-and-range.md) | `tests/run/range_array.gopp` |
 | A float that an integer type cannot hold, converted to it (`int8(300.0)` at run time, `int(NaN)`) | whatever the machine gives | the nearest value of the type; 0 for what is no number | [EXP-8](../spec/06-expressions.md) | `tests/run/convert.gopp` |
+| `t := s`, `f(s)`, `return s`, `x.field = s` for a slice `s` | `t` and `s` are two names for the same elements | `t` has its own elements: nothing done to one is seen through the other ([ADR-0041](../adr/0041-values-are-copied.md)). `s = append(s, v)` still grows `s` where it is | [OWN-R3](../spec/04-ownership.md), [SLC-4](../spec/08-slices-and-range.md) | `tests/run/slice_values.gopp` |
+| `t := s[i:j]` of a slice or an array | the same elements | a new slice with copies of them; `s = s[i:j]` keeps the elements, and `&s[i:j]` names the same ones | [SLC-6](../spec/08-slices-and-range.md), [SLC-8](../spec/08-slices-and-range.md) | `tests/run/slice_values.gopp` |
+| `s[:n]` with `len(s) < n <= cap(s)` | the slice grows into its room | out of range: `slice bounds out of range [:n] with length len(s)` | [SLC-13](../spec/08-slices-and-range.md) | `tests/run/panic_slice_length.gopp` |
+| `copy(dst, src)` | in a Go file as in Go | in a Go++ file the destination is written `&dst` | [ADR-0041](../adr/0041-values-are-copied.md) rule 10 | `tests/run/slice_values.gopp` |
 | A nil pointer that is followed | `panic: …` and a `[signal SIGSEGV …]` line | the same first line, no signal line: the pointer is checked before it is followed | [runtime.md](runtime.md) | `tests/run/panic_nil.go` |
 
-Not different, though it may look so: the text of a stack trace is no part of what a program means ([UB chapter](../spec/16-undefined-behavior.md)), and the run tests compare everything before it.
+Not different, though it may look so:
+
+- The text of a stack trace is no part of what a program means ([UB chapter](../spec/16-undefined-behavior.md)), and the run tests compare everything before it.
+- The capacity of a slice that `append` grew is the one that Go's `growslice` gives (D5.7): `tests/run/slices.go` prints the same capacities under both. Go's compiler starts a slice that does not leave its function in a 32-byte buffer on the stack, which gives other capacities there; the test appends to package variables, which Go keeps on the heap.
+- The order in which the operands of one expression are read is left open by Go where a call is among them; Go++ reads them from left to right ([EXP-3](../spec/06-expressions.md)).
