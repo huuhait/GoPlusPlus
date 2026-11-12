@@ -4827,6 +4827,129 @@ func _() {
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn values_of_type_parameters_are_indexed_sliced_and_ranged_over_as_go_checks_it() {
+    let text = "package p
+
+type Bytes interface{ ~string | ~[]byte }
+type Seq interface{ []int | [4]int | *[8]int }
+type Maps interface{ map[string]int | map[string]int }
+type Mixed interface{ []int | map[int]int }
+type Other interface{ []int | []string }
+
+func index[B Bytes, S Seq, M Maps, X Mixed, O Other, A any, N ~int](b B, s S, m M, x X, o O, a A, n N) {
+	_ = b[0]
+	_ = s[0]
+	_ = s[3]
+	_ = s[4]
+	_ = m[\"k\"]
+	_ = m[1]
+	_ = x[0]
+	_ = o[0]
+	_ = a[0]
+	_ = n[0]
+	s[0] = 1
+	b[0] = 1
+	m[\"k\"] = 2
+	_ = b[1:2]
+	_ = b[1:2:3]
+	_ = s[1:]
+	_ = o[1:]
+	_ = a[1:]
+	_ = x[1:]
+	var _ B = b[1:]
+}
+
+func ranges[B Bytes, S Seq, N ~int | ~int64, I ~int, C chan int | <-chan int, D chan<- int, A any, Z int | string](b B, s S, n N, i I, c C, d D, a A, z Z) {
+	for range b {
+	}
+	for i, v := range s {
+		_, _ = i, v
+	}
+	for range n {
+	}
+	for x := range i {
+		var _ I = x
+	}
+	for v := range c {
+		_ = v
+	}
+	for range d {
+	}
+	for range a {
+	}
+	for range z {
+	}
+}
+";
+    let expected = [
+        "a.go:5:39: overlapping terms map[string]int and map[string]int",
+        "a.go:15:8: cannot use 1 (untyped int constant) as string value in map index",
+        "a.go:16:6: cannot index x (variable of type X constrained by Mixed)",
+        "a.go:17:6: cannot index o (variable of type O constrained by Other)",
+        "a.go:18:6: cannot index a (variable of type A constrained by any)",
+        "a.go:19:6: cannot index n (variable of type N constrained by ~int)",
+        "a.go:21:2: cannot assign to b[0] (neither addressable nor a map index expression)",
+        "a.go:24:12: invalid operation: 3-index slice of string",
+        "a.go:25:6: cannot slice s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
+        "a.go:26:6: cannot slice o (variable of type O constrained by Other): []int and []string have different underlying types",
+        "a.go:27:6: cannot slice a (variable of type A constrained by any): no specific type in A",
+        "a.go:28:6: cannot slice x (variable of type X constrained by Mixed): []int and map[int]int have different underlying types",
+        "a.go:33:12: cannot range over b (variable of type B constrained by Bytes): string and []uint8 have different underlying types",
+        "a.go:35:20: cannot range over s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
+        "a.go:38:12: cannot range over n (variable of type N constrained by ~int | ~int64): int and int64 have different underlying types",
+        "a.go:46:12: cannot range over d (variable of type D constrained by chan<- int): receive from send-only channel chan<- int",
+        "a.go:48:12: cannot range over a (variable of type A constrained by any): no specific type",
+        "a.go:50:12: cannot range over z (variable of type Z constrained by int | string): int and string have different underlying types",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+#[test]
+fn a_type_parameter_has_the_methods_of_its_constraint_and_no_fields() {
+    let text = "package p
+
+type S struct{ f int }
+
+func (S) m() {}
+
+type C interface {
+	~struct{ f int }
+	m()
+}
+type M interface{ m() }
+
+func f[P C, Q M, R any, T S](p P, q Q, r R, t T, pp *P, pq *Q) {
+	p.m()
+	q.m()
+	_ = P.m
+	_ = Q.m
+	var _ func() = q.m
+	_ = p.f
+	_ = q.f
+	r.m()
+	_ = r.f
+	t.m()
+	_ = t.f
+	pp.m()
+	pq.m()
+	_ = pp.f
+}
+";
+    let expected = [
+        "a.go:19:8: p.f undefined (type P has no field or method f)",
+        "a.go:20:8: q.f undefined (type Q has no field or method f)",
+        "a.go:21:4: r.m undefined (type R has no field or method m)",
+        "a.go:22:8: r.f undefined (type R has no field or method f)",
+        "a.go:23:4: t.m undefined (type T has no field or method m)",
+        "a.go:24:8: t.f undefined (type T has no field or method f)",
+        "a.go:25:5: pp.m undefined (type *P is pointer to type parameter, not type parameter)",
+        "a.go:26:5: pq.m undefined (type *Q is pointer to type parameter, not type parameter)",
+        "a.go:27:9: pp.f undefined (type *P is pointer to type parameter, not type parameter)",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -5754,7 +5877,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2472;
+const EXPECTED_ERRORS_REPORTED: usize = 2530;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

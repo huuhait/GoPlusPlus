@@ -2085,10 +2085,8 @@ impl<'a> Checker<'a> {
             Type::Pointer(elem) if invalid(*elem)
         );
         // What a type with parents has is decided with its parents.
-        let unsettled = invalid(x.ty)
-            || pointee_invalid
-            || self.types.has_param(x.ty)
-            || self.types.extends(x.ty);
+        let unsettled =
+            invalid(x.ty) || pointee_invalid || self.open(x.ty) || self.types.extends(x.ty);
         if !known || unsettled {
             return;
         }
@@ -2098,16 +2096,21 @@ impl<'a> Checker<'a> {
             return self.error(Code::AmbiguousSelector, sel.span, message);
         }
         let shown = self.type_string(x.ty);
-        let pointer_to_interface = matches!(
-            &*self.types.get(self.types.underlying(x.ty)),
-            Type::Pointer(elem) if self.types.is_interface(*elem)
-        );
+        let pointee = match &*self.types.get(self.types.underlying(x.ty)) {
+            Type::Pointer(elem) => Some(*elem),
+            _ => None,
+        };
+        let pointer_to_param = pointee.is_some_and(|elem| self.is_param(elem));
+        let pointer_to_interface = pointee.is_some_and(|elem| self.types.is_interface(elem));
         // A member whose name differs in its capitals only is the likely
         // one.
         let near = self
             .types
             .lookup(x.ty, sel.name, self.path, self.names, true);
         let reason = match near {
+            _ if pointer_to_param => {
+                format!("type {shown} is pointer to type parameter, not type parameter")
+            }
             _ if pointer_to_interface => {
                 format!("type {shown} is pointer to interface, not interface")
             }

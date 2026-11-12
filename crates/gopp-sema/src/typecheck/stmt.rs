@@ -181,11 +181,23 @@ impl<'a> Checker<'a> {
         ty: TypeId,
     ) -> Result<Option<(Option<TypeId>, Option<TypeId>)>, String> {
         let int = Some(self.types.basic(Basic::Int));
-        let mut under = self.types.underlying(ty);
-        let is_param = matches!(&*self.types.get(under), Type::Param(_));
-        if under == Types::INVALID || is_param || self.may_overload(cx, ty) {
+        if self.open(ty) || self.may_overload(cx, ty) {
             return Ok(None);
         }
+        // What is ranged over is what all the types of a type parameter
+        // share; a channel among them lets receive.
+        let mut under = self.common_under(ty, |this, of| match of {
+            Some((ty, under)) => match &*this.types.get(under) {
+                Type::Chan {
+                    dir: ChanDir::Send, ..
+                } => Some(format!(
+                    "receive from send-only channel {}",
+                    this.type_string(ty)
+                )),
+                _ => None,
+            },
+            None => None,
+        })?;
         // A pointer to an array is ranged over as the array.
         if let Type::Pointer(elem) = &*self.types.get(under)
             && matches!(
@@ -197,18 +209,10 @@ impl<'a> Checker<'a> {
         }
         let iterator = "func must be func(yield func(...) bool)";
         Ok(Some(match &*self.types.get(under) {
-            Type::Basic(_) if self.is_string(ty) => (int, Some(self.types.basic(Basic::Int32))),
-            Type::Basic(_) if self.is_integer(ty) => (Some(ty), None),
+            Type::Basic(_) if self.is_string(under) => (int, Some(self.types.basic(Basic::Int32))),
+            Type::Basic(_) if self.is_integer(under) => (Some(ty), None),
             Type::Array { elem, .. } | Type::Slice(elem) => (int, Some(*elem)),
             Type::Map { key, value } => (Some(*key), Some(*value)),
-            Type::Chan {
-                dir: ChanDir::Send, ..
-            } => {
-                return Err(format!(
-                    "receive from send-only channel {}",
-                    self.type_string(ty)
-                ));
-            }
             Type::Chan { elem, .. } => (Some(*elem), None),
             // An iterator calls `yield` with what each step gives.
             Type::Func {

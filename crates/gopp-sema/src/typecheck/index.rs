@@ -144,19 +144,14 @@ impl<'a> Checker<'a> {
                 _ => return self.cannot_index(cx, of, &x, indices),
             },
             Type::Slice(elem) => (None, Operand::variable(*elem)),
-            Type::Map { key, value } => {
-                let Some(index) = self.single_index(cx, indices) else {
-                    return Operand::UNKNOWN;
-                };
-                self.assign(cx, index, Some(*key), "map index");
-                return match *value {
-                    Types::INVALID => Operand::UNKNOWN,
-                    ty => Operand {
-                        mode: Mode::MapIndex,
-                        ty,
-                    },
-                };
-            }
+            Type::Map { key, value } => return self.map_index(cx, indices, *key, *value),
+            Type::Param(_) if !self.open(x.ty) => match self.indexed_param(&x) {
+                Some((Some(key), _, element)) => {
+                    return self.map_index(cx, indices, key, element.ty);
+                }
+                Some((None, length, element)) => (length, element),
+                None => return self.cannot_index(cx, of, &x, indices),
+            },
             _ => return self.cannot_index(cx, of, &x, indices),
         };
         let Some(index) = self.single_index(cx, indices) else {
@@ -164,6 +159,121 @@ impl<'a> Checker<'a> {
         };
         self.index_value(cx, index, length);
         element
+    }
+
+    /// `m[key]` for a map with the key type `key` and the value type
+    /// `value`.
+    fn map_index(
+        &mut self,
+        cx: &Cx<'a>,
+        indices: &[ExprId],
+        key: TypeId,
+        value: TypeId,
+    ) -> Operand {
+        let Some(index) = self.single_index(cx, indices) else {
+            return Operand::UNKNOWN;
+        };
+        self.assign(cx, index, Some(key), "map index");
+        match value {
+            Types::INVALID => Operand::UNKNOWN,
+            ty => Operand {
+                mode: Mode::MapIndex,
+                ty,
+            },
+        }
+    }
+
+    /// What indexing a value of a type parameter gives, if every type
+    /// that it may be is indexed and all give elements of one type: the
+    /// key type if they are maps, the smallest length that is known, and
+    /// the element.
+    fn indexed_param(&self, x: &Operand) -> Option<(Option<TypeId>, Option<u64>, Operand)> {
+        let types = self.types.specific_types(x.ty)?;
+        let byte = self.types.basic(Basic::Uint8);
+        let mut variable = true;
+        let mut shared: Option<(Option<TypeId>, Option<u64>, TypeId)> = None;
+        for (_, under) in types {
+            let (key, length, elem) = match &*self.types.get(under) {
+                Type::Basic(Basic::String) => {
+                    variable = false;
+                    (None, None, byte)
+                }
+                Type::Array { len, elem } => {
+                    variable &= x.mode == Mode::Variable;
+                    (None, Some(*len), *elem)
+                }
+                Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
+                    Type::Array { len, elem } => (None, Some(*len), *elem),
+                    _ => return None,
+                },
+                Type::Slice(elem) => (None, None, *elem),
+                Type::Map { key, value } => (Some(*key), None, *value),
+                _ => return None,
+            };
+            shared = match shared {
+                None => Some((key, length, elem)),
+                Some((first_key, first_length, first_elem)) => {
+                    // Maps are not mixed with other types, and all keys
+                    // and all elements are of one type.
+                    let same_key = match (first_key, key) {
+                        (Some(a), Some(b)) => self.types.identical(a, b),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !same_key || !self.types.identical(first_elem, elem) {
+                        return None;
+                    }
+                    let length = match (first_length, length) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (first, _) => first,
+                    };
+                    Some((first_key, length, first_elem))
+                }
+            };
+        }
+        let (key, length, elem) = shared?;
+        let element = match variable {
+            true => Operand::variable(elem),
+            false => Operand::value(elem),
+        };
+        Some((key, length, element))
+    }
+
+    /// The type that slicing a value of a type parameter works on: what
+    /// all the types that it may be share, a string counting as a slice
+    /// of bytes. With a string among them, that is the string type.
+    fn sliced_param(&mut self, cx: &Cx<'a>, of: ExprId, x: &Operand) -> Option<TypeId> {
+        let (string, byte) = (
+            self.types.basic(Basic::String),
+            self.types.basic(Basic::Uint8),
+        );
+        let bytes = self.types.slice(byte);
+        let cause = match self.types.specific_types(x.ty) {
+            None => Some(format!("no specific type in {}", self.type_string(x.ty))),
+            Some(types) => {
+                let as_slice = |under: TypeId| if under == string { bytes } else { under };
+                let (first, shared) = (types[0].0, as_slice(types[0].1));
+                let other = types
+                    .iter()
+                    .find(|&&(_, under)| !self.types.identical(shared, as_slice(under)));
+                match other {
+                    Some(&(other, _)) => Some(format!(
+                        "{} and {} have different underlying types",
+                        self.type_string(first),
+                        self.type_string(other)
+                    )),
+                    None if types.iter().any(|&(_, under)| under == string) => return Some(string),
+                    None => return Some(shared),
+                }
+            }
+        };
+        let message = format!(
+            "cannot slice {}: {}",
+            self.describe(cx, of, x),
+            cause.unwrap_or_default()
+        );
+        self.error(Code::CannotSlice, cx.tree.exprs[of].span, message);
+        None
     }
 
     /// The first of the indices, which is the only one that counts.
@@ -185,10 +295,8 @@ impl<'a> Checker<'a> {
         for &index in indices {
             self.operand(cx, index);
         }
-        // What a type parameter or a type in error can do is not said.
-        let under = self.types.underlying(x.ty);
-        let decided = !self.types.has_param(x.ty) && !self.may_overload(cx, x.ty);
-        if under != Types::INVALID && decided {
+        // What a type in error can do is not said.
+        if !self.open(x.ty) && !self.may_overload(cx, x.ty) {
             let message = format!("cannot index {}", self.describe(cx, of, x));
             self.error(Code::CannotIndex, cx.tree.exprs[of].span, message);
         }
@@ -206,16 +314,19 @@ impl<'a> Checker<'a> {
         let x = self.value(cx, of);
         let x = self.read(cx, x);
         let span = cx.tree.exprs[of].span;
-        let open = self.types.underlying(x.ty) == Types::INVALID
-            || self.types.has_param(x.ty)
-            || self.may_overload(cx, x.ty);
-        if x.mode == Mode::Unknown || open {
+        let open = self.open(x.ty) || self.may_overload(cx, x.ty);
+        let sliced = match x.mode == Mode::Unknown || open {
+            true => None,
+            false if self.is_param(x.ty) => self.sliced_param(cx, of, &x),
+            false => Some(self.types.underlying(x.ty)),
+        };
+        let Some(sliced) = sliced else {
             for bound in bounds.into_iter().flatten() {
                 self.operand(cx, bound);
             }
             return Operand::UNKNOWN;
-        }
-        let under = self.types.get(self.types.underlying(x.ty));
+        };
+        let under = self.types.get(sliced);
         let array_in = |pointer: TypeId| match &*self.types.get(self.types.underlying(pointer)) {
             Type::Array { len, elem } => Some((*len, *elem)),
             _ => None,

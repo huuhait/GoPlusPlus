@@ -854,7 +854,13 @@ impl Types {
         // Through one pointer, the members of what it points to. A
         // declared pointer type has the fields, but no methods.
         let (start, through_pointer) = match &*self.get(self.underlying(ty)) {
-            Type::Pointer(elem) if !self.is_interface(*elem) => (*elem, true),
+            // A pointer to an interface or to a type parameter has no
+            // members.
+            Type::Pointer(elem)
+                if !self.is_interface(*elem) && !matches!(&*self.get(*elem), Type::Param(_)) =>
+            {
+                (*elem, true)
+            }
             _ => (ty, false),
         };
         let fields_only = through_pointer && matches!(&*self.get(ty), Type::Named { .. });
@@ -945,8 +951,13 @@ impl Types {
                             }
                         }
                     }
-                    Type::Interface { .. } => {
-                        let methods = self.method_set(current).unwrap_or_default();
+                    // A type parameter has the methods of its constraint.
+                    Type::Interface { .. } | Type::Param(_) => {
+                        let methods = match &*self.get(current) {
+                            Type::Param(_) => self.param_set(current).map(|set| set.methods),
+                            _ => self.method_set(current),
+                        };
+                        let methods = methods.unwrap_or_default();
                         let method = match any_case {
                             true => {
                                 let mut near = None;
