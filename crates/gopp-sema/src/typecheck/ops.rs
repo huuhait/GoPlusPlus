@@ -828,7 +828,7 @@ impl<'a> Checker<'a> {
         if is_comparison(op) {
             return self.comparison(cx, op, (left, x), (right, y));
         }
-        if !self.types.identical(x.ty, y.ty, self.names) {
+        if !self.types.identical(x.ty, y.ty) {
             let decided = !self.may_overload(cx, x.ty) && !self.may_overload(cx, y.ty);
             if !self.open(x.ty) && !self.open(y.ty) && decided {
                 let written = match whole {

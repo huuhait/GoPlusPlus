@@ -112,20 +112,15 @@ impl<'a> Checker<'a> {
         }
         let (from_under, to_under) = (self.types.underlying(x.ty), self.types.underlying(to));
         let (from, target) = (self.types.get(from_under), self.types.get(to_under));
-        if self
-            .types
-            .identical_ignoring_tags(from_under, to_under, self.names)
-        {
+        if self.types.identical_ignoring_tags(from_under, to_under) {
             return true;
         }
         // Pointers that are no declared types, to types with identical
         // underlying types.
         if let (Type::Pointer(a), Type::Pointer(b)) = (&*self.types.get(x.ty), &*self.types.get(to))
-            && self.types.identical_ignoring_tags(
-                self.types.underlying(*a),
-                self.types.underlying(*b),
-                self.names,
-            )
+            && self
+                .types
+                .identical_ignoring_tags(self.types.underlying(*a), self.types.underlying(*b))
         {
             return true;
         }
@@ -169,12 +164,10 @@ impl<'a> Checker<'a> {
             (from, _) if (pointer(from) || uintptr(from)) && unsafe_to => true,
             (_, to) if unsafe_from && (pointer(to) || uintptr(to)) => true,
             // A slice to an array, or to a pointer to one, of its elements.
-            (Type::Slice(elem), Type::Array { elem: of, .. }) => {
-                self.types.identical(*elem, *of, self.names)
-            }
+            (Type::Slice(elem), Type::Array { elem: of, .. }) => self.types.identical(*elem, *of),
             (Type::Slice(elem), Type::Pointer(array)) => {
                 match &*self.types.get(self.types.underlying(*array)) {
-                    Type::Array { elem: of, .. } => self.types.identical(*elem, *of, self.names),
+                    Type::Array { elem: of, .. } => self.types.identical(*elem, *of),
                     _ => false,
                 }
             }

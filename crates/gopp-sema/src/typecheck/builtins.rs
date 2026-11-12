@@ -318,7 +318,7 @@ impl<'a> Checker<'a> {
                         return self.invalid_argument(cx, from, format!("invalid copy: {why}"));
                     }
                 };
-                if !self.types.identical(to_elem, from_elem, self.names) {
+                if !self.types.identical(to_elem, from_elem) {
                     let message = format!(
                         "invalid copy: arguments {} and {} have different element types {} and {}",
                         self.describe(cx, at, &x),
@@ -444,7 +444,7 @@ impl<'a> Checker<'a> {
         if re.mode == Mode::Unknown || im.mode == Mode::Unknown {
             return Operand::UNKNOWN;
         }
-        if !self.types.identical(re.ty, im.ty, self.names) {
+        if !self.types.identical(re.ty, im.ty) {
             let message = format!(
                 "invalid operation: {} (mismatched types {} and {})",
                 self.expr_string(cx, call),
@@ -654,7 +654,7 @@ impl<'a> Checker<'a> {
             if x.mode == Mode::Unknown {
                 return Operand::UNKNOWN;
             }
-            if !self.types.identical(x.ty, a.ty, self.names) {
+            if !self.types.identical(x.ty, a.ty) {
                 let message = format!(
                     "invalid argument: mismatched types {} (previous argument) and {} (type of {})",
                     self.type_string(x.ty),

@@ -14,6 +14,7 @@ mod conversion;
 mod implements;
 mod index;
 mod literal;
+mod methods;
 mod ops;
 mod own;
 mod stmt;
@@ -227,8 +228,16 @@ struct Checker<'a> {
     /// While a body is walked: the expressions whose values are put into
     /// an interface, each with its type and the interface type.
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
+    /// The methods and the embedded types of each interface type that was
+    /// written, with where they are written: the names of its methods are
+    /// checked once every type is known.
+    interfaces: Vec<Vec<(Result<Method, TypeId>, Span)>>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
+    /// The declared types of this package.
+    declared: FxHashSet<crate::types::NamedId>,
+    /// Where each method of a type of this package is declared.
+    method_names: FxHashMap<(crate::types::NamedId, Spur, Option<Spur>), Span>,
     /// The object that each declaring identifier declares.
     by_span: FxHashMap<Span, usize>,
     /// The constants and variables whose declaration is worked out: what
@@ -319,7 +328,10 @@ pub fn declarations(
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
         iface_conversions: FxHashMap::default(),
+        interfaces: Vec::new(),
         steps: 0,
+        declared: FxHashSet::default(),
+        method_names: FxHashMap::default(),
         by_span,
         current: Vec::new(),
         needs: vec![Vec::new(); count],
@@ -356,6 +368,7 @@ pub fn declarations(
     for object in 0..count {
         checker.resolve(object, false);
     }
+    checker.fields_and_methods();
     checker.validate();
     let types_of_files: Vec<_> = units
         .iter()
@@ -697,6 +710,9 @@ impl<'a> Checker<'a> {
             next += 1;
         }
         self.to_validate.clear();
+        for written in std::mem::take(&mut self.interfaces) {
+            self.interface_methods(&written);
+        }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided
             // here yet.
@@ -951,6 +967,7 @@ impl<'a> Checker<'a> {
                 let named = self
                     .types
                     .declare(self.package.objects[object].name, self.name);
+                self.declared.insert(named);
                 self.ty[object] = self.types.named(named, &[]);
                 self.written(self.ty[object], self.package.objects[object].span);
                 self.types.set_type_params(named, params);
@@ -1017,7 +1034,7 @@ impl<'a> Checker<'a> {
 
     /// The type of the object `object` of this package, which is named
     /// as a type or as a value.
-    fn object_type(&mut self, object: ObjId, as_type: bool) -> TypeId {
+    pub(super) fn object_type(&mut self, object: ObjId, as_type: bool) -> TypeId {
         self.resolve(object.0 as usize, as_type);
         self.ty[object.0 as usize]
     }
@@ -1036,100 +1053,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Declares the methods of the file for their types.
-    fn methods(&mut self, file: usize, unit: Unit<'a>, with_signatures: bool) {
-        let tree = unit.file;
-        for (index, &decl) in tree.decls.iter().enumerate() {
-            let DeclKind::Func {
-                receiver: Some(receiver),
-                name,
-                ty,
-                ..
-            } = &tree.decl_nodes[decl].kind
-            else {
-                continue;
-            };
-            let body = &self.package.files[file].bodies[index];
-            // What was incomplete in the method before is not in this one.
-            self.incomplete = false;
-            let decl = Decl {
-                unit,
-                body,
-                form: Form::Func {
-                    type_params: &[],
-                    ty: *ty,
-                },
-            };
-            let mut cx = self.cx(&decl, None);
-            // `func (r *T[P]) m()`: the base type, whether the receiver is
-            // a pointer, and the type parameters that the brackets name.
-            let mut base = receiver.ty;
-            let mut pointer_receiver = false;
-            let mut receiver_params = Vec::new();
-            loop {
-                match &tree.exprs[base].kind {
-                    ExprKind::Paren(x) => base = *x,
-                    ExprKind::Unary {
-                        op: UnaryOp::Star,
-                        x,
-                    } => {
-                        pointer_receiver = true;
-                        base = *x;
-                    }
-                    ExprKind::Index { x, indices } => {
-                        for index in indices {
-                            let span = tree.exprs[*index].span;
-                            let ExprKind::Name(name) = tree.exprs[*index].kind else {
-                                continue;
-                            };
-                            let param = self.types.param(name);
-                            receiver_params.push(param);
-                            if let Some(&local) = body.defs.get(&span.lo) {
-                                cx.params.insert(local, param);
-                            }
-                        }
-                        base = *x;
-                    }
-                    _ => break,
-                }
-            }
-            let Some(&Ref::Object(object)) = body.uses.get(&base) else {
-                continue;
-            };
-            // The base type may be named through an alias of a pointer.
-            let mut receiver_type = self.object_type(object, true);
-            if let Type::Pointer(elem) = &*self.types.get(receiver_type) {
-                (receiver_type, pointer_receiver) = (*elem, true);
-            }
-            let Type::Named { id: named, .. } = &*self.types.get(receiver_type) else {
-                continue;
-            };
-            let sig = match with_signatures {
-                true => self.typ(&cx, *ty),
-                false => Types::INVALID,
-            };
-            let method = Method {
-                name: name.name,
-                package: self.package_of(name.name),
-                sig,
-            };
-            self.types.add_method(
-                *named,
-                DeclaredMethod {
-                    method,
-                    pointer_receiver,
-                    receiver_params,
-                },
-            );
-        }
-        // A method names no object, so nothing waits for what was
-        // incomplete in it.
-        self.incomplete = false;
-    }
-
     /// The package of a field or method name: a name that is not exported
     /// belongs to its package.
-    fn package_of(&self, name: Spur) -> Option<Spur> {
+    pub(super) fn package_of(&self, name: Spur) -> Option<Spur> {
         (!is_exported(self.names.resolve(&name))).then_some(self.path)
     }
 
@@ -1393,7 +1319,11 @@ impl<'a> Checker<'a> {
                     });
                     let embedded = field.names.is_empty();
                     let names: Vec<Spur> = match embedded {
-                        true => self.embedded_name(tree, field.ty).into_iter().collect(),
+                        true => self
+                            .embedded(tree, field.ty)
+                            .map(|e| e.0)
+                            .into_iter()
+                            .collect(),
                         false => field.names.iter().map(|name| name.name).collect(),
                     };
                     for name in names {
@@ -1411,15 +1341,27 @@ impl<'a> Checker<'a> {
             }
             ExprKind::InterfaceType { elems } => {
                 let (mut methods, mut embedded) = (Vec::new(), Vec::new());
+                let mut written = Vec::new();
                 for elem in elems {
                     match elem {
-                        InterfaceElem::Method { name, ty } => methods.push(Method {
-                            name: name.name,
-                            package: self.package_of(name.name),
-                            sig: self.typ(cx, *ty),
-                        }),
-                        InterfaceElem::Type(ty) => embedded.push(self.typ(cx, *ty)),
+                        InterfaceElem::Method { name, ty } => {
+                            let method = Method {
+                                name: name.name,
+                                package: self.package_of(name.name),
+                                sig: self.typ(cx, *ty),
+                            };
+                            written.push((Ok(method.clone()), name.span));
+                            methods.push(method);
+                        }
+                        InterfaceElem::Type(ty) => {
+                            let inner = self.typ(cx, *ty);
+                            written.push((Err(inner), tree.exprs[*ty].span));
+                            embedded.push(inner);
+                        }
                     }
+                }
+                if written.len() > 1 {
+                    self.interfaces.push(written);
                 }
                 self.types.interface(methods, embedded, self.names)
             }
@@ -1473,12 +1415,13 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The name of an embedded field: that of its type.
-    fn embedded_name(&self, tree: &File, mut ty: ExprId) -> Option<Spur> {
+    /// The name of an embedded field, which is that of its type, and
+    /// where it is written.
+    pub(super) fn embedded(&self, tree: &File, mut ty: ExprId) -> Option<(Spur, Span)> {
         loop {
             match &tree.exprs[ty].kind {
-                ExprKind::Name(name) => return Some(*name),
-                ExprKind::Selector { sel, .. } => return Some(sel.name),
+                ExprKind::Name(name) => return Some((*name, tree.exprs[ty].span)),
+                ExprKind::Selector { sel, .. } => return Some((sel.name, sel.span)),
                 ExprKind::Paren(x)
                 | ExprKind::Index { x, .. }
                 | ExprKind::Unary {

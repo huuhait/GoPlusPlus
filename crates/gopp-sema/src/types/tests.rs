@@ -144,7 +144,7 @@ fn struct_types_are_identical_field_for_field() {
     ];
     for (index, &ty) in different.iter().enumerate() {
         assert_ne!(ty, same, "{index}");
-        assert!(!f.types.identical(ty, same, &f.names), "{index}");
+        assert!(!f.types.identical(ty, same), "{index}");
     }
     assert_eq!(
         f.show(with(&|field| {
@@ -170,20 +170,14 @@ fn interfaces_are_identical_when_their_methods_are() {
     let embedding_both = f.interface(vec![], vec![closer, reader, reader]);
     assert_ne!(both, embedding);
     for other in [embedding, embedding_both] {
-        assert!(f.types.identical(both, other, &f.names));
-        assert!(f.types.identical(other, both, &f.names));
+        assert!(f.types.identical(both, other));
+        assert!(f.types.identical(other, both));
     }
-    assert!(
-        !f.types
-            .identical(both, f.interface(vec![read()], vec![]), &f.names)
-    );
-    assert!(!f.types.identical(both, f.types.any(), &f.names));
-    assert!(!f.types.identical(both, int, &f.names));
+    assert!(!f.types.identical(both, f.interface(vec![read()], vec![])));
+    assert!(!f.types.identical(both, f.types.any()));
+    assert!(!f.types.identical(both, int));
     // A declared interface is its own type.
-    assert!(
-        !f.types
-            .identical(reader, f.interface(vec![read()], vec![]), &f.names)
-    );
+    assert!(!f.types.identical(reader, f.interface(vec![read()], vec![])));
     assert_eq!(f.show(embedding), "interface{Close(); p.Reader}");
     assert_eq!(f.show(f.types.any()), "any");
 }

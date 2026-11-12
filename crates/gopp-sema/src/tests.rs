@@ -3703,7 +3703,7 @@ fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
         let loader = Loader::default();
         let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
         assert_eq!(checked.messages, [] as [&str; 0]);
-        loader.types.get().unwrap().steps()
+        checked.steps + loader.types.get().unwrap().steps()
     };
     // Types next to each other, each put into an interface of its own.
     let siblings = |count: usize| {
@@ -3749,11 +3749,172 @@ fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
             depth - 1
         )
     };
+    // Interfaces next to each other, each with a method and two embedded
+    // interfaces.
+    let sibling_interfaces = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("type I{i} interface {{ A; B; m{i}() }}\nvar _ A = I{i}(nil)\n"))
+            .collect();
+        format!("package p\ntype A interface {{ a() }}\ntype B interface {{ b() }}\n{all}")
+    };
     let sizes = [500, 1_000, 2_000, 4_000];
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(many_methods(n)));
     linear::assert_near_linear(&sizes, |n| steps(nested(n)));
+    linear::assert_near_linear(&sizes, |n| steps(sibling_interfaces(n)));
+    // An interface shares the methods of the interfaces that it embeds:
+    // the work for a chain of them grows with its length.
     linear::assert_near_linear(&sizes, |n| steps(embedded_interfaces(n)));
+}
+
+#[test]
+fn method_declarations_are_checked_as_go_checks_them() {
+    let text = "package p
+
+type T1 struct {
+	f int
+}
+
+func (T1) m()    {}
+func (T1) m()    {}
+func (x *T1) f() {}
+
+type T1b struct {
+	int
+}
+
+func (T1b) int() {}
+
+type T1c struct {
+	*T2
+}
+
+func (T1c) T2() int { return 0 }
+
+func (*T2) f() {}
+
+type T2 struct {
+	f int
+}
+
+type T5 interface {
+	m() int
+}
+
+func (T5) m1() {}
+func (T5) m2() {}
+
+type ptr *int
+
+func (ptr) _()  {}
+func (*ptr) _() {}
+
+func (int) m()        {}
+func ([]int) m()      {}
+func (error) m()      {}
+func (*error) m()     {}
+func (x any) m()      {}
+
+type T0 struct{}
+type A0 = T0
+type Ai = int
+type A3 = *T0
+type A10 = **T0
+
+func (Ai) m1()  {}
+func (T0) m1()  {}
+func (A0) m1()  {}
+func (A0) m2()  {}
+func (A3) m3()  {}
+func (A10) m1() {}
+
+var x0 T0
+var _ interface {
+	m1()
+	m2()
+	m3()
+} = &x0
+
+type G[P any] struct{}
+type GA = G[int]
+
+func (GA) m()         {}
+func (*GA) n()        {}
+func (G[_, _]) m1()   {}
+func (G[[]int]) m2()  {}
+func (g G[P]) m3()    {}
+func (g *G[P]) m3()   {}
+func (**T0) pp()      {}
+func (*struct{}) ps() {}
+
+type U6 interface {
+	m()
+	m()
+}
+type M32 interface{ m() int32 }
+type M64 interface{ m() int64 }
+type U7 interface {
+	M32
+	m()
+}
+type U8 interface {
+	m()
+	M32
+}
+type U9 interface {
+	M32
+	M64
+}
+type U10 interface {
+	M32
+	M32
+	m() int32
+}
+";
+    // Go names an alias where it is written (`Ai`, `A10`); the type that
+    // it stands for is named here.
+    let expected = [
+        "a.go:8:11: method T1.m already declared",
+        "    a.go:7:11: other declaration of method m",
+        "a.go:9:14: field and method with the same name f",
+        "    a.go:4:2: other declaration of f",
+        "a.go:15:12: field and method with the same name int",
+        "    a.go:12:2: other declaration of int",
+        "a.go:21:12: field and method with the same name T2",
+        "    a.go:18:3: other declaration of T2",
+        "a.go:23:12: field and method with the same name f",
+        "    a.go:26:2: other declaration of f",
+        "a.go:33:7: invalid receiver type T5 (pointer or interface type)",
+        "a.go:34:7: invalid receiver type T5 (pointer or interface type)",
+        "a.go:38:7: invalid receiver type ptr (pointer or interface type)",
+        "a.go:39:8: invalid receiver type ptr (pointer or interface type)",
+        "a.go:41:7: cannot define new methods on non-local type int",
+        "a.go:42:7: invalid receiver type []int",
+        "a.go:43:7: cannot define new methods on non-local type error",
+        "a.go:44:8: cannot define new methods on non-local type error",
+        "a.go:45:9: invalid receiver type any",
+        "a.go:53:7: cannot define new methods on non-local type int",
+        "a.go:55:11: method T0.m1 already declared",
+        "    a.go:54:11: other declaration of method m1",
+        "a.go:58:7: invalid receiver type **T0",
+        "a.go:70:7: cannot define new methods on instantiated type G[int]",
+        "a.go:71:8: cannot define new methods on instantiated type G[int]",
+        "a.go:72:7: receiver declares 2 type parameters, but receiver base type declares 1",
+        "a.go:73:9: receiver type parameter []int must be an identifier",
+        "a.go:75:16: method G.m3 already declared",
+        "    a.go:74:15: other declaration of method m3",
+        "a.go:76:8: invalid receiver type **T0",
+        "a.go:77:8: invalid receiver type *struct{}",
+        "a.go:81:2: duplicate method m",
+        "    a.go:80:2: other declaration of method m",
+        "a.go:86:2: duplicate method m",
+        "    a.go:87:2: other declaration of method m",
+        "a.go:91:2: duplicate method m",
+        "    a.go:90:2: other declaration of method m",
+        "a.go:95:2: duplicate method m",
+        "    a.go:94:2: other declaration of method m",
+    ];
+    assert_eq!(messages("a.go", text), expected);
 }
 
 // rule: RNG-8
@@ -4645,7 +4806,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1999;
+const EXPECTED_ERRORS_REPORTED: usize = 2047;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

@@ -122,7 +122,7 @@ impl<'a> Checker<'a> {
             return;
         }
         let known = seen.entry(value.exact_string()).or_default();
-        let same = |&&(ty, _): &&(TypeId, Span)| self.types.identical(v.ty, ty, self.names);
+        let same = |&&(ty, _): &&(TypeId, Span)| self.types.identical(v.ty, ty);
         let Some(&(_, previous)) = known.iter().find(same) else {
             return known.push((v.ty, span));
         };
