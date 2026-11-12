@@ -5070,6 +5070,150 @@ func built[S ~[]int, M ~map[string]int, C ~chan int, R ~<-chan int, B ~string | 
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn a_generic_alias_with_type_arguments_is_what_it_stands_for() {
+    let names = ThreadedRodeo::new();
+    let mut loader = Loader::default();
+    let lib = "package lib
+
+type Pair[K comparable, V any] struct {
+	Key K
+	Val V
+}
+type Index[V any] = map[string]Pair[string, V]
+type Set[K comparable] = map[K]bool
+";
+    let checked = check_texts("example.com/lib", &[("lib.go", lib)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    loader
+        .packages
+        .insert("example.com/lib".to_owned(), Arc::new(checked.package));
+    let text = "package p
+
+import \"example.com/lib\"
+
+type T[P any] struct{ x P }
+type List[P any] = []P
+type Table[P any, Q ~int] = map[Q]List[P]
+type Same[P any] = T[P]
+type Int[P any] = int
+type S struct{}
+type Plain[P any] = S
+type Ptr = *Plain[int]
+type Far = Ptr
+
+var a List[int] = []int{1}
+var _ Table[string, int] = map[int][]string{}
+var _ Same[int] = T[int]{x: 1}
+var _ lib.Index[int] = map[string]lib.Pair[string, int]{}
+var _ = lib.Index[int]{}[\"k\"].Val + 1
+
+func first[P any](x List[P]) P { return x[0] }
+
+var _ int = first(a)
+var _ = struct{ List[int] }{}.List
+
+func local[P any](p P) {
+	type Node[Q any] struct {
+		next *Node[Q]
+		v    Q
+	}
+	type Row[Q ~int] = []Q
+	var n Node[P]
+	n.next.v = p
+	var _ Row[int] = []int{}
+	n.next.v = 1
+	var _ Row[string]
+	var _ Node
+	type Loop[Q any] = *Loop[Q]
+}
+
+var _ List
+var _ = List(nil)
+var _ List[int, string]
+var _ Table[int]
+var _ Table[int, string]
+var _ Int[string] = \"x\"
+var _ string = first(a)
+var _ lib.Set[func()]
+var _ lib.Set
+
+func (Same[P]) m() {}
+func (Ptr) m()     {}
+func (*Far) m()    {}
+
+type Self[P any] = *Self[P]
+";
+    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    assert_eq!(
+        checked.messages,
+        [
+            "a.go:35:13: cannot use 1 (untyped int constant) as P value in assignment",
+            "a.go:36:12: string does not satisfy ~int (string missing in ~int)",
+            "a.go:37:8: cannot use generic type Node[Q any] without instantiation",
+            "a.go:38:7: invalid recursive type: Loop refers to itself",
+            "a.go:41:7: cannot use generic type List[P any] without instantiation",
+            "a.go:42:9: cannot use generic type List without instantiation",
+            "a.go:43:7: too many type arguments for type List: have 2, want 1",
+            "a.go:44:7: not enough type arguments for type Table: have 1, want 2",
+            "a.go:45:18: string does not satisfy ~int (string missing in ~int)",
+            "a.go:46:21: cannot use \"x\" (untyped string constant) as int value in variable \
+             declaration",
+            "a.go:47:16: cannot use first(a) (value of type int) as string value in variable \
+             declaration",
+            "a.go:48:15: func() does not satisfy comparable",
+            "a.go:49:7: cannot use generic type lib.Set[K comparable] without instantiation",
+            "a.go:51:7: cannot define new methods on generic alias type Same[P any]",
+            "a.go:52:7: cannot define new methods on instantiated type Plain[int]",
+            "a.go:53:8: cannot define new methods on instantiated type Plain[int]",
+            "a.go:55:6: invalid recursive type: Self refers to itself",
+        ]
+    );
+}
+
+/// An alias with type arguments is written out as what it stands for, so
+/// an alias that holds the one before it is as large as all before it
+/// together; the chains here name the one before and add nothing.
+#[test]
+fn the_steps_of_generic_aliases_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let siblings = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("type A{i}[P any] = map[string][]P\nvar v{i} A{i}[int]\n"))
+            .collect();
+        format!("package p\n{all}")
+    };
+    // Each alias stands for the one before it.
+    let chain = |count: usize| {
+        let all: String = (1..count)
+            .map(|i| format!("type A{i}[P any] = A{}[P]\nvar v{i} A{i}[int]\n", i - 1))
+            .collect();
+        format!("package p\ntype A0[P any] = []P\n{all}")
+    };
+    // Generic types and aliases inside a function, each used by the next.
+    let local = |count: usize| {
+        let all: String = (1..count)
+            .map(|i| {
+                let before = i - 1;
+                format!(
+                    "type T{i}[Q any] struct {{ next *T{i}[Q]; before *T{before}[Q] }}\n\
+                     type A{i}[Q any] = *T{i}[Q]\nvar v{i} A{i}[P]\n_ = v{i}.before.next\n"
+                )
+            })
+            .collect();
+        format!("package p\nfunc f[P any]() {{\ntype T0[Q any] struct{{ next *T0[Q] }}\n{all}}}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    linear::assert_near_linear(&sizes, |n| steps(local(n)));
+}
+
 // rule: GEN-6, GEN-7, GEN-8, GEN-9, GEN-10
 #[test]
 fn a_method_may_have_type_parameters_of_its_own() {
@@ -6210,7 +6354,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2632;
+const EXPECTED_ERRORS_REPORTED: usize = 2645;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

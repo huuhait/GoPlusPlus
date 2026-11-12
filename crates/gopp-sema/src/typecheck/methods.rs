@@ -187,7 +187,22 @@ impl<'a> Checker<'a> {
         params
     }
 
-    /// The type of this package that the receiver names, through aliases
+    /// How the generic alias with type arguments is written that the
+    /// type `ty` stands for, through other aliases and a pointer.
+    pub(super) fn alias_instance(&self, cx: &Cx<'a>, ty: ExprId) -> Option<String> {
+        let parts = Self::receiver_parts(cx.tree, ty);
+        if self
+            .alias_instances
+            .contains(&cx.tree.exprs[parts.named].span)
+        {
+            return Some(self.expr_string(cx, parts.named));
+        }
+        match cx.body.uses.get(&parts.named) {
+            Some(Ref::Object(object)) => self.through_instance.get(&(object.0 as usize)).cloned(),
+            _ => None,
+        }
+    }
+
     /// and at most one pointer, and whether the receiver is a pointer. A
     /// method belongs to that type also where its receiver is in error.
     fn receiver_base(&mut self, cx: &Cx<'a>, receiver: &Receiver) -> Option<(NamedId, bool)> {
@@ -214,11 +229,30 @@ impl<'a> Checker<'a> {
     /// names `named` type parameters.
     fn check_receiver(&mut self, cx: &Cx<'a>, receiver: ExprId, parts: &Receiver, named: usize) {
         let base_span = cx.tree.exprs[parts.base].span;
+        let base = match cx.body.uses.get(&parts.base) {
+            Some(&Ref::Object(object)) => Some((object, self.object_type(object, true))),
+            _ => None,
+        };
+        if let Some((object, ty)) = base {
+            let instance = self.through_instance.get(&(object.0 as usize));
+            let message = match &*self.types.get(ty) {
+                Type::Named { id, .. } if self.types.aliased(*id).is_some() => Some(format!(
+                    "cannot define new methods on generic alias type {}",
+                    self.generic_string(ty)
+                )),
+                _ => instance.map(|instance| {
+                    format!("cannot define new methods on instantiated type {instance}")
+                }),
+            };
+            if let Some(message) = message {
+                return self.error(Code::InvalidReceiver, base_span, message);
+            }
+        }
         // The receiver names as many type parameters as its base type
         // has.
         if named != 0
-            && let Some(&Ref::Object(object)) = cx.body.uses.get(&parts.base)
-            && let Type::Named { id, .. } = &*self.types.get(self.object_type(object, true))
+            && let Some((_, ty)) = base
+            && let Type::Named { id, .. } = &*self.types.get(ty)
         {
             let declared = self.types.type_params(*id).len();
             if declared != 0 && declared != named {

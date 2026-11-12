@@ -9,6 +9,7 @@
 //! A function that can fail (`func!(int) T`) has no type of its own: it is
 //! `func(int) (T, error)`.
 
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -238,6 +239,9 @@ struct Named {
     method_index: FxHashMap<(Spur, Option<Spur>), u32>,
     /// Declared with `@Extends`: it has parents.
     extends: bool,
+    /// A generic alias: with its type arguments it is what it was
+    /// declared as, and no type of its own.
+    alias: bool,
 }
 
 #[derive(Debug, Default)]
@@ -363,6 +367,7 @@ impl Types {
             methods: Vec::new(),
             method_index: FxHashMap::default(),
             extends: false,
+            alias: false,
         });
         let error = inner.intern(Type::Named {
             id: NamedId(0),
@@ -511,6 +516,7 @@ impl Types {
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 extends: false,
+                alias: false,
             });
             NamedId(inner.named.len() as u32 - 1)
         })
@@ -519,6 +525,24 @@ impl Types {
     /// Says what the declaration of `named` wrote.
     pub fn set_underlying(&self, named: NamedId, declared_as: TypeId) {
         self.write(|inner| inner.named[named.0 as usize].declared_as = Some(declared_as));
+    }
+
+    /// Says that `named` is a generic alias of `aliased`.
+    pub fn set_alias(&self, named: NamedId, aliased: TypeId) {
+        self.write(|inner| {
+            let named = &mut inner.named[named.0 as usize];
+            named.alias = true;
+            named.declared_as = Some(aliased);
+        });
+    }
+
+    /// What the generic alias `named` stands for, with its type
+    /// parameters in it.
+    pub fn aliased(&self, named: NamedId) -> Option<TypeId> {
+        self.read(|inner| {
+            let named = &inner.named[named.0 as usize];
+            named.declared_as.filter(|_| named.alias)
+        })
     }
 
     /// The type that the declaration of `named` wrote, with the type
@@ -720,7 +744,30 @@ impl Types {
         if from.is_empty() {
             return ty;
         }
-        let sub = |ty: TypeId| self.substitute(ty, from, to);
+        let (steps, done) = (Cell::new(0), RefCell::default());
+        let replaced = self.substitute_counted(ty, from, to, &steps, &done);
+        self.steps.fetch_add(steps.get(), Ordering::Relaxed);
+        replaced
+    }
+
+    /// `done` is what was replaced already: a type that is met again, as
+    /// one that stands in several places of an alias is, is not walked
+    /// again.
+    fn substitute_counted(
+        &self,
+        ty: TypeId,
+        from: &[TypeId],
+        to: &[TypeId],
+        steps: &Cell<u64>,
+        done: &RefCell<FxHashMap<TypeId, TypeId>>,
+    ) -> TypeId {
+        steps.set(steps.get() + 1);
+        if let Some(&replaced) = done.borrow().get(&ty) {
+            return replaced;
+        }
+        let sub = |ty: TypeId| {
+            gopp_syntax::with_stack(|| self.substitute_counted(ty, from, to, steps, done))
+        };
         let list =
             |types: &[TypeId]| -> Box<[TypeId]> { types.iter().map(|&ty| sub(ty)).collect() };
         let replaced = match &*self.get(ty) {
@@ -796,7 +843,9 @@ impl Types {
                 args: list(args),
             },
         };
-        self.intern(replaced)
+        let replaced = self.intern(replaced);
+        done.borrow_mut().insert(ty, replaced);
+        replaced
     }
 
     /// What `name` reaches in a value of the type `ty`: a field or a

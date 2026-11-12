@@ -229,6 +229,11 @@ struct Checker<'a> {
     writes_through: FxHashSet<ExprId>,
     /// While a body is walked: the expressions whose values are put into
     /// an interface, each with its type and the interface type.
+    /// Where a generic alias is written with its type arguments.
+    alias_instances: FxHashSet<Span>,
+    /// The aliases that stand for a generic alias with type arguments,
+    /// through others and a pointer, and how that one is written.
+    through_instance: FxHashMap<usize, String>,
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     /// The methods and the embedded types of each interface type that was
     /// written, with where they are written: the names of its methods are
@@ -359,6 +364,8 @@ pub fn declarations(
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
         iface_conversions: FxHashMap::default(),
+        alias_instances: FxHashSet::default(),
+        through_instance: FxHashMap::default(),
         interfaces: Vec::new(),
         embedded_fields: Vec::new(),
         var_types: Vec::new(),
@@ -579,20 +586,34 @@ impl<'a> Checker<'a> {
         cx: &mut Cx<'a>,
         type_params: &[TypeParam],
     ) -> Vec<TypeId> {
-        let mut params = Vec::new();
-        for param in type_params {
-            let ty = self.types.param(param.name.name);
+        let params = self.new_params(type_params);
+        for (param, &ty) in type_params.iter().zip(&params) {
             if let Some(&local) = cx.body.defs.get(&param.name.span.lo) {
                 cx.params.insert(local, ty);
             }
+        }
+        self.constrain(cx, type_params, &params);
+        params
+    }
+
+    fn new_params(&mut self, type_params: &[TypeParam]) -> Vec<TypeId> {
+        let mut params = Vec::new();
+        for param in type_params {
+            let ty = self.types.param(param.name.name);
             self.param_spans.insert(ty, param.name.span);
             params.push(ty);
         }
+        params
+    }
+
+    /// Gives the type parameters the constraints that are written for
+    /// them.
+    fn constrain(&mut self, cx: &Cx<'a>, type_params: &[TypeParam], params: &[TypeId]) {
         // A constraint that is not worked out leaves the declaration as
         // well known as it was.
         let incomplete = self.incomplete;
         let outer = std::mem::replace(&mut self.in_type_params, true);
-        for (param, &ty) in type_params.iter().zip(&params) {
+        for (param, &ty) in type_params.iter().zip(params) {
             let mut constraint = self.typ(cx, param.bound);
             if matches!(&*self.types.get(constraint), Type::Param(_)) {
                 let message = "cannot use a type parameter as constraint".to_owned();
@@ -604,7 +625,6 @@ impl<'a> Checker<'a> {
         }
         self.in_type_params = outer;
         self.incomplete = incomplete;
-        params
     }
 
     /// Works out the object, unless that is done. An object that is
@@ -1029,7 +1049,16 @@ impl<'a> Checker<'a> {
                 let mut cx = self.cx(&decl, None);
                 let params = self.declare_params(&mut cx, type_params);
                 if alias {
-                    self.ty[object] = self.typ(&cx, ty);
+                    let aliased = self.typ(&cx, ty);
+                    self.ty[object] = aliased;
+                    if params.is_empty() {
+                        if let Some(instance) = self.alias_instance(&cx, ty) {
+                            self.through_instance.insert(object, instance);
+                        }
+                    } else if !self.incomplete {
+                        let name = self.package.objects[object].name;
+                        self.ty[object] = self.generic_alias(name, params, aliased);
+                    }
                     return false;
                 }
                 // The type exists before what it is declared as is known,
@@ -1060,7 +1089,14 @@ impl<'a> Checker<'a> {
         false
     }
 
-    /// The type of one result of the expression `expr`, which gives
+    /// The generic alias `name` of `aliased`, without type arguments.
+    fn generic_alias(&mut self, name: Spur, params: Vec<TypeId>, aliased: TypeId) -> TypeId {
+        let named = self.types.declare(name, self.name);
+        self.types.set_type_params(named, params);
+        self.types.set_alias(named, aliased);
+        self.types.named(named, &[])
+    }
+
     /// `count` variables their values and the one at `position` this.
     fn result_type(
         &mut self,
@@ -1193,9 +1229,15 @@ impl<'a> Checker<'a> {
                     Some(declared) => (declared.mode == Mode::Type).then_some(declared.ty),
                     // An alias that names itself in its own declaration.
                     None => {
-                        let kind = cx.body.locals[local.0 as usize].kind;
+                        let declared = &cx.body.locals[local.0 as usize];
                         self.incomplete = true;
-                        (kind == LocalKind::Type).then_some(Types::INVALID)
+                        if declared.kind != LocalKind::Type {
+                            return None;
+                        }
+                        let name = self.names.resolve(&declared.name);
+                        let message = format!("invalid recursive type: {name} refers to itself");
+                        self.error(Code::InvalidRecursiveTypeSelf, declared.span, message);
+                        Some(Types::INVALID)
                     }
                 }
             }),
@@ -1534,18 +1576,6 @@ impl<'a> Checker<'a> {
                 Types::INVALID
             });
         }
-        // An alias with type parameters of its own is not followed yet.
-        let generic_alias = match cx.body.uses.get(&x) {
-            Some(Ref::Object(object)) => matches!(
-                self.decls[object.0 as usize].map(|decl| decl.form),
-                Some(Form::Type { alias: true, type_params, .. }) if !type_params.is_empty()
-            ),
-            _ => false,
-        };
-        if generic_alias {
-            self.incomplete = true;
-            return Types::INVALID;
-        }
         // The arguments of what is no generic type are not looked at.
         let generic = self.generic_or_type(cx, x);
         if let Type::Named { id, .. } = &*self.types.get(generic)
@@ -1570,9 +1600,19 @@ impl<'a> Checker<'a> {
                 self.incomplete = true;
                 return Types::INVALID;
             }
-            let instance = self.types.named(*id, &args);
-            self.written(instance, cx.tree.exprs[x].span);
-            self.note_instance(expr, &args, instance);
+            // An alias with type arguments is what it stands for.
+            let instance = match self.types.aliased(*id) {
+                Some(aliased) => {
+                    self.alias_instances.insert(at);
+                    self.types.substitute(aliased, &params, &args)
+                }
+                None => {
+                    let instance = self.types.named(*id, &args);
+                    self.written(instance, cx.tree.exprs[x].span);
+                    self.note_instance(expr, &args, instance);
+                    instance
+                }
+            };
             let spans = indices.iter().map(|&index| cx.tree.exprs[index].span);
             self.instances.push(constraints::Instance {
                 params,
@@ -2273,6 +2313,7 @@ impl<'a> Checker<'a> {
         spread: bool,
     ) -> Operand {
         let callee = self.operand(cx, fun);
+        let callee = self.instantiated(cx, fun, callee);
         match callee.mode {
             Mode::Type => self.conversion(cx, expr, callee.ty, args),
             Mode::Builtin(_) | Mode::Unsafe(_) => {
@@ -3190,25 +3231,34 @@ impl<'a> Checker<'a> {
                 ty,
                 type_params,
             } => {
-                let Some(local) = local(*name) else {
+                let Some(this) = local(*name) else {
                     return;
                 };
-                if *alias || !type_params.is_empty() {
-                    let ty = self.typ(cx, *ty);
-                    let mode = match type_params.is_empty() {
-                        true => Mode::Type,
-                        false => Mode::Unknown,
-                    };
-                    self.locals.insert(local, Operand { mode, ty });
+                let params = self.new_params(type_params);
+                for (param, &ty) in type_params.iter().zip(&params) {
+                    if let Some(param) = local(param.name) {
+                        let mode = Mode::Type;
+                        self.locals.insert(param, Operand { mode, ty });
+                    }
+                }
+                self.constrain(cx, type_params, &params);
+                if *alias {
+                    let mut ty = self.typ(cx, *ty);
+                    if !params.is_empty() {
+                        ty = self.generic_alias(name.name, params, ty);
+                    }
+                    let mode = Mode::Type;
+                    self.locals.insert(this, Operand { mode, ty });
                     return;
                 }
                 // The type exists before what it is declared as is known,
                 // so that it can name itself.
                 let named = self.types.declare(name.name, self.name);
+                self.types.set_type_params(named, params);
                 let declared = self.types.named(named, &[]);
                 self.written(declared, name.span);
                 self.locals.insert(
-                    local,
+                    this,
                     Operand {
                         mode: Mode::Type,
                         ty: declared,
