@@ -13,8 +13,9 @@ example; `gopp explain --list` lists all codes.
   diagnostic takes the next free number (`GOPP_UPDATE_CODES=1 cargo test -p gopp-diag`
   appends it; never edit or renumber existing rows in `docs/errors/codes.lock`).
   `custom` (a message given as a string by a tool or plugin) has no code.
-- The explanations live in `crates/gopp-diag/src/explain.rs`. Every explainable
-  code carries what the error means, how to fix it, and a minimal example.
+- The explanations live in `crates/gopp-diag/src/explain.rs`. Every error and
+  warning that the compiler reports carries what it means, how to fix it, and a
+  minimal example; a test fails for a new code without one.
 - Every message has a row of its own. Rows whose feature the language no longer
   has (`err_view_*`, `err_unit_*`, `err_strict_*`, and the shared `err_sema_*`
   rows of an earlier scheme) are *retired*: nothing is reported with them, and

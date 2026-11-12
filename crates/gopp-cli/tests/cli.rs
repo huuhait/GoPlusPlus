@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, reason = "test helpers outside #[test] functions")]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Mutex, PoisonError};
@@ -31,32 +30,51 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let path = dir.join(name);
+/// A program that prints the line that `replies` has for its first
+/// argument, and `otherwise` for any other: a shell script, or a batch file
+/// on Windows.
+fn fake_tool(dir: &Path, name: &str, replies: &[(&str, &str)], otherwise: &str) -> PathBuf {
+    let (path, text) = if cfg!(windows) {
+        let mut text = "@echo off\r\n".to_owned();
+        for (at, (argument, _)) in replies.iter().enumerate() {
+            text += &format!("if \"%~1\"==\"{argument}\" goto reply{at}\r\n");
+        }
+        text += &format!("echo {otherwise}\r\nexit /b 0\r\n");
+        for (at, (_, line)) in replies.iter().enumerate() {
+            text += &format!(":reply{at}\r\necho {line}\r\nexit /b 0\r\n");
+        }
+        (dir.join(format!("{name}.cmd")), text)
+    } else {
+        let mut text = "#!/bin/sh\ncase $1 in\n".to_owned();
+        for (argument, line) in replies {
+            text += &format!("{argument}) echo '{line}';;\n");
+        }
+        text += &format!("*) echo '{otherwise}';;\nesac\n");
+        (dir.join(name), text)
+    };
     let _guard = SPAWN.lock().unwrap_or_else(PoisonError::into_inner);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(&path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     path
 }
 
-/// A `clang` that reports `clang_version` and points at an `ld.lld` reporting `lld_version`.
-fn fake_toolchain(dir: &TempDir, clang_version: &str, lld_version: &str) -> PathBuf {
-    let lld = script(
-        dir.path(),
-        "ld.lld",
-        &format!("echo 'LLD {lld_version} (compatible with GNU linkers)'"),
-    );
-    script(
-        dir.path(),
-        "clang",
-        &format!(
-            "case $1 in\n\
-             --version) echo 'clang version {clang_version}';;\n\
-             -print-prog-name=ld.lld) echo '{}';;\n\
-             esac",
-            lld.display()
-        ),
-    )
+/// A `clang` that reports `clang_version` and points at an `ld.lld` reporting
+/// `lld_version`: the two programs.
+fn fake_toolchain(dir: &TempDir, clang_version: &str, lld_version: &str) -> (PathBuf, PathBuf) {
+    let version = format!("LLD {lld_version} (compatible with GNU linkers)");
+    let lld = fake_tool(dir.path(), "ld.lld", &[], &version);
+    let replies = [
+        ("--version", format!("clang version {clang_version}")),
+        ("-print-prog-name=ld.lld", lld.display().to_string()),
+    ];
+    let replies = replies
+        .each_ref()
+        .map(|(argument, line)| (*argument, line.as_str()));
+    (fake_tool(dir.path(), "clang", &replies, ""), lld)
 }
 
 fn host_toolchain(clang: &Path) -> Output {
@@ -122,14 +140,14 @@ fn explain_says_what_a_code_means_and_lists_them_all() {
 #[test]
 fn host_toolchain_prints_the_pinned_tools() {
     let dir = TempDir::new().unwrap();
-    let clang = fake_toolchain(&dir, "23.1.0", "23.1.0");
+    let (clang, lld) = fake_toolchain(&dir, "23.1.0", "23.1.0");
     let output = host_toolchain(&clang);
     assert_eq!(
         stdout(&output),
         format!(
             "clang: {} (23.1.0)\nld.lld: {} (23.1.0)\n",
             clang.display(),
-            dir.path().join("ld.lld").display()
+            lld.display()
         )
     );
     assert_eq!(output.status.code(), Some(0));
@@ -138,7 +156,7 @@ fn host_toolchain_prints_the_pinned_tools() {
 #[test]
 fn host_toolchain_rejects_another_clang_major() {
     let dir = TempDir::new().unwrap();
-    let clang = fake_toolchain(&dir, "22.1.8", "23.1.0");
+    let (clang, _) = fake_toolchain(&dir, "22.1.8", "23.1.0");
     let output = host_toolchain(&clang);
     assert_eq!(
         stderr(&output),
@@ -153,7 +171,7 @@ fn host_toolchain_rejects_another_clang_major() {
 #[test]
 fn host_toolchain_rejects_another_lld_major() {
     let dir = TempDir::new().unwrap();
-    let clang = fake_toolchain(&dir, "23.1.0", "21.1.8");
+    let (clang, _) = fake_toolchain(&dir, "23.1.0", "21.1.8");
     let output = host_toolchain(&clang);
     assert!(stderr(&output).ends_with("is LLD 21.1.8, but gopp needs LLD 23\n"));
     assert_eq!(output.status.code(), Some(1));
@@ -169,21 +187,22 @@ fn host_toolchain_reports_a_clang_that_cannot_run() {
 #[test]
 fn host_toolchain_reports_a_missing_lld() {
     let dir = TempDir::new().unwrap();
-    let clang = script(
-        dir.path(),
-        "clang",
-        "case $1 in\n\
-         --version) echo 'clang version 23.1.0';;\n\
-         -print-prog-name=ld.lld) echo ld.lld;;\n\
-         esac",
-    );
+    let replies = [
+        ("--version", "clang version 23.1.0"),
+        ("-print-prog-name=ld.lld", "ld.lld"),
+    ];
+    let clang = fake_tool(dir.path(), "clang", &replies, "");
     let output = host_toolchain(&clang);
     assert!(stderr(&output).starts_with("error: ld.lld not found: "));
     assert_eq!(output.status.code(), Some(1));
 }
 
 fn write_source(dir: &TempDir, name: &str, text: &str) -> PathBuf {
-    let path = dir.path().join(name);
+    // The path as the system writes it, whatever separates its parts.
+    let path: PathBuf = [dir.path()]
+        .into_iter()
+        .chain(name.split('/').map(Path::new))
+        .collect();
     fs::write(&path, text).unwrap();
     path
 }

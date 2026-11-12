@@ -7078,6 +7078,91 @@ func use(f, g File, files []File) {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+// rule: OWN-S2, PAR-5
+#[test]
+fn a_part_of_a_slice_is_a_copy_of_its_elements_unless_it_is_a_view() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Pool struct{ files []File }
+
+func open() []File          { return nil }
+func checkAll(files []File) {}
+func keep(f File)           {}
+func view(files *[]File)    {}
+
+func slices(files []File, p *Pool, arr [4]File, docs []string) []File {
+	checkAll(files)
+	checkAll(files[1:])
+	checkAll(p.files)
+	view(&files[1:])
+	view(&arr[:2])
+	files = files[1:]
+	p.files = p.files[:2]
+	_ = len(files[1:])
+	for _, f := range files[1:] {
+		_ = f.fd
+	}
+	tail := open()[1:]
+	names := docs[1:]
+	_, _ = tail, names
+
+	a := files[1:]
+	b := p.files[1:]
+	c := arr[:]
+	other := append(files[:1], open()...)
+	_, _, _, _ = a, b, c, other
+	return files[1:]
+}
+
+func generic[T any](xs []T, ys []T) []T {
+	a := xs[1:]
+	_ = a
+	xs = xs[1:]
+	return ys[:1]
+}
+";
+    let checked = check_texts(
+        "p",
+        &[("a.gopp", text)],
+        &Loader::default(),
+        &ThreadedRodeo::new(),
+    );
+    let expected = [
+        "a.gopp:30:7: cannot copy the elements of files[1:]: File has a drop method and no Clone() \
+         File",
+        "    use &files[1:] to name the same elements",
+        "a.gopp:31:7: cannot copy the elements of p.files[1:]: File has a drop method and no \
+         Clone() File",
+        "    use &p.files[1:] to name the same elements",
+        "a.gopp:32:7: cannot copy the elements of arr[:]: File has a drop method and no Clone() \
+         File",
+        "    use &arr[:] to name the same elements",
+        "a.gopp:33:18: cannot copy the elements of files[:1]: File has a drop method and no \
+         Clone() File",
+        "    use &files[:1] to name the same elements",
+        "a.gopp:39:7: cannot copy the elements of xs[1:]: T is not constrained by Clone",
+        "    use &xs[1:] to name the same elements",
+    ];
+    assert_eq!(checked.messages, expected);
+    // A slice that is passed is copied if the function does more than
+    // read it, which is known with the function.
+    let expected = [
+        "15:11 files: copy",
+        "16:11 files: copy",
+        "17:11 p.files: copy",
+        "20:10 files: over",
+        "21:12 p.files: over",
+        "35:9 files: move",
+        "41:7 xs: over",
+        "42:9 ys: move",
+    ];
+    assert_eq!(transfers(&checked), expected);
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {

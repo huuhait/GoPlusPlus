@@ -141,16 +141,17 @@ impl<'a> Checker<'a> {
         if let Some(to) = to {
             self.note_interface(cx, expr, &x, to, writes);
         }
-        let read = self.operands_read && context.starts_with("argument to ");
-        if own
-            && !read
-            && matches!(x.mode, Mode::Variable | Mode::MapIndex)
-            && let Some(how) = Self::gives(context)
-        {
-            // The value is of the type that the operand is read as.
-            let read = to.and_then(|to| self.fit_own(&x, to, writes));
-            let ty = read.map_or(x.ty, |(from, _)| from);
-            self.given(cx, expr, &x, ty, how);
+        if own && let Some(how) = self.gives(context) {
+            match x.mode {
+                Mode::Variable | Mode::MapIndex => {
+                    // The value is of the type that the operand is read as.
+                    let read = to.and_then(|to| self.fit_own(&x, to, writes));
+                    let ty = read.map_or(x.ty, |(from, _)| from);
+                    self.given(cx, expr, &x, ty, how);
+                }
+                Mode::Value => self.slice_given(cx, expr, &x, how),
+                _ => {}
+            }
         }
         x
     }

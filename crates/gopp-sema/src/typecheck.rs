@@ -250,10 +250,9 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
-    /// While the arguments of a call are assigned: the call is that of
-    /// an operator or a conversion method, which reads its operands where
-    /// they are (PAR-5).
-    operands_read: bool,
+    /// While the arguments of a call are assigned: what the function
+    /// that is called does with them.
+    operands: place::Operands,
     /// While the value of an assignment to one place is walked: the
     /// place, as it is written.
     target: Option<String>,
@@ -423,7 +422,7 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
-        operands_read: false,
+        operands: place::Operands::Kept,
         target: None,
         swapping: false,
         iface_conversions: FxHashMap::default(),
@@ -2458,9 +2457,9 @@ impl<'a> Checker<'a> {
         spread: bool,
     ) -> Operand {
         // The calls in the arguments have operands of their own.
-        let outer = std::mem::replace(&mut self.operands_read, false);
+        let outer = std::mem::replace(&mut self.operands, place::Operands::Kept);
         let called = self.call_checked(cx, expr, fun, args, spread);
-        self.operands_read = outer;
+        self.operands = outer;
         called
     }
 
@@ -2509,7 +2508,10 @@ impl<'a> Checker<'a> {
             }
             _ if callee.is_value() => {
                 self.called_or_received = true;
-                self.operands_read = self.reads_operands(cx, called);
+                self.operands = match self.reads_operands(cx, called) {
+                    true => place::Operands::Read,
+                    false => place::Operands::Passed,
+                };
                 // What is called is a function; of a type parameter, the
                 // function type that all its types share.
                 let shared = self.common_under(callee.ty, |this, of| match of {

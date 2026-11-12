@@ -35,10 +35,25 @@ pub(super) enum Binding {
 /// Where a value is given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Given {
-    /// To a variable, a field, an element, a parameter, a channel.
+    /// To a variable, a field, an element, a channel, a built-in function
+    /// that keeps it.
     Stored,
+    /// To a parameter of a function, which may only read it.
+    Passed,
     /// To the caller, which ends the variables of the function.
     Returned,
+}
+
+/// What the function that is being called does with its arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Operands {
+    /// A built-in function keeps them.
+    Kept,
+    /// A function gets them in its parameters.
+    Passed,
+    /// An operator method or a conversion method reads them where they
+    /// are (PAR-5).
+    Read,
 }
 
 /// What is done to a place that a variable of a range clause may not be
@@ -303,7 +318,7 @@ impl<'a> Checker<'a> {
 
     /// Whether a value is given to a new owner where a message says
     /// `context`, and how.
-    pub(super) fn gives(context: &str) -> Option<Given> {
+    pub(super) fn gives(&self, context: &str) -> Option<Given> {
         match context {
             "return statement" => Some(Given::Returned),
             "assignment"
@@ -316,9 +331,73 @@ impl<'a> Checker<'a> {
             "argument to delete" => None,
             _ if context.starts_with("argument to built-in ") => None,
             _ if context.starts_with("argument to unsafe.") => None,
-            _ if context.starts_with("argument to ") => Some(Given::Stored),
+            _ if context.starts_with("argument to ") => match self.operands {
+                Operands::Kept => Some(Given::Stored),
+                Operands::Passed => Some(Given::Passed),
+                Operands::Read => None,
+            },
             _ => None,
         }
+    }
+
+    /// Whether a function that only reads a parameter of the type gets
+    /// the argument as it is, whatever its elements are: a slice (PAR-5,
+    /// GEN-3). Whether the function only reads is known with its body.
+    fn passed_as_it_is(&self, ty: TypeId, how: Given) -> bool {
+        let is_slice = matches!(&*self.types.get(self.types.underlying(ty)), Type::Slice(_));
+        how == Given::Passed && is_slice
+    }
+
+    /// The value of `expr` is given to a new owner: if it is a part
+    /// `x[lo:hi]` of a slice or an array that stays, its elements are
+    /// copied, which they must allow (OWN-S2). A view `&x[lo:hi]` names
+    /// the same elements, `x = x[lo:hi]` keeps them, and a returned
+    /// variable ends.
+    pub(super) fn slice_given(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand, how: Given) {
+        let expr = self.unparen(cx, expr);
+        let ExprKind::Slice { x: of, .. } = cx.tree.exprs[expr].kind else {
+            return;
+        };
+        if self.memo.is_none() || self.types.category(x.ty) != Category::NoCopy {
+            return;
+        }
+        let of = self.unparen(cx, of);
+        let reached = self.walked_type(of).is_none_or(|ty| self.reaches_out(ty));
+        let place = match reached {
+            true => Place::Elsewhere,
+            false => self.place_of(cx, of),
+        };
+        let kept = self.self_moves.contains(&of);
+        let returned = matches!(place, Place::Local(_)) && how == Given::Returned;
+        if place == Place::Temporary || kept || returned {
+            if returned {
+                self.var_modes.insert(of, Transfer::Move);
+            }
+            return;
+        }
+        if self.passed_as_it_is(x.ty, how) {
+            self.var_modes.insert(of, Transfer::Copy);
+            return;
+        }
+        let Some((part, why)) = self.types.not_copied(x.ty, true) else {
+            return;
+        };
+        if self.open(part) {
+            return;
+        }
+        let text = self.expr_string(cx, expr);
+        let code = match (place, why) {
+            (_, NotCopied::Param) => Code::OwnGenericCopy,
+            (Place::Local(_), _) => Code::OwnCopyLocal,
+            _ => Code::OwnR3aNeedsOwnership,
+        };
+        let message = format!(
+            "cannot copy the elements of {text}: {}",
+            self.not_copied_text(part, why, true)
+        );
+        let fix = format!("use &{text} to name the same elements");
+        let span = cx.tree.exprs[expr].span;
+        self.error_with_fix(code, span, message, (Code::NoteOwnFixAddress, fix));
     }
 
     /// The value of the place `expr` is given to a new owner as a value
@@ -362,6 +441,10 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let element = binding.is_some();
+        if self.passed_as_it_is(ty, how) {
+            self.var_modes.insert(expr, Transfer::Copy);
+            return;
+        }
         let Some((part, why)) = self.types.not_copied(ty, true) else {
             return;
         };
