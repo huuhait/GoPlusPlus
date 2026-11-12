@@ -24,9 +24,17 @@ const ARRAY_AT_ONCE: u64 = 64;
 pub(super) enum Check {
     /// The index is below the length. The second slot has the index
     /// with the sign that the program gave it, for the message.
-    Bounds(LocalId, LocalId, u64, SourceSpan),
+    Bounds(LocalId, LocalId, Length, SourceSpan),
     /// The pointer is not nil.
     Nil(Operand, SourceSpan),
+}
+
+/// How many elements there are: a number that is known, or the slot
+/// that holds the length of a string.
+#[derive(Clone, Copy)]
+pub(super) enum Length {
+    Known(u64),
+    Of(LocalId),
 }
 
 /// How a place is worked out.
@@ -263,7 +271,9 @@ impl FuncCx<'_, '_> {
             ExprKind::BasicLit { .. } if ty == TypeInterner::UNIT => Ok(Rvalue::Use(self.zero(ty))),
             ExprKind::BasicLit { .. } => Ok(self.placeholder(span, ty, "a complex number")),
             ExprKind::FuncLit { .. } => Ok(self.placeholder(span, ty, "a function literal")),
-            ExprKind::Slice { .. } => Ok(self.placeholder(span, ty, "a slice expression")),
+            ExprKind::Slice { x, lo, hi, max, .. } => {
+                self.substring(expr, ty, *x, [*lo, *hi, *max])
+            }
             ExprKind::Assert { .. } => Ok(self.placeholder(span, ty, "a type assertion")),
             ExprKind::MacroCall { .. } => Ok(self.placeholder(span, ty, "a macro call")),
             _ => Ok(self.placeholder(span, ty, "this expression")),
@@ -498,7 +508,10 @@ impl FuncCx<'_, '_> {
         match check {
             Check::Bounds(index, written, len, span) => {
                 let word = Memo::word(self.shared, self.b.types(), false);
-                let len = self.b.const_int(word, len)?;
+                let len = match len {
+                    Length::Known(len) => self.b.const_int(word, len)?,
+                    Length::Of(len) => Operand::Copy(Place::local(len)),
+                };
                 let index = Operand::Copy(Place::local(index));
                 let written = Operand::Copy(Place::local(written));
                 let within = Rvalue::Binary(BinOp::Lt, index, len.clone());
@@ -587,29 +600,41 @@ impl FuncCx<'_, '_> {
         let span = self.tree.exprs[expr].span;
         let base = self.place(x, mode)?;
         let base = self.through(base, span, mode)?;
-        let Type::Array(_, len) = self.kind(self.b.place_ty(&base)) else {
-            self.unsupported(span, "an index of a slice, a string or a map");
-            let ty = self.ty_of(expr);
-            return Ok(Place::local(
-                self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
-            ));
+        let len = match self.kind(self.b.place_ty(&base)) {
+            Type::Array(_, len) => Length::Known(len),
+            // A string is a value: its length is read where it is.
+            Type::String => Length::Of(self.b.assign_temp(Rvalue::Len(base.clone()))?),
+            _ => {
+                self.unsupported(span, "an index of a slice or a map");
+                let ty = self.ty_of(expr);
+                return Ok(Place::local(
+                    self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
+                ));
+            }
         };
         let known = self
             .body
             .types
             .get(&index)
             .map(|typed| typed.value.to_int());
-        if let Some(at) = known.and_then(|value| value.low_bits())
+        if let (Length::Known(len), Some(at)) = (len, known.and_then(|value| value.low_bits()))
             && at < len
         {
             return self.b.const_index(&base, at);
         }
-        // The index in a slot of its own, as a number without a sign: a
-        // negative index is past every length.
+        let (at, written) = self.index_slots(index, span)?;
+        self.check(Check::Bounds(at, written, len, span), mode)?;
+        self.b.index(&base, at)
+    }
+
+    /// An index in two slots of its own: as a number without a sign,
+    /// since a negative index is past every length, and as the program
+    /// wrote it, for the message of a failure.
+    fn index_slots(&mut self, index: ExprId, span: SourceSpan) -> Built<(LocalId, LocalId)> {
         let word = Memo::word(self.shared, self.b.types(), false);
         let given = self.operand(index)?;
         let from = self.b.operand_ty(&given);
-        let (at, written) = match (from == word, self.kind(from)) {
+        Ok(match (from == word, self.kind(from)) {
             (true, _) => {
                 let at = self.b.assign_temp(Rvalue::Use(given))?;
                 (at, at)
@@ -625,9 +650,66 @@ impl FuncCx<'_, '_> {
                 let at = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
                 (at, at)
             }
+        })
+    }
+
+    /// `x[lo:hi]` of a string: the same bytes, of which nothing is
+    /// copied. The string is worked out first, then its bounds, and
+    /// then the bounds are checked, the high one first.
+    fn substring(
+        &mut self,
+        expr: ExprId,
+        ty: TypeId,
+        x: ExprId,
+        bounds: [Option<ExprId>; 3],
+    ) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
+        let mut mode = PlaceMode::default();
+        let base = self.place(x, &mut mode)?;
+        let base = self.through(base, span, &mut mode)?;
+        let [lo, hi, max] = bounds;
+        if !matches!(self.kind(self.b.place_ty(&base)), Type::String) || max.is_some() {
+            return Ok(self.placeholder(span, ty, "a slice of a slice or an array"));
+        }
+        let whole = self.b.assign_temp(Rvalue::Use(Operand::Copy(base)))?;
+        let whole = Place::local(whole);
+        let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
+        let word = Memo::word(self.shared, self.b.types(), false);
+        let zero = self.zero(word);
+        let lo = match lo {
+            Some(lo) => self.index_slots(lo, span)?,
+            None => {
+                let none = self.b.assign_temp(Rvalue::Use(zero))?;
+                (none, none)
+            }
         };
-        self.check(Check::Bounds(at, written, len, span), mode)?;
-        self.b.index(&base, at)
+        let hi = match hi {
+            Some(hi) => self.index_slots(hi, span)?,
+            None => (len, len),
+        };
+        let slot = |local: LocalId| Operand::Copy(Place::local(local));
+        let within = Rvalue::Binary(BinOp::Le, slot(hi.0), slot(len));
+        self.assert(
+            span,
+            within,
+            AssertKind::SliceAlen,
+            vec![slot(hi.1), slot(len)],
+        )?;
+        let ordered = Rvalue::Binary(BinOp::Le, slot(lo.0), slot(hi.0));
+        self.assert(
+            span,
+            ordered,
+            AssertKind::SliceB,
+            vec![slot(lo.1), slot(hi.0)],
+        )?;
+        let first = self.b.index(&whole, lo.0)?;
+        let bytes = self.b.assign_temp(Rvalue::AddrOf(first, Mutability::Not))?;
+        let count = Rvalue::Binary(BinOp::Sub, slot(hi.0), slot(lo.0));
+        let count = self.b.assign_temp(count)?;
+        let backing = Operand::Copy(self.b.field(&whole, 2)?);
+        let string = self.b.place_ty(&whole);
+        let parts = vec![slot(bytes), slot(count), backing];
+        Ok(Rvalue::Aggregate(AggKind::Of(string), parts))
     }
 
     // ---- operators
@@ -678,7 +760,7 @@ impl FuncCx<'_, '_> {
 
     /// What a pointer of the type leads to; the type itself if it is
     /// no pointer.
-    fn pointee(&mut self, ty: TypeId) -> TypeId {
+    pub fn pointee(&mut self, ty: TypeId) -> TypeId {
         match self.kind(ty) {
             Type::Ptr(to) => to,
             _ => ty,
@@ -775,6 +857,9 @@ impl FuncCx<'_, '_> {
         let unit = TypeInterner::UNIT;
         if left == unit || right == unit {
             return Ok(Rvalue::Use(self.zero(unit)));
+        }
+        if let (Type::String, Type::String) = (&kind, &count) {
+            return self.string_op(span, lowered, first, second);
         }
         if !fits {
             let ty = match lowered {
@@ -1079,6 +1164,42 @@ impl FuncCx<'_, '_> {
         Ok(self.placeholder(span, ty, &what))
     }
 
+    /// An operator on two strings: the runtime joins and compares
+    /// them.
+    fn string_op(
+        &mut self,
+        span: SourceSpan,
+        op: BinOp,
+        first: Operand,
+        second: Operand,
+    ) -> Built<Rvalue> {
+        let string = self.b.operand_ty(&first);
+        let both = [string, string];
+        let args = vec![first, second];
+        match op {
+            BinOp::Add => {
+                let joined = self.runtime("_gopp_string_concat", &both, string, args)?;
+                Ok(Rvalue::Use(joined))
+            }
+            BinOp::Eq | BinOp::Ne => {
+                let bool = TypeInterner::BOOL;
+                let same = self.runtime("_gopp_string_eq", &both, bool, args)?;
+                Ok(match op {
+                    BinOp::Eq => Rvalue::Use(same),
+                    _ => Rvalue::Unary(UnOp::Not, same),
+                })
+            }
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                // The order of two strings against zero is the order of
+                // the strings.
+                let order = self.b.types().int(64, true);
+                let ordered = self.runtime("_gopp_string_compare", &both, order, args)?;
+                Ok(Rvalue::Binary(op, ordered, self.zero(order)))
+            }
+            _ => Ok(self.placeholder(span, string, "this operator on these values")),
+        }
+    }
+
     /// `print` and `println`: the values are worked out, and then each
     /// is given to the function of the runtime that writes its kind;
     /// `println` has a space between two and a newline at the end.
@@ -1138,16 +1259,29 @@ impl FuncCx<'_, '_> {
     /// A call of the function `name` of the runtime, which gives
     /// nothing back.
     fn runtime_call(&mut self, name: &str, params: &[TypeId], args: Vec<Operand>) -> Built {
+        self.runtime(name, params, TypeInterner::UNIT, args)
+            .map(drop)
+    }
+
+    /// A call of the function `name` of the runtime: what it gives
+    /// back.
+    pub fn runtime(
+        &mut self,
+        name: &str,
+        params: &[TypeId],
+        ret: TypeId,
+        args: Vec<Operand>,
+    ) -> Built<Operand> {
         let sig = self.b.types().intern(Type::Func(FuncType {
             params: params.into(),
-            ret: TypeInterner::UNIT,
+            ret,
             has_env: false,
             cc: CallConv::C,
         }));
         let func = self.function_named(name, sig)?;
         let kind = ConstantKind::Func(func);
         let callee = Operand::Const(Constant { kind, ty: sig });
-        let result = self.b.temp(TypeInterner::UNIT);
+        let result = self.b.temp(ret);
         let next = self.b.new_block();
         self.b.call(
             callee,
@@ -1157,7 +1291,7 @@ impl FuncCx<'_, '_> {
             UnwindAction::Continue,
         )?;
         self.b.switch_to(next);
-        Ok(())
+        Ok(Operand::Copy(Place::local(result)))
     }
 
     /// `T(value)` for a type of GIR `to`.
@@ -1176,6 +1310,29 @@ impl FuncCx<'_, '_> {
             return Ok(Rvalue::Use(given));
         }
         let cast = match (self.kind(from), self.kind(to)) {
+            // `string(r)`: the text of one code point.
+            (Type::Int { signed, .. }, Type::String) => {
+                let wide = self.b.types().int(64, true);
+                let rune = match from == wide {
+                    true => given,
+                    // A number without a sign that is too large for a
+                    // code point stays too large.
+                    false => {
+                        let wider = self.b.types().int(64, signed);
+                        let cast = Rvalue::Cast(CastKind::IntToInt, given, wider);
+                        let widened = Operand::Copy(Place::local(self.b.assign_temp(cast)?));
+                        match signed {
+                            true => widened,
+                            false => {
+                                let cast = Rvalue::Cast(CastKind::IntToInt, widened, wide);
+                                Operand::Copy(Place::local(self.b.assign_temp(cast)?))
+                            }
+                        }
+                    }
+                };
+                let text = self.runtime("_gopp_string_from_rune", &[wide], to, vec![rune])?;
+                return Ok(Rvalue::Use(text));
+            }
             (Type::Int { .. }, Type::Int { .. }) => CastKind::IntToInt,
             (Type::Int { .. }, Type::Float { .. }) => CastKind::IntToFloat,
             (Type::Float { .. }, Type::Int { .. }) => CastKind::FloatToInt,

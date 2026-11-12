@@ -9,7 +9,7 @@ use gopp_syntax::ast::{AssignOp, BinaryOp, ExprId, ExprKind};
 use super::Shared;
 use super::expr::{Check, PlaceMode};
 use super::func::{Built, FuncCx};
-use crate::{Constant, ConstantKind, Operand, Place, Rvalue, Type, TypeId};
+use crate::{CastKind, Constant, ConstantKind, Operand, Place, Rvalue, Type, TypeId};
 
 /// What one expression on the left of an assignment takes a value for.
 enum Dest {
@@ -75,6 +75,41 @@ impl FuncCx<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// Gives a variable of a range clause its value for one pass of the
+    /// loop: a new variable of the pass with `define`, a place that is
+    /// assigned to without it.
+    pub fn set_range_var(&mut self, left: ExprId, define: bool, value: Operand) -> Built {
+        let dest = self.dest(left, define, false)?;
+        let wanted = match &dest {
+            Dest::Blank => return Ok(()),
+            Dest::New(_, ty) => *ty,
+            Dest::Place(place, _) => self.b.place_ty(place),
+        };
+        // The loop counts in a type of its own.
+        let have = self.b.operand_ty(&value);
+        let integers = matches!(
+            (self.kind(have), self.kind(wanted)),
+            (Type::Int { .. }, Type::Int { .. })
+        );
+        let value = match have != wanted && integers {
+            true => Rvalue::Cast(CastKind::IntToInt, value, wanted),
+            false => Rvalue::Use(value),
+        };
+        match dest {
+            Dest::Blank => Ok(()),
+            Dest::New(local, _) => {
+                let var = self.declare(local)?;
+                self.store(Place::local(var), value)
+            }
+            Dest::Place(place, checks) => {
+                for check in checks {
+                    self.checked(check)?;
+                }
+                self.store(place, value)
+            }
+        }
     }
 
     /// What `left` takes its value for. With `later`, more is evaluated

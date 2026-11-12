@@ -538,6 +538,71 @@ func read(p *Point, q *int, l Line, m *Line) int {
 }
 
 #[test]
+fn strings_are_joined_compared_and_cut_by_the_runtime_and_by_their_parts() {
+    insta::assert_snapshot!(gir("package main
+
+func ops(a, b string, i, j int) (string, bool, byte) {
+	joined := a + b
+	joined += a
+	same := a == b
+	same = a != b
+	same = a < b
+	same = a >= b
+	return joined[i:j], same, a[i]
+}
+
+func ends(s string, r rune, u uint64) (string, string, string) {
+	return s[:2], s[1:], string(r) + string(u)
+}
+"));
+}
+
+#[test]
+fn a_range_loop_counts_walks_an_array_or_decodes_a_string() {
+    insta::assert_snapshot!(gir("package main
+
+func count(n int8) int8 {
+	var total int8
+	for i := range n {
+		total += i
+	}
+	return total
+}
+
+func walk(cells [3]int, names [2]string, p *[3]int) int {
+	total := 0
+	for i, cell := range cells {
+		total += i * cell
+	}
+	for i := range cells {
+		total += i
+	}
+	for _, name := range names {
+		total += len(name)
+	}
+	for i, cell := range p {
+		total += i - cell
+	}
+	return total
+}
+
+func runes(s string) int {
+	var at int
+	var last rune
+	for at, last = range s {
+		if last == 'x' {
+			continue
+		}
+	}
+	for range s {
+		at++
+	}
+	return at + int(last)
+}
+"));
+}
+
+#[test]
 fn print_gives_each_value_to_the_runtime_after_all_are_worked_out() {
     insta::assert_snapshot!(gir("package main
 
@@ -764,6 +829,28 @@ fn the_steps_grow_with_the_source() {
     });
     assert_near_linear(&[50, 100, 200, 400], |n| {
         steps_of(&many_functions(n).replace("\tdefer println(total)\n", ""))
+    });
+    // Range loops in range loops, over a number, an array and a string.
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| match at % 3 {
+                0 => format!("\tfor a{at} := range x {{\n\t\tx += a{at}\n"),
+                1 => format!(
+                    "\tfor a{at}, b{at} := range [3]int{{1, 2, 3}} {{\n\t\tx += a{at} * b{at}\n"
+                ),
+                _ => format!(
+                    "\tfor a{at}, b{at} := range \"text\" {{\n\t\tx += a{at} + int(b{at})\n"
+                ),
+            })
+            .collect();
+        steps_of(&function(&format!("{open}{}", "\t}\n".repeat(n))))
+    });
+    // Strings that are joined, cut and compared in one expression.
+    assert_near_linear(&sizes, |n| {
+        let joined = " + s[1:2] + \"a\"".repeat(n);
+        steps_of(&function(&format!(
+            "\ts := \"text\"\n\tif s{joined} < s {{\n\t\tx++\n\t}}\n"
+        )))
     });
 }
 

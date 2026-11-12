@@ -17,31 +17,38 @@ mod tests;
 #[derive(Debug)]
 pub struct RuntimeFunc {
     pub name: &'static str,
-    /// Its parameters as C declares them.
+    /// Its result and its parameters as C declares them.
+    pub result: &'static str,
     pub params: &'static str,
     pub noreturn: bool,
 }
 
-const fn returns(name: &'static str, params: &'static str) -> RuntimeFunc {
+/// A function that gives a value back.
+const fn gives(result: &'static str, name: &'static str, params: &'static str) -> RuntimeFunc {
     RuntimeFunc {
         name,
+        result,
         params,
         noreturn: false,
     }
 }
 
+const fn returns(name: &'static str, params: &'static str) -> RuntimeFunc {
+    gives("void", name, params)
+}
+
 const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
     RuntimeFunc {
         name,
+        result: "void",
         params,
         noreturn: true,
     }
 }
 
 /// Every function of the runtime that generated code may call: the
-/// header declares them, and the runtime defines them. None has a
-/// result yet.
-pub const FUNCS: [RuntimeFunc; 24] = [
+/// header declares them, and the runtime defines them.
+pub const FUNCS: [RuntimeFunc; 29] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -53,6 +60,23 @@ pub const FUNCS: [RuntimeFunc; 24] = [
     returns("_gopp_print_pointer", "uint8_t *value"),
     returns("_gopp_print_space", "void"),
     returns("_gopp_print_newline", "void"),
+    gives(
+        "gopp_string",
+        "_gopp_string_concat",
+        "gopp_string a, gopp_string b",
+    ),
+    gives("bool", "_gopp_string_eq", "gopp_string a, gopp_string b"),
+    gives(
+        "int64_t",
+        "_gopp_string_compare",
+        "gopp_string a, gopp_string b",
+    ),
+    gives("gopp_string", "_gopp_string_from_rune", "int64_t rune"),
+    gives(
+        "uint64_t",
+        "_gopp_string_decode",
+        "gopp_string text, uint64_t at",
+    ),
     ends(
         "_gopp_panic_bounds",
         "uint64_t index, uint64_t length, bool is_signed",
@@ -176,7 +200,8 @@ pub fn header(layout: TargetLayout) -> String {
             true => "[[noreturn]] ",
             false => "",
         };
-        let _ = writeln!(out, "{noreturn}void {}({});", func.name, func.params);
+        let (result, name) = (func.result, func.name);
+        let _ = writeln!(out, "{noreturn}{result} {name}({});", func.params);
     }
     out
 }
@@ -188,9 +213,9 @@ type Source = (&'static str, &'static str);
 
 const INTERNAL: Source = ("internal.h", include_str!("../../../runtime/internal.h"));
 
-/// The sources of the runtime for a system: every target has the first
-/// three.
-fn sources(os: Os) -> [Source; 4] {
+/// The sources of the runtime for a system: every target has all but
+/// the last.
+fn sources(os: Os) -> [Source; 5] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",
@@ -202,6 +227,7 @@ fn sources(os: Os) -> [Source; 4] {
         ("rt.c", include_str!("../../../runtime/rt.c")),
         ("print.c", include_str!("../../../runtime/print.c")),
         ("panic.c", include_str!("../../../runtime/panic.c")),
+        ("string.c", include_str!("../../../runtime/string.c")),
         of_system,
     ]
 }

@@ -9,6 +9,7 @@ Every Go++ program is linked with a runtime ([ADR-0035](../adr/0035-runtime-in-c
 | `runtime/rt.c` | `_gopp_rt_init`, which the generated `main` calls first, `_gopp_rt_exit`, where every program that does not return from `main` ends, and `_gopp_rt_funcs`, which takes the names of the functions of a unit |
 | `runtime/print.c` | `_gopp_print_<kind>`: the built-in `print` and `println` |
 | `runtime/panic.c` | `_gopp_panic_<kind>`: where a failed bounds, slice, nil, division or shift check of generated code ends, and `_gopp_panic_must` |
+| `runtime/string.c` | what the compiler calls for strings: `_gopp_string_concat`, `_gopp_string_eq`, `_gopp_string_compare`, `_gopp_string_from_rune`, `_gopp_string_decode`; and `_gopp_alloc`, which is `malloc` until the allocator of `P05.03` |
 | `runtime/os_linux.c`, `runtime/os_windows.c` | what the runtime asks of the system: writing to the standard error stream and walking the stack. A target gets the one of its system |
 | `runtime/internal.h` | what these files share |
 | `gopp_rt.h` | generated, never written by hand (below) |
@@ -36,6 +37,15 @@ Generated code and the runtime read the same values and call the same functions.
 The objects stand in for a static archive: Clang and LLD are the only tools a build needs, and neither writes an archive.
 
 A build is kept in `<cache>/runtime/<number>/`, where the cache is `GOPPCACHE`, or `~/.cache/gopp` (`%LOCALAPPDATA%\gopp` on Windows). The key of a build is the text of everything it is a function of: the form, the path and the version of Clang, the flags, the header and every source. The number is a hash of that text and only names the directory; the directory holds the whole key in the file `key`, and a build is found again only when that file is the key, byte for byte. A build is made in a directory of its own and then renamed, so a directory with the name is whole, and builds that start at the same time agree on one. The build cache of `P06` takes this over.
+
+## Strings
+
+A string that a program makes while it runs (`a + b`, `string(r)`) has its bytes in a buffer of its own: a header `{refcount, byte_cap}`, the bytes, and one NUL (SLC-5); `backing` points to the header. A literal and the empty string have no buffer. Nothing releases a buffer yet: that comes with the drops (`P04.09`, `P05.04`), and until then no count is raised either.
+
+- `_gopp_string_concat` makes a new buffer, except for a result without bytes.
+- `_gopp_string_eq` compares the lengths, then the bytes; `_gopp_string_compare` gives a number below zero, zero or above it, which the compiler compares with zero for `<`, `<=`, `>`, `>=`.
+- `_gopp_string_from_rune` is `string(r)`: the UTF-8 of the code point, or of U+FFFD for a number that is none.
+- `_gopp_string_decode(text, at)` is one step of `range` over a string: the code point in the low half of the result and its width in the high half. Bytes that are no UTF-8 give U+FFFD and a width of 1, exactly where Go's `range` gives them.
 
 ## `print` and `println`
 

@@ -1,0 +1,8 @@
+cd
+panic: runtime error: slice bounds out of range [4:2]
+
+goroutine 1 [running]:
+main.cut()
+	+0x?
+main.main()
+	+0x?

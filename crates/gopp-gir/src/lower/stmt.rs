@@ -1,14 +1,29 @@
 //! Statements: blocks, branches, loops and what leaves them.
 
 use gopp_sema::constant::Value;
+use gopp_sema::types::Category;
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{
     Block, BranchKind, CaseClause, DeclId, DeclKind, ExprId, ExprKind, Ident, StmtId, StmtKind,
+    UnaryOp,
 };
 use lasso::Spur;
 
+use super::Shared;
+use super::expr::PlaceMode;
 use super::func::{Built, FuncCx, Target, deeper};
-use crate::{BinOp, BlockId, Operand, Place, Rvalue, Type, TypeInterner};
+use crate::{BinOp, BlockId, CastKind, LocalId, Operand, Place, Rvalue, Type, TypeInterner};
+
+/// What a range loop walks.
+enum Walked {
+    /// Nothing but the count: a number, or an array whose elements are
+    /// not asked for.
+    Count,
+    /// The elements of the array in the place.
+    Elements(Place),
+    /// The code points of the string in the place.
+    Text(Place),
+}
 
 impl FuncCx<'_, '_> {
     /// The statements of one list, whose labels are known before the
@@ -78,7 +93,12 @@ impl FuncCx<'_, '_> {
             StmtKind::Switch { init, tag, clauses } => {
                 self.switch_stmt(label, node.span, *init, *tag, clauses)?;
             }
-            StmtKind::Range { .. } => self.unsupported(node.span, "a range loop"),
+            StmtKind::Range {
+                lhs,
+                define,
+                x,
+                body,
+            } => self.range_stmt(label, node.span, lhs, *define, *x, body)?,
             StmtKind::Go(_) => self.unsupported(node.span, "a go statement"),
             StmtKind::Defer(_) => self.unsupported(node.span, "a defer statement"),
             StmtKind::Send { .. } => self.unsupported(node.span, "a send"),
@@ -203,6 +223,155 @@ impl FuncCx<'_, '_> {
         self.close_scope(span)
     }
 
+    /// `for key, value := range x` over a number, an array or a string.
+    /// What is walked is worked out once, before the first pass; each
+    /// pass has its own variables.
+    fn range_stmt(
+        &mut self,
+        label: Option<Spur>,
+        span: SourceSpan,
+        lhs: &[ExprId],
+        define: bool,
+        x: ExprId,
+        body: &Block,
+    ) -> Built {
+        let inner = |this: &Self, left: ExprId| Shared::unparen(this.tree, left);
+        let alias = |&left: &ExprId| {
+            let kind = &self.tree.exprs[inner(self, left)].kind;
+            let address = UnaryOp::Addr;
+            matches!(kind, ExprKind::Unary { op, .. } if *op == address)
+        };
+        if lhs.iter().any(alias) {
+            self.unsupported(span, "a range variable that is the element itself");
+            return Ok(());
+        }
+        let (key, value) = (lhs.first().copied(), lhs.get(1).copied());
+        let named = value.is_some_and(|value| {
+            let kind = &self.tree.exprs[inner(self, value)].kind;
+            !matches!(kind, ExprKind::Name(name) if *name == self.shared.blank)
+        });
+        self.open_scope();
+        self.at(self.tree.exprs[x].span);
+        let word = super::Memo::word(self.shared, self.b.types(), false);
+        let slot = |local: LocalId| Operand::Copy(Place::local(local));
+        let walked = self.ty_of(x);
+        // What is walked, the number of passes or what tells it, and
+        // the type that the loop counts in.
+        let behind = self.pointee(walked);
+        // A constant without a type is a count; anything else without a
+        // type of GIR has a type that is not supported, which was said.
+        let constant = self.body.types.get(&x);
+        let constant = constant.is_some_and(|typed| typed.value != Value::Unknown);
+        let (source, limit, counts) = match self.kind(behind) {
+            Type::Unit if !constant => {
+                self.unsupported(span, "a range over a value of this type");
+                return self.close_scope(span);
+            }
+            Type::Int { .. } | Type::Unit if behind == walked => {
+                let counts = match walked == TypeInterner::UNIT {
+                    true => super::Memo::word(self.shared, self.b.types(), true),
+                    false => walked,
+                };
+                let limit = self.operand_as(x, counts)?;
+                let limit = self.b.assign_temp(Rvalue::Use(limit))?;
+                (Walked::Count, slot(limit), counts)
+            }
+            // The length of an array is known: without a variable for
+            // the elements the array is not worked out at all.
+            Type::Array(_, len) => {
+                let limit = self.b.const_int(word, len)?;
+                let source = match named {
+                    true => Walked::Elements(self.ranged_array(x, span)?),
+                    false => Walked::Count,
+                };
+                (source, limit, word)
+            }
+            Type::String => {
+                let whole = self.operand(x)?;
+                let whole = Place::local(self.b.assign_temp(Rvalue::Use(whole))?);
+                let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
+                (Walked::Text(whole), slot(len), word)
+            }
+            _ => {
+                self.unsupported(span, "a range over a slice, a map, a channel or a function");
+                return self.close_scope(span);
+            }
+        };
+        let counter = self.b.assign_temp(Rvalue::Use(self.zero(counts)))?;
+        let [head, inside, after, exit] = [(); 4].map(|()| self.b.new_block());
+        self.b.goto(head)?;
+        self.b.switch_to(head);
+        let more = Rvalue::Binary(BinOp::Lt, slot(counter), limit);
+        let more = self.b.assign_temp(more)?;
+        self.b.switch(slot(more), vec![(0, exit)], inside)?;
+        self.b.switch_to(inside);
+        let target = Target {
+            label,
+            breaks: exit,
+            continues: Some(after),
+            depth: self.depth(),
+            next: None,
+        };
+        self.open_scope();
+        // What this pass walks, and how far the next one starts.
+        let mut step = self.b.const_int(counts, 1)?;
+        let element = match &source {
+            Walked::Count => None,
+            Walked::Elements(array) => Some(Operand::Copy(self.b.index(array, counter)?)),
+            Walked::Text(text) => {
+                let string = self.b.place_ty(text);
+                let args = vec![Operand::Copy(text.clone()), slot(counter)];
+                let packed = self.runtime("_gopp_string_decode", &[string, word], word, args)?;
+                let rune = self.b.types().int(32, true);
+                let point = Rvalue::Cast(CastKind::IntToInt, packed.clone(), rune);
+                let point = self.b.assign_temp(point)?;
+                let half = self.b.const_int(word, 32)?;
+                let width = self
+                    .b
+                    .assign_temp(Rvalue::Binary(BinOp::Shr, packed, half))?;
+                step = slot(width);
+                Some(slot(point))
+            }
+        };
+        if let Some(key) = key {
+            self.set_range_var(key, define, slot(counter))?;
+        }
+        if let (Some(value), Some(element)) = (value, element) {
+            self.set_range_var(value, define, element)?;
+        }
+        self.targets.push(target);
+        self.block(body)?;
+        self.targets.pop();
+        self.close_scope(span)?;
+        self.b.goto(after)?;
+        self.b.switch_to(after);
+        let next = Rvalue::Binary(BinOp::Add, slot(counter), step);
+        self.b.assign(Place::local(counter), next)?;
+        self.b.goto(head)?;
+        self.b.switch_to(exit);
+        self.close_scope(span)
+    }
+
+    /// The array whose elements a range loop reads. An array whose
+    /// elements are copied by their bytes is copied first, as in Go: the
+    /// loop does not see what its body writes. Any other, and one behind
+    /// a pointer, is walked where it is (RNG-6).
+    fn ranged_array(&mut self, x: ExprId, span: SourceSpan) -> Built<Place> {
+        let mut mode = PlaceMode::default();
+        let place = self.place(x, &mut mode)?;
+        let pointer = matches!(self.kind(self.b.place_ty(&place)), Type::Ptr(_));
+        let checked = self.body.types.get(&x).map(|typed| typed.ty);
+        let trivial = checked.is_some_and(|ty| self.shared.types.category(ty) == Category::Trivial);
+        match (pointer, trivial) {
+            (true, _) => self.deref(place, span, &mut mode),
+            (false, true) => {
+                let copy = self.b.assign_temp(Rvalue::Use(Operand::Copy(place)))?;
+                Ok(Place::local(copy))
+            }
+            (false, false) => Ok(place),
+        }
+    }
+
     fn switch_stmt(
         &mut self,
         label: Option<Spur>,
@@ -291,20 +460,25 @@ impl FuncCx<'_, '_> {
             }
             return self.b.switch(on, table, otherwise);
         }
-        let scalar = matches!(
+        let compared = matches!(
             self.kind(ty),
-            Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_)
+            Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_) | Type::String
         );
         for &(case, body) in cases {
             let span = self.tree.exprs[case].span;
-            if !scalar || self.body.case_operators.contains_key(&case) {
+            if !compared || self.body.case_operators.contains_key(&case) {
                 self.unsupported(span, "a case that is compared by a function");
                 continue;
             }
             let value = self.operand_as(case, ty)?;
-            let equal = self
-                .b
-                .assign_temp(Rvalue::Binary(BinOp::Eq, on.clone(), value))?;
+            let equal = self.arith(
+                span,
+                gopp_syntax::ast::BinaryOp::Eq,
+                on.clone(),
+                value,
+                false,
+            )?;
+            let equal = self.b.assign_temp(equal)?;
             let next = self.b.new_block();
             let equal = Operand::Copy(Place::local(equal));
             self.b.switch(equal, vec![(0, next)], body)?;

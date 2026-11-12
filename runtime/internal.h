@@ -24,6 +24,10 @@ void _gopp_write_uint(uint64_t value);
 void _gopp_write_int(int64_t value);
 void _gopp_write_hex(uint64_t value);
 
+// Room for `size` bytes, which is never null: a program that gets none
+// ends.
+void *_gopp_alloc(uint64_t size);
+
 // The name of the Go++ function that starts at the address; null for
 // what is no Go++ function.
 const char *_gopp_func_name(uintptr_t start);
