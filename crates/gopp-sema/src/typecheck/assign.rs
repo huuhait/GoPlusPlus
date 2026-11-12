@@ -506,24 +506,30 @@ impl<'a> Checker<'a> {
         expr: ExprId,
     ) -> Operand {
         let x = self.value(cx, expr);
+        // A constant that is declared with a type has that type whatever
+        // its value is; a value in error is not known.
+        let unknown = match declared {
+            Some(ty) if ty != Types::INVALID => Operand::constant(ty, Value::Unknown),
+            _ => Operand::UNKNOWN,
+        };
         if x.mode == Mode::Unknown || declared == Some(Types::INVALID) {
-            return Operand::UNKNOWN;
+            return unknown;
         }
         if !matches!(x.mode, Mode::Const(_)) {
             let message = format!("{} is not constant", self.describe(cx, expr, &x));
             self.error(Code::NotConstant, cx.tree.exprs[expr].span, message);
-            return Operand::UNKNOWN;
+            return unknown;
         }
         let Some(ty) = declared else { return x };
         // The constant has the declared type and holds the value as that
         // type holds it.
         let assigned = self.assignment(cx, expr, x, Some(ty), "constant declaration");
         let Mode::Const(value) = assigned.mode else {
-            return Operand::UNKNOWN;
+            return unknown;
         };
         match self.converted(&value, ty) {
             Some(value) => Operand::constant(ty, value),
-            None => Operand::UNKNOWN,
+            None => unknown,
         }
     }
 

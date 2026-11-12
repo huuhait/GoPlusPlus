@@ -2125,6 +2125,104 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
     );
 }
 
+#[test]
+fn statements_that_compute_and_assign_are_checked_as_go_checks_them() {
+    let declared = "func g() int { return 0 }\ntype myint int\nconst (\n\tsmall int8  = 1\n\
+                    \tbig   myint = 1 << 100\n)\n";
+    let locals = "const c = 3.14\n\tvar (\n\t\tx int\n\t\ts string\n\t\tf float64\n\t\tb bool\n\
+                  \t\tu uint8\n\t\tm map[string]int\n\t)\n\t_, _, _, _, _, _ = x, s, f, b, u, m";
+    let overflows = "6:16: cannot use 1 << 100 (untyped int constant \
+                     1267650600228229401496703205376) as myint value in constant declaration \
+                     (overflows)";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "c++",
+            &["19:2: cannot assign to c (neither addressable nor a map index expression)"],
+        ),
+        (
+            "s--",
+            &["19:2: invalid operation: s-- (non-numeric type string)"],
+        ),
+        (
+            "g()++",
+            &["19:2: cannot assign to g() (neither addressable nor a map index expression)"],
+        ),
+        (
+            "x += \"a\"",
+            &["19:2: invalid operation: x += \"a\" (mismatched types int and untyped string)"],
+        ),
+        (
+            "s -= \"a\"",
+            &["19:2: invalid operation: operator - not defined on s (variable of type string)"],
+        ),
+        (
+            "f <<= 2",
+            &[
+                "19:2: invalid operation: shifted operand f (variable of type float64) must be \
+                 integer",
+            ],
+        ),
+        ("x /= 0", &["19:7: invalid operation: division by zero"]),
+        (
+            "c += 1",
+            &["19:2: cannot assign to c (neither addressable nor a map index expression)"],
+        ),
+        (
+            "x += f",
+            &["19:2: invalid operation: x += f (mismatched types int and float64)"],
+        ),
+        (
+            "u += 300",
+            &["19:7: 300 (untyped int constant) overflows uint8"],
+        ),
+        (
+            "type d int\n\tx, c, d := 1, 2, 3",
+            &["20:5: cannot assign to c", "20:8: cannot assign to d"],
+        ),
+        // A constant that is declared with a type has it whatever its
+        // value is.
+        (
+            "_ = big / small",
+            &["19:6: invalid operation: big / small (mismatched types myint and int8)"],
+        ),
+        (
+            "var _ [big]int",
+            &["19:9: invalid array length big (constant unknown of int type myint)"],
+        ),
+        (
+            "var _ [-1]int",
+            &["19:9: invalid array length -1 (untyped int constant)"],
+        ),
+        (
+            "var _ [2.5]int",
+            &["19:9: array length 2.5 (untyped float constant) must be integer"],
+        ),
+        (
+            "var _ [g()]int",
+            &["19:9: array length g() (value of type int) must be constant"],
+        ),
+        // What is right next to each of them.
+        (
+            "x++\n\tf--\n\tm[\"a\"]++\n\tx += 1\n\ts += \"a\"\n\tx <<= 2\n\tu += 255\n\tx %= 2",
+            &[],
+        ),
+        (
+            "_ = big / big\n\tvar _ [2.0]int\n\tvar _ [len(\"abc\")]int\n\tx, y := 1, 2\n\t_ = y",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t{locals}\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .filter(|&message| message != overflows)
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2743,7 +2841,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1674;
+const EXPECTED_ERRORS_REPORTED: usize = 1693;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

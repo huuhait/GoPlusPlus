@@ -519,6 +519,11 @@ impl<'a> Checker<'a> {
         Operand::UNKNOWN
     }
 
+    /// Whether all types that `ty` may be are numbers.
+    pub(super) fn all_numeric(&self, ty: TypeId) -> bool {
+        self.open(ty) || self.is_numeric(ty)
+    }
+
     /// Whether all types that `ty` may be are integers.
     pub(super) fn all_integer(&self, ty: TypeId) -> bool {
         self.open(ty) || self.is_integer(ty)
@@ -730,10 +735,12 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `left op right`, which is the expression `whole`, or without one
+    /// the statement `left op= right`.
     pub(super) fn binary(
         &mut self,
         cx: &Cx<'a>,
-        expr: ExprId,
+        whole: Option<ExprId>,
         op: BinaryOp,
         left: ExprId,
         right: ExprId,
@@ -743,7 +750,7 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         }
         if is_shift(op) {
-            return self.shift(cx, expr, op, (left, x), (right, y));
+            return self.shift(cx, whole, op, (left, x), (right, y));
         }
         self.match_types(cx, (left, &mut x), (right, &mut y));
         if x.mode == Mode::Unknown {
@@ -754,13 +761,25 @@ impl<'a> Checker<'a> {
         }
         if !self.types.identical(x.ty, y.ty, self.names) {
             if !self.open(x.ty) && !self.open(y.ty) {
+                let written = match whole {
+                    Some(expr) => self.expr_string(cx, expr),
+                    None => format!(
+                        "{} {}= {}",
+                        self.expr_string(cx, left),
+                        binary_text(op),
+                        self.expr_string(cx, right)
+                    ),
+                };
                 let message = format!(
-                    "invalid operation: {} (mismatched types {} and {})",
-                    self.expr_string(cx, expr),
+                    "invalid operation: {written} (mismatched types {} and {})",
                     self.type_string(x.ty),
                     self.type_string(y.ty)
                 );
-                self.error(Code::MismatchedTypes, self.span(cx, expr), message);
+                self.error(
+                    Code::MismatchedTypes,
+                    self.span(cx, whole.unwrap_or(left)),
+                    message,
+                );
             }
             return Operand::UNKNOWN;
         }
@@ -818,7 +837,9 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         }
         let mut result = Operand::constant(x.ty, value);
-        self.overflow(cx, expr, &mut result);
+        if let Some(expr) = whole {
+            self.overflow(cx, expr, &mut result);
+        }
         result
     }
 
@@ -959,7 +980,7 @@ impl<'a> Checker<'a> {
     fn shift(
         &mut self,
         cx: &Cx<'a>,
-        expr: ExprId,
+        whole: Option<ExprId>,
         op: BinaryOp,
         (left, mut x): (ExprId, Operand),
         (right, mut y): (ExprId, Operand),
@@ -1046,7 +1067,9 @@ impl<'a> Checker<'a> {
                 }
                 let value = shifted.shift(op == BinaryOp::Shl, bits as u32);
                 let mut result = Operand::constant(x.ty, value);
-                self.overflow(cx, expr, &mut result);
+                if let Some(expr) = whole {
+                    self.overflow(cx, expr, &mut result);
+                }
                 return result;
             }
             // A constant of no type shifted by a count that is no

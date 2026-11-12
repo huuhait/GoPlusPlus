@@ -1263,6 +1263,13 @@ impl<'a> Resolver<'a> {
             match self.visible.get(&name) {
                 Some(binding) if binding.scope == self.scope() => {
                     self.body.uses.insert(target, Ref::Local(binding.local));
+                    // What is no variable is not assigned to, which is
+                    // said once the types are known.
+                    let kind = self.body.locals[binding.local.0 as usize].kind;
+                    repeated |= matches!(
+                        kind,
+                        LocalKind::Const | LocalKind::Type | LocalKind::TypeParam
+                    );
                 }
                 _ => new.push(Ident {
                     name,

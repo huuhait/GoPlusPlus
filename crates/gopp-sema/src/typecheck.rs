@@ -860,9 +860,7 @@ impl<'a> Checker<'a> {
                 let x = self.const_value(&cx, declared, value);
                 self.error_at = None;
                 match x.mode {
-                    Mode::Const(value) if value != Value::Unknown => {
-                        (self.ty[object], self.value[object]) = (x.ty, value);
-                    }
+                    Mode::Const(value) => (self.ty[object], self.value[object]) = (x.ty, value),
                     _ => self.incomplete = true,
                 }
             }
@@ -1263,10 +1261,9 @@ impl<'a> Checker<'a> {
                 elem,
             } => {
                 let elem = self.typ(cx, *elem);
-                let len = self.constant(cx, *len).map(|(_, len)| len.to_int());
-                match len.as_ref().and_then(Value::as_i64).map(u64::try_from) {
-                    Some(Ok(len)) => self.types.array(len, elem),
-                    _ => {
+                match self.array_length(cx, *len) {
+                    Some(len) => self.types.array(len, elem),
+                    None => {
                         self.incomplete = true;
                         Types::INVALID
                     }
@@ -1542,6 +1539,50 @@ impl<'a> Checker<'a> {
         representable(value, self.basic_of(ty)?)
     }
 
+    /// The length that `expr` gives an array: a constant that is an
+    /// integer, not negative, and that an `int` holds.
+    fn array_length(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<u64> {
+        // What a name that is no constant is was said where the name was
+        // found.
+        let x = match cx.tree.exprs[expr].kind {
+            ExprKind::Name(_) => {
+                let x = self.operand(cx, expr);
+                match x.mode {
+                    Mode::Const(_) => x,
+                    _ => return None,
+                }
+            }
+            _ => self.value(cx, expr),
+        };
+        let what = match &x.mode {
+            Mode::Unknown => return None,
+            Mode::Const(value) => {
+                let integer = self.is_integer(x.ty);
+                if integer || self.is_untyped(x.ty) {
+                    let value = value.to_int();
+                    let fits = representable(&value, Basic::Int).is_some();
+                    let length = value.as_i64().map(u64::try_from);
+                    if let (true, Some(Ok(length))) = (fits, length) {
+                        return Some(length);
+                    }
+                }
+                match integer {
+                    true => format!("invalid array length {}", self.describe(cx, expr, &x)),
+                    false => format!(
+                        "array length {} must be integer",
+                        self.describe(cx, expr, &x)
+                    ),
+                }
+            }
+            _ => format!(
+                "array length {} must be constant",
+                self.describe(cx, expr, &x)
+            ),
+        };
+        self.error(Code::InvalidArrayLength, cx.tree.exprs[expr].span, what);
+        None
+    }
+
     /// The value of a constant expression; `None` for what is not constant
     /// or not worked out here yet.
     fn constant(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<(TypeId, Value)> {
@@ -1590,7 +1631,7 @@ impl<'a> Checker<'a> {
             ExprKind::Name(_) => self.name(cx, expr),
             ExprKind::Selector { x, sel } => self.selector(cx, expr, *x, *sel),
             ExprKind::Unary { op, x } => self.unary(cx, expr, *op, *x),
-            ExprKind::Binary { op, x, y } => self.binary(cx, expr, *op, *x, *y),
+            ExprKind::Binary { op, x, y } => self.binary(cx, Some(expr), *op, *x, *y),
             ExprKind::Call {
                 fun,
                 args,
@@ -1732,7 +1773,7 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         }
         match kind {
-            ObjKind::Const if value != Value::Unknown => Operand::constant(ty, value),
+            ObjKind::Const => Operand::constant(ty, value),
             ObjKind::Type => Operand {
                 mode: Mode::Type,
                 ty,
@@ -2639,8 +2680,25 @@ impl<'a> Checker<'a> {
             StmtKind::Labeled { stmt, .. } => self.stmt(cx, *stmt),
             StmtKind::Block(block) => self.stmts(cx, &block.stmts),
             StmtKind::Expr(x) => self.expr_stmt(cx, *x),
-            StmtKind::IncDec { x, .. } | StmtKind::Go(x) | StmtKind::Defer(x) => {
+            StmtKind::Go(x) | StmtKind::Defer(x) => {
                 self.operand(cx, *x);
+            }
+            StmtKind::IncDec { x, inc } => {
+                let operand = self.value(cx, *x);
+                if operand.mode == Mode::Unknown || self.own_rules(cx) {
+                    return;
+                }
+                if self.all_numeric(operand.ty) {
+                    self.lhs_var(cx, *x);
+                    return;
+                }
+                let message = format!(
+                    "invalid operation: {}{} (non-numeric type {})",
+                    self.expr_string(cx, *x),
+                    if *inc { "++" } else { "--" },
+                    self.type_string(operand.ty)
+                );
+                self.error(Code::IncDecNonNumeric, tree.exprs[*x].span, message);
             }
             StmtKind::Send { chan, value } => {
                 let to = *chan;
@@ -2688,10 +2746,19 @@ impl<'a> Checker<'a> {
                 let mut places = Vec::new();
                 for (&place, local) in lhs.iter().zip(&locals) {
                     let is_blank = matches!(tree.exprs[place].kind, ExprKind::Name(name) if name == self.blank);
-                    places.push(match local.is_some() || is_blank {
-                        true => None,
-                        false => Some(self.operand(cx, place).ty),
-                    });
+                    if local.is_some() || is_blank {
+                        places.push(None);
+                        continue;
+                    }
+                    // What is declared in this block and is no variable
+                    // is not assigned to.
+                    let declared = self.operand(cx, place);
+                    let assigned = matches!(declared.mode, Mode::Variable | Mode::Unknown);
+                    if !assigned && !self.own_rules(cx) {
+                        let message = format!("cannot assign to {}", self.expr_string(cx, place));
+                        self.error(Code::CannotAssignTo, tree.exprs[place].span, message);
+                    }
+                    places.push(assigned.then_some(declared.ty));
                 }
                 let types = self.init_vars(cx, &places, rhs, Init::Variables);
                 for (local, ty) in locals.into_iter().zip(types) {
@@ -2705,6 +2772,16 @@ impl<'a> Checker<'a> {
                 lhs,
                 rhs,
             } => self.assign_vars(cx, lhs, rhs),
+            // `x op= y` is `x = x op y`.
+            StmtKind::Assign {
+                op: AssignOp::Op(op),
+                lhs,
+                rhs,
+            } if !self.own_rules(cx) && lhs.len() == 1 && rhs.len() == 1 => {
+                if self.binary(cx, None, *op, lhs[0], rhs[0]).mode != Mode::Unknown {
+                    self.lhs_var(cx, lhs[0]);
+                }
+            }
             StmtKind::Assign { op, lhs, rhs } => {
                 let targets: Vec<Operand> = lhs.iter().map(|&x| self.operand(cx, x)).collect();
                 for &x in rhs {

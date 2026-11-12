@@ -161,6 +161,7 @@ codes! {
     212 MissingInitExpr "err_missing_init_expr",
     213 ExtraInitExpr "err_extra_init_expr",
     219 SelectCaseInvalid "err_select_case_invalid",
+    222 IncDecNonNumeric "err_inc_dec_non_numeric",
     223 BuiltinNotEnoughArguments "err_builtin_not_enough_args",
     224 BuiltinTooManyArguments "err_builtin_too_many_args",
     225 BuiltinInvalidArgument "err_builtin_invalid_arg",
