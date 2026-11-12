@@ -6,8 +6,10 @@
 //! value that needs the type of an expression that is not constant) is
 //! left invalid, which fits everywhere and is no error.
 
+mod ops;
+
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::Span;
+use gopp_span::{Dialect, Span};
 use gopp_syntax::ast::{self, *};
 use lasso::{Spur, ThreadedRodeo};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -98,7 +100,14 @@ enum Mode {
     Unsafe(Spur),
     Type,
     Const(Value),
+    /// What can be assigned to and have its address taken.
+    Variable,
+    /// `m[k]`: can be assigned to, has no address.
+    MapIndex,
     Value,
+    /// A value that can give a second one that says whether it is there:
+    /// `x.(T)`, `<-ch`.
+    CommaOk,
 }
 
 /// An expression: what it is and its type, which may be untyped.
@@ -129,9 +138,18 @@ impl Operand {
         }
     }
 
+    fn variable(ty: TypeId) -> Self {
+        let mode = match ty {
+            Types::INVALID => Mode::Unknown,
+            _ => Mode::Variable,
+        };
+        Self { mode, ty }
+    }
+
     /// Whether the expression has a value: a constant or not.
     fn is_value(&self) -> bool {
-        matches!(self.mode, Mode::Value | Mode::Const(_))
+        use Mode::*;
+        matches!(self.mode, Const(_) | Variable | MapIndex | Value | CommaOk)
     }
 }
 
@@ -151,8 +169,11 @@ struct Checker<'a> {
     /// Whether the declaration being worked out needed something that
     /// this module does not work out yet.
     incomplete: bool,
-    /// Where an error was reported, so that none is reported twice.
-    reported: FxHashSet<Span>,
+    /// Where which error was reported, so that none is reported twice.
+    reported: FxHashSet<(Span, Code)>,
+    /// The constants of no type that are shifted by a count that is no
+    /// constant: the type they get must be an integer type.
+    shifted: FxHashSet<ExprId>,
     /// While a body is walked: what each local of it is.
     locals: FxHashMap<LocalId, Operand>,
     /// While a body is walked: what each expression of it is, so that
@@ -241,6 +262,7 @@ pub fn declarations(
         value: vec![Value::Unknown; count],
         incomplete: false,
         reported: FxHashSet::default(),
+        shifted: FxHashSet::default(),
         locals: FxHashMap::default(),
         memo: None,
         fresh: false,
@@ -561,7 +583,7 @@ impl<'a> Checker<'a> {
                 diagnostic
             }
         };
-        if self.reported.insert(objects[at].span) {
+        if self.reported.insert((objects[at].span, diagnostic.code)) {
             self.sink.push(diagnostic);
         }
         if is_value_kind(&objects[object].kind) {
@@ -757,7 +779,7 @@ impl<'a> Checker<'a> {
         let Some(&(name, span)) = members.first() else {
             return;
         };
-        if !self.reported.insert(span) {
+        if !self.reported.insert((span, Code::InvalidRecursiveType)) {
             return;
         }
         if members.len() == 1 {
@@ -1091,11 +1113,8 @@ impl<'a> Checker<'a> {
                     let text = &cx.text[node.span.lo as usize..node.span.hi as usize];
                     // A signature is read once for its declaration and
                     // once for its body.
-                    if self.reported.insert(node.span) {
-                        let message = format!("{text} is not a type");
-                        let diagnostic = Diagnostic::new(Code::NotAType, node.span, message);
-                        self.sink.push(diagnostic);
-                    }
+                    let message = format!("{text} is not a type");
+                    self.error(Code::NotAType, node.span, message);
                 }
                 self.incomplete = true;
                 Types::INVALID
@@ -1366,11 +1385,20 @@ impl<'a> Checker<'a> {
             ExprKind::Paren(x) => self.operand(cx, *x),
             ExprKind::Name(_) => self.name(cx, expr),
             ExprKind::Selector { x, sel } => self.selector(cx, expr, *x, *sel),
-            ExprKind::Unary { op, x } => self.unary(cx, *op, *x),
-            ExprKind::Binary { op, x, y } => self.binary(cx, *op, *x, *y),
+            ExprKind::Unary { op, x } => self.unary(cx, expr, *op, *x),
+            ExprKind::Binary { op, x, y } => self.binary(cx, expr, *op, *x, *y),
             ExprKind::Call {
-                fun, args, spread, ..
-            } => self.call(cx, *fun, args, *spread),
+                fun,
+                args,
+                spread,
+                unwrap,
+            } => {
+                let called = self.call(cx, *fun, args, *spread);
+                match unwrap {
+                    true => self.unwrapped(called),
+                    false => called,
+                }
+            }
             ExprKind::FuncLit { ty, body } => {
                 let sig = self.typ(cx, *ty);
                 // Its body is walked with the body it is in.
@@ -1417,7 +1445,13 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Assert { x, ty } => {
                 self.operand(cx, *x);
-                Operand::value(self.typ(cx, *ty))
+                match self.typ(cx, *ty) {
+                    Types::INVALID => Operand::UNKNOWN,
+                    ty => Operand {
+                        mode: Mode::CommaOk,
+                        ty,
+                    },
+                }
             }
             // A type written out: `[]int`, `map[string]T`, `func()`, ...
             ExprKind::ArrayType { .. }
@@ -1493,7 +1527,8 @@ impl<'a> Checker<'a> {
                 mode: Mode::Type,
                 ty,
             },
-            ObjKind::Var | ObjKind::Func => Operand::value(ty),
+            ObjKind::Var => Operand::variable(ty),
+            ObjKind::Func => Operand::value(ty),
             _ => Operand::UNKNOWN,
         }
     }
@@ -1518,8 +1553,15 @@ impl<'a> Checker<'a> {
         let x = self.operand(cx, x);
         let found = self.types.member(x.ty, sel.name, self.path, self.names);
         match (&x.mode, found) {
-            (Mode::Value, Some(Member::Field { ty })) => Operand::value(ty),
-            (Mode::Value, Some(Member::Method { sig, .. })) => Operand::value(sig),
+            // A field of a variable, or one behind a pointer, is a
+            // variable.
+            (mode, Some(Member::Field { ty, indirect })) if x.is_value() => {
+                match *mode == Mode::Variable || indirect {
+                    true => Operand::variable(ty),
+                    false => Operand::value(ty),
+                }
+            }
+            (_, Some(Member::Method { sig, .. })) if x.is_value() => Operand::value(sig),
             // `T.m`: a function that takes the receiver first.
             (Mode::Type, Some(Member::Method { sig, .. })) => {
                 let Type::Func {
@@ -1563,7 +1605,7 @@ impl<'a> Checker<'a> {
                 (Type::Struct(_), Some(key)) => match tree.exprs[key].kind {
                     ExprKind::Name(name) => {
                         match self.types.member(literal, name, self.path, self.names) {
-                            Some(Member::Field { ty }) => Some(ty),
+                            Some(Member::Field { ty, .. }) => Some(ty),
                             _ => None,
                         }
                     }
@@ -1636,7 +1678,7 @@ impl<'a> Checker<'a> {
                 mode: Mode::Type,
                 ty: self.typ(cx, expr),
             },
-            Mode::Value | Mode::Const(_) => {
+            _ if x.is_value() => {
                 // An index of no type is an `int`; the key of a map has
                 // the type of its keys.
                 let wanted = match &*self.types.get(self.types.underlying(x.ty)) {
@@ -1654,10 +1696,27 @@ impl<'a> Checker<'a> {
                     Type::Basic(Basic::String | Basic::UntypedString) => {
                         self.types.basic(Basic::Uint8)
                     }
-                    Type::Slice(elem) | Type::Array { elem, .. } => *elem,
-                    Type::Map { value, .. } => *value,
+                    // An element of a slice is a variable, one of an
+                    // array if the array is, one of a map can only be
+                    // assigned to.
+                    Type::Slice(elem) => return Operand::variable(*elem),
+                    Type::Array { elem, .. } => {
+                        return match x.mode {
+                            Mode::Variable => Operand::variable(*elem),
+                            _ => Operand::value(*elem),
+                        };
+                    }
+                    Type::Map { value, .. } => {
+                        return match *value {
+                            Types::INVALID => Operand::UNKNOWN,
+                            ty => Operand {
+                                mode: Mode::MapIndex,
+                                ty,
+                            },
+                        };
+                    }
                     Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
-                        Type::Array { elem, .. } => *elem,
+                        Type::Array { elem, .. } => return Operand::variable(*elem),
                         _ => return Operand::UNKNOWN,
                     },
                     // A generic function with its type arguments.
@@ -1681,88 +1740,6 @@ impl<'a> Checker<'a> {
 
     fn is_untyped(&self, ty: TypeId) -> bool {
         self.types.is_untyped(ty)
-    }
-
-    /// The type that a value of the untyped kind `untyped` has where a
-    /// value of the type `to` is wanted. `None` where it keeps its kind.
-    fn target(&self, untyped: TypeId, to: TypeId) -> Option<TypeId> {
-        if untyped == self.types.basic(Basic::UntypedNil) {
-            return None;
-        }
-        match &*self.types.get(self.types.underlying(to)) {
-            Type::Basic(Basic::UntypedNil) => None,
-            Type::Basic(_) => Some(to),
-            // An interface holds a value with a type of its own.
-            Type::Interface { .. } => Some(self.types.default_type(untyped)),
-            // A value is its own option (TYP-2).
-            Type::Option(elem) => self.target(untyped, *elem),
-            _ => None,
-        }
-    }
-
-    /// Gives the expression `expr` the type `to`, if it has no type of its
-    /// own yet: a constant, or a value made of constants of no type. Where
-    /// the value is not a constant, its operands get the type too.
-    fn convert(&mut self, cx: &Cx<'a>, expr: ExprId, to: TypeId) {
-        self.retype(cx, expr, to, true);
-    }
-
-    /// `convert`; with `outermost`, a constant is also held as its type
-    /// holds it. An expression in parentheses or under an operator keeps
-    /// its exact value: only what is used as a value is rounded.
-    fn retype(&mut self, cx: &Cx<'a>, expr: ExprId, to: TypeId, outermost: bool) {
-        let Some(old) = self.memo.as_ref().and_then(|memo| memo.get(&expr)).cloned() else {
-            return;
-        };
-        if !old.is_value() || !self.is_untyped(old.ty) {
-            return;
-        }
-        let Some(ty) = self.target(old.ty, to) else {
-            return;
-        };
-        let constant = matches!(old.mode, Mode::Const(_));
-        match cx.tree.exprs[expr].kind {
-            ExprKind::Paren(x) => self.retype(cx, x, to, false),
-            ExprKind::Unary { x, .. } if !constant => self.retype(cx, x, to, false),
-            ExprKind::Binary { op, x, y } if !constant => match op {
-                // The result of a comparison says nothing of its operands.
-                BinaryOp::Eq
-                | BinaryOp::Ne
-                | BinaryOp::Lt
-                | BinaryOp::Le
-                | BinaryOp::Gt
-                | BinaryOp::Ge => {}
-                BinaryOp::Shl | BinaryOp::Shr => self.retype(cx, x, to, false),
-                _ => {
-                    self.retype(cx, x, to, false);
-                    self.retype(cx, y, to, false);
-                }
-            },
-            _ => {}
-        }
-        // A constant is held as its type holds it.
-        let fitted = match &old.mode {
-            Mode::Const(value) if outermost && !self.is_untyped(ty) => self.converted(value, ty),
-            _ => None,
-        };
-        if let Some(entry) = self.memo.as_mut().and_then(|memo| memo.get_mut(&expr)) {
-            entry.ty = ty;
-            if let Some(value) = fitted {
-                entry.mode = Mode::Const(value);
-            }
-        }
-    }
-
-    /// Gives the expression `expr` the default type of its kind, if it has
-    /// no type of its own yet.
-    fn convert_default(&mut self, cx: &Cx<'a>, expr: ExprId) {
-        let known = self.memo.as_ref().and_then(|memo| memo.get(&expr));
-        if let Some(ty) = known
-            .map(|operand| operand.ty)
-            .filter(|&ty| self.is_untyped(ty))
-        {
-            self.convert(cx, expr, self.types.default_type(ty));
-        }
     }
 
     fn is_integer(&self, ty: TypeId) -> bool {
@@ -1799,58 +1776,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn unary(&mut self, cx: &Cx<'a>, op: UnaryOp, x: ExprId) -> Operand {
-        let operand = self.operand(cx, x);
-        match (op, &operand.mode) {
-            // `*T` is a type, `*p` what the pointer points to.
-            (UnaryOp::Star, Mode::Type) => Operand {
-                mode: Mode::Type,
-                ty: self.types.pointer(operand.ty),
-            },
-            (UnaryOp::Star, Mode::Value) => {
-                match &*self.types.get(self.types.underlying(operand.ty)) {
-                    Type::Pointer(elem) => Operand::value(*elem),
-                    _ => Operand::UNKNOWN,
-                }
-            }
-            (UnaryOp::Addr, Mode::Value) => Operand::value(self.types.pointer(operand.ty)),
-            (UnaryOp::Recv, Mode::Value) => {
-                match &*self.types.get(self.types.underlying(operand.ty)) {
-                    Type::Chan { elem, .. } => Operand::value(*elem),
-                    _ => Operand::UNKNOWN,
-                }
-            }
-            (UnaryOp::Plus | UnaryOp::Neg | UnaryOp::Not | UnaryOp::Xor, Mode::Value) => {
-                Operand::value(operand.ty)
-            }
-            (_, Mode::Const(value)) => {
-                let Some(basic) = self.basic_of(operand.ty) else {
-                    return Operand::UNKNOWN;
-                };
-                let (op, bits) = match op {
-                    UnaryOp::Plus => (constant::UnaryOp::Plus, 0),
-                    UnaryOp::Neg => (constant::UnaryOp::Neg, 0),
-                    UnaryOp::Not => (constant::UnaryOp::Not, 0),
-                    // The complement of an unsigned number stays in its
-                    // size.
-                    UnaryOp::Xor => {
-                        let bits = match basic {
-                            Basic::Uint8 => 8,
-                            Basic::Uint16 => 16,
-                            Basic::Uint32 => 32,
-                            Basic::Uint | Basic::Uint64 | Basic::Uintptr => 64,
-                            _ => 0,
-                        };
-                        (constant::UnaryOp::Complement, bits)
-                    }
-                    _ => return Operand::UNKNOWN,
-                };
-                self.fitted(operand.ty, value.unary(op, bits))
-            }
-            _ => Operand::UNKNOWN,
-        }
-    }
-
     /// The kind of the result for two untyped numbers: the later of
     /// integer, rune, float, complex.
     fn larger_kind(&self, x: TypeId, y: TypeId) -> Option<TypeId> {
@@ -1868,116 +1793,24 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn binary(&mut self, cx: &Cx<'a>, op: BinaryOp, left: ExprId, right: ExprId) -> Operand {
-        let (x, y) = (self.operand(cx, left), self.operand(cx, right));
-        let comparison = matches!(
-            op,
-            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
-        );
-        // An operand of no type takes the type of the other; of two such
-        // numbers, the one of the smaller kind takes the larger kind.
-        if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) && x.is_value() && y.is_value() {
-            match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
-                (true, false) => self.convert(cx, left, y.ty),
-                (false, true) => self.convert(cx, right, x.ty),
-                (true, true) => {
-                    if let Some(kind) = self.larger_kind(x.ty, y.ty) {
-                        self.convert(cx, left, kind);
-                        self.convert(cx, right, kind);
-                    }
-                }
-                (false, false) => {}
-            }
-        }
-        let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) else {
-            if !x.is_value() || !y.is_value() {
-                return Operand::UNKNOWN;
-            }
-            // A comparison of values is a boolean of no type yet; the
-            // other results have the type of the operand that has one.
-            return match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
-                _ if comparison => self.value_of(Basic::UntypedBool),
-                // A shift has the type of what is shifted; with a constant
-                // of no type there, the type comes from around it.
-                _ if matches!(op, BinaryOp::Shl | BinaryOp::Shr) => match self.is_untyped(x.ty) {
-                    true => Operand::UNKNOWN,
-                    false => Operand::value(x.ty),
+    /// The result of `f!(x)`: the results of `f(x)` without the error.
+    fn unwrapped(&self, called: Operand) -> Operand {
+        let Type::Tuple(results) = &*self.types.get(called.ty) else {
+            return match called.ty == self.types.error() {
+                true => Operand {
+                    mode: Mode::NoValue,
+                    ty: Types::INVALID,
                 },
-                (false, _) => Operand::value(x.ty),
-                (true, false) => Operand::value(y.ty),
-                (true, true) => match self.larger_kind(x.ty, y.ty) {
-                    Some(ty) => Operand::value(ty),
-                    None => Operand::UNKNOWN,
-                },
+                false => called,
             };
         };
-        if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
-            // The count fits an unsigned integer and is small; a float
-            // that is an integer shifts as one.
-            let count = b
-                .to_int()
-                .as_i64()
-                .and_then(|count| u32::try_from(count).ok());
-            let shifted = a.to_int();
-            let ty = match self.is_integer(x.ty) {
-                true => x.ty,
-                false if self.is_untyped(x.ty) => self.types.basic(Basic::UntypedInt),
-                false => return Operand::UNKNOWN,
-            };
-            return match count {
-                Some(count) if count <= 1023 - 1 + 52 && shifted.kind() == Kind::Int => {
-                    self.fitted(ty, shifted.shift(op == BinaryOp::Shl, count))
-                }
-                _ => Operand::UNKNOWN,
-            };
+        match &results[..] {
+            [rest @ .., last] if *last == self.types.error() => match rest {
+                [one] => Operand::value(*one),
+                many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
+            },
+            _ => called,
         }
-        // An untyped operand takes the type of the other; two typed ones
-        // have the same type.
-        let (mut a, mut b) = (a.clone(), b.clone());
-        let ty = match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
-            (true, true) => self.larger_kind(x.ty, y.ty),
-            (true, false) => self.converted(&a, y.ty).map(|fit| {
-                a = fit;
-                y.ty
-            }),
-            (false, true) => self.converted(&b, x.ty).map(|fit| {
-                b = fit;
-                x.ty
-            }),
-            (false, false) => (x.ty == y.ty).then_some(x.ty),
-        };
-        let Some(ty) = ty else {
-            return Operand::UNKNOWN;
-        };
-        let compare = match op {
-            BinaryOp::Eq => Some(CompareOp::Eq),
-            BinaryOp::Ne => Some(CompareOp::Ne),
-            BinaryOp::Lt => Some(CompareOp::Lt),
-            BinaryOp::Le => Some(CompareOp::Le),
-            BinaryOp::Gt => Some(CompareOp::Gt),
-            BinaryOp::Ge => Some(CompareOp::Ge),
-            _ => None,
-        };
-        if let Some(compare) = compare {
-            return self.untyped(Basic::UntypedBool, Value::Bool(a.compare(compare, &b)));
-        }
-        let op = match op {
-            BinaryOp::OrOr => constant::BinaryOp::LogicalOr,
-            BinaryOp::AndAnd => constant::BinaryOp::LogicalAnd,
-            BinaryOp::Add => constant::BinaryOp::Add,
-            BinaryOp::Sub => constant::BinaryOp::Sub,
-            BinaryOp::Mul => constant::BinaryOp::Mul,
-            // Two integers divide to an integer.
-            BinaryOp::Div if self.is_integer(ty) => constant::BinaryOp::IntQuo,
-            BinaryOp::Div => constant::BinaryOp::Quo,
-            BinaryOp::Rem => constant::BinaryOp::Rem,
-            BinaryOp::And => constant::BinaryOp::And,
-            BinaryOp::Or => constant::BinaryOp::Or,
-            BinaryOp::Xor => constant::BinaryOp::Xor,
-            BinaryOp::AndNot => constant::BinaryOp::AndNot,
-            _ => return Operand::UNKNOWN,
-        };
-        self.fitted(ty, a.binary(op, &b))
     }
 
     /// A call: of a function, a conversion, or a built-in function.
@@ -1987,7 +1820,7 @@ impl<'a> Checker<'a> {
             Mode::Type => self.conversion(cx, callee.ty, args),
             Mode::Builtin(builtin) => self.builtin(cx, builtin, args, spread),
             Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
-            Mode::Value => {
+            _ if callee.is_value() => {
                 for &arg in args {
                     self.operand(cx, arg);
                 }
@@ -2229,7 +2062,8 @@ impl<'a> Checker<'a> {
                     }
                     // The length of an array is constant if nothing is
                     // called or received to get the array.
-                    Mode::Value if self.is_static(cx, first) => {
+                    Mode::Const(_) => self.value_of(Basic::Int),
+                    _ if x.is_value() && self.is_static(cx, first) => {
                         let array = match &*self.types.get(self.types.underlying(x.ty)) {
                             Type::Pointer(elem) => self.types.underlying(*elem),
                             _ => self.types.underlying(x.ty),
@@ -2242,7 +2076,7 @@ impl<'a> Checker<'a> {
                             _ => self.value_of(Basic::Int),
                         }
                     }
-                    Mode::Value | Mode::Const(_) => self.value_of(Basic::Int),
+                    _ if x.is_value() => self.value_of(Basic::Int),
                     _ => Operand::UNKNOWN,
                 }
             }
@@ -2281,7 +2115,8 @@ impl<'a> Checker<'a> {
                         };
                         self.fitted(self.types.basic(part), value)
                     }
-                    Mode::Value => self.value_of(part),
+                    Mode::Const(_) => Operand::UNKNOWN,
+                    _ if x.is_value() => self.value_of(part),
                     _ => Operand::UNKNOWN,
                 }
             }
@@ -2410,6 +2245,7 @@ impl<'a> Checker<'a> {
             let mut cx = self.cx(&Decl { unit, body, form }, None);
             self.locals.clear();
             self.local_groups.clear();
+            self.shifted.clear();
             self.memo = Some(FxHashMap::default());
             self.current.clear();
             match &tree.decl_nodes[decl].kind {
@@ -2465,10 +2301,12 @@ impl<'a> Checker<'a> {
                 if self.types.generic_func(operand.ty).is_some() {
                     return None;
                 }
+                if !operand.is_value() {
+                    return None;
+                }
                 let value = match operand.mode {
                     Mode::Const(value) => value,
-                    Mode::Value => Value::Unknown,
-                    _ => return None,
+                    _ => Value::Unknown,
                 };
                 Some((
                     expr,
@@ -2534,7 +2372,7 @@ impl<'a> Checker<'a> {
             let ty = self.typ(cx, param.ty);
             let local = param.name.and_then(|name| cx.body.defs.get(&name.span.lo));
             if let Some(&local) = local {
-                self.locals.insert(local, Operand::value(ty));
+                self.locals.insert(local, Operand::variable(ty));
             }
         }
     }
@@ -2560,7 +2398,7 @@ impl<'a> Checker<'a> {
     fn set_local(&mut self, local: Option<LocalId>, ty: Option<TypeId>) {
         if let Some(local) = local {
             let operand = ty.map_or(Operand::UNKNOWN, |ty| {
-                Operand::value(self.types.default_type(ty))
+                Operand::variable(self.types.default_type(ty))
             });
             self.locals.insert(local, operand);
         }
@@ -2755,7 +2593,7 @@ impl<'a> Checker<'a> {
                             [one] if one.mode == Mode::Type => one.ty,
                             _ => switched.ty,
                         };
-                        self.locals.insert(local, Operand::value(ty));
+                        self.locals.insert(local, Operand::variable(ty));
                     }
                     self.stmts(cx, &clause.body);
                 }
@@ -2820,7 +2658,7 @@ impl<'a> Checker<'a> {
                             self.convert(cx, value, ty);
                         }
                         for local in locals.into_iter().flatten() {
-                            self.locals.insert(local, Operand::value(ty));
+                            self.locals.insert(local, Operand::variable(ty));
                         }
                     }
                     None => self.define_locals(cx, &locals, values),

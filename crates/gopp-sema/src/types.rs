@@ -144,6 +144,9 @@ pub struct DeclaredMethod {
 pub enum Member {
     Field {
         ty: TypeId,
+        /// Reached through a pointer: the field is a variable whatever
+        /// the value it was selected from is.
+        indirect: bool,
     },
     Method {
         /// A [`Type::Func`], without the receiver.
@@ -194,6 +197,15 @@ impl Inner {
         self.ids.insert(ty, id);
         id
     }
+}
+
+/// How a type is written out.
+#[derive(Clone, Copy, Default)]
+struct Spelling {
+    /// One spelling for all identical types.
+    canonical: bool,
+    /// The name of the package whose types are written without it.
+    within: Option<Spur>,
 }
 
 /// Why a predeclared generic type cannot take a type argument.
@@ -696,16 +708,16 @@ impl Types {
             other == name && (exported || owner == Some(package))
         };
         // Through one pointer, the members of what it points to.
-        let start = match &*self.get(self.underlying(ty)) {
-            Type::Pointer(elem) if !self.is_interface(*elem) => *elem,
-            _ => ty,
+        let (start, through_pointer) = match &*self.get(self.underlying(ty)) {
+            Type::Pointer(elem) if !self.is_interface(*elem) => (*elem, true),
+            _ => (ty, false),
         };
         let mut seen = vec![start];
-        let mut level = vec![start];
+        let mut level = vec![(start, through_pointer)];
         while !level.is_empty() {
             let mut found = Vec::new();
             let mut next = Vec::new();
-            for &current in &level {
+            for &(current, indirect) in &level {
                 if let Type::Named { id, args } = &*self.get(current) {
                     let declared = self.read(|inner| {
                         let mut methods = inner.named[id.0 as usize].methods.iter();
@@ -725,15 +737,18 @@ impl Types {
                     Type::Struct(fields) => {
                         for field in fields.iter() {
                             if matches(field.name, field.package) {
-                                found.push(Member::Field { ty: field.ty });
+                                found.push(Member::Field {
+                                    ty: field.ty,
+                                    indirect,
+                                });
                             } else if field.embedded {
-                                let inner = match &*self.get(field.ty) {
-                                    Type::Pointer(elem) => *elem,
-                                    _ => field.ty,
+                                let (inner, pointer) = match &*self.get(field.ty) {
+                                    Type::Pointer(elem) => (*elem, true),
+                                    _ => (field.ty, false),
                                 };
                                 if !seen.contains(&inner) {
                                     seen.push(inner);
-                                    next.push(inner);
+                                    next.push((inner, indirect || pointer));
                                 }
                             }
                         }
@@ -1026,17 +1041,68 @@ impl Types {
         if a == b {
             return true;
         }
-        // Only interfaces have more than one spelling.
-        let literal = |id| matches!(&*self.get(id), Type::Interface { .. });
-        literal(a)
-            && literal(b)
-            && match (
-                self.interface_methods(a, names),
-                self.interface_methods(b, names),
-            ) {
-                (Some(a), Some(b)) => a == b,
-                _ => false,
+        // Only interfaces have more than one spelling: two types with
+        // different ids are identical if they differ in interfaces alone.
+        let same = |a: TypeId, b: TypeId| self.identical(a, b, names);
+        let all = |a: &[TypeId], b: &[TypeId]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(&a, &b)| same(a, b))
+        };
+        match (&*self.get(a), &*self.get(b)) {
+            (Type::Interface { .. }, Type::Interface { .. }) => {
+                let (Some(a), Some(b)) = (
+                    self.interface_methods(a, names),
+                    self.interface_methods(b, names),
+                ) else {
+                    return false;
+                };
+                let same_method = |(a, b): (&Method, &Method)| {
+                    a.name == b.name && a.package == b.package && same(a.sig, b.sig)
+                };
+                a.len() == b.len() && a.iter().zip(&b).all(same_method)
             }
+            (Type::Pointer(a), Type::Pointer(b))
+            | (Type::Unique(a), Type::Unique(b))
+            | (Type::Shared(a), Type::Shared(b))
+            | (Type::Weak(a), Type::Weak(b))
+            | (Type::Option(a), Type::Option(b))
+            | (Type::Local(a), Type::Local(b))
+            | (Type::Slice(a), Type::Slice(b)) => same(*a, *b),
+            (Type::Array { len: m, elem: a }, Type::Array { len: n, elem: b }) => {
+                m == n && same(*a, *b)
+            }
+            (Type::Map { key: k, value: v }, Type::Map { key: l, value: w }) => {
+                same(*k, *l) && same(*v, *w)
+            }
+            (Type::Chan { dir: d, elem: a }, Type::Chan { dir: e, elem: b }) => {
+                d == e && same(*a, *b)
+            }
+            (Type::Tuple(a), Type::Tuple(b)) => all(a, b),
+            (
+                Type::Func {
+                    params: p,
+                    results: r,
+                    variadic: v,
+                },
+                Type::Func {
+                    params: q,
+                    results: s,
+                    variadic: w,
+                },
+            ) => v == w && all(p, q) && all(r, s),
+            (Type::Struct(a), Type::Struct(b)) => {
+                let same_field = |(a, b): (&Field, &Field)| {
+                    a.name == b.name
+                        && a.package == b.package
+                        && a.embedded == b.embedded
+                        && a.tag == b.tag
+                        && a.required == b.required
+                        && same(a.ty, b.ty)
+                };
+                a.len() == b.len() && a.iter().zip(b.iter()).all(same_field)
+            }
+            (Type::Named { id: a, args: x }, Type::Named { id: b, args: y }) => a == b && all(x, y),
+            _ => false,
+        }
     }
 
     /// Whether values of the type can be compared with `==`.
@@ -1224,19 +1290,38 @@ impl Types {
 
     /// The type as a program writes it.
     pub fn display(&self, id: TypeId, names: &ThreadedRodeo) -> String {
-        self.show(id, names, false)
+        self.show(id, names, Spelling::default())
+    }
+
+    /// The type as a message of the package named `package` shows it: the
+    /// types of that package are written without it.
+    pub fn display_in(&self, id: TypeId, names: &ThreadedRodeo, package: Spur) -> String {
+        let spelling = Spelling {
+            within: Some(package),
+            ..Spelling::default()
+        };
+        self.show(id, names, spelling)
     }
 
     /// The type in one spelling for all identical types: an interface is
     /// written with all its methods, in the order of their names, then its
     /// type terms.
     pub fn canonical(&self, id: TypeId, names: &ThreadedRodeo) -> String {
-        self.show(id, names, true)
+        let spelling = Spelling {
+            canonical: true,
+            ..Spelling::default()
+        };
+        self.show(id, names, spelling)
     }
 
     /// The methods and the type terms of an interface, each as text, with
     /// those of the interfaces it embeds.
-    fn interface_parts(&self, id: TypeId, names: &ThreadedRodeo) -> (Vec<String>, Vec<String>) {
+    fn interface_parts(
+        &self,
+        id: TypeId,
+        names: &ThreadedRodeo,
+        spelling: Spelling,
+    ) -> (Vec<String>, Vec<String>) {
         let (mut methods, mut terms) = (Vec::new(), Vec::new());
         let mut seen = vec![self.underlying(id)];
         let mut next = 0;
@@ -1251,14 +1336,17 @@ impl Types {
             };
             for method in own.iter() {
                 let name = names.resolve(&method.name);
-                methods.push(format!("{name}{}", self.signature(method.sig, names, true)));
+                methods.push(format!(
+                    "{name}{}",
+                    self.signature(method.sig, names, spelling)
+                ));
             }
             for &inner in embedded.iter() {
                 let under = self.underlying(inner);
                 match &*self.get(under) {
                     Type::Interface { .. } if !seen.contains(&under) => seen.push(under),
                     Type::Interface { .. } => {}
-                    _ => terms.push(self.show(inner, names, true)),
+                    _ => terms.push(self.show(inner, names, spelling)),
                 }
             }
         }
@@ -1269,8 +1357,8 @@ impl Types {
         (methods, terms)
     }
 
-    fn show(&self, id: TypeId, names: &ThreadedRodeo, canonical: bool) -> String {
-        let show = |id: TypeId| self.show(id, names, canonical);
+    fn show(&self, id: TypeId, names: &ThreadedRodeo, spelling: Spelling) -> String {
+        let show = |id: TypeId| self.show(id, names, spelling);
         let list = |ids: &[TypeId]| {
             ids.iter()
                 .map(|&id| show(id))
@@ -1295,7 +1383,7 @@ impl Types {
                 ChanDir::Recv => format!("<-chan {}", show(*elem)),
             },
             Type::Tuple(types) => format!("({})", list(types)),
-            Type::Func { .. } => format!("func{}", self.signature(id, names, canonical)),
+            Type::Func { .. } => format!("func{}", self.signature(id, names, spelling)),
             Type::Struct(fields) => {
                 let field = |f: &Field| {
                     let name = if f.embedded {
@@ -1316,8 +1404,8 @@ impl Types {
                 if methods.is_empty() && embedded.is_empty() {
                     return "any".to_owned();
                 }
-                if canonical {
-                    let (methods, terms) = self.interface_parts(id, names);
+                if spelling.canonical {
+                    let (methods, terms) = self.interface_parts(id, names, spelling);
                     let parts: Vec<String> = methods.into_iter().chain(terms).collect();
                     return match parts.is_empty() {
                         true => "any".to_owned(),
@@ -1326,7 +1414,7 @@ impl Types {
                 }
                 let method = |m: &Method| {
                     let name = names.resolve(&m.name);
-                    format!("{name}{}", self.signature(m.sig, names, false))
+                    format!("{name}{}", self.signature(m.sig, names, spelling))
                 };
                 let parts: Vec<String> = methods
                     .iter()
@@ -1346,6 +1434,7 @@ impl Types {
                     let named = &inner.named[named.0 as usize];
                     (named.name, named.package)
                 });
+                let package = package.filter(|&package| spelling.within != Some(package));
                 let package = package.map_or(String::new(), |p| format!("{}.", names.resolve(&p)));
                 let args = if args.is_empty() {
                     String::new()
@@ -1363,7 +1452,7 @@ impl Types {
 
     /// `(int, ...string) (bool, error)`: the parameters and results of the
     /// function type `id`.
-    fn signature(&self, id: TypeId, names: &ThreadedRodeo, canonical: bool) -> String {
+    fn signature(&self, id: TypeId, names: &ThreadedRodeo, spelling: Spelling) -> String {
         let Type::Func {
             params,
             results,
@@ -1374,21 +1463,21 @@ impl Types {
         };
         let mut shown: Vec<String> = params
             .iter()
-            .map(|&p| self.show(p, names, canonical))
+            .map(|&p| self.show(p, names, spelling))
             .collect();
         if *variadic
             && let Some((last, &ty)) = shown.last_mut().zip(params.last())
             && let Type::Slice(elem) = &*self.get(ty)
         {
-            *last = format!("...{}", self.show(*elem, names, canonical));
+            *last = format!("...{}", self.show(*elem, names, spelling));
         }
         let results = match &results[..] {
             [] => String::new(),
-            [one] => format!(" {}", self.show(*one, names, canonical)),
+            [one] => format!(" {}", self.show(*one, names, spelling)),
             many => {
                 let many: Vec<String> = many
                     .iter()
-                    .map(|&r| self.show(r, names, canonical))
+                    .map(|&r| self.show(r, names, spelling))
                     .collect();
                 format!(" ({})", many.join(", "))
             }

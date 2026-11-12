@@ -3,6 +3,7 @@
 pub mod basic;
 pub mod constant;
 mod decls;
+mod exprstring;
 mod literal;
 mod object;
 mod package;

@@ -1,0 +1,1020 @@
+//! Operators: what Go's type checker asks of their operands, and how a
+//! value of no type takes the type of what is around it. The functions
+//! follow `go/types` (expr.go, const.go), and the messages are Go's.
+
+use super::*;
+use crate::exprstring::{Writer, binary_text, unary_text};
+
+/// Why a value of no type cannot take a type.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Unfit {
+    /// A number with a fraction, for an integer type.
+    Truncated,
+    /// A number outside the range of the type.
+    Overflows,
+    Other,
+}
+
+fn is_comparison(op: BinaryOp) -> bool {
+    use BinaryOp::*;
+    matches!(op, Eq | Ne | Lt | Le | Gt | Ge)
+}
+
+fn is_shift(op: BinaryOp) -> bool {
+    matches!(op, BinaryOp::Shl | BinaryOp::Shr)
+}
+
+impl<'a> Checker<'a> {
+    pub(super) fn expr_string(&self, cx: &Cx<'a>, expr: ExprId) -> String {
+        let writer = Writer {
+            tree: cx.tree,
+            text: cx.text,
+            names: self.names,
+        };
+        writer.expr_string(expr)
+    }
+
+    pub(super) fn type_string(&self, ty: TypeId) -> String {
+        self.types.display_in(ty, self.names, self.name)
+    }
+
+    /// Reports an error once: an expression may be looked at twice.
+    pub(super) fn error(&mut self, code: Code, span: Span, message: String) {
+        if self.reported.insert((span, code)) {
+            self.sink.push(Diagnostic::new(code, span, message));
+        }
+    }
+
+    fn span(&self, cx: &Cx<'a>, expr: ExprId) -> Span {
+        cx.tree.exprs[expr].span
+    }
+
+    /// The operand as a message describes it: `x (variable of type int)`,
+    /// `1 << 70 (untyped int constant 1180591620717411303424)`.
+    pub(super) fn describe(&self, cx: &Cx<'a>, expr: ExprId, x: &Operand) -> String {
+        let nil = self.types.basic(Basic::UntypedNil);
+        if x.mode == Mode::Value && x.ty == nil {
+            return "nil".to_owned();
+        }
+        let text = self.expr_string(cx, expr);
+        let mut out = format!("{text} (");
+        let has_value = !matches!(
+            x.mode,
+            Mode::Unknown | Mode::NoValue | Mode::Builtin(_) | Mode::Unsafe(_) | Mode::Type
+        );
+        let untyped = has_value && self.is_untyped(x.ty);
+        if untyped {
+            out += &self.type_string(x.ty);
+            out.push(' ');
+        }
+        out += match &x.mode {
+            Mode::Unknown => "invalid operand",
+            Mode::NoValue => "no value",
+            Mode::Builtin(_) | Mode::Unsafe(_) => "built-in",
+            Mode::Type => "type",
+            Mode::Const(_) => "constant",
+            Mode::Variable => "variable",
+            Mode::MapIndex => "map index expression",
+            Mode::Value => "value",
+            Mode::CommaOk => "comma, ok expression",
+        };
+        if let Mode::Const(value) = &x.mode {
+            let value = value.to_string();
+            if value != text {
+                out.push(' ');
+                out += &value;
+            }
+        }
+        if has_value && !untyped {
+            match x.ty {
+                Types::INVALID => out += " with invalid type",
+                ty => {
+                    // A declared type is said with what it is.
+                    let mut what = String::new();
+                    if let Type::Named { .. } = &*self.types.get(ty) {
+                        what = match self.composite_kind(ty) {
+                            "" => self.type_string(self.types.underlying(ty)),
+                            kind => kind.to_owned(),
+                        };
+                        what.push(' ');
+                    }
+                    out += &format!(" of {what}type {}", self.type_string(ty));
+                }
+            }
+        }
+        out.push(')');
+        out
+    }
+
+    /// `array`, `slice`, ... for the type; nothing for a basic type.
+    fn composite_kind(&self, ty: TypeId) -> &'static str {
+        match &*self.types.get(self.types.underlying(ty)) {
+            Type::Array { .. } => "array",
+            Type::Slice(_) => "slice",
+            Type::Struct(_) => "struct",
+            Type::Pointer(_) => "pointer",
+            Type::Func { .. } => "func",
+            Type::Interface { .. } => "interface",
+            Type::Map { .. } => "map",
+            Type::Chan { .. } => "chan",
+            Type::Tuple(_) => "tuple",
+            _ => "",
+        }
+    }
+
+    // ---- what a type is
+
+    /// Whether what holds for the type is not known here: it is written
+    /// with a type parameter, or a part of it is in error.
+    fn open(&self, ty: TypeId) -> bool {
+        ty == Types::INVALID || self.types.has_param(ty)
+    }
+
+    fn is_numeric(&self, ty: TypeId) -> bool {
+        self.basic_of(ty).is_some_and(|basic| {
+            !matches!(
+                basic,
+                Basic::Bool
+                    | Basic::String
+                    | Basic::UntypedBool
+                    | Basic::UntypedString
+                    | Basic::UntypedNil
+            )
+        })
+    }
+
+    fn is_boolean(&self, ty: TypeId) -> bool {
+        matches!(self.basic_of(ty), Some(Basic::Bool | Basic::UntypedBool))
+    }
+
+    fn is_string(&self, ty: TypeId) -> bool {
+        matches!(
+            self.basic_of(ty),
+            Some(Basic::String | Basic::UntypedString)
+        )
+    }
+
+    fn is_complex(&self, ty: TypeId) -> bool {
+        use Basic::*;
+        matches!(
+            self.basic_of(ty),
+            Some(Complex64 | Complex128 | UntypedComplex)
+        )
+    }
+
+    fn is_nil(&self, x: &Operand) -> bool {
+        x.mode == Mode::Value && x.ty == self.types.basic(Basic::UntypedNil)
+    }
+
+    fn is_interface(&self, ty: TypeId) -> bool {
+        self.types.is_interface(ty)
+    }
+
+    /// Whether `nil` is a value of the type by Go's rule. What a `.gopp`
+    /// file asks of pointers, funcs and interfaces is checked on its own.
+    fn has_nil(&self, ty: TypeId) -> bool {
+        self.types.has_nil(ty, Dialect::Go)
+    }
+
+    // ---- constants
+
+    /// The constant `value` of the type `from` as the basic type `to`
+    /// holds it.
+    fn representation(&self, value: &Value, from: TypeId, to: Basic) -> Result<Value, Unfit> {
+        if let Some(value) = representable(value, to) {
+            return Ok(value);
+        }
+        let to = self.types.basic(to);
+        Err(match self.is_numeric(from) && self.is_numeric(to) {
+            true if !self.is_integer(from) && self.is_integer(to) => Unfit::Truncated,
+            true => Unfit::Overflows,
+            false => Unfit::Other,
+        })
+    }
+
+    fn invalid_conversion(
+        &mut self,
+        cx: &Cx<'a>,
+        unfit: Unfit,
+        expr: ExprId,
+        x: &Operand,
+        target: TypeId,
+    ) {
+        let (x, target) = (self.describe(cx, expr, x), self.type_string(target));
+        let (code, message) = match unfit {
+            Unfit::Truncated => (Code::ValueTruncated, format!("{x} truncated to {target}")),
+            Unfit::Overflows => (Code::ValueOverflows, format!("{x} overflows {target}")),
+            Unfit::Other => (
+                Code::CannotConvert,
+                format!("cannot convert {x} to type {target}"),
+            ),
+        };
+        self.error(code, self.span(cx, expr), message);
+    }
+
+    /// The result `x` of the constant expression `expr` fits its type, or
+    /// is not too large to compute with if it has none.
+    fn overflow(&mut self, cx: &Cx<'a>, expr: ExprId, x: &mut Operand) {
+        let Mode::Const(value) = &x.mode else { return };
+        if *value == Value::Unknown {
+            return;
+        }
+        if !self.is_untyped(x.ty) {
+            let Some(basic) = self.basic_of(x.ty) else {
+                return;
+            };
+            match self.representation(value, x.ty, basic) {
+                Ok(value) => x.mode = Mode::Const(value),
+                Err(unfit) => {
+                    let target = self.types.basic(basic);
+                    self.invalid_conversion(cx, unfit, expr, x, target);
+                    *x = Operand::UNKNOWN;
+                }
+            }
+            return;
+        }
+        // The precision of constants.
+        const BITS: u64 = 512;
+        if value.kind() == Kind::Int && value.bit_len() > BITS {
+            let (operation, at) = match cx.tree.exprs[expr].kind {
+                ExprKind::Binary { op, x, y } => {
+                    let name = match op {
+                        BinaryOp::Add => "addition ",
+                        BinaryOp::Sub => "subtraction ",
+                        BinaryOp::Xor => "bitwise XOR ",
+                        BinaryOp::Mul => "multiplication ",
+                        BinaryOp::Shl => "shift ",
+                        _ => "",
+                    };
+                    (name, self.operator_span(cx, x, y, op))
+                }
+                ExprKind::Unary {
+                    op: UnaryOp::Xor, ..
+                } => ("bitwise complement ", self.span(cx, expr)),
+                _ => ("", self.span(cx, expr)),
+            };
+            let message = format!("constant {operation}overflow");
+            self.error(Code::ConstantExpressionOverflow, at, message);
+            *x = Operand::UNKNOWN;
+        }
+    }
+
+    /// Where the operator of `x op y` is written.
+    fn operator_span(&self, cx: &Cx<'a>, x: ExprId, y: ExprId, op: BinaryOp) -> Span {
+        let (from, to) = (self.span(cx, x).hi as usize, self.span(cx, y).lo as usize);
+        let between = &cx.text[from..to.max(from)];
+        // Comments may stand between the operand and the operator.
+        let mut at = 0;
+        loop {
+            let rest = &between[at..];
+            let trimmed = rest.trim_start();
+            at += rest.len() - trimmed.len();
+            let comment = match trimmed {
+                _ if trimmed.starts_with("/*") => trimmed.find("*/").map(|end| end + 2),
+                _ if trimmed.starts_with("//") => trimmed.find('\n').map(|end| end + 1),
+                _ => None,
+            };
+            match comment {
+                Some(len) => at += len,
+                None => break,
+            }
+        }
+        let lo = (from + at) as u32;
+        Span {
+            lo,
+            hi: lo + binary_text(op).len() as u32,
+            ..self.span(cx, x)
+        }
+    }
+
+    // ---- values of no type
+
+    /// The type, and for a constant the value, that the untyped `x` has
+    /// as a value of the type `target`.
+    pub(super) fn implicit(
+        &self,
+        x: &Operand,
+        target: TypeId,
+    ) -> Result<(TypeId, Option<Value>), Unfit> {
+        if !x.is_value() || !self.is_untyped(x.ty) || target == Types::INVALID {
+            return Ok((x.ty, None));
+        }
+        let nil = self.types.basic(Basic::UntypedNil);
+        if self.is_untyped(target) {
+            // Both have no type: the later kind of number.
+            return match self.larger_kind(x.ty, target) {
+                Some(kind) => Ok((kind, None)),
+                None => Err(Unfit::Other),
+            };
+        }
+        let for_nil = |fits: bool| match fits {
+            true => Ok((nil, None)),
+            false => Err(Unfit::Other),
+        };
+        match &*self.types.get(self.types.underlying(target)) {
+            Type::Basic(basic) => {
+                if let Mode::Const(value) = &x.mode {
+                    let value = self.representation(value, x.ty, *basic)?;
+                    return Ok((target, Some(value)));
+                }
+                // A value that is no constant: only its kind is known.
+                let fits = match self.basic_of(x.ty) {
+                    Some(Basic::UntypedBool) => self.is_boolean(target),
+                    Some(Basic::UntypedString) => self.is_string(target),
+                    Some(Basic::UntypedNil) => return for_nil(false),
+                    _ => self.is_numeric(target),
+                };
+                match fits {
+                    true => Ok((target, None)),
+                    false => Err(Unfit::Other),
+                }
+            }
+            // An interface holds a value with a type of its own; only the
+            // empty interface takes a value that has no methods.
+            Type::Interface { methods, embedded } => {
+                if x.ty == nil {
+                    return for_nil(self.has_nil(target));
+                }
+                match methods.is_empty() && embedded.is_empty() {
+                    true => Ok((self.types.default_type(x.ty), None)),
+                    false => Err(Unfit::Other),
+                }
+            }
+            // What a type parameter stands for is not followed yet.
+            Type::Param(_) => match x.ty == nil {
+                true => Ok((nil, None)),
+                false => Ok((target, None)),
+            },
+            // A value is its own option (TYP-2).
+            Type::Option(elem) if x.ty != nil => self.implicit(x, *elem),
+            Type::Pointer(_)
+            | Type::Func { .. }
+            | Type::Slice(_)
+            | Type::Map { .. }
+            | Type::Chan { .. }
+            | Type::Option(_) => for_nil(x.ty == nil && self.has_nil(target)),
+            _ => Err(Unfit::Other),
+        }
+    }
+
+    /// Gives the untyped operand `x` of the expression `expr` the type
+    /// `target`. With `report`, an error says why it cannot have it.
+    pub(super) fn convert_untyped(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: &mut Operand,
+        target: TypeId,
+        report: bool,
+    ) -> bool {
+        match self.implicit(x, target) {
+            Err(unfit) => {
+                if report {
+                    let shown = match &*self.types.get(target) {
+                        Type::Param(_) => target,
+                        _ => self.types.underlying(target),
+                    };
+                    self.invalid_conversion(cx, unfit, expr, x, shown);
+                }
+                *x = Operand::UNKNOWN;
+                false
+            }
+            Ok((ty, value)) => {
+                if let Some(value) = value {
+                    self.update_expr_value(expr, &value);
+                    x.mode = Mode::Const(value);
+                }
+                if ty != x.ty {
+                    x.ty = ty;
+                    self.update_expr_type(cx, expr, ty, false);
+                }
+                true
+            }
+        }
+    }
+
+    /// The constant `expr`, which has no type yet, has the value `value`.
+    fn update_expr_value(&mut self, expr: ExprId, value: &Value) {
+        let untyped = |operand: &&mut Operand| self.types.is_untyped(operand.ty);
+        let known = self.memo.as_mut().and_then(|memo| memo.get_mut(&expr));
+        if let Some(operand) = known.filter(untyped) {
+            operand.mode = Mode::Const(value.clone());
+        }
+    }
+
+    /// The expression `expr`, which has no type yet, gets the type `ty`,
+    /// and so do the operands that it got its kind from. With a type that
+    /// is no kind of constant, or with `last`, that is its type for good:
+    /// a constant must then fit it.
+    pub(super) fn update_expr_type(&mut self, cx: &Cx<'a>, expr: ExprId, ty: TypeId, last: bool) {
+        let Some(old) = self.memo.as_ref().and_then(|memo| memo.get(&expr)).cloned() else {
+            return;
+        };
+        if !old.is_value() || !self.is_untyped(old.ty) {
+            return;
+        }
+        let constant = matches!(old.mode, Mode::Const(_));
+        match cx.tree.exprs[expr].kind {
+            ExprKind::Paren(x) => self.update_expr_type(cx, x, ty, last),
+            // The operands of a constant keep their kind: `uint8(-1 + 2)`
+            // is right though `-1` is no `uint8`.
+            ExprKind::Unary { x, .. } if !constant => self.update_expr_type(cx, x, ty, last),
+            ExprKind::Binary { op, x, y } if !constant => {
+                // The result of a comparison says nothing of its operands.
+                if is_shift(op) {
+                    self.update_expr_type(cx, x, ty, last);
+                } else if !is_comparison(op) {
+                    self.update_expr_type(cx, x, ty, last);
+                    self.update_expr_type(cx, y, ty, last);
+                }
+            }
+            _ => {}
+        }
+        if self.is_untyped(ty) {
+            if !last && let Some(entry) = self.memo.as_mut().and_then(|memo| memo.get_mut(&expr)) {
+                entry.ty = self.types.underlying(ty);
+            }
+            return;
+        }
+        // What is shifted by a count that is no constant is an integer.
+        if self.shifted.contains(&expr) && !self.all_integer(ty) {
+            let message = format!(
+                "invalid operation: shifted operand {} (type {}) must be integer",
+                self.expr_string(cx, expr),
+                self.type_string(ty)
+            );
+            return self.error(Code::ShiftOperandInvalid, self.span(cx, expr), message);
+        }
+        if constant {
+            let mut held = old;
+            if let Err(unfit) = self.implicit(&held, ty) {
+                let shown = self.types.underlying(ty);
+                self.invalid_conversion(cx, unfit, expr, &held, shown);
+                held = Operand::UNKNOWN;
+            }
+            if held.mode == Mode::Unknown {
+                return;
+            }
+        }
+        if let Some(entry) = self.memo.as_mut().and_then(|memo| memo.get_mut(&expr)) {
+            entry.ty = ty;
+        }
+    }
+
+    /// Gives the expression `expr` the type `to`, if it has no type of its
+    /// own yet, as an assignment to a place of the type `to` does. Nothing
+    /// is said if it cannot have that type.
+    pub(super) fn convert(&mut self, cx: &Cx<'a>, expr: ExprId, to: TypeId) {
+        let Some(mut x) = self.memo.as_ref().and_then(|memo| memo.get(&expr)).cloned() else {
+            return;
+        };
+        // In an interface, a value has the default type of its kind.
+        let target = match self.is_interface(to) && self.is_untyped(x.ty) {
+            true => self.types.default_type(x.ty),
+            false => to,
+        };
+        self.convert_untyped(cx, expr, &mut x, target, false);
+    }
+
+    /// Gives the expression `expr` the default type of its kind, if it has
+    /// no type of its own yet.
+    pub(super) fn convert_default(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        let known = self.memo.as_ref().and_then(|memo| memo.get(&expr));
+        if let Some(ty) = known
+            .map(|operand| operand.ty)
+            .filter(|&ty| self.is_untyped(ty))
+        {
+            self.convert(cx, expr, self.types.default_type(ty));
+        }
+    }
+
+    // ---- operators
+
+    /// The expression `expr` where one value is needed: a call without a
+    /// result, a built-in that is not called, a type, and a call with
+    /// several results are errors there.
+    pub(super) fn value(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
+        let x = self.operand(cx, expr);
+        let (code, what) = match &x.mode {
+            Mode::NoValue => (Code::NoValue, "used as value"),
+            Mode::Builtin(_) | Mode::Unsafe(_) => (Code::BuiltinNotCalled, "must be called"),
+            Mode::Type => (Code::NotAnExpression, "is not an expression"),
+            Mode::Value if matches!(&*self.types.get(x.ty), Type::Tuple(_)) => {
+                let message = format!(
+                    "multiple-value {} in single-value context",
+                    self.describe(cx, expr, &x)
+                );
+                self.error(Code::MultiValueInSingle, self.span(cx, expr), message);
+                return Operand::UNKNOWN;
+            }
+            _ => return x,
+        };
+        let message = format!("{} {what}", self.describe(cx, expr, &x));
+        self.error(code, self.span(cx, expr), message);
+        Operand::UNKNOWN
+    }
+
+    /// Whether all types that `ty` may be are integers.
+    fn all_integer(&self, ty: TypeId) -> bool {
+        self.open(ty) || self.is_integer(ty)
+    }
+
+    /// Whether the operator `op` is defined on the operand `x`.
+    fn defined(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: &Operand,
+        op: &str,
+        holds: fn(&Self, TypeId) -> bool,
+    ) -> bool {
+        if self.open(x.ty) || holds(self, x.ty) {
+            return true;
+        }
+        let message = format!(
+            "invalid operation: operator {op} not defined on {}",
+            self.describe(cx, expr, x)
+        );
+        self.error(Code::OperatorNotDefined, self.span(cx, expr), message);
+        false
+    }
+
+    pub(super) fn unary(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        op: UnaryOp,
+        inner: ExprId,
+    ) -> Operand {
+        // `*T` is a type, `*p` what the pointer points to.
+        let x = match op {
+            UnaryOp::Star => self.operand(cx, inner),
+            _ => self.value(cx, inner),
+        };
+        if x.mode == Mode::Unknown {
+            return Operand::UNKNOWN;
+        }
+        match op {
+            UnaryOp::Star => {
+                return match x.mode {
+                    Mode::Type => Operand {
+                        mode: Mode::Type,
+                        ty: self.types.pointer(x.ty),
+                    },
+                    _ if x.is_value() => match &*self.types.get(self.types.underlying(x.ty)) {
+                        Type::Pointer(elem) => Operand::variable(*elem),
+                        _ => Operand::UNKNOWN,
+                    },
+                    _ => Operand::UNKNOWN,
+                };
+            }
+            UnaryOp::Addr => {
+                if !x.is_value() {
+                    return Operand::UNKNOWN;
+                }
+                let mut literal = inner;
+                while let ExprKind::Paren(x) = cx.tree.exprs[literal].kind {
+                    literal = x;
+                }
+                let is_literal =
+                    matches!(cx.tree.exprs[literal].kind, ExprKind::CompositeLit { .. });
+                if !is_literal && x.mode != Mode::Variable {
+                    let message = format!(
+                        "invalid operation: cannot take address of {}",
+                        self.describe(cx, inner, &x)
+                    );
+                    self.error(Code::AddressOfUnaddressable, self.span(cx, inner), message);
+                    return Operand::UNKNOWN;
+                }
+                return Operand::value(self.types.pointer(x.ty));
+            }
+            UnaryOp::Recv => {
+                if !x.is_value() {
+                    return Operand::UNKNOWN;
+                }
+                return match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Chan { elem, .. } => Operand {
+                        mode: Mode::CommaOk,
+                        ty: *elem,
+                    },
+                    _ => Operand::UNKNOWN,
+                };
+            }
+            UnaryOp::Tilde => return Operand::UNKNOWN,
+            UnaryOp::Plus | UnaryOp::Neg | UnaryOp::Not | UnaryOp::Xor => {}
+        }
+        if !x.is_value() {
+            return Operand::UNKNOWN;
+        }
+        let holds: fn(&Self, TypeId) -> bool = match op {
+            UnaryOp::Xor => Self::is_integer,
+            UnaryOp::Not => Self::is_boolean,
+            _ => Self::is_numeric,
+        };
+        if !self.defined(cx, inner, &x, unary_text(op), holds) {
+            return Operand::UNKNOWN;
+        }
+        let Mode::Const(value) = &x.mode else {
+            return Operand::value(x.ty);
+        };
+        if *value == Value::Unknown {
+            return Operand::UNKNOWN;
+        }
+        let (op, bits) = match op {
+            UnaryOp::Plus => (constant::UnaryOp::Plus, 0),
+            UnaryOp::Neg => (constant::UnaryOp::Neg, 0),
+            UnaryOp::Not => (constant::UnaryOp::Not, 0),
+            // The complement of an unsigned number stays in its size.
+            _ => {
+                let bits = match self.basic_of(x.ty) {
+                    Some(Basic::Uint8) => 8,
+                    Some(Basic::Uint16) => 16,
+                    Some(Basic::Uint32) => 32,
+                    Some(Basic::Uint | Basic::Uint64 | Basic::Uintptr) => 64,
+                    _ => 0,
+                };
+                (constant::UnaryOp::Complement, bits)
+            }
+        };
+        let mut result = Operand::constant(x.ty, value.unary(op, bits));
+        self.overflow(cx, expr, &mut result);
+        result
+    }
+
+    /// An untyped operand takes the type of the other, where that can be.
+    fn match_types(
+        &mut self,
+        cx: &Cx<'a>,
+        (left, x): (ExprId, &mut Operand),
+        (right, y): (ExprId, &mut Operand),
+    ) {
+        let may_convert = {
+            let (x_untyped, y_untyped) = (self.is_untyped(x.ty), self.is_untyped(y.ty));
+            if !x_untyped && !y_untyped {
+                false
+            } else if self.is_interface(x.ty) || self.is_interface(y.ty) {
+                true
+            } else if self.is_boolean(x.ty) != self.is_boolean(y.ty)
+                || self.is_string(x.ty) != self.is_string(y.ty)
+            {
+                false
+            } else if self.is_nil(x) {
+                self.has_nil(y.ty)
+            } else if self.is_nil(y) {
+                self.has_nil(x.ty)
+            } else {
+                let pointer = |ty| {
+                    matches!(
+                        &*self.types.get(self.types.underlying(ty)),
+                        Type::Pointer(_)
+                    )
+                };
+                !pointer(x.ty) && !pointer(y.ty)
+            }
+        };
+        if may_convert
+            && self.convert_untyped(cx, left, x, y.ty, true)
+            && !self.convert_untyped(cx, right, y, x.ty, true)
+        {
+            *x = Operand::UNKNOWN;
+        }
+    }
+
+    pub(super) fn binary(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        op: BinaryOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> Operand {
+        let (mut x, mut y) = (self.value(cx, left), self.value(cx, right));
+        if !x.is_value() || !y.is_value() {
+            return Operand::UNKNOWN;
+        }
+        if is_shift(op) {
+            return self.shift(cx, expr, op, (left, x), (right, y));
+        }
+        self.match_types(cx, (left, &mut x), (right, &mut y));
+        if x.mode == Mode::Unknown {
+            return Operand::UNKNOWN;
+        }
+        if is_comparison(op) {
+            return self.comparison(cx, op, (left, x), (right, y));
+        }
+        if !self.types.identical(x.ty, y.ty, self.names) {
+            if !self.open(x.ty) && !self.open(y.ty) {
+                let message = format!(
+                    "invalid operation: {} (mismatched types {} and {})",
+                    self.expr_string(cx, expr),
+                    self.type_string(x.ty),
+                    self.type_string(y.ty)
+                );
+                self.error(Code::MismatchedTypes, self.span(cx, expr), message);
+            }
+            return Operand::UNKNOWN;
+        }
+        let holds: fn(&Self, TypeId) -> bool = match op {
+            BinaryOp::Add => |this, ty| this.is_numeric(ty) || this.is_string(ty),
+            BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => Self::is_numeric,
+            BinaryOp::OrOr | BinaryOp::AndAnd => Self::is_boolean,
+            _ => Self::is_integer,
+        };
+        if !self.defined(cx, left, &x, binary_text(op), holds) {
+            return Operand::UNKNOWN;
+        }
+        if matches!(op, BinaryOp::Div | BinaryOp::Rem)
+            && let Mode::Const(divisor) = &y.mode
+            && *divisor != Value::Unknown
+        {
+            let by_zero = match (&x.mode, self.is_complex(x.ty)) {
+                (Mode::Const(_), true) => {
+                    let complex = divisor.to_complex();
+                    complex.real().sign() == 0 && complex.imag().sign() == 0
+                }
+                (Mode::Const(_), false) => divisor.sign() == 0,
+                _ => self.is_integer(x.ty) && divisor.sign() == 0,
+            };
+            if by_zero {
+                let message = "invalid operation: division by zero".to_owned();
+                self.error(Code::DivisionByZero, self.span(cx, right), message);
+                return Operand::UNKNOWN;
+            }
+        }
+        let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) else {
+            return Operand::value(x.ty);
+        };
+        if *a == Value::Unknown || *b == Value::Unknown {
+            return Operand::UNKNOWN;
+        }
+        let op = match op {
+            BinaryOp::OrOr => constant::BinaryOp::LogicalOr,
+            BinaryOp::AndAnd => constant::BinaryOp::LogicalAnd,
+            BinaryOp::Add => constant::BinaryOp::Add,
+            BinaryOp::Sub => constant::BinaryOp::Sub,
+            BinaryOp::Mul => constant::BinaryOp::Mul,
+            // Two integers divide to an integer.
+            BinaryOp::Div if self.is_integer(x.ty) => constant::BinaryOp::IntQuo,
+            BinaryOp::Div => constant::BinaryOp::Quo,
+            BinaryOp::Rem => constant::BinaryOp::Rem,
+            BinaryOp::And => constant::BinaryOp::And,
+            BinaryOp::Or => constant::BinaryOp::Or,
+            BinaryOp::Xor => constant::BinaryOp::Xor,
+            BinaryOp::AndNot => constant::BinaryOp::AndNot,
+            _ => return Operand::UNKNOWN,
+        };
+        let value = a.binary(op, b);
+        if value == Value::Unknown {
+            return Operand::UNKNOWN;
+        }
+        let mut result = Operand::constant(x.ty, value);
+        self.overflow(cx, expr, &mut result);
+        result
+    }
+
+    /// Whether the operand `x` is surely no value of the type `to`. What
+    /// an interface or a type parameter takes is not decided here yet.
+    fn not_assignable(&self, x: &Operand, to: TypeId) -> bool {
+        if self.open(x.ty) || self.open(to) || self.is_interface(x.ty) || self.is_interface(to) {
+            return false;
+        }
+        if self.is_untyped(x.ty) {
+            return self.implicit(x, to).is_err();
+        }
+        let value = match &x.mode {
+            Mode::Const(value) => Some(value),
+            _ => None,
+        };
+        !self
+            .types
+            .assignable(x.ty, value, to, Dialect::Go, self.names)
+    }
+
+    fn comparison(
+        &mut self,
+        cx: &Cx<'a>,
+        op: BinaryOp,
+        (left, x): (ExprId, Operand),
+        (right, y): (ExprId, Operand),
+    ) -> Operand {
+        if x.ty == Types::INVALID || y.ty == Types::INVALID {
+            return Operand::UNKNOWN;
+        }
+        let ordered =
+            |this: &Self, ty: TypeId| this.open(ty) || this.is_numeric(ty) || this.is_string(ty);
+        let comparable = |this: &Self, ty: TypeId| this.open(ty) || this.types.comparable(ty);
+        // The operand that the error is about, and what is wrong with it.
+        let wrong: Option<(ExprId, &Operand, String, Code)> = {
+            let mismatched = self.not_assignable(&x, y.ty) && self.not_assignable(&y, x.ty);
+            if mismatched {
+                let cause = format!(
+                    "mismatched types {} and {}",
+                    self.type_string(x.ty),
+                    self.type_string(y.ty)
+                );
+                Some((right, &y, cause, Code::MismatchedTypes))
+            } else if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+                if self.is_nil(&x) || self.is_nil(&y) {
+                    let other = if self.is_nil(&x) { y.ty } else { x.ty };
+                    let has_nil = self.open(other) || self.has_nil(other);
+                    (!has_nil).then(|| (right, &y, String::new(), Code::CannotCompare))
+                } else if !comparable(self, x.ty) {
+                    Some((left, &x, self.incomparable_cause(x.ty), Code::CannotCompare))
+                } else if !comparable(self, y.ty) {
+                    Some((
+                        right,
+                        &y,
+                        self.incomparable_cause(y.ty),
+                        Code::CannotCompare,
+                    ))
+                } else {
+                    None
+                }
+            } else if !ordered(self, x.ty) {
+                Some((left, &x, String::new(), Code::OperatorNotDefined))
+            } else if !ordered(self, y.ty) {
+                Some((right, &y, String::new(), Code::OperatorNotDefined))
+            } else {
+                None
+            }
+        };
+        if let Some((mut at, mut operand, mut cause, code)) = wrong {
+            let is_param = |ty: TypeId| matches!(&*self.types.get(ty), Type::Param(_));
+            if cause.is_empty() && (is_param(x.ty) || is_param(y.ty)) {
+                (at, operand) = match is_param(x.ty) {
+                    true => (left, &x),
+                    false => (right, &y),
+                };
+                cause = format!(
+                    "type parameter {} cannot use operator {}",
+                    self.type_string(operand.ty),
+                    binary_text(op)
+                );
+            }
+            if cause.is_empty() {
+                let what = match self.composite_kind(operand.ty) {
+                    "" => self.type_string(operand.ty),
+                    kind => kind.to_owned(),
+                };
+                cause = format!("operator {} not defined on {what}", binary_text(op));
+            }
+            let message = format!(
+                "invalid operation: {} {} {} ({cause})",
+                self.expr_string(cx, left),
+                binary_text(op),
+                self.expr_string(cx, right)
+            );
+            self.error(code, self.span(cx, at), message);
+            return Operand::UNKNOWN;
+        }
+        if let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) {
+            if *a == Value::Unknown || *b == Value::Unknown {
+                return Operand::UNKNOWN;
+            }
+            let compare = match op {
+                BinaryOp::Eq => CompareOp::Eq,
+                BinaryOp::Ne => CompareOp::Ne,
+                BinaryOp::Lt => CompareOp::Lt,
+                BinaryOp::Le => CompareOp::Le,
+                BinaryOp::Gt => CompareOp::Gt,
+                _ => CompareOp::Ge,
+            };
+            return self.untyped(Basic::UntypedBool, Value::Bool(a.compare(compare, b)));
+        }
+        // Compared as values, both have their types for good.
+        self.update_expr_type(cx, left, self.types.default_type(x.ty), true);
+        self.update_expr_type(cx, right, self.types.default_type(y.ty), true);
+        self.value_of(Basic::UntypedBool)
+    }
+
+    fn incomparable_cause(&self, ty: TypeId) -> String {
+        match &*self.types.get(self.types.underlying(ty)) {
+            Type::Slice(_) | Type::Func { .. } | Type::Map { .. } => {
+                format!("{} can only be compared to nil", self.composite_kind(ty))
+            }
+            Type::Struct(fields) => {
+                let field = fields.iter().find(|field| !self.types.comparable(field.ty));
+                field.map_or(String::new(), |field| {
+                    format!(
+                        "struct containing {} cannot be compared",
+                        self.type_string(field.ty)
+                    )
+                })
+            }
+            Type::Array { .. } => format!("{} cannot be compared", self.type_string(ty)),
+            _ => String::new(),
+        }
+    }
+
+    fn shift(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        op: BinaryOp,
+        (left, mut x): (ExprId, Operand),
+        (right, mut y): (ExprId, Operand),
+    ) -> Operand {
+        // A constant that is an integer, whatever its kind, is shifted
+        // as one: `1.0 << 3`.
+        let shifted = match &x.mode {
+            Mode::Const(value) => Some(value.to_int()),
+            _ => None,
+        };
+        let integer_constant = self.is_untyped(x.ty)
+            && shifted
+                .as_ref()
+                .is_some_and(|value| value.kind() == Kind::Int);
+        let operand_must_be_integer = |this: &mut Self, x: &Operand| {
+            let message = format!(
+                "invalid operation: shifted operand {} must be integer",
+                this.describe(cx, left, x)
+            );
+            this.error(Code::ShiftOperandInvalid, this.span(cx, left), message);
+            Operand::UNKNOWN
+        };
+        if !self.all_integer(x.ty) && !integer_constant {
+            return operand_must_be_integer(self, &x);
+        }
+
+        let count = match &y.mode {
+            Mode::Const(value) => {
+                // -1 and 1.0 are integers here, -1.1 is not.
+                let count = value.to_int();
+                if count.kind() == Kind::Int && count.sign() < 0 {
+                    let message = format!(
+                        "invalid operation: negative shift count {}",
+                        self.describe(cx, right, &y)
+                    );
+                    self.error(Code::ShiftCountNegative, self.span(cx, right), message);
+                    return Operand::UNKNOWN;
+                }
+                if self.is_untyped(y.ty)
+                    && let Err(unfit) = self.representation(value, y.ty, Basic::Uint)
+                {
+                    let uint = self.types.basic(Basic::Uint);
+                    self.invalid_conversion(cx, unfit, right, &y, uint);
+                    return Operand::UNKNOWN;
+                }
+                Some(count)
+            }
+            _ if self.all_integer(y.ty) => None,
+            _ if self.is_untyped(y.ty) => {
+                let uint = self.types.basic(Basic::Uint);
+                if !self.convert_untyped(cx, right, &mut y, uint, true) {
+                    return Operand::UNKNOWN;
+                }
+                None
+            }
+            _ => {
+                let message = format!(
+                    "invalid operation: shift count {} must be integer",
+                    self.describe(cx, right, &y)
+                );
+                self.error(Code::ShiftCountInvalid, self.span(cx, right), message);
+                return Operand::UNKNOWN;
+            }
+        };
+
+        if let Some(shifted) = shifted {
+            if let Some(count) = count {
+                if shifted == Value::Unknown || count == Value::Unknown {
+                    return Operand::UNKNOWN;
+                }
+                // So that the smallest float64 can be written as a shift.
+                const BOUND: u64 = 1023 - 1 + 52;
+                let bits = count.as_i64().and_then(|count| u64::try_from(count).ok());
+                let Some(bits) = bits.filter(|&bits| bits <= BOUND) else {
+                    let message = format!(
+                        "invalid operation: invalid shift count {}",
+                        self.describe(cx, right, &y)
+                    );
+                    self.error(Code::ShiftCountInvalid, self.span(cx, right), message);
+                    return Operand::UNKNOWN;
+                };
+                if !self.is_integer(x.ty) {
+                    x.ty = self.types.basic(Basic::UntypedInt);
+                }
+                let value = shifted.shift(op == BinaryOp::Shl, bits as u32);
+                let mut result = Operand::constant(x.ty, value);
+                self.overflow(cx, expr, &mut result);
+                return result;
+            }
+            // A constant of no type shifted by a count that is no
+            // constant gets its type from around the shift: `1 << s` is
+            // an `int64` in `var x int64 = 1 << s`.
+            if self.is_untyped(x.ty) {
+                if self.memo.is_some() {
+                    self.shifted.insert(left);
+                }
+                return Operand {
+                    mode: Mode::Value,
+                    ty: x.ty,
+                };
+            }
+        }
+        if !self.all_integer(x.ty) {
+            return operand_must_be_integer(self, &x);
+        }
+        Operand::value(x.ty)
+    }
+}

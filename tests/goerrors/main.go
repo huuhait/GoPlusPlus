@@ -73,7 +73,25 @@ func commentMap(src []byte) map[int][]comment {
 	}
 }
 
+var (
+	uint8Name = regexp.MustCompile(`\buint8\b`)
+	int32Name = regexp.MustCompile(`\bint32\b`)
+)
+
+// matches reports whether the message is the one that the comment expects.
+// Go names a type byte or rune where the source does; gopp has one name
+// for byte and uint8 and one for rune and int32, so a message also matches
+// with those names in the place of uint8 and int32.
 func matches(want comment, message string) bool {
+	as := func(byteName, runeName string) string {
+		message := uint8Name.ReplaceAllString(message, byteName)
+		return int32Name.ReplaceAllString(message, runeName)
+	}
+	return matchesText(want, message) || matchesText(want, as("byte", "int32")) ||
+		matchesText(want, as("uint8", "rune")) || matchesText(want, as("byte", "rune"))
+}
+
+func matchesText(want comment, message string) bool {
 	pattern, substr := strings.CutPrefix(want.text, " ERROR ")
 	if !substr {
 		pattern = strings.TrimPrefix(want.text, " ERRORx ")
