@@ -181,8 +181,11 @@ impl Memo<'_> {
                 lowered
             }
             CheckedType::Interface { .. } | CheckedType::Union(_) | CheckedType::Marker(_) => {
-                let bytes = Self::bytes(types);
-                Self::runtime(types, "gopp.iface", &[("itab", bytes), ("data", bytes)])
+                let header = &gopp_target::IFACE;
+                let parts = types.header(header, TypeInterner::UNIT);
+                let names = header.fields.iter().map(|&(name, _)| name);
+                let fields: Vec<(&str, TypeId)> = names.zip(parts).collect();
+                Self::runtime(types, "gopp.iface", &fields)
             }
             CheckedType::Named { .. } => {
                 let under = checked.underlying(ty);

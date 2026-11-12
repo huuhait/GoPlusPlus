@@ -3,9 +3,6 @@ source: crates/gopp-codegen-c/src/emit/tests.rs
 expression: "unit(\"a.gopp\", CONTROL)"
 ---
 
-_Static_assert(sizeof(void *) == 8, "the width of a pointer");
-_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
-
 typedef int64_t (*T3)(int64_t, bool); /* fn(i64, bool) -> i64 */
 typedef void (*T4)(void); /* fn() -> () */
 
@@ -86,8 +83,7 @@ bb1:
 }
 
 int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+  _gopp_rt_init(argc, argv);
   gopp_f1();
   return 0;
 }

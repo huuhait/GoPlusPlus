@@ -3,13 +3,9 @@ source: crates/gopp-codegen-c/src/emit/tests.rs
 expression: "unit(\"a.gopp\", VALUES)"
 ---
 
-_Static_assert(sizeof(void *) == 8, "the width of a pointer");
-_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
-
 typedef struct T3 T3; /* _GPTiN4mainE5Point */
 typedef struct T5 T5; /* (i64, _GPTiN4mainE5Point) */
 typedef struct T8 T8; /* _GPTiN4mainE3Box */
-typedef struct T10 T10; /* string */
 typedef struct T11 T11; /* [3]i8 */
 typedef struct T17 T17; /* [2]f32 */
 typedef struct T18 T18; /* [2][2]f32 */
@@ -25,18 +21,13 @@ struct T5 {
   int64_t f0;
   T3 f1;
 };
-struct T10 {
-  uint8_t *ptr;
-  uint64_t len;
-  uint8_t *backing;
-};
 struct T11 {
   int8_t a[3];
 };
 struct T8 {
   T3 f0;
   T11 f1;
-  T10 f2;
+  gopp_string f2;
   T8 * f4;
 };
 struct T17 {
@@ -47,7 +38,6 @@ struct T18 {
 };
 _Static_assert(sizeof(T3) == 16 && _Alignof(T3) == 8, "the layout of T3");
 _Static_assert(sizeof(T5) == 24 && _Alignof(T5) == 8, "the layout of T5");
-_Static_assert(sizeof(T10) == 24 && _Alignof(T10) == 8, "the layout of T10");
 _Static_assert(sizeof(T11) == 3 && _Alignof(T11) == 1, "the layout of T11");
 _Static_assert(sizeof(T8) == 56 && _Alignof(T8) == 8, "the layout of T8");
 _Static_assert(sizeof(T17) == 8 && _Alignof(T17) == 4, "the layout of T17");
@@ -110,7 +100,7 @@ bb1:
   _5 = _4.f0;
   _6 = _4.f1;
   _7 = ((T11){{((int8_t)1), ((int8_t)0), ((int8_t)3)}});
-  _8 = ((T8){_6, _7, ((T10){(uint8_t *)gopp_s0, 4, 0}), _1});
+  _8 = ((T8){_6, _7, ((gopp_string){(uint8_t *)gopp_s0, 4, 0}), _1});
   _9 = (&_8);
   _10 = ((int8_t)_5);
   _11 = _8.f2.len;
@@ -137,8 +127,7 @@ void gopp_f4(void) {
 }
 
 int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+  _gopp_rt_init(argc, argv);
   gopp_f3();
   gopp_f4();
   return 0;

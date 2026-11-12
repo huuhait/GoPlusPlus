@@ -9,6 +9,8 @@ use gopp_gir::{
     UnOp, UnwindAction,
 };
 
+use gopp_target::{Header, SLICE, STRING};
+
 use super::number::{float_literal, int_literal, int_tag};
 use super::{Cx, EmitError, func_name, global_name, linkage, quoted};
 
@@ -21,6 +23,11 @@ fn local_name(local: LocalId) -> String {
 /// The name of the part `at` of a type whose parts have names in C.
 fn member(names: &[&'static str], at: u32) -> &'static str {
     names.get(at as usize).copied().unwrap_or_default()
+}
+
+fn header_field(header: &Header, at: u32) -> &'static str {
+    let field = header.fields.get(at as usize);
+    field.map_or("", |&(name, _)| name)
 }
 
 fn block_name(block: BlockId) -> String {
@@ -163,10 +170,10 @@ impl Writer<'_, '_> {
             text = match (step.kind, self.cx.kind(ty)) {
                 (ProjectionKind::Deref, _) => format!("(*{text})"),
                 (ProjectionKind::Field(at), Type::String) => {
-                    format!("{text}.{}", member(&["ptr", "len", "backing"], at))
+                    format!("{text}.{}", header_field(&STRING, at))
                 }
                 (ProjectionKind::Field(at), Type::Slice(_)) => {
-                    format!("{text}.{}", member(&["ptr", "len", "cap", "backing"], at))
+                    format!("{text}.{}", header_field(&SLICE, at))
                 }
                 (ProjectionKind::Field(at), Type::Option(_)) => {
                     format!("{text}.{}", member(&["value", "set"], at))

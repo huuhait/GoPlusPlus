@@ -13,8 +13,15 @@ use tempfile::TempDir;
 /// handle for a moment, and executing the script then fails as "text file busy".
 static SPAWN: Mutex<()> = Mutex::new(());
 
+/// `gopp`, with a cache of these tests alone.
 fn gopp() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_gopp"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gopp"));
+    command.env("GOPPCACHE", cache());
+    command
+}
+
+fn cache() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join("gopp-cache")
 }
 
 fn run(command: &mut Command) -> Output {
@@ -879,4 +886,34 @@ fn build_makes_an_object_for_each_target_and_links_for_its_own() {
         let ran = run(&mut Command::new(dir.path().join(program)));
         assert_eq!(ran.status.code(), Some(0));
     }
+}
+
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
+fn build_links_the_runtime_which_ends_a_program_that_fails_a_check() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main\n\nfunc at() int { return 3 }\n\n\
+                func main() {\n\tvar cells [3]int\n\tcells[at()] = 1\n}\n";
+    let file = write_source(&dir, "fails.gopp", text);
+    let program = dir.path().join("fails");
+    let built = run(gopp().arg("build").arg("-o").arg(&program).arg(&file));
+    assert_eq!(stderr(&built), "");
+    assert_eq!(built.status.code(), Some(0));
+    assert_eq!(run(&mut Command::new(&program)).status.code(), Some(2));
+    // The runtime was built into the cache that the environment names.
+    let kept = fs::read_dir(cache().join("runtime")).unwrap();
+    assert!(kept.count() >= 1);
+    // Without a place for the cache nothing is linked.
+    let mut homeless = gopp();
+    homeless.env_remove("GOPPCACHE").env_remove("HOME");
+    homeless.env_remove("XDG_CACHE_HOME");
+    let refused = run(homeless.arg("build").arg("-o").arg(&program).arg(&file));
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        stderr(&refused),
+        "error: no folder for the cache: GOPPCACHE says where it is\n"
+    );
 }

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output};
+use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, emit_c23};
 use gopp_diag::{Code, Diagnostic, Severity, Sink, render_text};
@@ -151,10 +152,42 @@ pub fn run(options: &Options) -> ExitCode {
         opt: OptLevel::default(),
         strict: false,
     };
-    match driver.build(&unit, dir.path(), &output, kind, &[]) {
+    // An executable is linked with the runtime, which is built once for
+    // a target and its flags.
+    let runtime = match kind {
+        Output::Executable => {
+            let cache = match cache_dir() {
+                Ok(cache) => cache,
+                Err(message) => return stopped(message),
+            };
+            let checked = driver.check_link_inputs();
+            match checked.and_then(|()| runtime::build(&driver, Form::Objects, &cache)) {
+                Ok(runtime) => runtime,
+                Err(error) => return codegen(error),
+            }
+        }
+        _ => Vec::new(),
+    };
+    match driver.build(&unit, dir.path(), &output, kind, &runtime) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => codegen(error),
     }
+}
+
+/// Where what is built once is kept: what `GOPPCACHE` says, or the
+/// folder of the user for such things.
+fn cache_dir() -> Result<PathBuf, String> {
+    let set = |name: &str| {
+        let value = env::var_os(name).filter(|value| !value.is_empty());
+        value.map(PathBuf::from)
+    };
+    let of_user = match cfg!(windows) {
+        true => set("LOCALAPPDATA"),
+        false => set("XDG_CACHE_HOME").or_else(|| set("HOME").map(|home| home.join(".cache"))),
+    };
+    let dir = set("GOPPCACHE").or_else(|| of_user.map(|dir| dir.join("gopp")));
+    let dir = dir.ok_or("no folder for the cache: GOPPCACHE says where it is")?;
+    std::path::absolute(&dir).map_err(|error| format!("{}: {error}", dir.display()))
 }
 
 /// Writes the text to the file, or to standard output without one.

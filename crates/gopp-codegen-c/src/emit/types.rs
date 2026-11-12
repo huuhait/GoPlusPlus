@@ -1,11 +1,12 @@
 //! The types of a module as types of C. A type of several parts is a
 //! struct named after its number in the module; an array is a struct
-//! around a C array, so that it is assigned and returned as a value.
+//! around a C array, so that it is assigned and returned as a value. A
+//! string is the struct that the header of the runtime declares.
 
 use std::fmt::Write;
 
 use gopp_gir::{Module, Type, TypeId};
-use gopp_target::Layout;
+use gopp_target::{Layout, Part, SLICE, STRING};
 
 use super::number::int_type;
 use super::{Cx, EmitError};
@@ -31,6 +32,7 @@ pub(super) fn spelled(module: &Module, layouts: &[Layout], steps: &mut u64) -> V
                     continue;
                 }
                 _ if layouts[at.index()].size == 0 => "void".to_owned(),
+                Type::String => STRING.name.to_owned(),
                 Type::Unit => "void".to_owned(),
                 Type::Bool => "bool".to_owned(),
                 Type::Int { bits, signed } => int_type(*bits, *signed),
@@ -59,12 +61,7 @@ fn comment(cx: &Cx<'_>, ty: TypeId) -> String {
 fn is_struct(kind: &Type) -> bool {
     matches!(
         kind,
-        Type::String
-            | Type::Slice(_)
-            | Type::Array(..)
-            | Type::Tuple(_)
-            | Type::Option(_)
-            | Type::Struct(_)
+        Type::Slice(_) | Type::Array(..) | Type::Tuple(_) | Type::Option(_) | Type::Struct(_)
     )
 }
 
@@ -183,18 +180,18 @@ pub(super) fn definitions(cx: &Cx<'_>, out: &mut String, steps: &mut u64) -> Res
         let name = cx.spelled(ty);
         let _ = writeln!(out, "struct {name} {{");
         match cx.kind(ty) {
-            Type::String => {
-                out.push_str("  uint8_t *ptr;\n  uint64_t len;\n  uint8_t *backing;\n");
-            }
             Type::Slice(of) => {
                 let of = match cx.empty(*of) {
                     true => "void",
                     false => cx.spelled(*of),
                 };
-                let _ = writeln!(
-                    out,
-                    "  {of} *ptr;\n  uint64_t len;\n  uint64_t cap;\n  uint8_t *backing;"
-                );
+                for (field, part) in SLICE.fields {
+                    let _ = match part {
+                        Part::Bytes => writeln!(out, "  uint8_t *{field};"),
+                        Part::Elems => writeln!(out, "  {of} *{field};"),
+                        Part::U64 => writeln!(out, "  uint64_t {field};"),
+                    };
+                }
             }
             Type::Array(of, count) => {
                 let _ = writeln!(out, "  {} a[{count}];", cx.spelled(*of));

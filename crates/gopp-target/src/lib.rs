@@ -6,7 +6,7 @@ mod layout;
 
 use std::fmt;
 
-pub use layout::{Layout, TargetLayout};
+pub use layout::{HEADERS, Header, IFACE, Layout, Part, SLICE, STRING, TargetLayout};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Os {

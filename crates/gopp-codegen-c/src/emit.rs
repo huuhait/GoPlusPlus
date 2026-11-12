@@ -1,7 +1,8 @@
 //! From a verified module to one unit of GNU C23 (pipelines.md §1,
-//! targets-and-linking.md). The unit includes no header, so it compiles
-//! for any target without a sysroot; it is the same text for the same
-//! module, whatever the number of threads that write it.
+//! targets-and-linking.md). The unit includes no header: it starts with
+//! the text of the header of the runtime, so it compiles for any target
+//! without a sysroot. It is the same text for the same module, whatever
+//! the number of threads that write it.
 
 mod body;
 mod number;
@@ -130,15 +131,9 @@ pub(crate) fn emit_counted(
         spelled,
         globals: module.globals.values().map(|global| global.ty).collect(),
     };
-    let mut out = String::new();
+    let mut out = crate::runtime::header(options.layout);
     out.push_str(PRELUDE);
     number::helpers(&mut out);
-    let pointer = options.layout.pointer_bits() / 8;
-    let _ = writeln!(
-        out,
-        "\n_Static_assert(sizeof(void *) == {pointer}, \"the width of a pointer\");\n\
-         _Static_assert(_Alignof(int64_t) == 8, \"the alignment of int64\");"
-    );
     types::definitions(&cx, &mut out, &mut steps)?;
 
     out.push('\n');
@@ -201,8 +196,9 @@ pub(crate) fn linkage(link: Linkage) -> &'static str {
     }
 }
 
-/// `main` of C: the `init` functions of the package in their order,
-/// then its `main`. A package without a `main` gets none.
+/// `main` of C: the runtime is told that the program starts, then the
+/// `init` functions of the package run in their order, then its `main`.
+/// A package without a `main` gets none.
 fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
     let package = &cx.module.name;
     let defined = |name: &str| {
@@ -212,7 +208,7 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
     let Some(main) = defined(&gopp_mangle::func_symbol(package, "main")) else {
         return;
     };
-    out.push_str("\nint main(int argc, char **argv) {\n  (void)argc;\n  (void)argv;\n");
+    out.push_str("\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n");
     let mut number = 0;
     while let Some(init) = defined(&gopp_mangle::init_symbol(package, number)) {
         let _ = writeln!(out, "  {}();", func_name(init));
@@ -221,33 +217,10 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
     let _ = writeln!(out, "  {}();\n  return 0;\n}}", func_name(main));
 }
 
-/// What every unit starts with: the names of the types that C has for
-/// the scalars, without a header, and what the runtime gives.
-const PRELUDE: &str = "\
-typedef __INT8_TYPE__ int8_t;
-typedef __INT16_TYPE__ int16_t;
-typedef __INT32_TYPE__ int32_t;
-typedef __INT64_TYPE__ int64_t;
-typedef __UINT8_TYPE__ uint8_t;
-typedef __UINT16_TYPE__ uint16_t;
-typedef __UINT32_TYPE__ uint32_t;
-typedef __UINT64_TYPE__ uint64_t;
-typedef __UINTPTR_TYPE__ uintptr_t;
-
+/// What a unit has after the header of the runtime and before its own
+/// helpers.
+const PRELUDE: &str = "
 [[maybe_unused]] static char gopp_empty;
-
-[[noreturn]] void _gopp_panic_bounds(uint64_t index, uint64_t length);
-[[noreturn]] void _gopp_panic_slice_alen(uint64_t index, uint64_t length);
-[[noreturn]] void _gopp_panic_slice_acap(uint64_t index, uint64_t capacity);
-[[noreturn]] void _gopp_panic_slice_b(uint64_t low, uint64_t high);
-[[noreturn]] void _gopp_panic_slice3_alen(uint64_t index, uint64_t length);
-[[noreturn]] void _gopp_panic_slice3_acap(uint64_t index, uint64_t capacity);
-[[noreturn]] void _gopp_panic_slice3_b(uint64_t high, uint64_t max);
-[[noreturn]] void _gopp_panic_slice3_c(uint64_t low, uint64_t high);
-[[noreturn]] void _gopp_panic_slice_convert(uint64_t length, uint64_t wanted);
-[[noreturn]] void _gopp_panic_nil(void);
-[[noreturn]] void _gopp_panic_divide(void);
-[[noreturn]] void _gopp_panic_shift(void);
 
 [[maybe_unused]] static inline float gopp_f32(uint32_t bits) {
   union { uint32_t bits; float value; } of = {.bits = bits};

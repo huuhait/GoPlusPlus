@@ -15,6 +15,56 @@ pub struct TargetLayout {
     pointer_bits: u8,
 }
 
+/// What one field of a header holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// A pointer to bytes.
+    Bytes,
+    /// A pointer to the elements of a slice.
+    Elems,
+    /// A count of 64 bits on every target.
+    U64,
+}
+
+/// A value of a few words that generated code and the runtime both
+/// read: the one place that says what its fields are.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Header {
+    /// The name of its struct in C.
+    pub name: &'static str,
+    pub fields: &'static [(&'static str, Part)],
+}
+
+/// `string`: the bytes, how many, and the buffer that holds them.
+pub const STRING: Header = Header {
+    name: "gopp_string",
+    fields: &[
+        ("ptr", Part::Bytes),
+        ("len", Part::U64),
+        ("backing", Part::Bytes),
+    ],
+};
+
+/// `[]T`: the elements, how many, how many fit, and the buffer.
+pub const SLICE: Header = Header {
+    name: "gopp_slice",
+    fields: &[
+        ("ptr", Part::Elems),
+        ("len", Part::U64),
+        ("cap", Part::U64),
+        ("backing", Part::Bytes),
+    ],
+};
+
+/// An interface value: the table of its type, and the value.
+pub const IFACE: Header = Header {
+    name: "gopp_iface",
+    fields: &[("itab", Part::Bytes), ("data", Part::Bytes)],
+};
+
+/// Every header, in the order in which C declares them.
+pub const HEADERS: [&Header; 3] = [&STRING, &SLICE, &IFACE];
+
 impl Layout {
     /// A value that takes no room: `struct{}`, no result.
     pub const UNIT: Layout = Layout { size: 0, align: 1 };
@@ -75,24 +125,33 @@ impl TargetLayout {
         Some((whole, offsets))
     }
 
-    /// `string`: the bytes, how many, and the buffer that holds them.
+    /// A header: the whole, and where each field starts.
+    pub fn header(self, header: &Header) -> (Layout, Vec<u64>) {
+        let (mut whole, mut offsets) = (Layout::UNIT, Vec::new());
+        for (_, part) in header.fields {
+            let field = match part {
+                Part::Bytes | Part::Elems => self.pointer(),
+                Part::U64 => self.scalar(64),
+            };
+            let start = whole.size.next_multiple_of(field.align);
+            offsets.push(start);
+            whole.size = start + field.size;
+            whole.align = whole.align.max(field.align);
+        }
+        whole.size = whole.size.next_multiple_of(whole.align);
+        (whole, offsets)
+    }
+
     pub fn string(self) -> Layout {
-        self.words(&[self.pointer(), self.scalar(64), self.pointer()])
+        self.header(&STRING).0
     }
 
-    /// `[]T`: the elements, how many, how many fit, and the buffer.
     pub fn slice(self) -> Layout {
-        self.words(&[
-            self.pointer(),
-            self.scalar(64),
-            self.scalar(64),
-            self.pointer(),
-        ])
+        self.header(&SLICE).0
     }
 
-    /// An interface value: the table of its type, and the value.
     pub fn interface(self) -> Layout {
-        self.words(&[self.pointer(), self.pointer()])
+        self.header(&IFACE).0
     }
 
     /// A `func` value: the code, and what it captured.

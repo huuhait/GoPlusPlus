@@ -62,6 +62,8 @@ pub enum DriverError {
          linked; `-emit=obj` makes the object file"
     )]
     NoSysroot { target: String },
+    #[error("the runtime has no shared form for {target} yet")]
+    NoSharedRuntime { target: &'static str },
 }
 
 /// The flags without which a program does not mean what Go++ says: the
@@ -121,7 +123,7 @@ impl ClangDriver<'_> {
         flags
     }
 
-    fn link_flags(&self) -> Vec<&'static str> {
+    pub(crate) fn link_flags(&self) -> Vec<&'static str> {
         let mut flags = vec!["-fuse-ld=lld"];
         if self.target.object == ObjectFormat::Elf {
             flags.extend(ELF_LINK_FLAGS);
@@ -129,7 +131,7 @@ impl ClangDriver<'_> {
         flags
     }
 
-    fn clang(&self, dir: &Path) -> Command {
+    pub(crate) fn clang(&self, dir: &Path) -> Command {
         let mut command = Command::new(&self.toolchain.clang.path);
         // The unit is named without its directory, so that no path of
         // this machine gets into what is made.
@@ -141,7 +143,7 @@ impl ClangDriver<'_> {
         command
     }
 
-    fn run(&self, mut command: Command) -> Result<String, DriverError> {
+    pub(crate) fn run(&self, mut command: Command) -> Result<String, DriverError> {
         let output = command.output().map_err(|source| DriverError::Run {
             path: self.toolchain.clang.path.clone(),
             source,

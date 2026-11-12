@@ -103,6 +103,31 @@ fn shown(layout: Layout) -> String {
 }
 
 #[test]
+fn a_header_has_its_fields_where_c_puts_them() {
+    let (wide, narrow) = (TargetLayout::new(64), TargetLayout::new(32));
+    let placed = |layout: TargetLayout, header: &Header| {
+        let (whole, offsets) = layout.header(header);
+        (shown(whole), offsets)
+    };
+    assert_eq!(placed(wide, &STRING), ("24/8".to_owned(), vec![0, 8, 16]));
+    assert_eq!(
+        placed(wide, &SLICE),
+        ("32/8".to_owned(), vec![0, 8, 16, 24])
+    );
+    assert_eq!(placed(wide, &IFACE), ("16/8".to_owned(), vec![0, 8]));
+    // A count is 64 bits wide where a pointer is not.
+    assert_eq!(placed(narrow, &STRING), ("24/8".to_owned(), vec![0, 8, 16]));
+    assert_eq!(
+        placed(narrow, &SLICE),
+        ("32/8".to_owned(), vec![0, 8, 16, 24])
+    );
+    assert_eq!(placed(narrow, &IFACE), ("8/4".to_owned(), vec![0, 4]));
+    // The names are those of C, each once.
+    let names: Vec<&str> = HEADERS.iter().map(|header| header.name).collect();
+    assert_eq!(names, ["gopp_string", "gopp_slice", "gopp_iface"]);
+}
+
+#[test]
 fn values_are_as_large_as_the_target_says() {
     let table = |name: &str| {
         let layout = TargetSpec::named(name).unwrap().layout();

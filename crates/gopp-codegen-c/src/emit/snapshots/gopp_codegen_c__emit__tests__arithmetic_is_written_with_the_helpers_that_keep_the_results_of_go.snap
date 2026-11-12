@@ -3,9 +3,6 @@ source: crates/gopp-codegen-c/src/emit/tests.rs
 expression: "unit(\"a.gopp\", ARITHMETIC)"
 ---
 
-_Static_assert(sizeof(void *) == 8, "the width of a pointer");
-_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
-
 typedef struct T7 T7; /* (f64, bool) */
 typedef struct T12 T12; /* (i8, f32, u64, i64, u16) */
 typedef int64_t (*T5)(int64_t, int64_t, uint8_t, uint64_t, int64_t); /* fn(i64, i64, u8, u64, i64) -> i64 */

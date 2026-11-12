@@ -293,23 +293,27 @@ impl TypeInterner {
         shape
     }
 
+    /// The types of the fields of a header whose elements are `of`.
+    pub fn header(&mut self, header: &gopp_target::Header, of: TypeId) -> Vec<TypeId> {
+        let part = |this: &mut Self, part: &gopp_target::Part| match part {
+            gopp_target::Part::Bytes => {
+                let byte = this.int(8, false);
+                this.ptr(byte)
+            }
+            gopp_target::Part::Elems => this.ptr(of),
+            gopp_target::Part::U64 => this.int(64, false),
+        };
+        let fields = header.fields.iter();
+        fields.map(|(_, kind)| part(self, kind)).collect()
+    }
+
     /// The types of the fields of a value of the type, for a type that
     /// has fields: a string, a slice, a tuple, an option, a struct.
     pub fn fields(&mut self, ty: TypeId) -> Option<Vec<TypeId>> {
         let node = self.get(ty).clone();
-        let byte = |this: &mut Self| {
-            let byte = this.int(8, false);
-            this.ptr(byte)
-        };
         Some(match node {
-            Type::String => {
-                let (bytes, len) = (byte(self), self.int(64, false));
-                vec![bytes, len, bytes]
-            }
-            Type::Slice(of) => {
-                let (elems, len, buffer) = (self.ptr(of), self.int(64, false), byte(self));
-                vec![elems, len, len, buffer]
-            }
+            Type::String => self.header(&gopp_target::STRING, Self::UNIT),
+            Type::Slice(of) => self.header(&gopp_target::SLICE, of),
             Type::Tuple(fields) => fields.to_vec(),
             Type::Option(of) => vec![of, Self::BOOL],
             Type::Struct(id) => self.struct_fields(id)?.to_vec(),

@@ -1,0 +1,61 @@
+---
+source: crates/gopp-codegen-c/src/runtime/tests.rs
+expression: "header(TargetLayout::new(64))"
+---
+typedef __INT8_TYPE__ int8_t;
+typedef __INT16_TYPE__ int16_t;
+typedef __INT32_TYPE__ int32_t;
+typedef __INT64_TYPE__ int64_t;
+typedef __UINT8_TYPE__ uint8_t;
+typedef __UINT16_TYPE__ uint16_t;
+typedef __UINT32_TYPE__ uint32_t;
+typedef __UINT64_TYPE__ uint64_t;
+typedef __UINTPTR_TYPE__ uintptr_t;
+
+_Static_assert(sizeof(void *) == 8, "the width of a pointer");
+_Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
+
+typedef struct gopp_string {
+  uint8_t *ptr;
+  uint64_t len;
+  uint8_t *backing;
+} gopp_string;
+_Static_assert(sizeof(gopp_string) == 24 && _Alignof(gopp_string) == 8, "the layout of gopp_string");
+_Static_assert(__builtin_offsetof(gopp_string, ptr) == 0, "gopp_string.ptr");
+_Static_assert(__builtin_offsetof(gopp_string, len) == 8, "gopp_string.len");
+_Static_assert(__builtin_offsetof(gopp_string, backing) == 16, "gopp_string.backing");
+
+typedef struct gopp_slice {
+  void *ptr;
+  uint64_t len;
+  uint64_t cap;
+  uint8_t *backing;
+} gopp_slice;
+_Static_assert(sizeof(gopp_slice) == 32 && _Alignof(gopp_slice) == 8, "the layout of gopp_slice");
+_Static_assert(__builtin_offsetof(gopp_slice, ptr) == 0, "gopp_slice.ptr");
+_Static_assert(__builtin_offsetof(gopp_slice, len) == 8, "gopp_slice.len");
+_Static_assert(__builtin_offsetof(gopp_slice, cap) == 16, "gopp_slice.cap");
+_Static_assert(__builtin_offsetof(gopp_slice, backing) == 24, "gopp_slice.backing");
+
+typedef struct gopp_iface {
+  uint8_t *itab;
+  uint8_t *data;
+} gopp_iface;
+_Static_assert(sizeof(gopp_iface) == 16 && _Alignof(gopp_iface) == 8, "the layout of gopp_iface");
+_Static_assert(__builtin_offsetof(gopp_iface, itab) == 0, "gopp_iface.itab");
+_Static_assert(__builtin_offsetof(gopp_iface, data) == 8, "gopp_iface.data");
+
+void _gopp_rt_init(int argc, char **argv);
+[[noreturn]] void _gopp_rt_exit(int code);
+[[noreturn]] void _gopp_panic_bounds(uint64_t index, uint64_t length);
+[[noreturn]] void _gopp_panic_slice_alen(uint64_t index, uint64_t length);
+[[noreturn]] void _gopp_panic_slice_acap(uint64_t index, uint64_t capacity);
+[[noreturn]] void _gopp_panic_slice_b(uint64_t low, uint64_t high);
+[[noreturn]] void _gopp_panic_slice3_alen(uint64_t index, uint64_t length);
+[[noreturn]] void _gopp_panic_slice3_acap(uint64_t index, uint64_t capacity);
+[[noreturn]] void _gopp_panic_slice3_b(uint64_t high, uint64_t max);
+[[noreturn]] void _gopp_panic_slice3_c(uint64_t low, uint64_t high);
+[[noreturn]] void _gopp_panic_slice_convert(uint64_t length, uint64_t wanted);
+[[noreturn]] void _gopp_panic_nil(void);
+[[noreturn]] void _gopp_panic_divide(void);
+[[noreturn]] void _gopp_panic_shift(void);

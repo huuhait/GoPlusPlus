@@ -2,6 +2,7 @@
 
 pub mod driver;
 mod emit;
+pub mod runtime;
 pub mod toolchain;
 
 pub use emit::{EmitError, EmitOptions, emit_c23};

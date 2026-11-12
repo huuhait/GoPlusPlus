@@ -14,6 +14,7 @@ use rayon::prelude::*;
 
 use super::{EmitError, EmitOptions, emit_c23, emit_counted};
 use crate::driver::{ClangDriver, DriverError, OptLevel, Output};
+use crate::runtime::Form;
 use crate::toolchain::HostToolchain;
 
 /// Every import is a package about which nothing is known.
@@ -69,8 +70,10 @@ fn options(entry: bool) -> EmitOptions {
 /// The unit of the program without what every unit starts with.
 fn unit(name: &str, text: &str) -> String {
     let unit = emit_c23(&module(name, text), &options(true)).unwrap();
-    let own = unit.find("\n_Static_assert(sizeof(void *)").unwrap();
-    unit[own..].to_owned()
+    let mut start = crate::runtime::header(options(true).layout);
+    start.push_str(super::PRELUDE);
+    super::number::helpers(&mut start);
+    unit.strip_prefix(&start).unwrap().to_owned()
 }
 
 const ARITHMETIC: &str = "package main
@@ -452,16 +455,6 @@ func main() {
 }
 ";
 
-/// What the runtime will give: here a failed check ends the program
-/// with the status of a panic.
-const PANICS: &str = "
-[[noreturn]] void _exit(int status);
-[[noreturn]] void _gopp_panic_bounds(unsigned long index, unsigned long length) { _exit(2); }
-[[noreturn]] void _gopp_panic_nil(void) { _exit(2); }
-[[noreturn]] void _gopp_panic_divide(void) { _exit(2); }
-[[noreturn]] void _gopp_panic_shift(void) { _exit(2); }
-";
-
 #[test]
 #[cfg_attr(
     not(all(target_os = "linux", target_arch = "x86_64")),
@@ -487,21 +480,20 @@ fn a_program_computes_what_go_says_at_every_level() {
             [OptLevel::O0, OptLevel::O2, OptLevel::Oz].map(|opt| (&**program, *status, opt))
         })
         .collect();
+    let cache = tempfile::tempdir().unwrap();
     cases.par_iter().for_each(|&(program, status, opt)| {
         let unit = emit_c23(&module("a.gopp", program), &options(true)).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let panics = dir.path().join("panics.c");
-        std::fs::write(&panics, PANICS).unwrap();
         let program_file = dir.path().join("program");
-        let unit_dir = dir.path().join("unit");
-        std::fs::create_dir(&unit_dir).unwrap();
-        strict(&toolchain, "linux/amd64", opt)
+        let driver = strict(&toolchain, "linux/amd64", opt);
+        let runtime = crate::runtime::build(&driver, Form::Objects, cache.path()).unwrap();
+        driver
             .build(
                 &unit,
-                &unit_dir,
+                dir.path(),
                 &program_file,
                 Output::Executable,
-                &[panics],
+                &runtime,
             )
             .unwrap_or_else(|error| panic!("{error}"));
         let ran = std::process::Command::new(&program_file).status().unwrap();
