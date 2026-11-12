@@ -262,6 +262,7 @@ codes! {
     355 CloseNilChan "err_close_nil_chan",
     358 AttrNoArgs "err_attr_no_args",
     363 OptionAndRequired "err_option_and_required",
+    366 InstantiationCycle "err_instantiation_cycle",
     374 ExtendsOneParent "err_extends_one_parent",
     375 ExtendsParentKind "err_extends_parent_kind",
     376 ExtendsCycle "err_extends_cycle",

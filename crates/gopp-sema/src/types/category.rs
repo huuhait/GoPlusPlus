@@ -220,6 +220,10 @@ impl Types {
             self.keep(ty, category, walk);
             return (category, FINAL);
         }
+        // The instances of a type on an instantiation cycle have no end.
+        if self.is_expanding(ty) {
+            return (Category::Trivial, FINAL);
+        }
         // A type that holds itself is as its other parts are.
         if let Some(&depth) = walk.depth.get(&ty) {
             return (Category::Trivial, depth);

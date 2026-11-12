@@ -55,6 +55,9 @@ impl<'a> Checker<'a> {
             let Some((named, pointer_receiver)) = self.receiver_base(&cx, &parts) else {
                 continue;
             };
+            if type_params.is_empty() {
+                self.mono_canon(&receiver_params, named);
+            }
             // A method that is named `_` is no method of its type.
             if name.name == self.blank {
                 continue;
@@ -79,7 +82,12 @@ impl<'a> Checker<'a> {
             let sig = match with_signatures {
                 true => {
                     let own = self.declare_params(&mut cx, type_params);
+                    if !own.is_empty() {
+                        self.mono_method(name.span, &receiver_params, &own);
+                    }
+                    self.in_method_sig = true;
                     let sig = self.typ(&cx, *ty);
+                    self.in_method_sig = false;
                     match own.is_empty() {
                         true => sig,
                         false => self.types.generic_func_type(sig, &own),

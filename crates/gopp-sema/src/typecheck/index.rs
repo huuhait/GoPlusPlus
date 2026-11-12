@@ -127,6 +127,7 @@ impl<'a> Checker<'a> {
                     args,
                     spans: spans.collect(),
                     at: cx.tree.exprs[expr].span,
+                    skip_cycle: false,
                 });
                 return Operand::value(instance);
             }

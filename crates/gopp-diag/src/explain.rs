@@ -1690,6 +1690,14 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Name the parent: `base[Parent].M()`.",
             "return base.Describe()          // error if two parents have Describe\nreturn base[Payment].Describe() // ok",
         ),
+        InstantiationCycle => (
+            "A generic type or function instantiates itself, directly or through others, with a \
+             type argument that is built around its own type parameter. Every instance would \
+             need another, larger one, without end.",
+            "Pass the type parameter on as it is, or break the chain with a type that is not \
+             generic.",
+            "func f[T any]() { f[[]T]() }                   // error\ntype List[T any] struct{ next *List[*T] }      // error\ntype Ring[A, B any] struct{ next *Ring[B, A] } // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

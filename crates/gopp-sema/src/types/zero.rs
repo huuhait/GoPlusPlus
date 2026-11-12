@@ -70,7 +70,9 @@ impl Types {
         }
         *steps += 1;
         let found = match &*node {
-            Type::Named { .. } if self.is_unsafe_pointer(ty, names) => None,
+            Type::Named { .. } if self.is_unsafe_pointer(ty, names) || self.is_expanding(ty) => {
+                None
+            }
             // A declared type has the zero value of what it is declared
             // as; a struct that must be set is named by its own name.
             Type::Named { .. } => {

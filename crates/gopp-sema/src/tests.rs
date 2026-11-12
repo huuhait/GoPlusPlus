@@ -8861,6 +8861,239 @@ fn the_steps_of_hierarchies_grow_with_the_types_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(chain(n)));
 }
 
+/// What is said about the declarations, written after a clause that
+/// imports package unsafe.
+fn with_unsafe(file: &str, declarations: &str) -> Vec<String> {
+    let names = ThreadedRodeo::new();
+    let stub = "package unsafe\ntype Pointer *int\nfunc Sizeof(x any) uintptr\n";
+    let loader = with_packages(&names, &[("unsafe", stub)]);
+    let text = format!("package x; import \"unsafe\"; var _ unsafe.Pointer\n{declarations}\n");
+    check_texts("x", &[(file, &text)], &loader, &names).messages
+}
+
+// rule: GEN-5
+#[test]
+fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it() {
+    // The cases of Go's own test of this check.
+    let goods = [
+        "func F[T any](x T) { F(x) }",
+        "func F[T, U, V any]() { F[U, V, T](); F[V, T, U]() }",
+        "type Ring[A, B, C any] struct { L *Ring[B, C, A]; R *Ring[C, A, B] }",
+        "func F[T any]() { type U[T any] [unsafe.Sizeof(F[*T])]byte }",
+        "func F[T any]() { type U[T any] [unsafe.Sizeof(F[*T])]byte; type _ U[int] }",
+        "type U[T any] [unsafe.Sizeof(F[*T])]byte; func F[T any]() { type _ U[T] }",
+        "func F[T any]() { type A = int; F[A]() }",
+    ];
+    for good in goods {
+        assert_eq!(with_unsafe("a.go", good), [] as [&str; 0], "{good}");
+    }
+    let bads = [
+        "func F[T any](x T) { F(&x) }",
+        "func F[T any]() { F[*T]() }",
+        "func F[T any]() { F[[]T]() }",
+        "func F[T any]() { F[[1]T]() }",
+        "func F[T any]() { F[chan T]() }",
+        "func F[T any]() { F[map[*T]int]() }",
+        "func F[T any]() { F[map[error]T]() }",
+        "func F[T any]() { F[func(T)]() }",
+        "func F[T any]() { F[func() T]() }",
+        "func F[T any]() { F[struct{ t T }]() }",
+        "func F[T any]() { F[interface{ t() T }]() }",
+        "type U[_ any] int; func F[T any]() { F[U[T]]() }",
+        "type U[T any] int; func (U[T]) m() { var _ U[*T] }",
+        "type U[T any] int; func (*U[T]) m() { var _ U[*T] }",
+        "func F[A, B, C, D, E any]() { F[B, C, D, E, *A]() }",
+        "func F[T any]() { type A = *T; F[A]() }",
+    ];
+    for bad in bads {
+        let found = with_unsafe("a.go", bad);
+        let first = found.first().map(String::as_str).unwrap_or_default();
+        assert!(
+            first.ends_with(": instantiation cycle:"),
+            "{bad}: {found:?}"
+        );
+    }
+
+    // A type that holds such an instance of itself by value is refused
+    // for that.
+    assert_eq!(
+        with_unsafe("a.go", "type A[T any] struct { _ A[*T] }"),
+        ["a.go:2:26: invalid recursive type: A refers to itself"]
+    );
+
+    // The cycle is told at the first type parameter on it, with what
+    // each one is instantiated as.
+    let text = "package p
+type Box[A any] struct{ value A }
+func Nest[A any](b Box[A], n int) any {
+	if n == 0 {
+		return b
+	}
+	return Nest(Box[Box[A]]{b}, n-1)
+}
+";
+    let expected = [
+        "a.go:3:11: instantiation cycle:",
+        "    a.go:7:9: A instantiated as Box[A]",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+    let text = "package p
+func f[A, B any]() { g[B, *A]() }
+func g[C, D any]() { f[D, C]() }
+";
+    let expected = [
+        "a.go:2:8: instantiation cycle:",
+        "    a.go:3:24: A instantiated as D",
+        "    a.go:2:27: D instantiated as *A",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+
+    // Every type on a cycle is known before a body follows its
+    // instances, not only those of the cycle that is told.
+    let text = "package p
+type T[P any] struct {
+	s []T[[]P]
+	m map[string]*T[*P]
+}
+type A[P any] struct{ next Option[Unique[B[[]P]]] }
+type B[P any] struct {
+	back []A[P]
+	c    chan A[*P]
+}
+
+@Extends(Root[P])
+type Kid[P any] struct{ more []Kid[*P] }
+type Root[P any] struct{ v P }
+
+func f(x T[int], y A[int], k Kid[int]) {
+	ch := make(chan *A[int])
+	go func() { ch <- &y }()
+	w, kk := x, k
+	_, _ = w, kk
+}
+";
+    let expected = [
+        "a.gopp:2:8: instantiation cycle:",
+        "    a.gopp:3:8: P instantiated as []P",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+
+    // A package with another error is not told of its cycle.
+    let text = "package p\nfunc f[T any]() { f[*T]() }\nvar x int = \"\"\n";
+    let expected = [
+        "a.go:3:13: cannot use \"\" (untyped string constant) as int value in variable declaration",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+// rule: GEN-13
+#[test]
+fn the_signature_of_a_method_instantiates_as_a_field_does() {
+    let cycle = "package p
+type G[T any] struct{ v T }
+func (x G[T]) Next() Option[*G[*T]] { return nil }
+";
+    let expected = [
+        "a.gopp:2:8: instantiation cycle:",
+        "    a.gopp:3:32: T instantiated as *T",
+    ];
+    assert_eq!(messages("a.gopp", cycle), expected);
+    // Go follows no instance that only a signature names.
+    let go = "package p
+type G[T any] struct{ v T }
+func (x G[T]) Next() *G[*T] { return nil }
+";
+    assert_eq!(messages("a.go", go), [] as [&str; 0]);
+
+    // The same instance, the parameters in another order and another
+    // type need no new instance; a type parameter of the method is not
+    // one of the type.
+    let fine = "package p
+type G[T any] struct{ v T }
+func (x G[T]) Same() Option[*G[T]] { return nil }
+func (x G[T]) Other() G[int] { return G[int]{} }
+type Two[A, B any] struct{ a A; b B }
+func (x Two[A, B]) Swap() Two[B, A] { return Two[B, A]{a: x.b, b: x.a} }
+type Pair[A, B any] struct{ a A; b B }
+type List[T any] struct{ items []T }
+func (l List[T]) Zip[U any](o List[U]) List[Pair[T, U]] { return List[Pair[T, U]]{} }
+";
+    assert_eq!(messages("a.gopp", fine), [] as [&str; 0]);
+    let deep = "package p
+type List[T any] struct{ items []T }
+func (l List[T]) Deep[U any]() { l.Deep[*U]() }
+";
+    let expected = [
+        "a.gopp:3:23: instantiation cycle:",
+        "    a.gopp:3:41: U instantiated as *U",
+    ];
+    assert_eq!(messages("a.gopp", deep), expected);
+    // A method with type parameters of its own is instantiated where it
+    // is called, for the type arguments of the receiver too.
+    let through_receiver = "package p
+type List[T any] struct{ items []T }
+func (l List[T]) Deep[U any]() {
+	var x List[*T]
+	x.Deep[U]()
+}
+";
+    let expected = [
+        "a.gopp:3:14: instantiation cycle:",
+        "    a.gopp:5:2: T instantiated as *T",
+    ];
+    assert_eq!(messages("a.gopp", through_receiver), expected);
+    let other_receiver = "package p
+type List[T any] struct{ items []T }
+func (l List[T]) Deep[U any]() {
+	var x List[int]
+	x.Deep[*U]()
+}
+";
+    let expected = [
+        "a.gopp:3:23: instantiation cycle:",
+        "    a.gopp:5:9: U instantiated as *U",
+    ];
+    assert_eq!(messages("a.gopp", other_receiver), expected);
+}
+
+#[test]
+fn the_steps_of_instantiation_cycles_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    // Each function instantiates the next with a type around its type
+    // parameter, and the last one none: no cycle. Written last first,
+    // each edge is recorded before the one that leads to it.
+    let chain = |count: usize, forward: bool| {
+        let function = |i: usize| match i + 1 == count {
+            true => format!("func f{i}[T any]() {{}}\n"),
+            false => format!("func f{i}[T any]() {{ f{}[*T]() }}\n", i + 1),
+        };
+        let all: String = match forward {
+            true => (0..count).map(function).collect(),
+            false => (0..count).rev().map(function).collect(),
+        };
+        format!("package p\n{all}")
+    };
+    // Rings of three types that name each other with their parameters
+    // in another order: cycles of no weight.
+    let rings = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                format!("type R{i}[A, B, C any] struct {{ l *R{i}[B, C, A]; r *R{i}[C, A, B] }}\n")
+            })
+            .collect();
+        format!("package p\n{all}")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
+    linear::assert_near_linear(&sizes, |n| steps(rings(n)));
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {
@@ -10387,7 +10620,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2649;
+const EXPECTED_ERRORS_REPORTED: usize = 2652;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

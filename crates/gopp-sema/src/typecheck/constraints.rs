@@ -14,6 +14,9 @@ pub(super) struct Instance {
     pub spans: Vec<Span>,
     /// Where the instance is, for a type argument that is not written.
     pub at: Span,
+    /// Written in the signature of a method of a Go file, where Go does
+    /// not look for instantiation cycles.
+    pub skip_cycle: bool,
 }
 
 /// A union has no more terms than this, as in Go.
@@ -378,6 +381,14 @@ impl<'a> Checker<'a> {
     /// type parameters: the first that does not satisfy its constraint is
     /// reported.
     pub(super) fn verify(&mut self, instance: &Instance) {
+        if !instance.skip_cycle {
+            self.mono_record(
+                &instance.params,
+                &instance.args,
+                &instance.spans,
+                instance.at,
+            );
+        }
         for (at, (&param, &arg)) in instance.params.iter().zip(&instance.args).enumerate() {
             // The generic type or function holds a value of this
             // parameter, and an abstract type has none (TYP-19).

@@ -39,6 +39,12 @@ impl Sink {
         }
     }
 
+    /// Whether nothing was reported yet.
+    pub fn is_empty(&self) -> bool {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.kept.is_empty() && !state.dropped
+    }
+
     /// The kept diagnostics, sorted by file, offset, then code.
     pub fn finish(self) -> Vec<Diagnostic> {
         let mut state = self

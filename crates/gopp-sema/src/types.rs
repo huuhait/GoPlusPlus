@@ -197,7 +197,7 @@ impl Type {
         parts
     }
 
-    fn each_part(&self, each: &mut impl FnMut(TypeId)) {
+    pub fn each_part(&self, each: &mut impl FnMut(TypeId)) {
         match self {
             Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => {}
             Type::Pointer(elem)
@@ -462,6 +462,9 @@ struct Named {
     parents: Vec<TypeId>,
     /// Declared with `@Abstract`.
     abstract_marked: bool,
+    /// On an instantiation cycle: its instances have no end, and no walk
+    /// follows them.
+    expanding: bool,
     /// Declared with `@Pinned`: a value stays where it is and is not
     /// copied.
     pinned: bool,
@@ -488,6 +491,13 @@ struct Inner {
     named: Vec<Named>,
     /// The name of each type parameter, and its constraint once known.
     params: Vec<(Spur, Option<TypeId>)>,
+    /// For a type parameter that stands for another in one place, the
+    /// one that was declared.
+    param_origins: FxHashMap<TypeId, TypeId>,
+    /// By the first type parameter that a method with type parameters of
+    /// its own got for one receiver: what the receiver names its type
+    /// parameters, and the type arguments of that receiver.
+    method_receivers: FxHashMap<TypeId, (Vec<TypeId>, Vec<TypeId>)>,
     /// The underlying type of each generic type with arguments that was
     /// asked for.
     instances: FxHashMap<TypeId, TypeId>,
@@ -762,6 +772,7 @@ impl Types {
             extends: false,
             parents: Vec::new(),
             abstract_marked: false,
+            expanding: false,
             pinned: false,
             drops: false,
             alias: None,
@@ -788,6 +799,7 @@ impl Types {
                 extends: false,
                 parents: Vec::new(),
                 abstract_marked: false,
+                expanding: false,
                 pinned: false,
                 drops: false,
                 alias: Some(target),
@@ -1006,6 +1018,7 @@ impl Types {
                 extends: false,
                 parents: Vec::new(),
                 abstract_marked: false,
+                expanding: false,
                 pinned: false,
                 drops: false,
                 alias: None,
@@ -1327,8 +1340,12 @@ impl Types {
         }
         let fresh: Vec<TypeId> = own
             .iter()
-            .filter_map(|&param| self.param_name(param).map(|name| self.param(name)))
+            .filter_map(|&param| self.param_copy(param))
             .collect();
+        if let Some(&first) = fresh.first() {
+            let receiver = (method.receiver_params.clone(), args.to_vec());
+            self.write(|inner| inner.method_receivers.insert(first, receiver));
+        }
         let from: Vec<TypeId> = method.receiver_params.iter().chain(&own).copied().collect();
         let to: Vec<TypeId> = args.iter().chain(&fresh).copied().collect();
         for (&param, &new) in own.iter().zip(&fresh) {
@@ -1734,6 +1751,22 @@ impl Types {
         self.write(|inner| inner.optional.insert(param));
     }
 
+    /// Says that the declared type is on an instantiation cycle.
+    pub fn set_expanding(&self, named: NamedId) {
+        self.write(|inner| inner.named[named.0 as usize].expanding = true);
+    }
+
+    /// Whether the type is an instance of a type that needs instances
+    /// without end: what it is made of is not walked.
+    pub fn is_expanding(&self, ty: TypeId) -> bool {
+        match &*self.get(ty) {
+            Type::Named { id, args } => {
+                !args.is_empty() && self.read(|inner| inner.named[id.0 as usize].expanding)
+            }
+            _ => false,
+        }
+    }
+
     /// Notes that a declaration holds a value of its type parameter
     /// `param`, so no type argument for it is abstract.
     pub fn set_held(&self, param: TypeId) {
@@ -1776,6 +1809,27 @@ impl Types {
             ParamId(inner.params.len() as u32 - 1)
         });
         self.intern(Type::Param(id))
+    }
+
+    /// A new type parameter that stands for `of` in one place.
+    pub fn param_copy(&self, of: TypeId) -> Option<TypeId> {
+        let copy = self.param(self.param_name(of)?);
+        let origin = self.param_origin(of);
+        self.write(|inner| inner.param_origins.insert(copy, origin));
+        Some(copy)
+    }
+
+    /// The declared type parameter that `param` stands for.
+    pub fn param_origin(&self, param: TypeId) -> TypeId {
+        self.read(|inner| inner.param_origins.get(&param).copied())
+            .unwrap_or(param)
+    }
+
+    /// For the first type parameter of a method as one receiver has it:
+    /// what the method names the type parameters of its receiver, and
+    /// the type arguments of that receiver.
+    pub fn method_receiver(&self, first: TypeId) -> Option<(Vec<TypeId>, Vec<TypeId>)> {
+        self.read(|inner| inner.method_receivers.get(&first).cloned())
     }
 
     // ---- relations

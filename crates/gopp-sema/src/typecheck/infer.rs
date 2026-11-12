@@ -433,8 +433,8 @@ impl<'a> Checker<'a> {
             .params
             .iter()
             .map(|&param| {
-                let name = self.types.param_name(param).unwrap_or(self.blank);
-                self.types.param(name)
+                let copy = self.types.param_copy(param);
+                copy.unwrap_or_else(|| self.types.param(self.blank))
             })
             .collect();
         for (&param, &new) in generic.params.iter().zip(&fresh) {
@@ -518,6 +518,7 @@ impl<'a> Checker<'a> {
             args: found,
             spans: generic.written.iter().map(|&(_, span)| span).collect(),
             at: call,
+            skip_cycle: false,
         });
         Some(instance)
     }
@@ -899,6 +900,7 @@ impl<'a> Checker<'a> {
             args: found,
             spans: generic.written.iter().map(|&(_, span)| span).collect(),
             at: span,
+            skip_cycle: false,
         });
         if let Some(memo) = &mut self.memo {
             memo.insert(expr, Operand::value(instance));

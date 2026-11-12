@@ -20,6 +20,7 @@ mod infer;
 mod inherit;
 mod literal;
 mod methods;
+mod mono;
 mod ops;
 mod own;
 mod place;
@@ -253,6 +254,11 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
+    /// While the signature of a method is worked out.
+    in_method_sig: bool,
+    /// The type parameters of the package and what each is instantiated
+    /// as.
+    mono: mono::Mono,
     /// While the body of a method is walked: the type of its receiver.
     receiver_of: Option<TypeId>,
     /// While a part of a literal that is a parent is worked out: a
@@ -464,6 +470,8 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
+        in_method_sig: false,
+        mono: mono::Mono::default(),
         receiver_of: None,
         parent_part: false,
         iface_args: FxHashSet::default(),
@@ -534,11 +542,15 @@ pub fn declarations(
     checker.fields_and_methods();
     checker.hierarchies(units);
     checker.validate();
+    // A type that needs instances without end is known before a body
+    // follows its instances.
+    checker.monomorph();
     let types_of_files: Vec<_> = units
         .iter()
         .enumerate()
         .map(|(file, unit)| checker.bodies(file, *unit))
         .collect();
+    checker.mono_report();
     let Checker {
         ty,
         value,
@@ -1253,6 +1265,7 @@ impl<'a> Checker<'a> {
                 self.declared.insert(named);
                 self.ty[object] = self.types.named(named, &[]);
                 self.written(self.ty[object], self.package.objects[object].span);
+                self.mono_owner(&params, named);
                 self.types.set_type_params(named, params);
                 if extends {
                     self.types.set_extends(named);
@@ -1869,6 +1882,9 @@ impl<'a> Checker<'a> {
                 args,
                 spans: spans.collect(),
                 at,
+                // Go follows no instance that only the signature of a
+                // method names (GEN-13).
+                skip_cycle: cx.dialect == Dialect::Go && self.in_method_sig,
             });
             return instance;
         }
@@ -3021,16 +3037,38 @@ impl<'a> Checker<'a> {
                         None => self.by_span.get(&name.span),
                     };
                     self.current.extend(function);
-                    self.declare_params(&mut cx, type_params);
+                    let own = self.declare_params(&mut cx, type_params);
+                    // In the body the type parameters are those of the
+                    // function, by other names.
+                    let declared = self.by_span.get(&name.span).copied();
+                    let of_function = declared
+                        .filter(|_| receiver.is_none())
+                        .and_then(|object| self.types.generic_func(self.ty[object]));
+                    if let Some(of_function) = of_function {
+                        self.mono_same(&own, &of_function);
+                    }
                     self.receiver_of = None;
                     if let Some(receiver) = receiver {
-                        self.receiver_params(&mut cx, receiver.ty);
+                        let named = self.receiver_params(&mut cx, receiver.ty);
                         self.params(&cx, std::slice::from_ref(receiver));
                         self.receiver_of = self.receiver_named(unit, receiver.ty);
+                        if let Some(Type::Named { id, .. }) =
+                            self.receiver_of.map(|ty| self.types.get(ty)).as_deref()
+                        {
+                            for &param in &named {
+                                self.param_spans.entry(param).or_insert(name.span);
+                            }
+                            match own.is_empty() {
+                                true => self.mono_canon(&named, *id),
+                                false => self.mono_method(name.span, &named, &own),
+                            }
+                        }
                         self.base_declared(&cx);
                     }
+                    self.in_method_sig = receiver.is_some();
                     self.signature_locals(&cx, *ty);
                     let sig = self.typ(&cx, *ty);
+                    self.in_method_sig = false;
                     self.function_body(&cx, *ty, sig, block);
                     self.receiver_of = None;
                 }
@@ -3234,8 +3272,9 @@ impl<'a> Checker<'a> {
     }
 
     /// Declares the type parameters that the receiver `T[P, Q]` names.
-    fn receiver_params(&mut self, cx: &mut Cx<'a>, mut base: ExprId) {
+    fn receiver_params(&mut self, cx: &mut Cx<'a>, mut base: ExprId) -> Vec<TypeId> {
         let tree = cx.tree;
+        let mut named = Vec::new();
         loop {
             match &tree.exprs[base].kind {
                 ExprKind::Paren(x)
@@ -3249,12 +3288,14 @@ impl<'a> Checker<'a> {
                         if let (ExprKind::Name(name), Some(&local)) =
                             (&tree.exprs[*index].kind, cx.body.defs.get(&span.lo))
                         {
-                            cx.params.insert(local, self.types.param(*name));
+                            let param = self.types.param(*name);
+                            cx.params.insert(local, param);
+                            named.push(param);
                         }
                     }
-                    return;
+                    return named;
                 }
-                _ => return,
+                _ => return named,
             }
         }
     }

@@ -133,8 +133,9 @@ impl Types {
                     }
                 }
             }
-            // `error` embeds `Sync`.
-            Type::Named { .. } if ty == self.error => {}
+            // `error` embeds `Sync`; the instances of a type on an
+            // instantiation cycle have no end.
+            Type::Named { .. } if ty == self.error || self.is_expanding(ty) => {}
             Type::Named { .. } => {
                 walk.inside.insert(ty, depth);
                 let under = self.underlying(ty);
