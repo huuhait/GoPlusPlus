@@ -1711,7 +1711,7 @@ impl<'a> Checker<'a> {
                 // Its body is walked with the body it is in.
                 if self.memo.is_some() {
                     self.signature_locals(cx, *ty);
-                    self.function_body(cx, *ty, sig, &body.stmts);
+                    self.function_body(cx, *ty, sig, body);
                 }
                 Operand::value(sig)
             }
@@ -2612,7 +2612,7 @@ impl<'a> Checker<'a> {
                     }
                     self.signature_locals(&cx, *ty);
                     let sig = self.typ(&cx, *ty);
-                    self.function_body(&cx, *ty, sig, &block.stmts);
+                    self.function_body(&cx, *ty, sig, block);
                 }
                 // The value of a constant is worked out with its
                 // declaration; variables are walked here too, for the
@@ -2694,7 +2694,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Walks the statements of a function of the type `sig`.
-    fn function_body(&mut self, cx: &Cx<'a>, ty: ExprId, sig: TypeId, stmts: &[StmtId]) {
+    fn function_body(&mut self, cx: &Cx<'a>, ty: ExprId, sig: TypeId, body: &ast::Block) {
         let (named, fails) = match &cx.tree.exprs[ty].kind {
             ExprKind::FuncType { results, fails, .. } => (
                 results.first().is_some_and(|result| result.name.is_some()),
@@ -2707,10 +2707,15 @@ impl<'a> Checker<'a> {
             Type::Func { results, .. } => Some((results.to_vec(), named, fails)),
             _ => None,
         };
+        // A function with results ends in a statement that does not go
+        // on; the error that `!` adds is no result of its own.
+        let returns = results
+            .as_ref()
+            .is_some_and(|(results, ..)| results.len() > usize::from(fails));
         self.results.push(results);
-        self.stmts(cx, stmts);
+        self.stmts(cx, &body.stmts);
         self.results.pop();
-        self.branches(cx, stmts);
+        self.branches(cx, body, returns);
     }
 
     /// `return results` in a function with the results `wanted`. A
@@ -2836,7 +2841,7 @@ impl<'a> Checker<'a> {
 
     fn opt_stmt(&mut self, cx: &Cx<'a>, stmt: Option<StmtId>) {
         if let Some(stmt) = stmt {
-            self.stmt(cx, stmt);
+            gopp_syntax::with_stack(|| self.stmt(cx, stmt));
         }
     }
 

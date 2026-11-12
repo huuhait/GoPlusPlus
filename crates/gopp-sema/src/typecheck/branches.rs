@@ -7,7 +7,8 @@ use super::*;
 /// it is, for the message when `fallthrough` is not allowed.
 #[derive(Clone, Copy, Default)]
 struct Allowed {
-    breaks: bool,
+    /// The statement that `break` leaves.
+    breaks: Option<StmtId>,
     continues: bool,
     falls_through: bool,
     final_case: bool,
@@ -39,6 +40,8 @@ struct Labels {
     /// count when it was written.
     waiting: FxHashMap<Spur, Vec<(Ident, u64)>>,
     count: u64,
+    /// The statements that a `break` leaves.
+    left: FxHashSet<StmtId>,
 }
 
 /// One block that is open.
@@ -52,11 +55,20 @@ struct Block {
 }
 
 impl<'a> Checker<'a> {
-    /// Checks the labels and the jumps of the body of a function.
-    pub(super) fn branches(&mut self, cx: &Cx<'a>, body: &[StmtId]) {
-        self.jumps(cx, Allowed::default(), body);
+    /// Checks the labels and the jumps of the body of a function, which
+    /// ends in a statement that does not go on if the function `returns`
+    /// results.
+    pub(super) fn branches(&mut self, cx: &Cx<'a>, body: &ast::Block, returns: bool) {
         let mut labels = Labels::default();
-        self.block_branches(cx, &mut labels, None, body);
+        self.jumps(cx, &mut labels.left, Allowed::default(), &body.stmts);
+        self.block_branches(cx, &mut labels, None, &body.stmts);
+        if returns && !self.terminating_list(cx, &labels.left, &body.stmts) {
+            let brace = Span {
+                lo: body.span.hi.saturating_sub(1),
+                ..body.span
+            };
+            self.error(Code::MissingReturn, brace, "missing return".to_owned());
+        }
         // A label that was not found is not declared, or it is inside a
         // block that the jump is outside of.
         let mut waiting: Vec<Ident> = labels
@@ -91,7 +103,13 @@ impl<'a> Checker<'a> {
 
     // ---- break, continue and fallthrough without a label
 
-    fn jumps(&mut self, cx: &Cx<'a>, allowed: Allowed, list: &[StmtId]) {
+    fn jumps(
+        &mut self,
+        cx: &Cx<'a>,
+        left: &mut FxHashSet<StmtId>,
+        allowed: Allowed,
+        list: &[StmtId],
+    ) {
         // Empty statements at the end do not count for `fallthrough`.
         let is_empty = |&stmt: &StmtId| matches!(cx.tree.stmts[stmt].kind, StmtKind::Empty);
         let end = list.iter().rposition(|stmt| !is_empty(stmt));
@@ -102,11 +120,11 @@ impl<'a> Checker<'a> {
                 ..allowed
             };
             self.steps += 1;
-            gopp_syntax::with_stack(|| self.jump(cx, allowed, stmt));
+            gopp_syntax::with_stack(|| self.jump(cx, left, allowed, stmt));
         }
     }
 
-    fn jump(&mut self, cx: &Cx<'a>, allowed: Allowed, stmt: StmtId) {
+    fn jump(&mut self, cx: &Cx<'a>, left: &mut FxHashSet<StmtId>, allowed: Allowed, stmt: StmtId) {
         let node = &cx.tree.stmts[stmt];
         // What a statement inside this one may do.
         let mut inner = Allowed {
@@ -116,18 +134,18 @@ impl<'a> Checker<'a> {
             ..allowed
         };
         match &node.kind {
-            StmtKind::Labeled { stmt, .. } => self.jump(cx, allowed, *stmt),
-            StmtKind::Block(block) => self.jumps(cx, inner, &block.stmts),
+            StmtKind::Labeled { stmt, .. } => self.jump(cx, left, allowed, *stmt),
+            StmtKind::Block(block) => self.jumps(cx, left, inner, &block.stmts),
             StmtKind::If {
                 then, otherwise, ..
             } => {
-                self.jumps(cx, inner, &then.stmts);
+                self.jumps(cx, left, inner, &then.stmts);
                 if let Some(otherwise) = otherwise {
-                    self.jump(cx, inner, *otherwise);
+                    gopp_syntax::with_stack(|| self.jump(cx, left, inner, *otherwise));
                 }
             }
             StmtKind::Switch { tag, clauses, .. } => {
-                inner.breaks = true;
+                inner.breaks = Some(stmt);
                 let type_switch = tag.is_some_and(|tag| {
                     matches!(cx.tree.exprs[tag].kind, ExprKind::TypeSwitchGuard { .. })
                 });
@@ -139,22 +157,25 @@ impl<'a> Checker<'a> {
                         final_case: !type_switch && last,
                         ..inner
                     };
-                    self.jumps(cx, inner, &clause.body);
+                    self.jumps(cx, left, inner, &clause.body);
                 }
             }
             StmtKind::Select { clauses } => {
-                inner.breaks = true;
+                inner.breaks = Some(stmt);
                 for clause in clauses {
-                    self.jumps(cx, inner, &clause.body);
+                    self.jumps(cx, left, inner, &clause.body);
                 }
             }
             StmtKind::For { body, .. } | StmtKind::Range { body, .. } => {
-                (inner.breaks, inner.continues) = (true, true);
-                self.jumps(cx, inner, &body.stmts);
+                (inner.breaks, inner.continues) = (Some(stmt), true);
+                self.jumps(cx, left, inner, &body.stmts);
             }
             StmtKind::Branch { kind, label: None } => {
+                if let (BranchKind::Break, Some(around)) = (kind, allowed.breaks) {
+                    left.insert(around);
+                }
                 let (code, message) = match kind {
-                    BranchKind::Break if !allowed.breaks => (
+                    BranchKind::Break if allowed.breaks.is_none() => (
                         Code::NotInLoopBreak,
                         "break not in for, switch, or select statement",
                     ),
@@ -178,6 +199,70 @@ impl<'a> Checker<'a> {
                 self.error(code, node.span, message.to_owned());
             }
             _ => {}
+        }
+    }
+
+    // ---- statements that do not go on
+
+    /// Whether the last statement of the list that is not empty is a
+    /// terminating statement.
+    fn terminating_list(&mut self, cx: &Cx<'a>, left: &FxHashSet<StmtId>, list: &[StmtId]) -> bool {
+        let is_empty = |&&stmt: &&StmtId| matches!(cx.tree.stmts[stmt].kind, StmtKind::Empty);
+        let last = list.iter().rev().find(|stmt| !is_empty(stmt));
+        last.is_some_and(|&last| gopp_syntax::with_stack(|| self.terminating(cx, left, last)))
+    }
+
+    /// Whether what follows the statement is never reached: it returns,
+    /// jumps, panics, or is made of statements that do.
+    fn terminating(&mut self, cx: &Cx<'a>, left: &FxHashSet<StmtId>, stmt: StmtId) -> bool {
+        self.steps += 1;
+        match &cx.tree.stmts[stmt].kind {
+            StmtKind::Labeled { stmt, .. } => self.terminating(cx, left, *stmt),
+            StmtKind::Return(_) => true,
+            StmtKind::Branch { kind, .. } => {
+                matches!(kind, BranchKind::Goto | BranchKind::Fallthrough)
+            }
+            // A call of the predeclared `panic`.
+            StmtKind::Expr(call) => {
+                let mut call = *call;
+                while let ExprKind::Paren(inner) = cx.tree.exprs[call].kind {
+                    call = inner;
+                }
+                let ExprKind::Call { fun, .. } = &cx.tree.exprs[call].kind else {
+                    return false;
+                };
+                let mut fun = *fun;
+                while let ExprKind::Paren(inner) = cx.tree.exprs[fun].kind {
+                    fun = inner;
+                }
+                cx.body.uses.get(&fun) == Some(&Ref::Universe(Predeclared::Panic))
+            }
+            StmtKind::Block(block) => self.terminating_list(cx, left, &block.stmts),
+            StmtKind::If {
+                then,
+                otherwise: Some(otherwise),
+                ..
+            } => {
+                self.terminating_list(cx, left, &then.stmts)
+                    && gopp_syntax::with_stack(|| self.terminating(cx, left, *otherwise))
+            }
+            // Every clause ends so, none is left by a `break`, and one of
+            // them is always taken.
+            StmtKind::Switch { clauses, .. } => {
+                !left.contains(&stmt)
+                    && clauses.iter().any(|clause| clause.cases.is_none())
+                    && clauses
+                        .iter()
+                        .all(|clause| self.terminating_list(cx, left, &clause.body))
+            }
+            StmtKind::Select { clauses } => {
+                !left.contains(&stmt)
+                    && clauses
+                        .iter()
+                        .all(|clause| self.terminating_list(cx, left, &clause.body))
+            }
+            StmtKind::For { cond: None, .. } => !left.contains(&stmt),
+            _ => false,
         }
     }
 
@@ -252,8 +337,9 @@ impl<'a> Checker<'a> {
                 label: Some(label),
             } => {
                 let name = self.names.resolve(&label.name);
-                let target = labels.enclosing.get(&label.name).and_then(|at| at.last());
-                let target = target.map(|&target| &cx.tree.stmts[target].kind);
+                let around = labels.enclosing.get(&label.name).and_then(|at| at.last());
+                let around = around.copied();
+                let target = around.map(|target| &cx.tree.stmts[target].kind);
                 let is_loop = matches!(target, Some(StmtKind::For { .. } | StmtKind::Range { .. }));
                 let breaks = is_loop
                     || matches!(
@@ -275,6 +361,7 @@ impl<'a> Checker<'a> {
                         return waiting.push((*label, labels.count));
                     }
                     BranchKind::Fallthrough => return,
+                    BranchKind::Break => labels.left.extend(around),
                     _ => {}
                 }
                 if let Some(&known) = labels.index.get(&label.name) {
@@ -287,7 +374,9 @@ impl<'a> Checker<'a> {
             } => {
                 self.block_branches(cx, labels, labeled, &then.stmts);
                 if let Some(otherwise) = otherwise {
-                    self.stmt_branches(cx, labels, block, labeled, *otherwise);
+                    gopp_syntax::with_stack(|| {
+                        self.stmt_branches(cx, labels, block, labeled, *otherwise);
+                    });
                 }
             }
             StmtKind::For { body, .. } | StmtKind::Range { body, .. } => {

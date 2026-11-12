@@ -612,6 +612,7 @@ fn undefined_and_redeclared_names_are_reported_as_go_reports_them() {
                 "    a.go:2:8: other declaration of a",
                 "a.go:2:32: a redeclared in this block",
                 "    a.go:2:8: other declaration of a",
+                "a.go:2:39: missing return",
             ],
         ),
         (
@@ -1012,6 +1013,22 @@ fn steps_grow_with_the_input_not_faster() {
             .collect();
         format!("package p\nfunc f() {{\n{all}End:\n}}\n")
     };
+    // A function with a result that ends in loops inside loops, each
+    // with a `break` that leaves a statement inside it; and one that ends
+    // in a chain of `else`.
+    let endless_loops = |depth: usize| {
+        format!(
+            "package p\nfunc f(x bool) int {{\n{}{}\n}}\n",
+            "for { switch { case x: break }; ".repeat(depth),
+            "}".repeat(depth)
+        )
+    };
+    let else_chain = |count: usize| {
+        format!(
+            "package p\nfunc f(x bool) int {{\n{}{{ return 0 }}\n}}\n",
+            "if x { return 1 } else ".repeat(count)
+        )
+    };
     // Each loop has a label; its body leaves it and goes on with the
     // outermost one.
     let labeled_loops = |depth: usize| {
@@ -1027,6 +1044,8 @@ fn steps_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(jumps_out(n)));
     linear::assert_near_linear(&sizes, |n| steps(waiting_jumps(n)));
     linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(labeled_loops(n)));
+    linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(endless_loops(n)));
+    linear::assert_near_linear(&sizes, |n| steps(else_chain(n)));
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(closures(n)));
     linear::assert_near_linear(&sizes, |n| steps(declarations(n)));
@@ -2978,6 +2997,69 @@ Back:
     assert_eq!(found, expected);
 }
 
+#[test]
+fn a_function_with_results_ends_in_a_statement_that_does_not_go_on() {
+    let cases: &[(&str, &[&str])] = &[
+        ("func f() int {\n}", &["3:1: missing return"]),
+        (
+            "func f(x bool) int {\n\tif x {\n\t\treturn 1\n\t}\n}",
+            &["6:1: missing return"],
+        ),
+        (
+            "func f(x bool) int {\n\tfor {\n\t\tif x {\n\t\t\tbreak\n\t\t}\n\t}\n}",
+            &["8:1: missing return"],
+        ),
+        (
+            "func f(x bool) int {\nL:\n\tfor {\n\t\tswitch {\n\t\tcase x:\n\t\t\tbreak L\n\t\t}\n\t}\n}",
+            &["10:1: missing return"],
+        ),
+        (
+            "func f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\treturn 1\n\t}\n}",
+            &["7:1: missing return"],
+        ),
+        (
+            "func f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\tbreak\n\tdefault:\n\t\treturn 1\n\t}\n}",
+            &["9:1: missing return"],
+        ),
+        (
+            "func f(x int) int {\n\tfor x < 3 {\n\t}\n}",
+            &["5:1: missing return"],
+        ),
+        ("var _ = func() int {\n}", &["3:1: missing return"]),
+        // What is right next to each of them.
+        ("func f() int {\n\treturn 1\n}\nfunc g() {\n}", &[]),
+        (
+            "func f(x bool) int {\n\tif x {\n\t\treturn 1\n\t} else {\n\t\tpanic(1)\n\t}\n}",
+            &[],
+        ),
+        (
+            "func f(x bool) int {\n\tfor {\n\t\tswitch {\n\t\tcase x:\n\t\t\tbreak\n\t\t}\n\t}\n}",
+            &[],
+        ),
+        (
+            "func f(x int) int {\n\tswitch x {\n\tcase 1:\n\t\tfallthrough\n\tdefault:\n\t\treturn 1\n\t}\n}",
+            &[],
+        ),
+        (
+            "func f(c chan int) int {\n\tselect {\n\tcase <-c:\n\t\treturn 1\n\t}\n}",
+            &[],
+        ),
+        ("func f() int {\nL:\n\tgoto L\n}", &[]),
+    ];
+    for (code, expected) in cases {
+        let text = format!("package p\n{code}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{code}");
+    }
+    // A function that can fail and has no other result needs no return.
+    let text = "package p\nfunc f!() {\n}\nfunc g!() int {\n}\n";
+    assert_eq!(messages("a.gopp", text), ["a.gopp:5:1: missing return"]);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -3596,7 +3678,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1824;
+const EXPECTED_ERRORS_REPORTED: usize = 1841;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

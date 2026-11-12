@@ -175,6 +175,7 @@ codes! {
     210 DefineNoNewVars "err_define_no_new_vars",
     212 MissingInitExpr "err_missing_init_expr",
     213 ExtraInitExpr "err_extra_init_expr",
+    214 MissingReturn "err_missing_return",
     219 SelectCaseInvalid "err_select_case_invalid",
     222 IncDecNonNumeric "err_inc_dec_non_numeric",
     223 BuiltinNotEnoughArguments "err_builtin_not_enough_args",
