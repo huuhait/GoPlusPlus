@@ -2,6 +2,7 @@
 //! value of no type takes the type of what is around it. The functions
 //! follow `go/types` (expr.go, const.go), and the messages are Go's.
 
+use super::operators::Overload;
 use super::*;
 use crate::exprstring::{Writer, binary_text, unary_text};
 
@@ -61,7 +62,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn span(&self, cx: &Cx<'a>, expr: ExprId) -> Span {
+    pub(super) fn span(&self, cx: &Cx<'a>, expr: ExprId) -> Span {
         cx.tree.exprs[expr].span
     }
 
@@ -598,9 +599,6 @@ impl<'a> Checker<'a> {
         if self.open(x.ty) || self.all_types(x.ty, holds) {
             return true;
         }
-        if self.may_overload(cx, x.ty) {
-            return false;
-        }
         let message = format!(
             "invalid operation: operator {op} not defined on {}",
             self.describe(cx, expr, x)
@@ -694,6 +692,15 @@ impl<'a> Checker<'a> {
                 let is_view = self.own_rules(cx)
                     && matches!(cx.tree.exprs[literal].kind, ExprKind::Slice { .. });
                 let held = self.own_rules(cx) && self.held_shared(cx, inner);
+                if self.operators.contains_key(&literal) && x.mode != Mode::Variable {
+                    let message = format!(
+                        "invalid operation: cannot take address of {}: what @Operator Index \
+                         gives is no place",
+                        self.expr_string(cx, inner)
+                    );
+                    self.error(Code::OpIndexNotPlace, self.span(cx, inner), message);
+                    return Operand::UNKNOWN;
+                }
                 if !is_literal && !is_view && !held && x.mode != Mode::Variable {
                     let message = format!(
                         "invalid operation: cannot take address of {}",
@@ -748,6 +755,11 @@ impl<'a> Checker<'a> {
             }
             op => op,
         };
+        match self.operator_unary(cx, expr, op, &x) {
+            Overload::Chosen(result) => return result,
+            Overload::Refused => return Operand::UNKNOWN,
+            Overload::Builtin => {}
+        }
         let holds: fn(&Self, TypeId) -> bool = match op {
             UnaryOp::Xor => Self::is_integer,
             UnaryOp::Not => Self::is_boolean,
@@ -963,8 +975,48 @@ impl<'a> Checker<'a> {
         if !(is_comparison(op) && refers(self, &x) && refers(self, &y)) {
             (x, y) = (self.read(cx, x), self.read(cx, y));
         }
+        // A method of the type of an operand may stand for the operator.
+        let operands = ((left, &x), (right, &y));
+        let decided = match whole {
+            Some(_) => self.operator_binary(cx, whole, op, operands.0, operands.1),
+            None => match self.operator_in_place(cx, op, operands.0, operands.1) {
+                Overload::Builtin => self.operator_binary(cx, whole, op, operands.0, operands.1),
+                decided => decided,
+            },
+        };
+        match decided {
+            Overload::Chosen(result) => return result,
+            Overload::Refused => return Operand::UNKNOWN,
+            Overload::Builtin => {}
+        }
         if is_shift(op) {
             return self.shift(cx, whole, op, (left, x), (right, y));
+        }
+        let written = |this: &Self| match whole {
+            Some(expr) => this.expr_string(cx, expr),
+            None => format!(
+                "{} {}= {}",
+                this.expr_string(cx, left),
+                binary_text(op),
+                this.expr_string(cx, right)
+            ),
+        };
+        // A constant of a kind that the type of the other operand does
+        // not hold would need a method of that type.
+        let nil = self.types.basic(Basic::UntypedNil);
+        let held = match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
+            (true, false) => Some((&x, y.ty)),
+            (false, true) => Some((&y, x.ty)),
+            _ => None,
+        };
+        if let Some((constant, ty)) = held
+            && constant.ty != nil
+            && self.may_overload(cx, ty)
+            && matches!(self.implicit(constant, ty), Err(Unfit::Other))
+        {
+            let at = self.span(cx, whole.unwrap_or(left));
+            self.no_operator(cx, (at, &written(self)), op, (&x, &y));
+            return Operand::UNKNOWN;
         }
         self.match_types(cx, (left, &mut x), (right, &mut y));
         if x.mode == Mode::Unknown {
@@ -974,28 +1026,26 @@ impl<'a> Checker<'a> {
             return self.comparison(cx, op, (left, x), (right, y));
         }
         if !self.types.identical(x.ty, y.ty) {
-            let decided = !self.may_overload(cx, x.ty) && !self.may_overload(cx, y.ty);
-            if !self.open(x.ty) && !self.open(y.ty) && decided {
-                let written = match whole {
-                    Some(expr) => self.expr_string(cx, expr),
-                    None => format!(
-                        "{} {}= {}",
-                        self.expr_string(cx, left),
-                        binary_text(op),
-                        self.expr_string(cx, right)
-                    ),
-                };
-                let message = format!(
-                    "invalid operation: {written} (mismatched types {} and {})",
-                    self.type_string(x.ty),
-                    self.type_string(y.ty)
-                );
-                self.error(
-                    Code::MismatchedTypes,
-                    self.span(cx, whole.unwrap_or(left)),
-                    message,
-                );
+            if self.open(x.ty) || self.open(y.ty) {
+                return Operand::UNKNOWN;
             }
+            // A type that may have operator methods has none for this.
+            if self.may_overload(cx, x.ty) || self.may_overload(cx, y.ty) {
+                let at = self.span(cx, whole.unwrap_or(left));
+                self.no_operator(cx, (at, &written(self)), op, (&x, &y));
+                return Operand::UNKNOWN;
+            }
+            let message = format!(
+                "invalid operation: {} (mismatched types {} and {})",
+                written(self),
+                self.type_string(x.ty),
+                self.type_string(y.ty)
+            );
+            self.error(
+                Code::MismatchedTypes,
+                self.span(cx, whole.unwrap_or(left)),
+                message,
+            );
             return Operand::UNKNOWN;
         }
         let holds: fn(&Self, TypeId) -> bool = match op {
@@ -1004,6 +1054,14 @@ impl<'a> Checker<'a> {
             BinaryOp::OrOr | BinaryOp::AndAnd => Self::is_boolean,
             _ => Self::is_integer,
         };
+        let lacking = self.may_overload(cx, x.ty)
+            && !matches!(op, BinaryOp::OrOr | BinaryOp::AndAnd)
+            && !(self.open(x.ty) || self.all_types(x.ty, holds));
+        if lacking {
+            let at = self.span(cx, whole.unwrap_or(left));
+            self.no_operator(cx, (at, &written(self)), op, (&x, &y));
+            return Operand::UNKNOWN;
+        }
         if !self.defined(cx, left, &x, binary_text(op), holds) {
             return Operand::UNKNOWN;
         }
@@ -1153,14 +1211,13 @@ impl<'a> Checker<'a> {
 
     /// What forbids to compare `x` with `y` by `op`: whether it is the
     /// second operand that the error is about, the cause, and the code.
-    /// `Err` if an operator method may decide instead.
     pub(super) fn uncomparable(
         &self,
         cx: &Cx<'a>,
         op: BinaryOp,
         x: &Operand,
         y: &Operand,
-    ) -> Result<Option<(bool, String, Code)>, ()> {
+    ) -> Option<(bool, String, Code)> {
         let ordered = |this: &Self, ty: TypeId| {
             this.open(ty)
                 || this.all_types(ty, |this, ty| this.is_numeric(ty) || this.is_string(ty))
@@ -1227,12 +1284,7 @@ impl<'a> Checker<'a> {
                 None
             }
         };
-        let Some((mut second, mut cause, code)) = wrong else {
-            return Ok(None);
-        };
-        if self.may_overload(cx, x.ty) || self.may_overload(cx, y.ty) {
-            return Err(());
-        }
+        let (mut second, mut cause, code) = wrong?;
         let is_param = |ty: TypeId| matches!(&*self.types.get(ty), Type::Param(_));
         if cause.is_empty() && (is_param(x.ty) || is_param(y.ty)) {
             second = !is_param(x.ty);
@@ -1251,7 +1303,7 @@ impl<'a> Checker<'a> {
             };
             cause = format!("operator {} not defined on {what}", binary_text(op));
         }
-        Ok(Some((second, cause, code)))
+        Some((second, cause, code))
     }
 
     fn comparison(
@@ -1264,20 +1316,16 @@ impl<'a> Checker<'a> {
         if x.ty == Types::INVALID || y.ty == Types::INVALID {
             return Operand::UNKNOWN;
         }
-        match self.uncomparable(cx, op, &x, &y) {
-            Ok(None) => {}
-            Err(()) => return Operand::UNKNOWN,
-            Ok(Some((second, cause, code))) => {
-                let message = format!(
-                    "invalid operation: {} {} {} ({cause})",
-                    self.expr_string(cx, left),
-                    binary_text(op),
-                    self.expr_string(cx, right)
-                );
-                let at = if second { right } else { left };
-                self.error(code, self.span(cx, at), message);
-                return Operand::UNKNOWN;
-            }
+        if let Some((second, cause, code)) = self.uncomparable(cx, op, &x, &y) {
+            let message = format!(
+                "invalid operation: {} {} {} ({cause})",
+                self.expr_string(cx, left),
+                binary_text(op),
+                self.expr_string(cx, right)
+            );
+            let at = if second { right } else { left };
+            self.error(code, self.span(cx, at), message);
+            return Operand::UNKNOWN;
         }
         if let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) {
             if *a == Value::Unknown || *b == Value::Unknown {

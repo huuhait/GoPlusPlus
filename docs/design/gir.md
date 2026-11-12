@@ -270,7 +270,7 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 | `selections` (`FieldVal`, `MethodVal`, `MethodExpr`, `Base`) | `Field`/`Deref` chains (including the `ParentSteps` of inherited members), direct/itab method calls, method-value thunks |
 | `instances`, `iface_conversions` | Monomorphization worklist roots and dynamic type descriptor method sets |
 | `bangs` | `!` early-return vs `panic_must` lowering (section 6) |
-| `operators`, `case_operators` | `@Operator` and `@Convert` call lowering (`+`, `==`, `Cmp`, `Index`, `SetIndex`, `*Assign`, `switch` cases) |
+| `operators`, `op_assigns`, `index_stores`, `case_operators` | `@Operator` and `@Convert` call lowering: `operators` for `+`, `-a`, `==`, `<`, an `Index` read, `T(a)`, the operand of `range` and a call by name that picks one of an overload set; `op_assigns` for `x op= y` (the `*Assign` method or the binary one); `index_stores` for `a[i] = v` (`SetIndex`); `case_operators` for `switch` cases (`Eq`) |
 | `hier_parents`, `method_marks` | parent subobject layouts and virtual dispatch tables |
 | `var_modes`, `swaps`, `self_moves` | Category-aware `OWN-C1`/`OWN-C2`/`OWN-C3` copies, skipped copies, moves (`move(x)`), borrows, and aliasing-safe swaps |
 

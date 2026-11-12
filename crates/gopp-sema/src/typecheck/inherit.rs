@@ -285,7 +285,9 @@ impl<'a> Checker<'a> {
                         first.insert(key, index);
                         continue;
                     };
-                    if self.replaced_together(ty, key, parents[other], parent) {
+                    if self.replaced_together(ty, key, parents[other], parent)
+                        || self.operators_combine(key.0, parents[other], parent)
+                    {
                         continue;
                     }
                     let message = format!(
@@ -298,6 +300,42 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+    }
+
+    /// Whether the `@Operator` method of `ty` that is declared at `name`
+    /// replaces none of the methods of its name that the parents have:
+    /// none of those takes its parameters.
+    fn operator_added(&self, ty: TypeId, name: Ident, parents: &[TypeId]) -> bool {
+        let Type::Named { id, .. } = &*self.types.get(ty) else {
+            return false;
+        };
+        let own = self.types.operators(ty, name.name);
+        let declared = own.iter().find(|operator| {
+            operator.holder == ty
+                && self.operator_spans.get(&(*id, operator.at)) == Some(&name.span)
+        });
+        // One that was refused replaces nothing.
+        let Some(declared) = declared else {
+            return true;
+        };
+        !parents.iter().any(|&parent| {
+            let inherited = self.types.operators(parent, name.name);
+            inherited
+                .iter()
+                .any(|other| self.types.same_params(other.sig, declared.sig))
+        })
+    }
+
+    /// Whether the two parents both have `@Operator` methods of the
+    /// name, no two for the same parameters: a child has them all.
+    fn operators_combine(&self, name: Spur, a: TypeId, b: TypeId) -> bool {
+        let (of_a, of_b) = (self.types.operators(a, name), self.types.operators(b, name));
+        !of_a.is_empty()
+            && !of_b.is_empty()
+            && !of_a.iter().any(|one| {
+                of_b.iter()
+                    .any(|other| self.types.same_params(one.sig, other.sig))
+            })
     }
 
     /// Whether the member `key` that the parents `a` and `b` of `ty` both
@@ -402,6 +440,11 @@ impl<'a> Checker<'a> {
                 self.error(Code::AbstractInstance, name.span, message);
             }
             let parents = self.types.parents(ty);
+            // An `@Operator` method that takes other parameters than the
+            // inherited ones of its name stands next to them (EXP-30).
+            if marks.has(Marks::OPERATOR) && self.operator_added(ty, *name, &parents) {
+                continue;
+            }
             let package = self.package_of(name.name);
             let method = self.names.resolve(&name.name).to_owned();
             let shown = self.type_string(ty);

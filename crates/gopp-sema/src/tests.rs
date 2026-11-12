@@ -2557,7 +2557,7 @@ func main() {
 fn a_place_of_a_gopp_file_takes_what_the_rules_of_gopp_say() {
     assert_eq!(messages("good.gopp", GOOD_GOPP), [] as [&str; 0]);
     let declared = "type User struct{ Name string }\ntype Vec struct{ X, Y int }\n\
-                    func (a Vec) Add(b Vec) Vec { return a }\nfunc take(u User)    {}\n\
+                    @Operator func (a Vec) Add(b Vec) Vec { return a }\nfunc take(u User) {}\n\
                     func borrow(u *User) {}\nfunc fail() error    { return nil }\n";
     let params = "p *User, n *int, w Weak[User], s string, xs *[]int, f float64, v Vec, u User, \
                   o Option[int], q *User";
@@ -9092,6 +9092,913 @@ fn the_steps_of_instantiation_cycles_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(rings(n)));
+}
+
+/// The methods that stand for operators in the first file, in the order
+/// of the source: `line: what is written: Holder.Name(parameters) results`.
+/// An entry says `op=` for a compound assignment, `store` for an index
+/// expression that is assigned to, `case` for the value of a case, and
+/// `right` for a method whose receiver is the operand on the right.
+fn operator_uses(text: &str) -> Vec<String> {
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let types = loader.types.get().unwrap();
+    let tree = &checked.files[0];
+    let mut found: Vec<(u32, u8, String)> = Vec::new();
+    for body in &checked.package.files[0].bodies {
+        let tables = [
+            ("", &body.operators),
+            ("op= ", &body.op_assigns),
+            ("store ", &body.index_stores),
+            ("case ", &body.case_operators),
+        ];
+        for (order, (kind, table)) in tables.into_iter().enumerate() {
+            for (&expr, used) in table {
+                let span = tree.exprs[expr].span;
+                let line = text[..span.lo as usize].matches('\n').count() + 1;
+                let written = &text[span.lo as usize..span.hi as usize];
+                let show = |ty| types.display_in(ty, &names, names.get_or_intern("p"));
+                let sig = show(used.sig);
+                let right = if used.swapped { " right" } else { "" };
+                let shown = format!(
+                    "{line}: {kind}{written}: {}.{}{}{right}",
+                    show(used.holder),
+                    names.resolve(&used.name),
+                    sig.strip_prefix("func").unwrap_or(&sig)
+                );
+                found.push((span.lo, order as u8, shown));
+            }
+        }
+    }
+    found.sort();
+    found.into_iter().map(|(_, _, shown)| shown).collect()
+}
+
+// rule: EXP-16
+#[test]
+fn an_operator_method_has_the_form_of_its_operator() {
+    let text = "package p
+
+type V struct{ x int }
+
+@Operator
+func (a V) Add(b V, c V) V { return a }
+
+@Operator
+func (a V) Eq(b V) int { return 0 }
+
+@Operator
+func (a V) Cmp(b V) bool { return false }
+
+@Operator
+func (a *V) Sub(b V) V { return b }
+
+@Operator
+func (a V) MulAssign(b V) {}
+
+@Operator
+func (a V) SetIndex(i int, v int) {}
+
+@Operator
+func (a V) Iter() int { return 0 }
+
+@Operator
+func (a V) Mul[U any](b U) V { return a }
+
+@Operator
+func (a V) Div!(b V) V { return a }
+
+@Operator
+func (a V) Rem(b V) V { return a }
+
+@Operator
+func (a V) Rem(b V) V { return a }
+
+func (a V) Neg() V { return a }
+
+@Operator
+func (a V) Neg() V { return a }
+
+@Operator @Right
+func (a V) BitAnd(b V) V { return a }
+
+@Operator
+func (a V) BitOr(b int) V { return a }
+
+@Operator @Right
+func (a V) BitOr(b int) V { return a }
+";
+    let expected = [
+        "a.gopp:6:12: invalid @Operator method Add: its form is (b U) R",
+        "a.gopp:9:12: invalid @Operator method Eq: its form is (b U) bool",
+        "a.gopp:12:12: invalid @Operator method Cmp: its form is (b U) int",
+        "a.gopp:15:13: invalid @Operator method Sub: it needs a value receiver: its operand may be \
+         a temporary",
+        "a.gopp:18:12: invalid @Operator method MulAssign: it needs a pointer receiver: it changes \
+         its operand",
+        "a.gopp:21:12: invalid @Operator method SetIndex: it needs a pointer receiver: it changes \
+         its operand",
+        "a.gopp:24:12: invalid @Operator method Iter: its form is () F, for a function type F that \
+         range accepts",
+        "a.gopp:27:12: invalid @Operator method Mul: an operator method has no type parameters of \
+         its own",
+        "a.gopp:30:12: invalid @Operator method Div: an operator method cannot fail",
+        "a.gopp:36:12: method V.Rem already declared for these parameter types",
+        "    a.gopp:33:12: other declaration of method Rem",
+        "a.gopp:41:12: method V.Neg is declared with @Operator and without it",
+        "    a.gopp:38:12: other declaration of method Neg",
+        "a.gopp:44:12: invalid @Right: the parameter has the type of the receiver",
+        "a.gopp:50:12: method V.BitOr already declared for these parameter types",
+        "    a.gopp:47:12: other declaration of method BitOr",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+
+    // The forms that are right, and the names that only a plain method
+    // has.
+    let text = "package p
+
+type V struct{ x int }
+
+@Operator
+func (a V) Add(b V) V { return a }
+
+@Operator
+func (a V) Add(b int) float64 { return 0 }
+
+@Operator
+func (a V) Shl(n int) V { return a }
+
+@Operator @Right
+func (a V) Shl(n int) V { return a }
+
+@Operator
+func (a V) Neg() V { return a }
+
+@Operator
+func (a V) Eq(b V) bool { return a.x == b.x }
+
+@Operator
+func (a V) Cmp(b V) int { return a.x - b.x }
+
+@Operator
+func (a *V) AddAssign(b V) { a.x += b.x }
+
+@Operator
+func (a V) Index(i, j int) int { return a.x }
+
+@Operator
+func (a *V) SetIndex(i, j int, v int) { a.x = v }
+
+@Operator
+func (a *V) Iter() func(yield func(int) bool) {
+	return func(yield func(int) bool) { yield(a.x) }
+}
+
+func (a V) Plus(b V) V { return a }
+
+type G[T any] struct{ items []T }
+
+@Operator
+func (g G[T]) Add(o G[T]) G[T] { return g }
+";
+    assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
+    // In a Go file a method is only a method.
+    let text = "package p\ntype V struct{}\nfunc (a V) Add(b V) V { return a }\nvar v V\n\
+                var _ = v.Add(v)\nvar _ = v + v\n";
+    let expected =
+        ["a.go:6:9: invalid operation: operator + not defined on v (variable of struct type V)"];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+// rule: EXP-17
+#[test]
+fn a_type_has_no_second_meaning_of_what_go_gives_it() {
+    let text = "package p
+
+type Meters float64
+type Seconds float64
+type Speed float64
+
+@Operator
+func (a Meters) Add(b Meters) Meters { return a }
+
+@Operator
+func (a Meters) Div(b Seconds) Speed { return Speed(float64(a) / float64(b)) }
+
+@Operator
+func (a Meters) Neg() Meters { return a }
+
+@Operator
+func (a Meters) Eq(b Meters) bool { return true }
+
+@Operator
+func (a Meters) Cmp(b Meters) int { return 0 }
+
+@Operator
+func (a *Meters) SubAssign(b Meters) {}
+
+@Operator
+func (a Meters) Shl(n uint) Meters { return a }
+
+type Bits uint8
+
+@Operator
+func (a Bits) Shl(n uint) Bits { return a }
+
+@Operator
+func (a Bits) BitNot() Bits { return a }
+
+type List []int
+
+@Operator
+func (l List) Index(i int) int { return 0 }
+
+@Operator
+func (l *List) SetIndex(i int, v int) {}
+
+@Operator
+func (l List) Iter() func(func(int) bool) { return func(func(int) bool) {} }
+
+type Grid [4]int
+
+@Operator
+func (g Grid) Eq(o Grid) bool { return true }
+
+@Convert
+func (a Meters) Float() float64 { return 0 }
+
+@Convert
+func (a Meters) Text() string { return \"\" }
+
+@Convert
+func (a Meters) Words() string { return \"\" }
+";
+    let expected = [
+        "a.gopp:8:17: invalid @Operator method Add: Meters already has the operator +: its \
+         underlying type float64 gives it",
+        "a.gopp:14:17: invalid @Operator method Neg: Meters already has the operator -: its \
+         underlying type float64 gives it",
+        "a.gopp:17:17: invalid @Operator method Eq: Meters already has the operator ==: its \
+         underlying type float64 gives it",
+        "a.gopp:20:17: invalid @Operator method Cmp: Meters already has the operator <: its \
+         underlying type float64 gives it",
+        "a.gopp:23:18: invalid @Operator method SubAssign: Meters already has the operator -=: its \
+         underlying type float64 gives it",
+        "a.gopp:31:15: invalid @Operator method Shl: Bits already has the operator <<: its \
+         underlying type uint8 gives it",
+        "a.gopp:34:15: invalid @Operator method BitNot: Bits already has the operator ^: its \
+         underlying type uint8 gives it",
+        "a.gopp:39:15: invalid @Operator method Index: List already has the operator []: its \
+         underlying type []int gives it",
+        "a.gopp:42:16: invalid @Operator method SetIndex: List already has the operator []=: its \
+         underlying type []int gives it",
+        "a.gopp:45:15: invalid @Operator method Iter: List already has the operator range: its \
+         underlying type []int gives it",
+        "a.gopp:53:17: invalid @Convert method Float: a Meters converts to float64 already",
+        "a.gopp:59:17: invalid @Convert method Words: Meters has a @Convert method to string \
+         already",
+        "    a.gopp:56:17: the other @Convert method",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+// rule: EXP-17
+// rule: EXP-20
+// rule: EXP-26
+// rule: TYP-27
+#[test]
+fn an_operator_is_the_method_that_takes_the_operand() {
+    // The example of ADR-0024.
+    let declared = "package p
+
+type Vec2 struct{ X, Y float64 }
+
+@Operator
+func (a Vec2) Add(b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+
+@Operator
+func (a Vec2) Sub(b Vec2) Vec2 { return Vec2{a.X - b.X, a.Y - b.Y} }
+
+@Operator
+func (a Vec2) Neg() Vec2 { return Vec2{-a.X, -a.Y} }
+
+@Operator
+func (a Vec2) Mul(b Vec2) Vec2 { return Vec2{a.X * b.X, a.Y * b.Y} }
+
+@Operator @Right
+func (a Vec2) Mul(s float64) Vec2 { return Vec2{a.X * s, a.Y * s} }
+
+@Operator @Right
+func (a Vec2) Div(s float64) Vec2 { return Vec2{s / a.X, s / a.Y} }
+
+@Operator
+func (a Vec2) Eq(b Vec2) bool { return a.X == b.X && a.Y == b.Y }
+
+@Operator
+func (a Vec2) Cmp(b Vec2) int { return 0 }
+";
+    let good = "
+func use(a, b Vec2, p, q *Vec2, f float64) bool {
+	c := a + b
+	d := -a * 2.0
+	e := 2.0 * a
+	g := f * a
+	h := a * f
+	i := 1 / a
+	j := p + q
+	k := -p - a
+	same := p == q
+	_, _, _, _, _, _, _, _ = c, d, e, g, h, i, j, k
+	switch a {
+	case b, c:
+	}
+	return a < b || a >= c || a == b || a != c || same
+}
+";
+    let expected = [
+        "30: a + b: Vec2.Add(Vec2) Vec2",
+        "31: -a * 2.0: Vec2.Mul(float64) Vec2",
+        "31: -a: Vec2.Neg() Vec2",
+        "32: 2.0 * a: Vec2.Mul(float64) Vec2 right",
+        "33: f * a: Vec2.Mul(float64) Vec2 right",
+        "34: a * f: Vec2.Mul(float64) Vec2",
+        "35: 1 / a: Vec2.Div(float64) Vec2 right",
+        "36: p + q: Vec2.Add(Vec2) Vec2",
+        "37: -p - a: Vec2.Sub(Vec2) Vec2",
+        "37: -p: Vec2.Neg() Vec2",
+        "41: case b: Vec2.Eq(Vec2) bool",
+        "41: case c: Vec2.Eq(Vec2) bool",
+        "43: a < b: Vec2.Cmp(Vec2) int",
+        "43: a >= c: Vec2.Cmp(Vec2) int",
+        "43: a == b: Vec2.Eq(Vec2) bool",
+        "43: a != c: Vec2.Eq(Vec2) bool",
+    ];
+    assert_eq!(operator_uses(&format!("{declared}{good}")), expected);
+
+    let bad = "
+type Other struct{}
+
+func use(a Vec2, o Other, n int) {
+	_ = a / 2.0
+	_ = a + 1
+	_ = a + n
+	_ = n + a
+	_ = a + o
+	_ = o + a
+	_ = !a
+	_ = a << 2
+	_ = a < o
+	a++
+}
+";
+    let expected = [
+        "a.gopp:32:6: invalid operation: a / 2.0 (Vec2 has no operator / (@Operator Div) for \
+         float64)",
+        "a.gopp:33:6: invalid operation: a + 1 (Vec2 has no operator + (@Operator Add) for int)",
+        "a.gopp:34:6: invalid operation: a + n (Vec2 has no operator + (@Operator Add) for int)",
+        "a.gopp:35:6: invalid operation: n + a (the @Operator Add methods of Vec2 take a Vec2 as \
+         the left operand)",
+        "    declare an @Operator @Right Add method for the other order",
+        "a.gopp:36:6: invalid operation: a + o (Vec2 has no operator + (@Operator Add) for Other)",
+        "a.gopp:37:6: invalid operation: o + a (the @Operator Add methods of Vec2 take a Vec2 as \
+         the left operand)",
+        "    declare an @Operator @Right Add method for the other order",
+        "a.gopp:38:7: invalid operation: operator ! not defined on a (variable of struct type \
+         Vec2)",
+        "a.gopp:39:6: invalid operation: shifted operand a (variable of struct type Vec2) must be \
+         integer",
+        "a.gopp:40:6: invalid operation: a < o (Vec2 has no operator < (@Operator Cmp) for Other)",
+        "a.gopp:41:2: invalid operation: a++ (non-numeric type Vec2)",
+    ];
+    assert_eq!(messages("a.gopp", &format!("{declared}{bad}")), expected);
+}
+
+// rule: EXP-17
+#[test]
+fn a_constant_takes_the_method_of_its_default_type_or_the_only_one_that_holds_it() {
+    let text = "package p
+
+type Meters float64
+type Seconds float64
+type Speed float64
+type Km int
+
+@Operator
+func (a Meters) Mul(b Seconds) Speed { return 0 }
+
+@Operator
+func (a Meters) Div(b int) Meters { return a }
+
+@Operator
+func (a Meters) Div(b float64) Speed { return 0 }
+
+type Small struct{}
+
+@Operator
+func (a Small) Add(b int8) Small { return a }
+
+@Operator
+func (a Small) Add(b int16) Small { return a }
+
+@Operator
+func (a Small) Sub(b int8) Small { return a }
+
+@Operator
+func (a Small) Sub(b string) Small { return a }
+
+@Operator
+func (a Small) Eq(b string) bool { return true }
+
+type Named struct{ n int }
+
+@Operator
+func (a Named) Eq(b int) bool { return a.n == b }
+
+func use(m Meters, s Seconds, x Small, n, o Named, any1 any) {
+	var speed Speed = m * s
+	var still Meters = m * m
+	var twice Meters = 2 * m
+	var half Meters = m / 2
+	var slow Speed = m / 2.5
+	x = x - 1
+	x = x - \"a\"
+	_ = x == \"a\"
+	_ = n == 3
+	_ = n == o
+	_ = n == any1
+	_ = any1 == n
+	_, _, _, _, _ = speed, still, twice, half, slow
+}
+";
+    let expected = [
+        "40: m * s: Meters.Mul(Seconds) Speed",
+        "43: m / 2: Meters.Div(int) Meters",
+        "44: m / 2.5: Meters.Div(float64) Speed",
+        "45: x - 1: Small.Sub(int8) Small",
+        "46: x - \"a\": Small.Sub(string) Small",
+        "47: x == \"a\": Small.Eq(string) bool",
+        "48: n == 3: Named.Eq(int) bool",
+    ];
+    assert_eq!(operator_uses(text), expected);
+
+    let bad = text.replace("x = x - 1\n", "x = x + 1\n\tx = x - 1.5\n\t_ = 3 == n\n");
+    let expected = [
+        "a.gopp:45:6: invalid operation: x + 1 (more than one @Operator Add method takes these \
+         operands)",
+        "a.gopp:46:6: invalid operation: x - 1.5 (Small has no operator - (@Operator Sub) for \
+         float64)",
+        "a.gopp:47:6: invalid operation: 3 == n (the @Operator Eq methods of Named take a Named as \
+         the left operand)",
+        "    declare an @Operator @Right Eq method for the other order",
+    ];
+    assert_eq!(messages("a.gopp", &bad), expected);
+}
+
+// rule: EXP-19
+// rule: EXP-22
+// rule: EXP-25
+// rule: RNG-6b
+#[test]
+fn a_method_changes_a_place_indexes_ranges_and_converts() {
+    let declared = "package p
+
+type Matrix struct {
+	rows, cols int
+	data       []float64
+}
+
+@Operator
+func (m *Matrix) Index(r, c int) float64 { return m.data[r*m.cols+c] }
+
+@Operator
+func (m *Matrix) Index(name string) *float64 { return &m.data[0] }
+
+@Operator
+func (m *Matrix) SetIndex(r, c int, v float64) { m.data[r*m.cols+c] = v }
+
+@Operator
+func (m *Matrix) AddAssign(o Matrix) {}
+
+@Operator
+func (m Matrix) Add(o Matrix) Matrix { return m }
+
+@Operator
+func (m Matrix) Sub(o Matrix) Matrix { return m }
+
+@Operator
+func (m Matrix) Mul(o Matrix) float64 { return 0 }
+
+@Operator
+func (m *Matrix) Iter() func(yield func(int, float64) bool) {
+	return func(yield func(int, float64) bool) {}
+}
+
+@Convert
+func (m Matrix) Size() int { return m.rows * m.cols }
+
+type Cells struct{ at map[string]Matrix }
+
+func open() Matrix { return Matrix{} }
+";
+    let good = "
+func use(m, n Matrix, pm *Matrix, cells Cells) float64 {
+	m[0, 1] = 2.5
+	m[1, 1] += 1
+	x := m[0, 1] + pm[1, 0]
+	pm[0, 0] = x
+	x = m[\"first\"]
+	m += n
+	m -= n
+	pm += n
+	cells.at[\"a\"] += n
+	for i, v := range m {
+		_, _ = i, v
+	}
+	for i := range pm {
+		_ = i
+	}
+	return float64(int(m)) + float64(m.Size())
+}
+";
+    let expected = [
+        "42: store m[0, 1]: Matrix.SetIndex(int, int, float64)",
+        "43: m[1, 1]: Matrix.Index(int, int) float64",
+        "43: store m[1, 1]: Matrix.SetIndex(int, int, float64)",
+        "44: m[0, 1]: Matrix.Index(int, int) float64",
+        "44: pm[1, 0]: Matrix.Index(int, int) float64",
+        "45: store pm[0, 0]: Matrix.SetIndex(int, int, float64)",
+        "46: m[\"first\"]: Matrix.Index(string) *float64",
+        "47: op= m: Matrix.AddAssign(Matrix)",
+        "48: op= m: Matrix.Sub(Matrix) Matrix",
+        "49: op= pm: Matrix.AddAssign(Matrix)",
+        "50: op= cells.at[\"a\"]: Matrix.Add(Matrix) Matrix",
+        "51: m: Matrix.Iter() func(func(int, float64) bool)",
+        "54: pm: Matrix.Iter() func(func(int, float64) bool)",
+        "57: int(m): Matrix.Size() int",
+    ];
+    assert_eq!(operator_uses(&format!("{declared}{good}")), expected);
+
+    let bad = "
+func use(m, n Matrix, cells Cells) {
+	m += m
+	m.data[0] = 1
+	m += open()
+	m *= n
+	p := &m[0, 0]
+	open()[0, 0] = 1
+	_ = open()[0, 0]
+	_ = m[0]
+	m[0, 0, 0] = 1
+	m[\"first\"] = 3
+	var k int = m
+	var s string = string(m)
+	for range open() {
+	}
+	_, _, _ = p, k, s
+}
+
+type Pair struct{ a, b int }
+type Pairs struct{ all []Pair }
+
+@Operator
+func (p Pairs) Index(i int) Pair { return p.all[i] }
+
+func change(p Pairs) {
+	p[0].a = 1
+	p[0] = Pair{}
+}
+";
+    let expected = [
+        "a.gopp:42:2: invalid operation: m += m (@Operator AddAssign changes m while it reads m)",
+        "    write m = m + m",
+        "a.gopp:45:2: invalid operation: m *= n (@Operator Mul gives a float64, which is no value \
+         of the type Matrix of m)",
+        "a.gopp:46:8: invalid operation: cannot take address of m[0, 0]: what @Operator Index \
+         gives is no place",
+        "a.gopp:47:2: invalid operation: open()[0, 0] (@Operator SetIndex has a pointer receiver, \
+         and open() is no place)",
+        "a.gopp:48:6: invalid operation: open()[0, 0] (@Operator Index has a pointer receiver, and \
+         open() is no place)",
+        "a.gopp:49:6: invalid operation: m[0] (Matrix has no @Operator Index method for int)",
+        "a.gopp:50:2: invalid operation: m[0, 0, 0] (Matrix has no @Operator SetIndex method for \
+         int, int, int)",
+        "a.gopp:51:2: invalid operation: m[\"first\"] (Matrix has no @Operator SetIndex method for \
+         string)",
+        "a.gopp:52:14: cannot use m (variable of struct type Matrix) as int value in variable \
+         declaration",
+        "    write int(m)",
+        "a.gopp:53:24: cannot convert m (variable of struct type Matrix) to type string",
+        "a.gopp:54:12: cannot range over open() (value of struct type Matrix): @Operator Iter has \
+         a pointer receiver, and it is no place",
+        "a.gopp:66:2: cannot assign to p[0].a: what @Operator Index gives is no place",
+        "a.gopp:67:2: invalid operation: p[0] (Pairs has no @Operator SetIndex method for int)",
+    ];
+    assert_eq!(messages("a.gopp", &format!("{declared}{bad}")), expected);
+}
+
+// rule: GEN-13
+#[test]
+fn a_constraint_lists_operators_that_the_types_of_go_have_too() {
+    let declared = "package p
+
+type Vec2 struct{ X, Y float64 }
+
+@Operator
+func (a Vec2) Add(b Vec2) Vec2 { return a }
+
+@Operator
+func (a Vec2) Mul(b Vec2) Vec2 { return a }
+
+@Operator @Right
+func (a Vec2) Mul(s float64) Vec2 { return a }
+
+@Operator @Right
+func (a Vec2) Div(s float64) Vec2 { return a }
+
+@Operator
+func (a *Vec2) SubAssign(b Vec2) {}
+
+type Table struct{ rows []int }
+
+@Operator
+func (t *Table) Index(i int) int { return t.rows[i] }
+
+@Operator
+func (t *Table) SetIndex(i int, v int) { t.rows[i] = v }
+
+type Named struct{ s []int }
+
+func Sum[T interface {
+	Add(T) T
+	Clone
+}](xs []T, zero T) T {
+	acc := zero
+	for _, x := range xs {
+		acc = acc + x
+		acc += x
+	}
+	return acc.Add(zero)
+}
+
+func Scale[T interface{ Mul(float64) T }](x T) T { return x * 2 }
+func Halve[T interface{ Div(float64) T }](x T) T { return x / 2 }
+func Same[T interface{ Eq(T) bool }](a, b T) bool { return a == b || a != b }
+func Less[T interface{ Cmp(T) int }](a, b T) bool { return a < b || a >= b }
+func Minus[T interface{ Neg() T }](a T) T { return -a }
+func Drop[T interface{ SubAssign(T) }](a *T, b T) { a -= move(b) }
+func Shift[T interface{ Shl(uint) T }](a T) T { return a << 2 }
+func At[S interface{ Index(int) E }, E any](s S) E { return s[0] }
+func Put[S interface{ SetIndex(int, E) }, E Copy](s S, v E) { s[0] = v }
+";
+    let good = "
+func use(v Vec2, xs []int, arr [3]int, t Table) {
+	_ = Sum([]int{1}, 0)
+	_ = Sum([]float64{1}, 0)
+	_ = Sum([]string{\"a\"}, \"\")
+	_ = Sum([]Vec2{v}, v)
+	_ = Scale(v)
+	_ = Scale(1.5)
+	_ = Same(1, 2)
+	_ = Same(v, v)
+	_ = Same(&v, &v)
+	_ = Less(\"a\", \"b\")
+	_ = Less(1.5, 2)
+	_ = Minus(3)
+	_ = Shift(uint8(1))
+	n := 1
+	Drop(&n, 2)
+	Drop(&v, v)
+	_ = At(xs)
+	_ = At(arr)
+	_ = At[string](\"x\")
+	_ = At(&xs)
+	_ = At(&t)
+	Put(&xs, 1)
+	Put(&arr, 1)
+	Put(&t, 1)
+}
+";
+    assert_eq!(
+        messages("a.gopp", &format!("{declared}{good}")),
+        [] as [&str; 0]
+    );
+
+    let bad = "
+func Any[T any](a, b T) bool { return a + b == a }
+func Other[T interface{ Add(T) T }](a T) bool { return a - a == a }
+
+func use(v Vec2, xs []int, n Named, t Table) {
+	_ = Sum([]bool{true}, false)
+	_ = Scale(1)
+	_ = Halve(v)
+	_ = Same(n, n)
+	_ = Less(v, v)
+	_ = Less(1i, 2i)
+	_ = Minus(\"a\")
+	_ = Shift(1.5)
+	Put(xs, 1)
+	Put(t, 1)
+	_ = At(t)
+	_ = Sum([]*Vec2{&v}, &v)
+}
+";
+    let expected = [
+        "a.gopp:52:39: invalid operation: operator + not defined on a (variable of type T \
+         constrained by any)",
+        "a.gopp:53:56: invalid operation: operator - not defined on a (variable of type T \
+         constrained by interface{Add(T) T})",
+        "a.gopp:56:6: in call to Sum, T (type bool) does not satisfy interface{Add(T) T; Clone} \
+         (missing method Add)",
+        "a.gopp:57:6: int does not satisfy interface{Mul(float64) int} (missing method Mul)",
+        "a.gopp:58:6: in call to Halve, T (type Vec2) does not satisfy interface{Div(float64) T} \
+         (missing method Div)",
+        "a.gopp:59:6: in call to Same, T (type Named) does not satisfy interface{Eq(T) bool} \
+         (missing method Eq)",
+        "a.gopp:60:6: in call to Less, T (type Vec2) does not satisfy interface{Cmp(T) int} \
+         (missing method Cmp)",
+        "a.gopp:61:6: complex128 does not satisfy interface{Cmp(complex128) int} (missing method \
+         Cmp)",
+        "a.gopp:62:6: string does not satisfy interface{Neg() string} (missing method Neg)",
+        "a.gopp:63:6: float64 does not satisfy interface{Shl(uint) float64} (missing method Shl)",
+        "a.gopp:64:2: in call to Put, S (type []int) does not satisfy interface{SetIndex(int, E)} \
+         (missing method SetIndex)",
+        "a.gopp:65:2: in call to Put, S (type Table) does not satisfy interface{SetIndex(int, E)} \
+         (method SetIndex has pointer receiver)",
+        "a.gopp:66:6: in call to At, S (type Table) does not satisfy interface{Index(int) E} \
+         (method Index has pointer receiver)",
+        "a.gopp:67:6: in call to Sum, T (type *Vec2) does not satisfy interface{Add(T) T; Clone} \
+         (wrong type for method Add)",
+        "    have Add(Vec2) Vec2",
+        "    want Add(T) T",
+    ];
+    assert_eq!(messages("a.gopp", &format!("{declared}{bad}")), expected);
+
+    // A method of a constraint of a Go file is only a method.
+    let go = "package p\nfunc Sum[T interface{ Add(T) T }](a T) T { return a.Add(a) }\n\
+              var _ = Sum(1)\n";
+    let expected = ["a.go:3:9: int does not satisfy interface{Add(int) int} (missing method Add)"];
+    assert_eq!(messages("a.go", go), expected);
+}
+
+// rule: EXP-18
+// rule: EXP-30
+#[test]
+fn an_operator_method_is_called_by_its_name_and_inherited() {
+    let declared = "package p
+
+type Big struct{ digits []uint32 }
+
+func (b *Big) drop() {}
+
+@Operator
+func (a Big) Add(b Big) Big { return Big{} }
+
+@Operator
+func (a Big) Add(n int) Big { return Big{} }
+
+@Operator @Right
+func (a Big) Sub(n int) Big { return Big{} }
+
+@Operator
+func (a Big) Sub(b Big) Big { return Big{} }
+
+@Operator
+func (a Big) Eq(b Big) bool { return len(a.digits) == len(b.digits) }
+
+type Base struct{ n int }
+
+@Operator
+func (b Base) Eq(o Base) bool { return b.n == o.n }
+
+@Operator
+func (b Base) Add(o Base) Base { return b }
+
+@Extends(Base)
+type Kid struct{ extra int }
+
+@Operator
+func (k Kid) Add(o Kid) Kid { return k }
+";
+    // The operands are read where they are, also those that are not
+    // copied.
+    let good = "
+func use(a, b Big, k, k2 Kid, e Base) bool {
+	c := a + b
+	d := a + 1
+	f := a.Add(b)
+	g := a.Add(2)
+	h := 3 - a
+	i := a.Sub(b)
+	_, _, _, _, _, _ = c, d, f, g, h, i
+	_ = k + k2
+	_ = e + e
+	return a == b && e == e
+}
+";
+    let expected = [
+        "37: a + b: Big.Add(Big) Big",
+        "38: a + 1: Big.Add(int) Big",
+        "39: a.Add(b): Big.Add(Big) Big",
+        "40: a.Add(2): Big.Add(int) Big",
+        "41: 3 - a: Big.Sub(int) Big right",
+        "42: a.Sub(b): Big.Sub(Big) Big",
+        "44: k + k2: Kid.Add(Kid) Kid",
+        "45: e + e: Base.Add(Base) Base",
+        "46: a == b: Big.Eq(Big) bool",
+        "46: e == e: Base.Eq(Base) bool",
+    ];
+    assert_eq!(operator_uses(&format!("{declared}{good}")), expected);
+
+    let bad = "
+func use(a Big, k, k2 Kid, e Base) {
+	_ = a.Add(\"x\")
+	_ = a.Sub(1)
+	f := a.Add
+	_ = f
+	_ = k == k2
+	_ = k + e
+	_ = e + k
+}
+";
+    let expected = [
+        "a.gopp:37:6: no @Operator Add method of Big takes (string)",
+        "a.gopp:38:6: no @Operator Sub method of Big takes (int)",
+        "a.gopp:39:7: a.Add names more than one @Operator method: only a call says which",
+        "a.gopp:39:7: cannot copy a (variable of struct type Big): Big has a drop method and no \
+         Clone() Big",
+        "    use move(a) to give the value, or &a to lend it",
+        "a.gopp:41:6: invalid operation: k == k2 (Kid has no operator == (@Operator Eq) for Kid)",
+        "    define @Operator Eq on Kid, or compare the parent parts",
+        "a.gopp:43:6: invalid operation: e + k (Base has no operator + (@Operator Add) for Kid)",
+    ];
+    assert_eq!(messages("a.gopp", &format!("{declared}{bad}")), expected);
+}
+
+#[test]
+fn the_steps_of_operators_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    // Many types, each with a few operator methods and uses of all the
+    // forms.
+    let types = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                format!(
+                    "type V{i} struct{{ x int }}\n\n\
+                     @Operator\nfunc (a V{i}) Add(b V{i}) V{i} {{ return a }}\n\n\
+                     @Operator\nfunc (a V{i}) Add(b int) V{i} {{ return a }}\n\n\
+                     @Operator @Right\nfunc (a V{i}) Mul(b float64) V{i} {{ return a }}\n\n\
+                     @Operator\nfunc (a V{i}) Eq(b V{i}) bool {{ return a.x == b.x }}\n\n\
+                     @Operator\nfunc (a *V{i}) SubAssign(b V{i}) {{}}\n\n\
+                     @Operator\nfunc (a V{i}) Index(k int) int {{ return a.x }}\n\n\
+                     func use{i}(a, b V{i}) bool {{\n\
+                     \tc := a + b + 1\n\tc = 2.5 * c\n\tc -= a\n\t_ = c[0] + c.Add(3)[1]\n\
+                     \treturn a == b\n}}\n"
+                )
+            })
+            .collect();
+        format!("package p\n{all}")
+    };
+    // One type and many uses of its operators in one function.
+    let uses = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("\tc = c + a*{i}.5 + b\n\tc -= a\n"))
+            .collect();
+        format!(
+            "package p\ntype V struct{{ x int }}\n\n\
+             @Operator\nfunc (a V) Add(b V) V {{ return a }}\n\n\
+             @Operator @Right\nfunc (a V) Mul(b float64) V {{ return a }}\n\n\
+             @Operator\nfunc (a *V) SubAssign(b V) {{}}\n\n\
+             func use(a, b V) V {{\n\tc := a\n{all}\treturn c\n}}\n"
+        )
+    };
+    // A generic function over operator elements, instantiated for many
+    // types.
+    let instances = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                format!(
+                    "type N{i} int\nvar _ = Sum([]N{i}{{1}})\ntype S{i} struct{{}}\n\n\
+                     @Operator\nfunc (a S{i}) Add(b S{i}) S{i} {{ return a }}\n\n\
+                     var _ = Sum([]S{i}{{}})\n"
+                )
+            })
+            .collect();
+        format!(
+            "package p\nfunc Sum[T interface {{\n\tAdd(T) T\n\tCopy\n}}](xs []T) T \
+             {{ return xs[0] + xs[0] }}\n{all}"
+        )
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(types(n)));
+    linear::assert_near_linear(&sizes, |n| steps(uses(n)));
+    linear::assert_near_linear(&sizes, |n| steps(instances(n)));
 }
 
 // rule: OWN-R3a

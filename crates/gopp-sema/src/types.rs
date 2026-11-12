@@ -320,6 +320,28 @@ pub struct DeclaredMethod {
     pub receiver_params: Vec<TypeId>,
 }
 
+/// Says whether a type meets a method that is wanted in a way of its
+/// own, given what says whether two method types are the same; `None`
+/// if the methods of the type decide.
+pub type Met<'m> = dyn FnMut(&Method, &mut dyn FnMut(TypeId, TypeId) -> bool) -> Option<bool> + 'm;
+
+/// An `@Operator` method as a value of one type has it.
+#[derive(Clone, Debug)]
+pub struct Operator {
+    pub name: Spur,
+    /// The type of the method, written with the type arguments of the
+    /// type that has it.
+    pub sig: TypeId,
+    pub marks: Marks,
+    pub pointer_receiver: bool,
+    /// The type that declares the method: the type itself or an
+    /// ancestor.
+    pub holder: TypeId,
+    /// Which of the `@Operator` methods of the holder it is, in the order
+    /// of their declarations.
+    pub at: u32,
+}
+
 /// The built-in attributes that a method is declared with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Marks(u16);
@@ -456,6 +478,9 @@ struct Named {
     methods: Vec<DeclaredMethod>,
     /// Where each method is in `methods`, by its name and its package.
     method_index: FxHashMap<(Spur, Option<Spur>), u32>,
+    /// Every `@Operator` method, in the order of the declarations: those
+    /// of one name are told apart by their parameters.
+    operators: Vec<DeclaredMethod>,
     /// Declared with `@Extends`: it has parents.
     extends: bool,
     /// The parents, in the order of the `@Extends` attributes.
@@ -494,6 +519,9 @@ struct Inner {
     /// For a type parameter that stands for another in one place, the
     /// one that was declared.
     param_origins: FxHashMap<TypeId, TypeId>,
+    /// The type parameters that are declared in Go++ files: a method of
+    /// their constraint may be met as an operator element (GEN-13).
+    element_params: FxHashSet<TypeId>,
     /// By the first type parameter that a method with type parameters of
     /// its own got for one receiver: what the receiver names its type
     /// parameters, and the type arguments of that receiver.
@@ -769,6 +797,7 @@ impl Types {
             params: Vec::new(),
             methods: Vec::new(),
             method_index: FxHashMap::default(),
+            operators: Vec::new(),
             extends: false,
             parents: Vec::new(),
             abstract_marked: false,
@@ -796,6 +825,7 @@ impl Types {
                 params: Vec::new(),
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
+                operators: Vec::new(),
                 extends: false,
                 parents: Vec::new(),
                 abstract_marked: false,
@@ -1015,6 +1045,7 @@ impl Types {
                 params: Vec::new(),
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
+                operators: Vec::new(),
                 extends: false,
                 parents: Vec::new(),
                 abstract_marked: false,
@@ -1729,6 +1760,102 @@ impl Types {
         None
     }
 
+    /// Declares an `@Operator` method of `named`, next to the others of
+    /// its name.
+    pub fn add_operator(&self, named: NamedId, method: DeclaredMethod) {
+        self.write(|inner| inner.named[named.0 as usize].operators.push(method));
+    }
+
+    /// The `@Operator` methods of the name that a value of the declared
+    /// type `ty` has: its own, then those of its ancestors that none
+    /// before replaces (EXP-30).
+    pub fn operators(&self, ty: TypeId, name: Spur) -> Vec<Operator> {
+        let mut found = Vec::new();
+        self.operators_in(ty, name, &mut found);
+        found
+    }
+
+    fn operators_in(&self, ty: TypeId, name: Spur, found: &mut Vec<Operator>) {
+        let Type::Named { id, args } = &*self.get(self.unalias(ty)) else {
+            return;
+        };
+        let own: Vec<(u32, DeclaredMethod)> = self.read(|inner| {
+            let all = inner.named[id.0 as usize].operators.iter().enumerate();
+            all.filter(|(_, method)| method.method.name == name)
+                .map(|(at, method)| (at as u32, method.clone()))
+                .collect()
+        });
+        self.steps
+            .fetch_add(1 + own.len() as u64, Ordering::Relaxed);
+        for (at, method) in own {
+            let sig = self.substitute(method.method.sig, &method.receiver_params, args);
+            let right = method.marks.has(Marks::RIGHT);
+            let replaced = found.iter().any(|known: &Operator| {
+                known.marks.has(Marks::RIGHT) == right && self.same_params(known.sig, sig)
+            });
+            if !replaced {
+                found.push(Operator {
+                    name,
+                    sig,
+                    marks: method.marks,
+                    pointer_receiver: method.pointer_receiver,
+                    holder: ty,
+                    at,
+                });
+            }
+        }
+        for parent in self.parents(ty) {
+            deep(|| self.operators_in(parent, name, found));
+        }
+    }
+
+    /// The methods with the mark that a value of the declared type `ty`
+    /// has, each with the type that declares it: its own, then those of
+    /// its ancestors. The types of the methods are written with the type
+    /// arguments.
+    pub fn marked_methods(&self, ty: TypeId, mark: Marks) -> Vec<(Method, TypeId)> {
+        let mut found = Vec::new();
+        self.marked_in(ty, mark, &mut found);
+        found
+    }
+
+    fn marked_in(&self, ty: TypeId, mark: Marks, found: &mut Vec<(Method, TypeId)>) {
+        let Type::Named { id, args } = &*self.get(self.unalias(ty)) else {
+            return;
+        };
+        let own: Vec<DeclaredMethod> = self.read(|inner| {
+            let all = inner.named[id.0 as usize].methods.iter();
+            all.filter(|method| method.marks.has(mark))
+                .cloned()
+                .collect()
+        });
+        self.steps
+            .fetch_add(1 + own.len() as u64, Ordering::Relaxed);
+        for method in own {
+            let sig = self.substitute(method.method.sig, &method.receiver_params, args);
+            found.push((
+                Method {
+                    sig,
+                    ..method.method
+                },
+                ty,
+            ));
+        }
+        for parent in self.parents(ty) {
+            deep(|| self.marked_in(parent, mark, found));
+        }
+    }
+
+    /// Whether the two function types take parameters of the same types.
+    pub fn same_params(&self, a: TypeId, b: TypeId) -> bool {
+        match (&*self.get(a), &*self.get(b)) {
+            (Type::Func { params: a, .. }, Type::Func { params: b, .. }) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(&a, &b)| self.identical(a, b))
+            }
+            _ => false,
+        }
+    }
+
     /// Declares a method of `named`, or says what the method that was
     /// declared with the name is.
     pub fn add_method(&self, named: NamedId, method: DeclaredMethod) {
@@ -1823,6 +1950,18 @@ impl Types {
     pub fn param_origin(&self, param: TypeId) -> TypeId {
         self.read(|inner| inner.param_origins.get(&param).copied())
             .unwrap_or(param)
+    }
+
+    /// The type parameter is declared in a Go++ file.
+    pub fn set_elements(&self, param: TypeId) {
+        self.write(|inner| inner.element_params.insert(param));
+    }
+
+    /// Whether a method of the constraint of the type parameter may be
+    /// met as an operator element.
+    pub fn has_elements(&self, param: TypeId) -> bool {
+        let origin = self.param_origin(param);
+        self.read(|inner| inner.element_params.contains(&origin))
     }
 
     /// For the first type parameter of a method as one receiver has it:
@@ -2162,17 +2301,25 @@ impl Types {
         wanted: &MethodSet,
         names: &ThreadedRodeo,
     ) -> Option<(Method, Lacks)> {
-        self.lacks_with(id, wanted, names, &mut |a, b| self.identical(a, b))
+        self.lacks_with(
+            id,
+            wanted,
+            names,
+            &mut |a, b| self.identical(a, b),
+            &mut |_, _| None,
+        )
     }
 
     /// `lacks`, where `same` says whether the type of a method that the
-    /// type has is the type that is wanted.
+    /// type has is the type that is wanted, and `met` whether the type
+    /// meets a method in a way of its own.
     pub fn lacks_with(
         &self,
         id: TypeId,
         wanted: &MethodSet,
         names: &ThreadedRodeo,
         same: &mut dyn FnMut(TypeId, TypeId) -> bool,
+        met: &mut Met<'_>,
     ) -> Option<(Method, Lacks)> {
         if wanted.is_empty() {
             return None;
@@ -2190,10 +2337,13 @@ impl Types {
             (names.resolve(&method.name), package)
         };
         wanted.for_each(&mut |method| {
+            let own = met(method, same);
             let lacks = match &has {
+                _ if own == Some(true) => None,
                 Some(has) => self.interface_lacks(has, method, same),
                 None => self.type_lacks(id, method, names, same),
             };
+            let lacks = lacks.or(own.filter(|met| !met).map(|_| Lacks::Method));
             if let Some(lacks) = lacks
                 && missing
                     .as_ref()

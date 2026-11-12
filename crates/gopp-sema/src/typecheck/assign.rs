@@ -137,6 +137,17 @@ impl<'a> Checker<'a> {
                 self.describe(cx, expr, &x),
                 self.type_string(to)
             );
+            // A `@Convert` method is called where the conversion is
+            // written (EXP-25).
+            if self
+                .convert_method(cx, self.read(cx, x.clone()).ty, to)
+                .is_some()
+            {
+                let written = format!("{}({})", self.type_string(to), self.expr_string(cx, expr));
+                let fix = (Code::NoteOpFix, format!("write {written}"));
+                self.error_with_fix(Code::CannotAssign, span, message, fix);
+                return Operand::UNKNOWN;
+            }
             let cause = self
                 .unfit_cause(&x, to)
                 .or_else(|| self.untested_option(&x, to));
@@ -416,7 +427,18 @@ impl<'a> Checker<'a> {
         }
         let outer = self.lookup_target.replace(inner);
         let known = self.unnarrowed.replace(inner);
-        let x = self.value(cx, lhs);
+        let mut x = self.value(cx, lhs);
+        // `a[i] op= v` read the element with `Index`, and stores it with
+        // `SetIndex` (EXP-22).
+        if let ExprKind::Index { x: of, indices } = &cx.tree.exprs[inner].kind
+            && self.operators.contains_key(&inner)
+        {
+            let held = self.value(cx, *of);
+            let held = self.read(cx, held);
+            x = self
+                .operator_index(cx, inner, *of, &held, indices)
+                .unwrap_or(x);
+        }
         self.unnarrowed = known;
         self.lookup_target = outer;
         if x.mode == Mode::Unknown || x.ty == Types::INVALID {
@@ -461,6 +483,17 @@ impl<'a> Checker<'a> {
         {
             let message = format!("cannot assign to struct field {text} in map");
             self.error(Code::CannotAssignTo, span, message);
+            return Some(Types::INVALID);
+        }
+        // A part of what `@Operator Index` gives is a part of a copy.
+        let mut base = inner;
+        while let ExprKind::Selector { x, .. } | ExprKind::Paren(x) = cx.tree.exprs[base].kind {
+            base = x;
+        }
+        if base != inner && self.operators.contains_key(&base) {
+            let message =
+                format!("cannot assign to {text}: what @Operator Index gives is no place");
+            self.error(Code::OpIndexNotPlace, span, message);
             return Some(Types::INVALID);
         }
         let message =

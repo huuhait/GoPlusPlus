@@ -1698,6 +1698,87 @@ pub fn explain(code: Code) -> Option<Explanation> {
              generic.",
             "func f[T any]() { f[[]T]() }                   // error\ntype List[T any] struct{ next *List[*T] }      // error\ntype Ring[A, B any] struct{ next *Ring[B, A] } // ok",
         ),
+        OpShape => (
+            "An @Operator method stands for one operator, and each operator has one shape: how \
+             many parameters the method takes and what it returns. Add takes the right operand \
+             and returns the result; Eq returns bool; Cmp returns int; AddAssign and SetIndex \
+             return nothing; Iter returns a function that range accepts.",
+            "Declare the method in the shape of its operator, or remove @Operator and call it \
+             by its name.",
+            "@Operator\nfunc (a Vec) Add(b Vec) Vec  // ok\n@Operator\nfunc (a Vec) Eq(b Vec) int   // error: Eq returns bool",
+        ),
+        OpReceiver => (
+            "An operator that only reads its operands has a value receiver, because the operand \
+             may be a temporary: a + b, -a, a == b, a < b. An operator that changes its operand \
+             has a pointer receiver: a += b, a[i] = v.",
+            "Use a value receiver for Add, Neg, Eq, Cmp and the like, and a pointer receiver for \
+             the Assign methods and SetIndex.",
+            "@Operator\nfunc (a *Vec) Add(b Vec) Vec  // error\n@Operator\nfunc (a *Vec) AddAssign(b Vec) // ok",
+        ),
+        OpDuplicate => (
+            "The @Operator methods of one name are told apart by the types of their parameters. \
+             Two of them take the same types, or a name is used both for @Operator methods and \
+             for a plain method.",
+            "Give each @Operator method of the name other parameter types, and give a plain \
+             method another name.",
+            "@Operator\nfunc (a Vec) Mul(b Vec) Vec\n@Operator\nfunc (a Vec) Mul(s float64) Vec // ok: another parameter type",
+        ),
+        OpSecondMeaning => (
+            "The type has this operator or this conversion already, from the type it is declared \
+             as. A method would give the same expression a second meaning.",
+            "Remove the method, or declare it for another operand type.",
+            "type Meters float64\n@Operator\nfunc (a Meters) Add(b Meters) Meters   // error: Meters + Meters is Go's\n@Operator\nfunc (a Meters) Mul(s Seconds) Speed  // ok",
+        ),
+        OpTypeParams => (
+            "An @Operator method has no type parameters of its own: an operator has no place to \
+             write type arguments. The type parameters of the receiver type are fine.",
+            "Remove the type parameters, or make the method a plain one.",
+            "@Operator\nfunc (a Vec[T]) Add(b Vec[T]) Vec[T]   // ok\n@Operator\nfunc (a Vec[T]) Mul[U any](b U) Vec[T] // error",
+        ),
+        OpFails => (
+            "An @Operator method cannot be a function that can fail: an operator has no place \
+             for the error.",
+            "Remove the !, or make the method a plain one and call it by its name.",
+            "@Operator\nfunc (a Dec) Div!(b Dec) Dec // error",
+        ),
+        OpNotAddressable => (
+            "The operator method has a pointer receiver, so it works on a place: a variable, a \
+             field, an element, or what a pointer points to. This operand is a temporary value.",
+            "Put the value in a variable first.",
+            "make()[0] = v     // error if SetIndex is the method\nm := make()\nm[0] = v          // ok",
+        ),
+        OpNoMethod => (
+            "No @Operator method of the type takes this operand, and Go has no such operator \
+             for these types. The type of the operand must be the parameter type exactly: there \
+             is no conversion.",
+            "Declare an @Operator method for that operand type, convert the operand, or, for a \
+             type on the right only, declare the method with @Right.",
+            "f := a / 2.0 // error: Vec has no operator / (@Operator Div) for float64",
+        ),
+        OpAmbiguous => (
+            "More than one @Operator method fits: a constant fits several parameter types, or a \
+             method of the left type and a @Right method of the right type both take the pair.",
+            "Give the constant a type, or remove one of the two methods.",
+            "x := a * 2          // error if Mul(int8) and Mul(int16) are declared\nx := a * int8(2)    // ok",
+        ),
+        OpCompoundOverlap => (
+            "An in-place operator method changes its receiver while it reads its operand. Here \
+             the operand is the receiver or a part of it.",
+            "Write the assignment out: m = m + m.",
+            "m += m    // error with an AddAssign method\nm = m + m // ok",
+        ),
+        OpIndexNotPlace => (
+            "What an @Operator Index method gives is a value, not a place: its address cannot be \
+             taken, and a field of it cannot be assigned.",
+            "Assign the whole element with a SetIndex method, or let Index return a pointer.",
+            "p := &m[0, 0]   // error\nm[0, 0].x = 1   // error\nm[0, 0] = v     // ok with SetIndex",
+        ),
+        OpSelect => (
+            "The name stands for several @Operator methods. A call picks the one whose parameter \
+             types are the argument types; here none fits, or the method is not called.",
+            "Call the method with arguments of the parameter types of one of them.",
+            "f := v.Mul      // error: which Mul?\nw := v.Mul(2.0) // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

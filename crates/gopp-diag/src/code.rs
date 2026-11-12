@@ -287,8 +287,20 @@ codes! {
     398 DowncastImpossible "err_downcast_impossible",
     399 ExtendsConstraint "err_extends_constraint",
     400 DefinedFromHierarchy "err_defined_from_hierarchy",
+    402 OpShape "err_op_shape",
+    403 OpReceiver "err_op_receiver",
+    404 OpDuplicate "err_op_duplicate",
+    405 OpSecondMeaning "err_op_second_meaning",
+    406 OpTypeParams "err_op_tparams",
+    407 OpFails "err_op_fails",
     408 ConvertMisuse "err_convert_misuse",
     409 RightMisuse "err_right_misuse",
+    410 OpNotAddressable "err_op_not_addressable",
+    411 OpNoMethod "err_op_no_method",
+    412 OpAmbiguous "err_op_ambiguous",
+    413 OpCompoundOverlap "err_op_compound_overlap",
+    414 OpIndexNotPlace "err_op_index_not_place",
+    415 OpSelect "err_op_select",
     442 GirExternBad "err_gir_extern_bad",
     445 GirExportBad "err_gir_export_bad",
     446 InstOption "err_inst_option",
@@ -334,6 +346,7 @@ codes! {
     495 IfaceNotSend "err_iface_not_send",
     496 ExtendsDiamond "err_extends_diamond",
     497 BaseAmbiguous "err_base_ambiguous",
+    498 NoteOpFix "note_op_fix",
 }
 
 impl Code {

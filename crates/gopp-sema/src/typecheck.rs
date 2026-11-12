@@ -21,6 +21,7 @@ mod inherit;
 mod literal;
 mod methods;
 mod mono;
+mod operators;
 mod ops;
 mod own;
 mod place;
@@ -256,6 +257,18 @@ struct Checker<'a> {
     callee: Option<ExprId>,
     /// While the signature of a method is worked out.
     in_method_sig: bool,
+    /// The `@Operator` methods of each type as they were declared, and
+    /// the types that its `@Convert` methods convert to.
+    operator_decls: FxHashMap<crate::types::NamedId, Vec<operators::OperatorDecl>>,
+    convert_decls: FxHashMap<crate::types::NamedId, Vec<(TypeId, Span)>>,
+    /// Where each `@Operator` method of a type is declared, by its place
+    /// among them; and the names of all that are declared.
+    operator_spans: FxHashMap<(crate::types::NamedId, u32), Span>,
+    operator_names: FxHashSet<Span>,
+    operators: FxHashMap<ExprId, crate::object::OperatorUse>,
+    op_assigns: FxHashMap<ExprId, crate::object::OperatorUse>,
+    index_stores: FxHashMap<ExprId, crate::object::OperatorUse>,
+    case_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
     /// The type parameters of the package and what each is instantiated
     /// as.
     mono: mono::Mono,
@@ -408,6 +421,10 @@ struct BodyTypes {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     narrowed: FxHashSet<ExprId>,
     iface_args: FxHashSet<ExprId>,
+    operators: FxHashMap<ExprId, crate::object::OperatorUse>,
+    op_assigns: FxHashMap<ExprId, crate::object::OperatorUse>,
+    index_stores: FxHashMap<ExprId, crate::object::OperatorUse>,
+    case_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -471,6 +488,14 @@ pub fn declarations(
         method_values: FxHashMap::default(),
         callee: None,
         in_method_sig: false,
+        operator_decls: FxHashMap::default(),
+        convert_decls: FxHashMap::default(),
+        operator_spans: FxHashMap::default(),
+        operator_names: FxHashSet::default(),
+        operators: FxHashMap::default(),
+        op_assigns: FxHashMap::default(),
+        index_stores: FxHashMap::default(),
+        case_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
         receiver_of: None,
         parent_part: false,
@@ -575,6 +600,10 @@ pub fn declarations(
             body.method_values = found.method_values;
             body.narrowed = found.narrowed;
             body.iface_args = found.iface_args;
+            body.operators = found.operators;
+            body.op_assigns = found.op_assigns;
+            body.index_stores = found.index_stores;
+            body.case_operators = found.case_operators;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
@@ -754,6 +783,9 @@ impl<'a> Checker<'a> {
         let incomplete = self.incomplete;
         let outer = std::mem::replace(&mut self.in_type_params, true);
         for (param, &ty) in type_params.iter().zip(params) {
+            if cx.dialect == Dialect::Gopp {
+                self.types.set_elements(ty);
+            }
             let mut constraint = self.typ(cx, param.bound);
             if matches!(&*self.types.get(constraint), Type::Param(_)) {
                 let message = "cannot use a type parameter as constraint".to_owned();
@@ -2656,6 +2688,10 @@ impl<'a> Checker<'a> {
         let callee = self.operand(cx, fun);
         self.callee = outer;
         self.method_values.remove(&called);
+        let callee = match self.own_rules(cx) {
+            true => self.operator_by_name(cx, expr, called, callee, args),
+            false => callee,
+        };
         let callee = self.instantiated(cx, fun, callee);
         // In a `.gopp` file a function is called through a pointer; an
         // option that is known to be set is the function already.
@@ -2702,7 +2738,7 @@ impl<'a> Checker<'a> {
                         for &arg in args {
                             self.operand(cx, arg);
                         }
-                        if !self.open(callee.ty) && !self.may_overload(cx, callee.ty) {
+                        if !self.open(callee.ty) {
                             let message = format!(
                                 "invalid operation: cannot call {}: {cause}",
                                 self.describe(cx, fun, &callee)
@@ -3159,6 +3195,10 @@ impl<'a> Checker<'a> {
                 method_values: std::mem::take(&mut self.method_values),
                 narrowed: std::mem::take(&mut self.narrowed),
                 iface_args: std::mem::take(&mut self.iface_args),
+                operators: std::mem::take(&mut self.operators),
+                op_assigns: std::mem::take(&mut self.op_assigns),
+                index_stores: std::mem::take(&mut self.index_stores),
+                case_operators: std::mem::take(&mut self.case_operators),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
                 bangs: std::mem::take(&mut self.bangs),

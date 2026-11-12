@@ -57,6 +57,11 @@ impl<'a> Checker<'a> {
             self.error(Code::CannotUseConstraintOutside, span, message);
             return Operand::UNKNOWN;
         }
+        // A `@Convert` method of the type gives the value.
+        let read = self.read(cx, x.clone());
+        if self.operator_convert(cx, call, &read, target) {
+            return Operand::value(target);
+        }
         let span = cx.tree.exprs[arg].span;
         let basic = self.basic_of(target);
         let mut cause = None;
@@ -185,7 +190,7 @@ impl<'a> Checker<'a> {
     /// Whether the value `x`, which is no constant of a type of constants,
     /// converts to the type `to`. `cause` gets what there is to say where
     /// a type parameter does not.
-    fn convertible(&self, x: &Operand, to: TypeId, cause: &mut Option<String>) -> bool {
+    pub(super) fn convertible(&self, x: &Operand, to: TypeId, cause: &mut Option<String>) -> bool {
         if !self.not_assignable(x, to) {
             return true;
         }

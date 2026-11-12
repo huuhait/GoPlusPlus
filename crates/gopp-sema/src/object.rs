@@ -154,6 +154,19 @@ pub struct Body {
     /// value is assigned over, so the one that is evaluated last may be
     /// given as it is.
     pub self_moves: FxHashSet<ExprId>,
+    /// The expressions that an `@Operator` or a `@Convert` method stands
+    /// for, each with the method: `a + b`, `-a`, `a == b`, `a < b`, `a[i]`
+    /// that is read, `T(a)`, and what a `range` clause ranges over.
+    pub operators: FxHashMap<ExprId, OperatorUse>,
+    /// For `x op= y`, by the place `x`: the method that is called, an
+    /// in-place one (`AddAssign`) or the one of `x op y` (`Add`).
+    pub op_assigns: FxHashMap<ExprId, OperatorUse>,
+    /// The index expressions that are assigned to through an `@Operator`
+    /// `SetIndex` method, each with the method.
+    pub index_stores: FxHashMap<ExprId, OperatorUse>,
+    /// The values of the cases of an expression switch that are compared
+    /// with the tag by an `@Operator` `Eq` method, each with the method.
+    pub case_operators: FxHashMap<ExprId, OperatorUse>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.
@@ -190,6 +203,23 @@ pub enum CaptureUse {
     /// The address of the variable or of a part of it is taken: `&x`, a
     /// method with a pointer receiver, `&v` of a range clause over it.
     Address,
+}
+
+/// The method that stands for an operator in one place (EXP-17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OperatorUse {
+    /// The type that declares the method, with its type arguments; or
+    /// the type parameter whose constraint lists it.
+    pub holder: TypeId,
+    pub name: Spur,
+    /// Which of the `@Operator` methods of the holder, in the order of
+    /// their declarations. `None` for a method that is found by its name
+    /// alone: one of a constraint, or a `@Convert` method.
+    pub method: Option<u32>,
+    /// The type of the method as it is called here.
+    pub sig: TypeId,
+    /// The receiver is the operand on the right (`@Right`).
+    pub swapped: bool,
 }
 
 /// What a method value `x.m` holds of `x` (CLO-5, CLO-5a).

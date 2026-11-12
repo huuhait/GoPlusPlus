@@ -3,7 +3,7 @@
 //! (signature.go, decl.go), and the messages are Go's.
 
 use super::*;
-use crate::types::NamedId;
+use crate::types::{Marks, NamedId};
 
 /// The receiver `(r *T[P])` of a method, taken apart.
 struct Receiver {
@@ -63,13 +63,24 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let package = self.package_of(name.name);
+            let marks = self.marks(&cx, &node.attrs);
+            let operator = self.own_rules(&cx) && marks.has(Marks::OPERATOR);
+            if operator {
+                self.operator_names.insert(name.span);
+            }
             let first = *self
                 .method_names
                 .entry((named, name.name, package))
                 .or_insert(name.span);
-            if first != name.span {
-                if !with_signatures {
-                    self.method_again(named, *name, first);
+            // The `@Operator` methods of one name are told apart by their
+            // parameters (TYP-27).
+            let first_operator = self.operator_names.contains(&first);
+            let overload = first != name.span && operator && first_operator;
+            if first != name.span && !overload {
+                match operator || first_operator {
+                    _ if with_signatures => {}
+                    false => self.method_again(named, *name, first),
+                    true => self.operator_mixed(named, *name, first),
                 }
                 continue;
             }
@@ -111,19 +122,49 @@ impl<'a> Checker<'a> {
                 package,
                 sig,
             };
-            self.types.add_method(
-                named,
-                DeclaredMethod {
-                    method,
-                    marks: self.marks(&cx, &node.attrs),
-                    pointer_receiver,
-                    receiver_params,
-                },
-            );
+            let method = DeclaredMethod {
+                method,
+                marks,
+                pointer_receiver,
+                receiver_params,
+            };
+            if with_signatures && self.own_rules(&cx) {
+                let fails = matches!(tree.exprs[*ty].kind, ExprKind::FuncType { fails: true, .. });
+                let marked = operators::Marked {
+                    named,
+                    receiver: self.types.named(named, &method.receiver_params),
+                    name: *name,
+                    method: &method,
+                    generic: !type_params.is_empty(),
+                    fails,
+                };
+                if operator {
+                    self.operator_declared(&marked);
+                } else if marks.has(Marks::CONVERT) {
+                    self.convert_declared(&marked);
+                }
+            }
+            // A selector finds the first method of a name.
+            if !overload {
+                self.types.add_method(named, method);
+            }
         }
         // A method names no object, so nothing waits for what was
         // incomplete in it.
         self.incomplete = false;
+    }
+
+    /// A name stands for `@Operator` methods or for one plain method.
+    fn operator_mixed(&mut self, named: NamedId, name: Ident, first: Span) {
+        let method = self.names.resolve(&name.name);
+        let message = format!(
+            "method {}.{method} is declared with @Operator and without it",
+            self.names.resolve(&self.types.name_of(named))
+        );
+        let note = format!("other declaration of method {method}");
+        let diagnostic = Diagnostic::new(Code::OpDuplicate, name.span, message);
+        self.sink
+            .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(first), note));
     }
 
     fn method_again(&mut self, named: NamedId, name: Ident, first: Span) {

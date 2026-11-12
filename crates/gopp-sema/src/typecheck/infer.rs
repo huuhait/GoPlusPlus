@@ -672,9 +672,13 @@ impl<'a> Checker<'a> {
                     continue;
                 };
                 let mut same = |a: TypeId, b: TypeId| unifier.unify(a, b, EXACT);
+                let elements = self.types.has_elements(param);
+                let mut met = |method: &Method, same: &mut dyn FnMut(TypeId, TypeId) -> bool| {
+                    self.element_met(known, method, same).filter(|_| elements)
+                };
                 let lacks = self
                     .types
-                    .lacks_with(known, &methods, self.names, &mut same);
+                    .lacks_with(known, &methods, self.names, &mut same, &mut met);
                 if let Some((method, lacks)) = lacks {
                     if !quiet {
                         let message = format!("{within}{}", shown(self, known));

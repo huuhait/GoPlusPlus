@@ -547,6 +547,20 @@ fn parse_go(text: &str) -> Parsed {
     parse_bytes(text.as_bytes(), Dialect::Go)
 }
 
+// rule: EXP-22
+#[test]
+fn an_index_list_holds_expressions_in_a_gopp_file() {
+    let text = "package p\nfunc f() {\n\tm[0, i+1] = m[i, j] + g[int, []string](x)[k, 2]\n\
+                \t_ = h[a, <-chan int, func(int) bool, *T,]\n}\n";
+    let parsed = parse_gopp(text);
+    assert_eq!(parsed.diagnostics, []);
+    assert!(!parsed.has_bad_node(), "{}", parsed.dump);
+    // Go takes types after the first.
+    let go = parse_go("package p\nfunc f() { _ = m[i, 1] }\n");
+    let codes: Vec<Code> = go.diagnostics.iter().map(|found| found.code).collect();
+    assert_eq!(codes, [Code::ExpectedFound]);
+}
+
 #[test]
 fn go_files_have_no_gopp_syntax() {
     let names = "package p

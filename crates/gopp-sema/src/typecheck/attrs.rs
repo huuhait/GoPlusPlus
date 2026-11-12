@@ -37,41 +37,6 @@ enum Declared {
     Alias,
 }
 
-/// The names of the methods that `@Operator` marks, and whether the
-/// operator has two operands.
-const OPERATORS: [(&str, bool); 30] = [
-    ("Add", true),
-    ("Sub", true),
-    ("Mul", true),
-    ("Div", true),
-    ("Rem", true),
-    ("BitAnd", true),
-    ("BitOr", true),
-    ("BitXor", true),
-    ("BitClear", true),
-    ("Shl", true),
-    ("Shr", true),
-    ("Eq", true),
-    ("Cmp", true),
-    ("Neg", false),
-    ("Not", false),
-    ("BitNot", false),
-    ("AddAssign", false),
-    ("SubAssign", false),
-    ("MulAssign", false),
-    ("DivAssign", false),
-    ("RemAssign", false),
-    ("BitAndAssign", false),
-    ("BitOrAssign", false),
-    ("BitXorAssign", false),
-    ("BitClearAssign", false),
-    ("ShlAssign", false),
-    ("ShrAssign", false),
-    ("Index", false),
-    ("SetIndex", false),
-    ("Iter", false),
-];
-
 /// The built-in attributes that take no argument, and `@Required`, which
 /// has an error of its own for one.
 const BARE: [&str; 14] = [
@@ -279,14 +244,12 @@ impl<'a> Checker<'a> {
                 "it is written on a method or a type".to_owned(),
             )),
             ("Operator", Method(shape)) => {
-                let known = OPERATORS
-                    .iter()
-                    .any(|&(operator, _)| operator == shape.name);
+                let known = operators::shape_of(shape.name).is_some();
                 (!known).then(|| (placement, format!("{} is no operator method", shape.name)))
             }
             ("Operator", _) => goes("a method"),
             ("Right", Method(shape)) => {
-                let binary = OPERATORS.contains(&(shape.name, true));
+                let binary = operators::two_operands(shape.name);
                 let why = match (has("Operator"), binary) {
                     (false, _) => "the method is no @Operator method".to_owned(),
                     (_, false) => format!("{} takes no operand on its left", shape.name),

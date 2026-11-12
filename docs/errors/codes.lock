@@ -500,3 +500,4 @@ E0494 err_invalid_handle_type
 E0495 err_iface_not_send
 E0496 err_extends_diamond
 E0497 err_base_ambiguous
+E0498 note_op_fix

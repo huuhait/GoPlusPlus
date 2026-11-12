@@ -90,6 +90,9 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         }
         let x = self.read(cx, x);
+        if let Some(element) = self.operator_index(cx, expr, of, &x, indices) {
+            return element;
+        }
         let under = self.types.get(self.types.underlying(x.ty));
         let (length, element) = match &*under {
             // A generic function with its type arguments.
@@ -295,7 +298,7 @@ impl<'a> Checker<'a> {
             self.operand(cx, index);
         }
         // What a type in error can do is not said.
-        if !self.open(x.ty) && !self.may_overload(cx, x.ty) {
+        if !self.open(x.ty) {
             let message = format!("cannot index {}", self.describe(cx, of, x));
             self.error(Code::CannotIndex, cx.tree.exprs[of].span, message);
         }
@@ -314,8 +317,7 @@ impl<'a> Checker<'a> {
         let x = self.read(cx, x);
         self.sliced(cx, of);
         let span = cx.tree.exprs[of].span;
-        let open = self.open(x.ty) || self.may_overload(cx, x.ty);
-        let sliced = match x.mode == Mode::Unknown || open {
+        let sliced = match x.mode == Mode::Unknown || self.open(x.ty) {
             true => None,
             false if self.is_param(x.ty) => self.sliced_param(cx, of, &x),
             false => Some(self.types.underlying(x.ty)),

@@ -162,8 +162,9 @@ impl<'a> Checker<'a> {
 
     /// Why the type `v` does not satisfy the constraint `bound`. `None`
     /// if it does, and where that is not decided here: a type in error,
-    /// a constraint of Go++.
-    pub(super) fn unsatisfied(&self, v: TypeId, bound: TypeId) -> Option<Cause> {
+    /// a constraint of Go++. With `elements`, a method of the constraint
+    /// may be met as an operator element (GEN-13).
+    pub(super) fn unsatisfied(&self, v: TypeId, bound: TypeId, elements: bool) -> Option<Cause> {
         let invalid = |ty: TypeId| self.types.underlying(ty) == Types::INVALID;
         let pointee_invalid = matches!(
             &*self.types.get(self.types.underlying(v)),
@@ -208,7 +209,13 @@ impl<'a> Checker<'a> {
         if wanted.is_empty() {
             return cause(format!("cannot satisfy {constraint} (empty type set)"));
         }
-        let lacks = self.types.lacks(v, &wanted.methods, self.names);
+        let mut same = |a, b| self.types.identical(a, b);
+        let mut met = |method: &Method, same: &mut dyn FnMut(TypeId, TypeId) -> bool| {
+            self.element_met(v, method, same).filter(|_| elements)
+        };
+        let lacks = self
+            .types
+            .lacks_with(v, &wanted.methods, self.names, &mut same, &mut met);
         if let Some((method, lacks)) = lacks {
             let mut why = self.lacks_cause(v, &method, lacks);
             why.text = format!("{shown} does not satisfy {constraint} {}", why.text);
@@ -421,7 +428,8 @@ impl<'a> Checker<'a> {
             let bound = self
                 .types
                 .substitute(constraint, &instance.params, &instance.args);
-            let unsatisfied = self.unsatisfied(arg, bound).or_else(|| {
+            let elements = self.types.has_elements(param);
+            let unsatisfied = self.unsatisfied(arg, bound, elements).or_else(|| {
                 let text = self
                     .not_copied(param, arg, bound)
                     .or_else(|| self.unlabeled(arg, bound))?;

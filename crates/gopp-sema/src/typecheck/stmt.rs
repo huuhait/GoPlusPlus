@@ -67,7 +67,7 @@ impl<'a> Checker<'a> {
             || self.types.comparable(x.ty)
             || self.types.has_nil(x.ty, Dialect::Go)
             || self.types.has_param(x.ty)
-            || self.may_overload(cx, x.ty);
+            || !self.operator_methods(cx, x.ty, "Eq").is_empty();
         if !compared {
             let message = format!(
                 "cannot switch on {} ({} is not comparable)",
@@ -98,6 +98,13 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown || v.mode == Mode::Unknown {
             return;
         }
+        // The case is compared with the tag as `tag == case` is.
+        if let Some(tag) = tag {
+            let read = self.read(cx, v.clone());
+            if self.operator_case(cx, (tag, x), (case, &read)) {
+                return;
+            }
+        }
         if !self.convert_untyped(cx, case, &mut v, x.ty, true) {
             return;
         }
@@ -106,17 +113,13 @@ impl<'a> Checker<'a> {
         if v.ty == Types::INVALID || x.ty == Types::INVALID {
             return;
         }
-        match self.uncomparable(cx, BinaryOp::Eq, &v, x) {
-            Ok(None) => {}
-            Err(()) => return,
-            Ok(Some((_, cause, code))) => {
-                let message = format!(
-                    "invalid case {} in switch on {} ({cause})",
-                    self.expr_string(cx, case),
-                    tag.map_or("true".to_owned(), |tag| self.expr_string(cx, tag))
-                );
-                return self.error(code, span, message);
-            }
+        if let Some((_, cause, code)) = self.uncomparable(cx, BinaryOp::Eq, &v, x) {
+            let message = format!(
+                "invalid case {} in switch on {} ({cause})",
+                self.expr_string(cx, case),
+                tag.map_or("true".to_owned(), |tag| self.expr_string(cx, tag))
+            );
+            return self.error(code, span, message);
         }
         // Like other compilers, only numbers and strings are looked at.
         let Mode::Const(value) = &v.mode else { return };
@@ -177,13 +180,12 @@ impl<'a> Checker<'a> {
     /// one. `Ok(None)` if that is not decided here, `Err` with the cause,
     /// if there is a special one, when the type cannot be ranged over.
     #[allow(clippy::type_complexity)]
-    fn range_key_value(
+    pub(super) fn range_key_value(
         &self,
-        cx: &Cx<'a>,
         ty: TypeId,
     ) -> Result<Option<(Option<TypeId>, Option<TypeId>)>, String> {
         let int = Some(self.types.basic(Basic::Int));
-        if self.open(ty) || self.may_overload(cx, ty) {
+        if self.open(ty) {
             return Ok(None);
         }
         // What is ranged over is what all the types of a type parameter
@@ -260,11 +262,12 @@ impl<'a> Checker<'a> {
         let tree = cx.tree;
         let x = self.value(cx, of);
         let x = self.read(cx, x);
+        let x = self.operator_iter(cx, of, x);
         let span = |expr: ExprId| tree.exprs[expr].span;
         let mut given = None;
         if x.mode != Mode::Unknown {
             let shown = self.describe(cx, of, &x);
-            match self.range_key_value(cx, x.ty) {
+            match self.range_key_value(x.ty) {
                 Err(cause) => {
                     let cause = match cause.is_empty() {
                         true => cause,

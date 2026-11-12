@@ -95,7 +95,7 @@ func (a Vec2) Cmp(b Vec2) int {
     return cmp.Compare(a.X*a.X+a.Y*a.Y, b.X*b.X+b.Y*b.Y)
 }
 
-func Sum[T interface{ Add(T) T }](xs []T, zero T) T {
+func Sum[T interface{ Add(T) T; Clone }](xs []T, zero T) T {
     acc := zero
     for _, x := range xs {
         acc = acc + x

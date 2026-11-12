@@ -684,6 +684,7 @@ impl<'a> Checker<'a> {
             self.addressed(cx, base);
         }
         if !called && self.memo.is_some() {
+            self.operator_value(cx, expr, name);
             let holds = match bound {
                 true => MethodValue::Address,
                 false => MethodValue::Value,

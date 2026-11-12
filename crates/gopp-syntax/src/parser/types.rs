@@ -180,13 +180,22 @@ impl Parser<'_> {
     }
 
     /// A comma-separated list of types that may end in a comma; without
-    /// `strict` the first may be any expression. Says whether a comma was seen.
+    /// `strict` the first may be any expression, and in a Go++ file every
+    /// one: `m[i, j+1]` is an index list (EXP-22). Says whether a comma
+    /// was seen.
     pub(super) fn type_list(&mut self, strict: bool) -> (Vec<ExprId>, bool) {
         self.expr_level += 1;
         let mut list = vec![if strict { self.type_() } else { self.expr() }];
         let mut comma = false;
         while self.got(T::Comma) {
             comma = true;
+            if !strict && self.gopp {
+                if self.at(T::RBrack) {
+                    break;
+                }
+                list.push(self.expr());
+                continue;
+            }
             match self.type_or_none() {
                 Some(ty) => list.push(ty),
                 None => break,
