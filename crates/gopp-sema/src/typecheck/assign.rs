@@ -27,8 +27,28 @@ impl<'a> Checker<'a> {
         context: &str,
     ) -> Operand {
         let span = cx.tree.exprs[expr].span;
+        let place = self.assigned_to.take();
         if x.mode == Mode::Unknown {
             return x;
+        }
+        // A generic function is the function that the place asks for.
+        if self.types.generic_func(x.ty).is_some() {
+            use super::infer::Place;
+            let generic = self.generic_func_string(x.ty);
+            let within = context
+                .strip_prefix("argument to ")
+                .map(|fun| format!("in call to {fun}, "));
+            let place = match (&place, &within, context) {
+                (_, Some(_), _) => Place::Parameter(&generic),
+                (Some(place), ..) => Place::Named(place),
+                (None, _, "return statement") => Place::Named("result variable"),
+                (None, ..) => Place::Named("variable"),
+            };
+            let within = within.as_deref().unwrap_or("");
+            x = self.generic_value(cx, expr, x, to, (place, within));
+            if x.mode == Mode::Unknown {
+                return x;
+            }
         }
         // In a `.gopp` file a place takes more than its own type, and an
         // assignment may write through a pointer.
@@ -170,7 +190,7 @@ impl<'a> Checker<'a> {
         format!("({})", shown.join(", "))
     }
 
-    fn unparen(&self, cx: &Cx<'a>, mut expr: ExprId) -> ExprId {
+    pub(super) fn unparen(&self, cx: &Cx<'a>, mut expr: ExprId) -> ExprId {
         while let ExprKind::Paren(inner) = cx.tree.exprs[expr].kind {
             expr = inner;
         }
@@ -426,7 +446,9 @@ impl<'a> Checker<'a> {
                         self.assign(cx, value, None, "assignment to _ identifier");
                     }
                     Some(to) => {
-                        let assigned = self.assign(cx, value, Some(to), "assignment");
+                        let x = self.value(cx, value);
+                        self.assigned_to = Some(self.expr_string(cx, place));
+                        let assigned = self.assignment(cx, value, x, Some(to), "assignment");
                         self.note_write(cx, place, to, Some(&assigned));
                     }
                 }
@@ -507,10 +529,11 @@ impl<'a> Checker<'a> {
     pub(super) fn var_decl(
         &mut self,
         cx: &Cx<'a>,
-        count: usize,
+        names: &[Ident],
         declared: Option<TypeId>,
         values: &[ExprId],
     ) -> Vec<TypeId> {
+        let count = names.len();
         let or_declared = |ty: TypeId| declared.unwrap_or(ty);
         match values {
             [] => vec![or_declared(Types::INVALID); count],
@@ -522,11 +545,15 @@ impl<'a> Checker<'a> {
             }
             _ => {
                 let mut types = Vec::new();
-                for position in 0..count {
+                for (position, name) in names.iter().enumerate() {
                     let ty = match values.get(position) {
                         Some(&value) => {
                             let context = "variable declaration";
-                            self.init_var(cx, value, None, declared, context).ty
+                            let name = self.names.resolve(&name.name);
+                            self.assigned_to = Some(name.to_owned());
+                            let ty = self.init_var(cx, value, None, declared, context).ty;
+                            self.assigned_to = None;
+                            ty
                         }
                         None => Types::INVALID,
                     };

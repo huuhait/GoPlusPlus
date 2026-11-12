@@ -306,13 +306,16 @@ impl Types {
 
     /// The types that a value of the type `ty` may have, each with its
     /// underlying type: the type itself, or for a type parameter the
-    /// types of its terms. `None` for a type parameter without terms, or
-    /// whose constraint is not known.
+    /// types of its terms. `None` for a type parameter without terms, with
+    /// an empty type set, or whose constraint is not known.
     pub fn specific_types(&self, ty: TypeId) -> Option<Vec<(TypeId, TypeId)>> {
         if !matches!(&*self.get(ty), Type::Param(_)) {
             return Some(vec![(ty, self.underlying(ty))]);
         }
-        let terms = self.param_set(ty)?.terms?;
+        let terms = self
+            .param_set(ty)?
+            .terms
+            .filter(|terms| !terms.is_empty())?;
         let with_under = |term: &Term| (term.ty, self.underlying(term.ty));
         Some(terms.iter().map(with_under).collect())
     }

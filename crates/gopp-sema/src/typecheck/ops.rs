@@ -117,6 +117,9 @@ impl<'a> Checker<'a> {
                     out += &format!(" of {what}type {}", self.type_string(ty));
                     if let Some(constraint) = self.types.constraint(ty) {
                         out += &format!(" constrained by {}", self.type_string(constraint));
+                        if self.types.param_set(ty).is_some_and(|set| set.is_empty()) {
+                            out += " with empty type set";
+                        }
                     }
                 }
             }
@@ -143,10 +146,28 @@ impl<'a> Checker<'a> {
 
     // ---- what a type is
 
-    /// Whether what holds for the type is not known here: it is written
-    /// with a type parameter, or a part of it is in error.
+    pub(super) fn is_param(&self, ty: TypeId) -> bool {
+        matches!(&*self.types.get(ty), Type::Param(_))
+    }
+
+    /// Whether what holds for the type is not known here: it is in
+    /// error, or a type parameter whose constraint is.
     pub(super) fn open(&self, ty: TypeId) -> bool {
-        self.types.underlying(ty) == Types::INVALID || self.types.has_param(ty)
+        self.types.underlying(ty) == Types::INVALID
+            || self.is_param(ty) && self.types.param_set(ty).is_none()
+    }
+
+    /// Whether `holds` for the type; for a type parameter, whether it
+    /// holds for every type that the parameter may be, of which its
+    /// constraint names one at least.
+    pub(super) fn all_types(&self, ty: TypeId, holds: impl Fn(&Self, TypeId) -> bool) -> bool {
+        match self.is_param(ty) {
+            true => self
+                .types
+                .specific_types(ty)
+                .is_some_and(|types| types.iter().all(|&(ty, _)| holds(self, ty))),
+            false => holds(self, ty),
+        }
     }
 
     pub(super) fn is_numeric(&self, ty: TypeId) -> bool {
@@ -192,7 +213,7 @@ impl<'a> Checker<'a> {
     /// Whether `nil` is a value of the type by Go's rule. What a `.gopp`
     /// file asks of pointers, funcs and interfaces is checked on its own.
     fn has_nil(&self, ty: TypeId) -> bool {
-        self.types.has_nil(ty, Dialect::Go)
+        self.all_types(ty, |this, ty| this.types.has_nil(ty, Dialect::Go))
     }
 
     // ---- constants
@@ -359,11 +380,20 @@ impl<'a> Checker<'a> {
                     false => Err(Unfit::Other),
                 }
             }
-            // What a type parameter stands for is not followed yet.
-            Type::Param(_) => match x.ty == nil {
-                true => Ok((nil, None)),
-                false => Ok((target, None)),
-            },
+            // A type parameter takes what every type that it may be
+            // takes; `nil` stays without a type.
+            Type::Param(_) => {
+                let fits =
+                    |this: &Self, ty: TypeId| this.implicit(x, this.types.underlying(ty)).is_ok();
+                match (
+                    self.open(target) || self.all_types(target, fits),
+                    x.ty == nil,
+                ) {
+                    (false, _) => Err(Unfit::Other),
+                    (true, true) => Ok((nil, None)),
+                    (true, false) => Ok((target, None)),
+                }
+            }
             // A value is its own option (TYP-2).
             Type::Option(elem) if x.ty != nil => self.implicit(x, *elem),
             Type::Pointer(_)
@@ -535,17 +565,17 @@ impl<'a> Checker<'a> {
 
     /// Whether all types that `ty` may be are booleans.
     pub(super) fn all_boolean(&self, ty: TypeId) -> bool {
-        self.open(ty) || self.is_boolean(ty)
+        self.open(ty) || self.all_types(ty, Self::is_boolean)
     }
 
     /// Whether all types that `ty` may be are numbers.
     pub(super) fn all_numeric(&self, ty: TypeId) -> bool {
-        self.open(ty) || self.is_numeric(ty)
+        self.open(ty) || self.all_types(ty, Self::is_numeric)
     }
 
     /// Whether all types that `ty` may be are integers.
     pub(super) fn all_integer(&self, ty: TypeId) -> bool {
-        self.open(ty) || self.is_integer(ty)
+        self.open(ty) || self.all_types(ty, Self::is_integer)
     }
 
     /// Whether the operator `op` is defined on the operand `x`.
@@ -557,7 +587,7 @@ impl<'a> Checker<'a> {
         op: &str,
         holds: fn(&Self, TypeId) -> bool,
     ) -> bool {
-        if self.open(x.ty) || holds(self, x.ty) {
+        if self.open(x.ty) || self.all_types(x.ty, holds) {
             return true;
         }
         if self.may_overload(cx, x.ty) {
@@ -601,6 +631,7 @@ impl<'a> Checker<'a> {
                     }
                     _ if x.is_value() => match &*self.types.get(self.types.underlying(x.ty)) {
                         Type::Pointer(elem) => Operand::variable(*elem),
+                        Type::Param(_) if !self.open(x.ty) => self.indirect_param(cx, inner, &x),
                         Type::Unique(_) | Type::Shared(_) | Type::Option(_)
                             if self.own_rules(cx) =>
                         {
@@ -730,8 +761,34 @@ impl<'a> Checker<'a> {
         result
     }
 
+    /// `*p` for a `p` whose type is a type parameter: every type that it
+    /// may be is a pointer, all to one type.
+    fn indirect_param(&mut self, cx: &Cx<'a>, inner: ExprId, x: &Operand) -> Operand {
+        let types = self.types.specific_types(x.ty).unwrap_or_default();
+        let bases: Option<Vec<TypeId>> = types
+            .iter()
+            .map(|&(_, under)| match &*self.types.get(under) {
+                Type::Pointer(elem) => Some(*elem),
+                _ => None,
+            })
+            .collect();
+        let shown = self.describe(cx, inner, x);
+        let message = match bases.as_deref() {
+            Some([first, rest @ ..]) => {
+                if rest.iter().all(|&base| self.types.identical(base, *first)) {
+                    return Operand::variable(*first);
+                }
+                format!("invalid operation: pointers of {shown} must have identical base types")
+            }
+            _ => format!("invalid operation: cannot indirect {shown}"),
+        };
+        self.error(Code::DerefNonPointer, self.span(cx, inner), message);
+        Operand::UNKNOWN
+    }
+
     /// The element type of the channel `x`, which is received from or sent
-    /// to: a channel that goes that way.
+    /// to: a channel that goes that way, or a type parameter whose types
+    /// are all such channels with one element type.
     pub(super) fn chan_elem(
         &mut self,
         cx: &Cx<'a>,
@@ -739,26 +796,79 @@ impl<'a> Checker<'a> {
         x: &Operand,
         receive: bool,
     ) -> Option<TypeId> {
-        let wrong = match &*self.types.get(self.types.underlying(x.ty)) {
-            Type::Chan {
-                dir: ChanDir::Send, ..
-            } if receive => "send-only channel",
-            Type::Chan {
-                dir: ChanDir::Recv, ..
-            } if !receive => "receive-only channel",
-            Type::Chan { elem, .. } => return Some(*elem),
-            _ => "non-channel",
-        };
-        if !self.open(x.ty) && x.is_value() {
-            let message = format!(
-                "invalid operation: cannot {} {wrong} {} {}",
-                if receive { "receive from" } else { "send to" },
-                self.type_string(x.ty),
-                self.describe(cx, expr, x)
-            );
-            self.error(Code::ChannelDirection, at, message);
+        if self.open(x.ty) || !x.is_value() {
+            return None;
         }
+        let shared = self.common_under(x.ty, |this, of| {
+            let Some((ty, under)) = of else {
+                return Some("no specific channel type".to_owned());
+            };
+            let wrong = match &*this.types.get(under) {
+                Type::Chan {
+                    dir: ChanDir::Send, ..
+                } if receive => "send-only channel",
+                Type::Chan {
+                    dir: ChanDir::Recv, ..
+                } if !receive => "receive-only channel",
+                Type::Chan { .. } => return None,
+                _ => "non-channel",
+            };
+            Some(format!("{wrong} {}", this.type_string(ty)))
+        });
+        let cause = match shared {
+            Ok(shared) => match &*self.types.get(shared) {
+                Type::Chan { elem, .. } => return Some(*elem),
+                _ => return None,
+            },
+            Err(cause) => cause,
+        };
+        let what = if receive { "receive from" } else { "send to" };
+        let shown = self.describe(cx, expr, x);
+        let message = match self.is_param(x.ty) {
+            true => format!("invalid operation: cannot {what} {shown}: {cause}"),
+            false => format!("invalid operation: cannot {what} {cause} {shown}"),
+        };
+        self.error(Code::ChannelDirection, at, message);
         None
+    }
+
+    /// The underlying type that all the types that a value of the type
+    /// `ty` may have share, or why they share none. `refused` says what is
+    /// wrong with one of the types, which it is given with its underlying
+    /// type, and with the case that there is no type.
+    pub(super) fn common_under(
+        &self,
+        ty: TypeId,
+        refused: impl Fn(&Self, Option<(TypeId, TypeId)>) -> Option<String>,
+    ) -> Result<TypeId, String> {
+        use crate::types::NoCommon;
+        let Some(types) = self.types.specific_types(ty) else {
+            return Err(refused(self, None).unwrap_or_else(|| "no specific type".to_owned()));
+        };
+        if let Some(cause) = types.iter().find_map(|&of| refused(self, Some(of))) {
+            return Err(cause);
+        }
+        let shown = |ty: TypeId| self.type_string(ty);
+        self.types.common_under(ty).map_err(|why| match why {
+            NoCommon::NoSpecificType => "no specific type".to_owned(),
+            NoCommon::DifferentUnderlying(a, b) => {
+                format!(
+                    "{} and {} have different underlying types",
+                    shown(a),
+                    shown(b)
+                )
+            }
+            NoCommon::DifferentElements(a, b) => format!(
+                "channels {} and {} have different element types",
+                shown(a),
+                shown(b)
+            ),
+            NoCommon::ConflictingDirections(a, b) => format!(
+                "channels {} and {} have conflicting directions",
+                shown(a),
+                shown(b)
+            ),
+        })
     }
 
     /// An untyped operand takes the type of the other, where that can be.
@@ -774,8 +884,9 @@ impl<'a> Checker<'a> {
                 false
             } else if self.is_interface(x.ty) || self.is_interface(y.ty) {
                 true
-            } else if self.is_boolean(x.ty) != self.is_boolean(y.ty)
-                || self.is_string(x.ty) != self.is_string(y.ty)
+            } else if self.all_types(x.ty, Self::is_boolean)
+                != self.all_types(y.ty, Self::is_boolean)
+                || self.all_types(x.ty, Self::is_string) != self.all_types(y.ty, Self::is_string)
             {
                 false
             } else if self.is_nil(x) {
@@ -916,11 +1027,13 @@ impl<'a> Checker<'a> {
         result
     }
 
-    /// Whether the operand `x` is surely no value of the type `to`. What
-    /// a type parameter takes is not decided here yet.
+    /// Whether the operand `x` is surely no value of the type `to`.
     pub(super) fn not_assignable(&self, x: &Operand, to: TypeId) -> bool {
         if self.open(x.ty) || self.open(to) || self.types.is_constraint(to) {
             return false;
+        }
+        if self.is_param(x.ty) || self.is_param(to) {
+            return self.param_unfit(x, to).is_some();
         }
         if self.is_untyped(x.ty) {
             return self.implicit(x, to).is_err();
@@ -941,6 +1054,72 @@ impl<'a> Checker<'a> {
             .assignable(x.ty, value, to, Dialect::Go, self.names)
     }
 
+    /// Where the type of `x` or the type `to` is a type parameter: that
+    /// `x` is no value of `to`, with the cause where there is more to say
+    /// than the two types. `None` if it is one.
+    pub(super) fn param_unfit(&self, x: &Operand, to: TypeId) -> Option<Option<String>> {
+        if self.types.identical(x.ty, to) {
+            return None;
+        }
+        let (from_param, to_param) = (self.is_param(x.ty), self.is_param(to));
+        // A value of no type fits a type parameter if it fits every type
+        // that the parameter may be.
+        if self.is_untyped(x.ty) {
+            let fits = |this: &Self, ty: TypeId| this.implicit(x, ty).is_ok();
+            return (!self.all_types(to, fits)).then_some(None);
+        }
+        // A type parameter is a value of an interface that its constraint
+        // implements.
+        if !to_param && self.is_interface(to) && self.lacking(x.ty, to).is_none() {
+            return None;
+        }
+        // A type without a name fits a type parameter if it fits every
+        // type that the parameter may be, and a type parameter fits a type
+        // without a name if every type that it may be does.
+        let named = |ty: TypeId| self.types.is_named(ty);
+        let (inner, outer) = if !named(x.ty) && to_param {
+            (None, to)
+        } else if from_param && !named(to) {
+            (Some(x.ty), to)
+        } else {
+            return Some(None);
+        };
+        let param = inner.unwrap_or(outer);
+        let Some(types) = self.types.specific_types(param) else {
+            return Some(None);
+        };
+        for (ty, _) in types {
+            let (value, place) = match inner {
+                Some(_) => (
+                    Operand {
+                        mode: x.mode.clone(),
+                        ty,
+                    },
+                    to,
+                ),
+                None => (x.clone(), ty),
+            };
+            if self.not_assignable(&value, place) {
+                let cause = match inner {
+                    Some(from) => format!(
+                        "cannot assign {} (in {}) to {}",
+                        self.type_string(ty),
+                        self.type_string(from),
+                        self.type_string(to)
+                    ),
+                    None => format!(
+                        "cannot assign {} to {} (in {})",
+                        self.type_string(x.ty),
+                        self.type_string(ty),
+                        self.type_string(to)
+                    ),
+                };
+                return Some(Some(cause));
+            }
+        }
+        None
+    }
+
     /// What forbids to compare `x` with `y` by `op`: whether it is the
     /// second operand that the error is about, the cause, and the code.
     /// `Err` if an operator method may decide instead.
@@ -951,8 +1130,10 @@ impl<'a> Checker<'a> {
         x: &Operand,
         y: &Operand,
     ) -> Result<Option<(bool, String, Code)>, ()> {
-        let ordered =
-            |this: &Self, ty: TypeId| this.open(ty) || this.is_numeric(ty) || this.is_string(ty);
+        let ordered = |this: &Self, ty: TypeId| {
+            this.open(ty)
+                || this.all_types(ty, |this, ty| this.is_numeric(ty) || this.is_string(ty))
+        };
         let comparable = |this: &Self, ty: TypeId| this.open(ty) || this.types.comparable(ty);
         // The operand that the error is about, and what is wrong with it.
         let wrong: Option<(bool, String, Code)> = {
@@ -1058,6 +1239,10 @@ impl<'a> Checker<'a> {
 
     fn incomparable_cause(&self, ty: TypeId) -> String {
         match &*self.types.get(self.types.underlying(ty)) {
+            Type::Param(_) => match self.types.param_set(ty).is_some_and(|set| set.is_empty()) {
+                true => "empty type set".to_owned(),
+                false => "incomparable types in type set".to_owned(),
+            },
             Type::Slice(_) | Type::Func { .. } | Type::Map { .. } => {
                 format!("{} can only be compared to nil", self.composite_kind(ty))
             }

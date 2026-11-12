@@ -87,6 +87,12 @@ impl<'a> Checker<'a> {
             Type::Option(elem) => *elem,
             _ => to,
         };
+        if self.is_param(x.ty) || self.is_param(to) {
+            return self.param_unfit(x, to).flatten().map(|text| Cause {
+                text,
+                have_want: None,
+            });
+        }
         let (from, target) = (self.type_string(x.ty), self.type_string(to));
         if self.points_to_interface(to) {
             let text = format!(

@@ -251,6 +251,9 @@ struct Checker<'a> {
     /// The type arguments of each generic function that is written with
     /// only the first of them, `f[int]`, each with where it is written.
     partial: FxHashMap<ExprId, Vec<(TypeId, Span)>>,
+    /// What the value that is assigned next is given to, as a message
+    /// names it.
+    assigned_to: Option<String>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -359,6 +362,7 @@ pub fn declarations(
         instances: Vec::new(),
         param_spans: FxHashMap::default(),
         partial: FxHashMap::default(),
+        assigned_to: None,
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -998,8 +1002,12 @@ impl<'a> Checker<'a> {
                     self.result_type(&cx, value, position, count)
                 });
                 match ty {
-                    Some(ty) => self.ty[object] = self.types.default_type(ty),
-                    None => self.incomplete = true,
+                    // A generic function is no value without its type
+                    // arguments.
+                    Some(ty) if self.types.generic_func(ty).is_none() => {
+                        self.ty[object] = self.types.default_type(ty);
+                    }
+                    _ => self.incomplete = true,
                 }
             }
             Form::Type {
@@ -1581,10 +1589,15 @@ impl<'a> Checker<'a> {
         let Type::Named { id, .. } = &*self.types.get(ty) else {
             return self.type_string(ty);
         };
-        let params = self.types.type_params(*id);
+        let params = self.type_params_string(&self.types.type_params(*id));
+        format!("{}[{params}]", self.type_string(ty))
+    }
+
+    /// `P, Q any`: type parameters as they are declared; those with one
+    /// constraint are written together.
+    fn type_params_string(&self, params: &[TypeId]) -> String {
         let mut list = String::new();
         for (at, &param) in params.iter().enumerate() {
-            // Parameters with one constraint are written together.
             let constraint = self.types.constraint(param);
             let next = params.get(at + 1).map(|&next| self.types.constraint(next));
             list += &self.type_string(param);
@@ -1600,7 +1613,21 @@ impl<'a> Checker<'a> {
                 (false, None) => {}
             }
         }
-        format!("{}[{list}]", self.type_string(ty))
+        list
+    }
+
+    /// A generic function type as a message shows it:
+    /// `func[P any](P) []P`.
+    pub(super) fn generic_func_string(&self, ty: TypeId) -> String {
+        let shown = self.type_string(ty);
+        match self.types.generic_func(ty) {
+            Some(params) => format!(
+                "func[{}]{}",
+                self.type_params_string(&params),
+                shown.strip_prefix("func").unwrap_or(&shown)
+            ),
+            None => shown,
+        }
     }
 
     // ---- expressions
@@ -2585,14 +2612,16 @@ impl<'a> Checker<'a> {
                     // `a, b = f()` gives both the one value.
                     if values.len() == 1 && names.len() > 1 {
                         self.current = objects(self, names);
-                        self.var_decl(&cx, names.len(), declared, values);
+                        self.var_decl(&cx, names, declared, values);
                     } else {
                         for (position, &value) in values.iter().enumerate() {
                             let declared_here = names.get(position..=position).unwrap_or(&[]);
                             self.current = objects(self, declared_here);
                             match declared_here.is_empty() {
                                 true => drop(self.operand(&cx, value)),
-                                false => drop(self.var_decl(&cx, 1, declared, &[value])),
+                                false => {
+                                    drop(self.var_decl(&cx, declared_here, declared, &[value]))
+                                }
                             }
                         }
                     }
@@ -3069,7 +3098,7 @@ impl<'a> Checker<'a> {
                 let locals: Vec<_> = names.iter().map(|&name| local(name)).collect();
                 let declared = ty.map(|ty| self.var_type(cx, ty));
                 self.arity(cx, names, values, None);
-                let types = self.var_decl(cx, names.len(), declared, values);
+                let types = self.var_decl(cx, names, declared, values);
                 for (local, ty) in locals.into_iter().zip(types) {
                     if let Some(local) = local {
                         self.locals.insert(local, Operand::variable(ty));

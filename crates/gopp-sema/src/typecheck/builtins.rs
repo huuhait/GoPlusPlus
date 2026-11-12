@@ -176,9 +176,17 @@ impl<'a> Checker<'a> {
                 let byte = self.types.basic(Basic::Uint8);
                 // `append(bytes, "text"...)`.
                 let text = given.get(1).filter(|_| spread && given.len() == 2);
-                let appends_text = text.is_some_and(|(_, y)| self.is_string(y.ty))
-                    && matches!(&*self.types.get(self.types.underlying(x.ty)),
-                        Type::Slice(elem) if self.basic_of(*elem) == self.basic_of(byte));
+                // The text may be of a type parameter whose types are
+                // strings and slices of bytes, with a string among them.
+                let bytes = |this: &Self, ty: TypeId| {
+                    matches!(&*this.types.get(this.types.underlying(ty)),
+                        Type::Slice(elem) if this.basic_of(*elem) == this.basic_of(byte))
+                };
+                let appends_text = text.is_some_and(|(_, y)| {
+                    let types = self.types.specific_types(y.ty).unwrap_or_default();
+                    let text = |&(ty, _): &(TypeId, TypeId)| self.is_string(ty) || bytes(self, ty);
+                    types.iter().all(text) && types.iter().any(|&(ty, _)| self.is_string(ty))
+                }) && bytes(self, x.ty);
                 if appends_text {
                     return Operand::value(x.ty);
                 }

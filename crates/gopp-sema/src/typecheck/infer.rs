@@ -40,6 +40,28 @@ pub(super) struct Generic {
     pub written: Vec<(TypeId, Span)>,
 }
 
+/// How type arguments are looked for.
+#[derive(Clone, Copy, Default)]
+struct How<'d> {
+    /// Nothing is reported.
+    quiet: bool,
+    /// The arguments are read as what they point to.
+    read: bool,
+    /// The generic function is a value that is given to a place: what
+    /// the place is, for the messages.
+    place: Option<Place<'d>>,
+}
+
+/// What a generic function that is used as a value is given to.
+#[derive(Clone, Copy)]
+pub(super) enum Place<'d> {
+    /// A variable or a result, as a message names it.
+    Named(&'d str),
+    /// A parameter: the function as a message shows it, which is with
+    /// its type parameters.
+    Parameter(&'d str),
+}
+
 /// What is found for type parameters while types are unified.
 #[derive(Clone)]
 struct Unifier<'t> {
@@ -450,12 +472,17 @@ impl<'a> Checker<'a> {
         // In a `.gopp` file a pointer stays a pointer where that fits;
         // where it does not, the arguments are read as what they point
         // to (OWN-P5).
+        let how = |quiet: bool, read: bool| How {
+            quiet,
+            read,
+            place: None,
+        };
         let found = match self.own_rules(cx) {
             true => self
-                .infer(cx, at, &generic, &wanted, args, (true, false))
-                .or_else(|| self.infer(cx, at, &generic, &wanted, args, (true, true)))
-                .or_else(|| self.infer(cx, at, &generic, &wanted, args, (quiet, false))),
-            false => self.infer(cx, at, &generic, &wanted, args, (quiet, false)),
+                .infer(cx, at, &generic, &wanted, args, how(true, false))
+                .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(true, true)))
+                .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(quiet, false))),
+            false => self.infer(cx, at, &generic, &wanted, args, how(quiet, false)),
         }?;
         let instance = self.types.substitute(generic.sig, &generic.params, &found);
         self.instances.push(Instance {
@@ -474,8 +501,9 @@ impl<'a> Checker<'a> {
         generic: &Generic,
         wanted: &[TypeId],
         args: &[(ExprId, Operand)],
-        (quiet, read): (bool, bool),
+        how: How<'_>,
     ) -> Option<Vec<TypeId>> {
+        let How { quiet, read, place } = how;
         let params = &generic.params;
         let written: Vec<TypeId> = generic.written.iter().map(|&(ty, _)| ty).collect();
         if written.len() == params.len() {
@@ -529,8 +557,26 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let found = unifier.inferred();
-            let (of, shown) = (self.type_string(x.ty), self.expr_string(cx, *arg));
-            let pattern = self.type_string(parameter);
+            // As an argument, the generic function is what does not
+            // match the type of its parameter.
+            let (of, shown, pattern) = match place {
+                Some(Place::Parameter(generic)) => (
+                    generic.to_owned(),
+                    self.expr_string(cx, *arg),
+                    self.type_string(x.ty),
+                ),
+                Some(Place::Named(place)) => (
+                    self.type_string(x.ty),
+                    place.to_owned(),
+                    self.type_string(parameter),
+                ),
+                None => (
+                    self.type_string(x.ty),
+                    self.expr_string(cx, *arg),
+                    self.type_string(parameter),
+                ),
+            };
+            let as_argument = matches!(place, Some(Place::Parameter(_)));
             let message = if found.iter().all(Option::is_none) {
                 format!(
                     "type {of} of {shown} does not match {pattern} (cannot infer {})",
@@ -543,12 +589,17 @@ impl<'a> Checker<'a> {
                     .filter_map(|(&param, ty)| ty.map(|ty| (param, ty)))
                     .unzip();
                 let inferred = self.types.substitute(parameter, &known, &types);
-                match inferred != parameter {
-                    true => format!(
-                        "type {of} of {shown} does not match inferred type {} for {pattern}",
-                        self.type_string(inferred)
+                let inferred_type = self.type_string(inferred);
+                match (inferred != parameter && !as_argument, place.is_some()) {
+                    (true, true) => format!(
+                        "inferred type {inferred_type} for {pattern} does not match type {of} of \
+                         {shown}"
                     ),
-                    false => format!("type {of} of {shown} does not match {pattern}"),
+                    (true, false) => format!(
+                        "type {of} of {shown} does not match inferred type {inferred_type} for \
+                         {pattern}"
+                    ),
+                    (false, _) => format!("type {of} of {shown} does not match {pattern}"),
                 }
             };
             report(self, cx.tree.exprs[*arg].span, message);
@@ -737,5 +788,70 @@ impl<'a> Checker<'a> {
             }
         }
         on_path.remove(&ty);
+    }
+
+    /// A generic function that is used as a value: it has the type
+    /// arguments that the place it is given to asks for, a place of the
+    /// function type `to` that a message calls `place`.
+    pub(super) fn generic_value(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: Operand,
+        to: Option<TypeId>,
+        (place, within): (Place<'_>, &str),
+    ) -> Operand {
+        let Some(params) = self.types.generic_func(x.ty) else {
+            return x;
+        };
+        let span = cx.tree.exprs[expr].span;
+        let target = to.map(|to| self.types.underlying(to)).filter(|&to| {
+            matches!(&*self.types.get(to), Type::Func { type_params, .. } if type_params.is_empty())
+        });
+        let written = self.partial.get(&self.unparen(cx, expr)).cloned();
+        // Without a place that says what the function is, the type
+        // arguments that are written and the constraints may.
+        if target.is_none() && written.is_none() {
+            let message = format!(
+                "cannot use generic function {} without instantiation",
+                self.expr_string(cx, expr)
+            );
+            self.error(Code::GenericWithoutInstantiation, span, message);
+            return Operand::UNKNOWN;
+        }
+        let mut generic = Generic {
+            sig: self.types.underlying(x.ty),
+            params,
+            written: written.unwrap_or_default(),
+        };
+        if target.is_some_and(|target| self.types.mentions(target, &generic.params)) {
+            generic = self.renamed(generic);
+        }
+        // The function without its type parameters is what the place
+        // takes.
+        let plain = self.types.generic_func_type(generic.sig, &[]);
+        let args: Vec<(ExprId, Operand)> = target
+            .map(|target| (expr, Operand::value(target)))
+            .into_iter()
+            .collect();
+        let wanted = &[plain][..args.len()];
+        let how = How {
+            place: Some(place),
+            ..How::default()
+        };
+        let Some(found) = self.infer(cx, (span, within), &generic, wanted, &args, how) else {
+            return Operand::UNKNOWN;
+        };
+        let instance = self.types.substitute(generic.sig, &generic.params, &found);
+        self.instances.push(Instance {
+            params: generic.params,
+            args: found,
+            spans: generic.written.iter().map(|&(_, span)| span).collect(),
+            at: span,
+        });
+        if let Some(memo) = &mut self.memo {
+            memo.insert(expr, Operand::value(instance));
+        }
+        Operand::value(instance)
     }
 }

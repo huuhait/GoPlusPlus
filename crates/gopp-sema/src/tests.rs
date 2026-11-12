@@ -4588,6 +4588,245 @@ fn the_steps_of_inference_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(many_params(n)));
 }
 
+#[test]
+fn values_of_type_parameters_are_used_as_go_checks_it() {
+    let text = "package p
+
+type Num interface{ ~int | ~float64 }
+type Text interface{ ~string | ~[]byte }
+type Any interface{ int | string | []int }
+type Ptr interface{ *int | *string }
+type Chans interface{ chan int | <-chan int }
+type Empty interface {
+	int
+	string
+}
+
+func ops[N Num, T Text, A Any, B ~bool, S ~string](n N, t T, a A, b B, s S) {
+	_ = n + n
+	_ = n * 2
+	_ = n < n
+	_ = n == n
+	_ = -n
+	_ = s + s
+	_ = b && b
+	_ = !b
+	_ = n % n
+	_ = t + t
+	_ = t == t
+	_ = a + a
+	_ = a == a
+	_ = a < a
+	_ = n + s
+	_ = n == 1
+	_ = n == \"x\"
+	_ = !n
+	_ = n && n
+	_ = n == nil
+}
+
+func assign[N Num, I ~int, P ~*int, A any](n N, i I, p P, a A, x int, f float64) {
+	n = 1
+	n = 1.5
+	i = 1
+	i = 1.5
+	n = \"s\"
+	p = nil
+	n = nil
+	a = nil
+	n = n
+	n = i
+	x = i
+	x = n
+	i = x
+	var _ any = n
+	var _ interface{ m() } = n
+	p = &x
+	var _ *int = p
+	var _ float64 = n
+}
+
+func indirect[P ~*int, Q Ptr, R ~*int | ~*string, N Num, A any](p P, q Q, r R, n N, a A) {
+	_ = *p
+	_ = *q
+	_ = *r
+	_ = *n
+	_ = *a
+}
+
+func chans[C chan int, D Chans, E chan int | chan string, F chan<- int | <-chan int, N Num, A any, Z Empty](c C, d D, e E, f F, n N, a A, z Z) {
+	c <- 1
+	_ = <-c
+	_ = <-d
+	d <- 1
+	_ = <-e
+	_ = <-f
+	_ = <-n
+	a <- 1
+	_ = z == z
+	_ = z + z
+	<-z
+}
+";
+    let expected = [
+        "a.go:22:6: invalid operation: operator % not defined on n (variable of type N constrained by Num)",
+        "a.go:23:6: invalid operation: operator + not defined on t (variable of type T constrained by Text)",
+        "a.go:24:6: invalid operation: t == t (incomparable types in type set)",
+        "a.go:25:6: invalid operation: operator + not defined on a (variable of type A constrained by Any)",
+        "a.go:26:6: invalid operation: a == a (incomparable types in type set)",
+        "a.go:27:6: invalid operation: a < a (type parameter A cannot use operator <)",
+        "a.go:28:6: invalid operation: n + s (mismatched types N and S)",
+        "a.go:30:11: invalid operation: n == \"x\" (mismatched types N and untyped string)",
+        "a.go:31:7: invalid operation: operator ! not defined on n (variable of type N constrained by Num)",
+        "a.go:32:6: invalid operation: operator && not defined on n (variable of type N constrained by Num)",
+        "a.go:33:11: invalid operation: n == nil (mismatched types N and untyped nil)",
+        "a.go:38:6: cannot use 1.5 (untyped float constant) as N value in assignment",
+        "a.go:40:6: cannot use 1.5 (untyped float constant) as I value in assignment",
+        "a.go:41:6: cannot use \"s\" (untyped string constant) as N value in assignment",
+        "a.go:43:6: cannot use nil as N value in assignment",
+        "a.go:44:6: cannot use nil as A value in assignment",
+        "a.go:46:6: cannot use i (variable of type I constrained by ~int) as N value in assignment",
+        "a.go:47:6: cannot use i (variable of type I constrained by ~int) as int value in assignment",
+        "a.go:48:6: cannot use n (variable of type N constrained by Num) as int value in assignment",
+        "a.go:49:6: cannot use x (variable of type int) as I value in assignment",
+        "a.go:51:27: cannot use n (variable of type N constrained by Num) as interface{m()} value in variable declaration: cannot assign int (in N) to interface{m()}",
+        "a.go:54:18: cannot use n (variable of type N constrained by Num) as float64 value in variable declaration",
+        "a.go:59:7: invalid operation: pointers of q (variable of type Q constrained by Ptr) must have identical base types",
+        "a.go:60:7: invalid operation: pointers of r (variable of type R constrained by ~*int | ~*string) must have identical base types",
+        "a.go:61:7: invalid operation: cannot indirect n (variable of type N constrained by Num)",
+        "a.go:62:7: invalid operation: cannot indirect a (variable of type A constrained by any)",
+        "a.go:69:4: invalid operation: cannot send to d (variable of type D constrained by Chans): receive-only channel <-chan int",
+        "a.go:70:8: invalid operation: cannot receive from e (variable of type E constrained by chan int | chan string): channels chan int and chan string have different element types",
+        "a.go:71:8: invalid operation: cannot receive from f (variable of type F constrained by chan<- int | <-chan int): send-only channel chan<- int",
+        "a.go:72:8: invalid operation: cannot receive from n (variable of type N constrained by Num): non-channel int",
+        "a.go:73:4: invalid operation: cannot send to a (variable of type A constrained by any): no specific channel type",
+        "a.go:74:6: invalid operation: z == z (empty type set)",
+        "a.go:75:6: invalid operation: operator + not defined on z (variable of type Z constrained by Empty with empty type set)",
+        "a.go:76:4: invalid operation: cannot receive from z (variable of type Z constrained by Empty with empty type set): no specific channel type",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+#[test]
+fn a_generic_function_is_the_function_that_its_place_asks_for() {
+    let text = "package p
+
+func f1[P any](P)        {}
+func f2[P any]() P       { var x P; return x }
+func f3[P, Q any](P) Q   { var x Q; return x }
+func f4[P any](P, P)     {}
+func f5[P any](P) []P    { return nil }
+func f6[P any](int) P    { var x P; return x }
+func f7[P any](P) string { return \"\" }
+
+// initialization expressions
+var (
+	v1           = f1 
+	v2 func(int) = f2 
+
+	v3 func(int)     = f1
+	v4 func() int    = f2
+	v5 func(int) int = f3
+	_  func(int) int = f3[int]
+
+	v6 func(int, int)     = f4
+	v7 func(int, string)  = f4 
+	v8 func(int) []int    = f5
+	v9 func(string) []int = f5 
+
+	_, _ func(int) = f1, f1
+	_, _ func(int) = f1, f2 
+)
+
+// Regular assignments
+func _() {
+	v1 = f1 // no error here because v1 is invalid (we don't know its type) due to the error above
+	var v1_ func() int
+	_ = v1_
+	v1_ = f1 
+	v2 = f2  
+
+	v3 = f1
+	v4 = f2
+	v5 = f3
+	v5 = f3[int]
+
+	v6 = f4
+	v7 = f4 
+	v8 = f5
+	v9 = f5 
+
+	// non-trivial LHS
+	var a [2]func(string) []int
+	a[0] = f5 
+}
+
+// Return statements
+func _() func(int)     { return f1 }
+func _() func() int    { return f2 }
+func _() func(int) int { return f3 }
+func _() func(int) int { return f3[int] }
+
+func _() func(int, int) { return f4 }
+func _() func(int, string) {
+	return f4 
+}
+func _() func(int) []int { return f5 }
+func _() func(string) []int {
+	return f5 
+}
+
+func _() (_, _ func(int)) { return f1, f1 }
+func _() (_, _ func(int)) { return f1, f2  }
+
+// Argument passing
+func g1(func(int))                           {}
+func g2(func(int, int))                      {}
+func g3(func(int) string)                    {}
+func g4[P any](func(P) string)               {}
+func g5[P, Q any](func(P) string, func(P) Q) {}
+func g6(func(int), func(string))             {}
+
+func _() {
+	g1(f1)
+	g1(f2 )
+	g2(f4)
+	g4(f6)
+	g5(f6, f7)
+	g6(f1, f1)
+}
+
+// Argument passing of partially instantiated functions
+func h(func(int, string), func(string, int)) {}
+
+func p[P, Q any](P, Q) {}
+
+func _() {
+	h(p, p)
+	h(p[int], p[string])
+}
+";
+    // Go names a result that has a name by it; it is a result variable
+    // here.
+    let expected = [
+        "a.go:13:17: cannot use generic function f1 without instantiation",
+        "a.go:14:17: type func(int) of v2 does not match func() P (cannot infer P)",
+        "a.go:22:26: inferred type func(int, int) for func(P, P) does not match type func(int, string) of v7",
+        "a.go:24:26: inferred type func(string) []string for func(P) []P does not match type func(string) []int of v9",
+        "a.go:27:23: type func(int) of _ does not match func() P (cannot infer P)",
+        "a.go:35:8: type func() int of v1_ does not match func(P) (cannot infer P)",
+        "a.go:36:7: type func(int) of v2 does not match func() P (cannot infer P)",
+        "a.go:44:7: inferred type func(int, int) for func(P, P) does not match type func(int, string) of v7",
+        "a.go:46:7: inferred type func(string) []string for func(P) []P does not match type func(string) []int of v9",
+        "a.go:50:9: inferred type func(string) []string for func(P) []P does not match type func(string) []int of a[0]",
+        "a.go:61:9: inferred type func(int, int) for func(P, P) does not match type func(int, string) of result variable",
+        "a.go:65:9: inferred type func(string) []string for func(P) []P does not match type func(string) []int of result variable",
+        "a.go:69:40: type func(int) of result variable does not match func() P (cannot infer P)",
+        "a.go:81:5: in call to g1, type func[P any]() P of f2 does not match func(int) (cannot infer P)",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -5515,7 +5754,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2360;
+const EXPECTED_ERRORS_REPORTED: usize = 2472;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
@@ -5634,6 +5873,11 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
         "fixedbugs/issue59740.go:24:25: in call to cons, type func(T, List[T]) T of nil[T]",
         "fixedbugs/issue60933.go:34:10: in call to g, type interface{Write([]uint8) (int, error)}",
         "fixedbugs/issue60933.go:35:12: in call to g, type *os.File of file does not match",
+        // A type parameter that is named like the type next to it is not
+        // told apart by where it is declared.
+        "fixedbugs/issue58611.go:13:6: cannot use 0 (untyped int constant) as int value",
+        "fixedbugs/issue58611.go:25:15: cannot use keys (variable of type []string) as []string",
+        "fixedbugs/issue58611.go:26:61: cannot use keys (variable of type []string) as []string",
     ];
     let (mut ok, mut missing) = (0, 0);
     let mut wrong = Vec::new();

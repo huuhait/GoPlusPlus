@@ -1249,7 +1249,9 @@ impl Types {
         matches!(&*self.get(self.underlying(id)), Type::Interface { .. })
     }
 
-    fn is_named(&self, id: TypeId) -> bool {
+    /// Whether the type has a name: a declared type, a type parameter or
+    /// a basic type.
+    pub fn is_named(&self, id: TypeId) -> bool {
         matches!(
             &*self.get(id),
             Type::Named { .. } | Type::Param(_) | Type::Basic(_)
@@ -1406,9 +1408,10 @@ impl Types {
             // A type parameter compares if every type that it may be
             // does.
             Type::Param(_) => self.param_set(id).is_some_and(|set| match &set.terms {
-                Some(terms) => terms
-                    .iter()
-                    .all(|term| self.comparable_in(term.ty, true, nest)),
+                Some(terms) => {
+                    let compares = |term: &Term| self.comparable_in(term.ty, true, nest);
+                    !terms.is_empty() && terms.iter().all(compares)
+                }
                 None => set.comparable,
             }),
             Type::Option(elem) | Type::Local(elem) | Type::Array { elem, .. } => {
