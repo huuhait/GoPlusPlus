@@ -132,6 +132,16 @@ impl<'a> Checker<'a> {
                 self.update_expr_type(cx, arg, last, true);
             }
         }
+        // A conversion that keeps how the value is held copies it as an
+        // assignment does (EXP-2); one that computes a new value only
+        // reads.
+        let kept = self.types.is_interface(target)
+            || self
+                .types
+                .identical(self.types.underlying(x.ty), self.types.underlying(target));
+        if kept {
+            self.given(cx, arg, &x, x.ty, place::Given::Stored);
+        }
         converted
     }
 

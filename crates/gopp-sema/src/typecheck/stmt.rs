@@ -299,6 +299,16 @@ impl<'a> Checker<'a> {
         }
         // A number is counted with the type that it has as a value.
         let counts = x.mode != Mode::Unknown && given.is_some() && self.is_integer(x.ty);
+        // The keys and the elements of a slice, an array or a map stay in
+        // it.
+        let mut held = self.types.underlying(x.ty);
+        if let Type::Pointer(elem) = &*self.types.get(held) {
+            held = self.types.underlying(*elem);
+        }
+        let holds = matches!(
+            &*self.types.get(held),
+            Type::Array { .. } | Type::Slice(_) | Type::Map { .. }
+        );
         for (position, &target) in lhs.iter().enumerate() {
             let ty = given.and_then(|given| given.get(position).copied().flatten());
             if !define {
@@ -311,6 +321,9 @@ impl<'a> Checker<'a> {
                 };
                 if !counts {
                     self.assignment(cx, target, Operand::value(ty), Some(to), "assignment");
+                    if holds && self.own_rules(cx) {
+                        self.range_copies(cx, of, &x, target, ty);
+                    }
                     continue;
                 }
                 let counted = self.assignment(cx, of, x.clone(), Some(to), "range clause");
@@ -344,12 +357,41 @@ impl<'a> Checker<'a> {
                 (ty, _) => ty,
             };
             self.set_local(local, ty);
+            let binding = match (alias, position) {
+                (true, _) => Some(place::Binding::Alias),
+                (false, 0) => holds.then_some(place::Binding::Key),
+                (false, _) => holds.then_some(place::Binding::Element),
+            };
+            if let (Some(local), Some(binding), Some(_)) = (local, binding, ty) {
+                self.bindings.insert(local, binding);
+            }
             // What cannot be ranged over gives its variables no type.
             self.excused.extend(local.filter(|_| ty.is_none()));
         }
         if lhs.is_empty() && counts {
             self.assignment(cx, of, x, None, "range clause");
         }
+    }
+
+    /// `for target = range x` assigns a copy of each key or element, of
+    /// the type `ty`, which must be one that is copied (RNG-1).
+    fn range_copies(&mut self, cx: &Cx<'a>, of: ExprId, x: &Operand, target: ExprId, ty: TypeId) {
+        let Some((part, why)) = self.types.not_copied(ty, true) else {
+            return;
+        };
+        if self.open(part) {
+            return;
+        }
+        let message = format!(
+            "cannot copy what {} holds to {}: {}",
+            self.describe(cx, of, x),
+            self.expr_string(cx, target),
+            self.not_copied_text(part, why, true)
+        );
+        let fix = "declare the variable in the range clause, with := and &".to_owned();
+        let fix = (Code::NoteOwnFixAlias, fix);
+        let span = cx.tree.exprs[target].span;
+        self.error_with_fix(Code::OwnR3aNeedsOwnership, span, message, fix);
     }
 
     /// The type of the variable `&v` of a range clause over `x`, which

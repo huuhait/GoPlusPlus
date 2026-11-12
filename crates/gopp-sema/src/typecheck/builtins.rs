@@ -330,6 +330,7 @@ impl<'a> Checker<'a> {
                     );
                     return self.invalid_argument(cx, at, message);
                 }
+                self.changed(cx, at, place::Change::Emptied("clear"));
                 no_value
             }
             (Close, Some((at, x))) => {
@@ -456,6 +457,7 @@ impl<'a> Checker<'a> {
                         return self.invalid_argument(cx, at, message);
                     }
                 };
+                self.changed(cx, at, place::Change::Emptied("delete"));
                 let (key_at, key_value) = given[1].clone();
                 let assigned =
                     self.assignment(cx, key_at, key_value, Some(key), "argument to delete");
@@ -680,16 +682,50 @@ impl<'a> Checker<'a> {
             ExprKind::Name(_) => cx.body.uses.get(&name),
             _ => None,
         };
-        let code = match (denotes, &x.mode) {
-            (Some(Ref::Local(_)), Mode::Variable) => return Operand::value(x.ty),
-            (Some(_), Mode::Variable) => Code::MoveNonlocal,
+        let shown = self.describe(cx, at, &x);
+        let span = cx.tree.exprs[at].span;
+        let local = match (denotes, &x.mode) {
+            (Some(&Ref::Local(local)), Mode::Variable) => Some(local),
+            _ => None,
+        };
+        // A variable of a plain range clause that is not copied is the
+        // element, which stays where it is.
+        let binding = local.and_then(|local| self.bindings.get(&local).copied());
+        let no_copy = self.types.category(x.ty) == crate::types::Category::NoCopy;
+        if let (Some(place::Binding::Element | place::Binding::Key), true) = (binding, no_copy) {
+            let text = self.expr_string(cx, name);
+            let message = format!("cannot move {shown}: the loop only reads {text}");
+            let fix = format!(
+                "write &{text} in the range clause, and use mem.Take(&{text}) or \
+                 mem.Replace(&{text}, v)"
+            );
+            match binding {
+                Some(place::Binding::Element) => {
+                    let fix = (Code::NoteOwnFixAlias, fix);
+                    self.error_with_fix(Code::OwnMoveRangeBorrowed, span, message, fix);
+                }
+                _ => self.error(Code::OwnMoveRangeBorrowed, span, message),
+            }
+            return Operand::UNKNOWN;
+        }
+        let code = match (local, &x.mode) {
+            (Some(_), _) if self.place_of(cx, name) != place::Place::Elsewhere => {
+                use crate::types::NotCopied;
+                if let Some((part, NotCopied::Pinned)) = self.types.not_copied(x.ty, true) {
+                    let cause = self.not_copied_text(part, NotCopied::Pinned, true);
+                    let message = format!("cannot move {shown}: {cause}, and stays in its place");
+                    self.error(Code::OwnPinnedMove, span, message);
+                    return Operand::UNKNOWN;
+                }
+                if self.memo.is_some() {
+                    self.var_modes.insert(name, crate::object::Transfer::Move);
+                }
+                return Operand::value(x.ty);
+            }
+            (_, Mode::Variable) => Code::MoveNonlocal,
             _ => Code::OwnMoveNotPlace,
         };
-        let message = format!(
-            "cannot move {}: move takes a local variable or a parameter",
-            self.describe(cx, at, &x)
-        );
-        let span = cx.tree.exprs[at].span;
+        let message = format!("cannot move {shown}: move takes a local variable or a parameter");
         // The value of another place is taken out of it.
         match x.mode {
             Mode::Variable => {

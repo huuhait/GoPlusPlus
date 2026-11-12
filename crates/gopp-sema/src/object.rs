@@ -127,10 +127,36 @@ pub struct Body {
     pub instances: FxHashMap<ExprId, Instance>,
     /// For a call `f!(x)`, what it does with an error.
     pub bangs: FxHashMap<ExprId, Bang>,
+    /// In a `.gopp` file: for a place whose value is given to a new
+    /// owner, how. A place of a type that is copied by its bytes has no
+    /// entry, nor has a temporary, which is given as it is.
+    pub var_modes: FxHashMap<ExprId, Transfer>,
+    /// The places on the left of the assignments that only exchange the
+    /// values of their places: each gets a value that was moved out of
+    /// another, and its own was moved out too.
+    pub swaps: FxHashSet<ExprId>,
+    /// The copied places on the right of an assignment that are the place
+    /// on its left, as in `xs = append(xs, v)` and `m[k] = f(m[k])`: the
+    /// value is assigned over, so the one that is evaluated last may be
+    /// given as it is.
+    pub self_moves: FxHashSet<ExprId>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.
     pub hidden_results: FxHashMap<StmtId, Vec<(LocalId, LocalId)>>,
+}
+
+/// How the value of a place gets to the new owner that one use gives it
+/// to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transfer {
+    /// The new owner gets a copy, made by the rule of the type. None is
+    /// made where the program cannot tell, which is decided where the
+    /// last read of each variable is known.
+    Copy,
+    /// The value itself: the operand of `move`, a returned variable that
+    /// cannot be copied, a place of a swap.
+    Move,
 }
 
 /// What a call `f!(x)` does when `f` returns an error. The innermost

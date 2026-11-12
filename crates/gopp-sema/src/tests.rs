@@ -13,7 +13,7 @@ use lasso::ThreadedRodeo;
 
 use crate::resolve::check_counted;
 use crate::types::Types;
-use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Unit, check};
+use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Transfer, Unit, check};
 
 /// Packages by import path. With `fake_rest`, any other path is a package
 /// about which nothing is known.
@@ -897,7 +897,7 @@ type Node/*=Node*/ struct {
 	next *Node/*@Node*/
 }
 
-type List/*=List*/[E/*=E*/ any] struct {
+type List/*=List*/[E/*=E*/ Clone] struct {
 	head E/*@E*/
 }
 
@@ -2775,6 +2775,48 @@ fn with_packages(names: &ThreadedRodeo, packages: &[(&str, &str)]) -> Loader {
             .insert(path.to_owned(), Arc::new(checked.package));
     }
     loader
+}
+
+/// How the places of the first file give their values, in the order in
+/// which they are written: `line:col place: copy`, with `over` for a
+/// place that is assigned over; then the places that swaps assign to.
+fn transfers(checked: &Checked) -> Vec<String> {
+    let file = &checked.files[0];
+    let shown = |expr: ExprId| {
+        let span = file.exprs[expr].span;
+        let source = checked.map.file(span.file);
+        let at = source.line_col(span.lo);
+        let text = &source.text()[span.lo as usize..span.hi as usize];
+        (span.lo, format!("{}:{} {text}", at.line, at.column))
+    };
+    let mut all = Vec::new();
+    for body in &checked.package.files[0].bodies {
+        for (&expr, mode) in &body.var_modes {
+            let (at, place) = shown(expr);
+            let mode = match mode {
+                Transfer::Copy => "copy",
+                Transfer::Move => "move",
+            };
+            let over = match body.self_moves.contains(&expr) {
+                true => ", over",
+                false => "",
+            };
+            all.push((at, format!("{place}: {mode}{over}")));
+        }
+        for &expr in &body.swaps {
+            let (at, place) = shown(expr);
+            all.push((at, format!("{place}: swap")));
+        }
+        // What is sliced is no value that is given.
+        for &expr in &body.self_moves {
+            if !body.var_modes.contains_key(&expr) {
+                let (at, place) = shown(expr);
+                all.push((at, format!("{place}: over")));
+            }
+        }
+    }
+    all.sort();
+    all.into_iter().map(|(_, line)| line).collect()
 }
 
 // rule: ERR-1, ERR-2, ERR-5, ERR-6, ERR-11a
@@ -4796,8 +4838,8 @@ fn a_pointer_argument_is_read_as_what_it_points_to_where_its_type_does_not_fit()
 
 type List []int
 
-func first[S ~[]E, E any](s S) E { return s[0] }
-func same[P any](a, b P)         {}
+func first[S ~[]E, E Clone](s S) E { return s[0] }
+func same[P any](a, b P)           {}
 func keep[P any](p P) P          { return p }
 
 func use(l List, pl *List, ps *[]string, n int, pn *int) {
@@ -5736,7 +5778,7 @@ type Pair[T Clone] struct{ a, b T }
 func text[T ~string | ~int](x T) {}
 func exact[T N | int](x T)       {}
 func free[T any](x T)            {}
-func plain[U any](u U)           { lib.Both(u) }
+func plain[U any](u U)           { lib.Both(move(u)) }
 func listed[U ~int](u U)         { lib.Both(u); lib.Dup(u) }
 func copied[U Clone](u U)        { lib.Again(u); lib.Both(u) }
 func mixed[U interface{ Clone; ~int | ~string }](u U) { lib.Again(u) }
@@ -5749,19 +5791,19 @@ func use(f lib.File, h Handle, m Mutex, n N, d Doc, p Point, s []lib.File, k M, 
 	lib.Again(h)
 	lib.Again([]Doc{})
 	text(\"x\")
-	exact(n)
-	free(f)
+	exact(move(n))
+	free(move(f))
 	var _ Pair[Doc]
 
-	lib.Dup(n)
-	lib.Dup(c)
+	lib.Dup(move(n))
+	lib.Dup(move(c))
 	lib.Both(d)
 	lib.Both(h)
 	lib.Both([]int{})
-	lib.Again(f)
-	lib.Again(m)
-	lib.Again(s)
-	text(n)
+	lib.Again(move(f))
+	lib.Again(Mutex{})
+	lib.Again(move(s))
+	text(move(n))
 	var _ Pair[lib.File]
 	h.drop()
 	_ = d.Clone()
@@ -5794,6 +5836,695 @@ func use(f lib.File, h Handle, m Mutex, n N, d Doc, p Point, s []lib.File, k M, 
         "a.gopp:57:8: d.Clone undefined (type Doc has no field or method Clone)",
     ];
     assert_eq!(checked.messages, expected);
+}
+
+// rule: OWN-R3, OWN-R3a, OWN-R10, PAR-5
+#[test]
+fn a_value_that_is_not_copied_is_moved_or_stays_in_its_place() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Files []File
+type Doc struct{ Title string }
+type Writer struct{ Out File }
+
+@Pinned
+type Mutex struct{ state int }
+
+var global File
+
+func openLog() File { return File{} }
+func keep(f File)   {}
+func check(f *File) {}
+func show(d Doc)    {}
+
+func locals(w Writer, files []File, m map[string]File, p *Writer, u Unique[File]) File {
+	f := openLog()
+	keep(move(f))
+	keep(openLog())
+	keep(Writer{}.Out)
+	check(&f)
+	check(&w.Out)
+	check(u)
+	files[0], files[1] = files[1], files[0]
+	w.Out, global = global, w.Out
+	w2 := Writer{Out: openLog()}
+	out := []File(move(files))
+	_, _ = w2, out
+
+	g := f
+	keep(f)
+	h := w.Out
+	i := files[0]
+	j := m[\"a\"]
+	k := global
+	l := p.Out
+	v, ok := m[\"a\"]
+	w3 := Writer{Out: f}
+	more := append(files, move(f))
+	fs := Files(files)
+	var o Option[File] = f
+	var q File = u
+	_, _, _, _, _, _, _, _, _, _, _, _, _ = g, h, i, j, k, l, v, ok, w3, more, fs, o, q
+	return f
+}
+
+func results(w *Writer, files []File) (File, File) {
+	return w.Out, files[0]
+}
+
+func pinned(mu Mutex, p *Mutex) Mutex {
+	a := mu
+	b := move(mu)
+	c := p
+	var d Mutex = p
+	_, _, _, _ = a, b, c, d
+	return mu
+}
+
+func captured(f File, d Doc) {
+	_ = func() {
+		keep(f)
+		keep(move(f))
+		show(d)
+		g := openLog()
+		keep(move(g))
+	}
+}
+
+func channel(ch chan File, f File) {
+	ch <- f
+	ch <- move(f)
+}
+";
+    let checked = check_texts(
+        "p",
+        &[("a.gopp", text)],
+        &Loader::default(),
+        &ThreadedRodeo::new(),
+    );
+    let expected = [
+        "a.gopp:35:7: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+        "a.gopp:36:7: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+        "a.gopp:37:7: cannot copy w.Out (variable of struct type File) out of its place: File has \
+         a drop method and no Clone() File",
+        "    use &w.Out, mem.Take(&w.Out) or mem.Replace(&w.Out, v)",
+        "a.gopp:38:7: cannot copy files[0] (variable of struct type File) out of its place: File \
+         has a drop method and no Clone() File",
+        "    use &files[0], mem.Take(&files[0]) or mem.Replace(&files[0], v)",
+        "a.gopp:39:7: cannot copy m[\"a\"] (map index expression of struct type File) out of its \
+         place: File has a drop method and no Clone() File",
+        "a.gopp:40:7: cannot copy global (variable of struct type File) out of its place: File has \
+         a drop method and no Clone() File",
+        "    use &global, mem.Take(&global) or mem.Replace(&global, v)",
+        "a.gopp:41:7: cannot copy p.Out (variable of struct type File) out of its place: File has \
+         a drop method and no Clone() File",
+        "    use &p.Out, mem.Take(&p.Out) or mem.Replace(&p.Out, v)",
+        "a.gopp:42:11: cannot copy m[\"a\"] (map index expression of struct type File) out of its \
+         place: File has a drop method and no Clone() File",
+        "a.gopp:43:20: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+        "a.gopp:44:17: cannot copy files (variable of type []File): File has a drop method and no \
+         Clone() File",
+        "    use move(files) to give the value, or &files to lend it",
+        "a.gopp:45:14: cannot copy files (variable of type []File): File has a drop method and no \
+         Clone() File",
+        "    use move(files) to give the value, or &files to lend it",
+        "a.gopp:46:23: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+        "a.gopp:47:15: cannot copy u (variable of type Unique[File]) out of its place: File has a \
+         drop method and no Clone() File",
+        "    use mem.Take(u) or mem.Replace(u, v)",
+        "a.gopp:53:9: cannot copy w.Out (variable of struct type File) out of its place: File has \
+         a drop method and no Clone() File",
+        "    use &w.Out, mem.Take(&w.Out) or mem.Replace(&w.Out, v)",
+        "a.gopp:53:16: cannot copy files[0] (variable of struct type File) out of its place: File \
+         has a drop method and no Clone() File",
+        "    use &files[0], mem.Take(&files[0]) or mem.Replace(&files[0], v)",
+        "a.gopp:57:7: cannot copy mu (variable of struct type Mutex): Mutex is @Pinned",
+        "    use &mu",
+        "a.gopp:58:12: cannot move mu (variable of struct type Mutex): Mutex is @Pinned, and stays \
+         in its place",
+        "a.gopp:60:16: cannot copy p (variable of type *Mutex): Mutex is @Pinned",
+        "a.gopp:67:8: cannot copy f (variable of struct type File) out of its place: File has a \
+         drop method and no Clone() File",
+        "    use &f, mem.Take(&f) or mem.Replace(&f, v)",
+        "a.gopp:68:13: cannot move f (variable of struct type File): move takes a local variable \
+         or a parameter",
+        "    use mem.Take(&f)",
+        "a.gopp:76:8: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+    ];
+    assert_eq!(checked.messages, expected);
+    // In a Go file a value is what it is in Go.
+    let text = "package p\ntype File struct{}\nfunc (f *File) drop() {}\nfunc f(a File) File { b := a; return b }\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+// rule: OWN-R3, OWN-R4, PAR-9
+#[test]
+fn a_place_says_how_each_use_gives_its_value() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Doc struct {
+	Title string
+	Tags  []string
+}
+
+func (d Doc) Show() string  { return d.Title }
+func (d *Doc) Set(t string) { d.Title = t }
+
+type Holder struct {
+	Docs []Doc
+	M    map[string][]int
+}
+
+func grow(xs []int) []int { return xs }
+func keep(f File)         {}
+
+func use(h *Holder, xs []int, d Doc, fs []File, f File, n int, name string) (Doc, File) {
+	m := n
+	e := d
+	title := d.Title
+	_ = any(d)
+	_ = d.Show()
+	_ = d.Show
+	d.Set(name)
+	_ = len(xs) + m
+	_ = title == name
+	xs = append(xs, 1)
+	xs = xs[1:]
+	xs = grow(xs)
+	h.Docs = append(h.Docs, d)
+	h.M[\"a\"] = append(h.M[\"a\"], n)
+	fs = append(fs, move(f))
+	fs = fs[1:]
+	ys := append(xs, 2)
+	xs, ys = ys, xs
+	h.Docs[0], h.Docs[n+1] = h.Docs[n+1], h.Docs[0]
+	fs[0], fs[1] = fs[1], fs[0]
+	g := func() Doc { return e }
+	_ = g
+	keep(move(fs[0]))
+	return d, f
+}
+";
+    let checked = check_texts(
+        "p",
+        &[("a.gopp", text)],
+        &Loader::default(),
+        &ThreadedRodeo::new(),
+    );
+    let expected = [
+        "a.gopp:46:12: cannot move fs[0] (variable of struct type File): move takes a local \
+         variable or a parameter",
+        "    use mem.Take(&fs[0])",
+    ];
+    assert_eq!(checked.messages, expected);
+    let expected = [
+        "12:38 d.Title: copy",
+        "13:41 t: copy",
+        "20:36 xs: copy",
+        "25:7 d: copy",
+        "26:11 d.Title: copy",
+        "27:10 d: copy",
+        "28:6 d: copy",
+        "29:6 d: copy",
+        "30:8 name: copy",
+        "33:14 xs: copy, over",
+        "34:7 xs: over",
+        "35:12 xs: copy, over",
+        "36:18 h.Docs: copy, over",
+        "36:26 d: copy",
+        "37:20 h.M[\"a\"]: copy, over",
+        "38:14 fs: move, over",
+        "38:23 f: move",
+        "39:7 fs: over",
+        "40:15 xs: copy",
+        "41:2 xs: swap",
+        "41:6 ys: swap",
+        "41:11 ys: move",
+        "41:15 xs: move",
+        "42:2 h.Docs[0]: swap",
+        "42:13 h.Docs[n+1]: swap",
+        "42:27 h.Docs[n+1]: move",
+        "42:40 h.Docs[0]: move",
+        "43:2 fs[0]: swap",
+        "43:9 fs[1]: swap",
+        "43:17 fs[1]: move",
+        "43:24 fs[0]: move",
+        "44:27 e: copy",
+        "47:9 d: copy",
+        "47:12 f: move",
+    ];
+    assert_eq!(transfers(&checked), expected);
+}
+
+// rule: OWN-R3b, RNG-1
+#[test]
+fn a_plain_range_variable_is_read_and_its_parts_are_not_changed() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Doc struct {
+	Title string
+	Tags  []string
+	N     int
+	Next  *Doc
+	Own   Unique[Doc]
+}
+
+type Key struct{ N int }
+
+func openLog() File { return File{} }
+func keep(f File)   {}
+func check(f *File) {}
+func show(d Doc)    {}
+
+func good(docs []Doc, nums []int, grid [][]int, ptrs []*Doc, ch chan Doc, byName map[string]Doc) {
+	var out []Doc
+	for i, d := range docs {
+		show(d)
+		out = append(out, d)
+		d = Doc{Title: d.Title}
+		d.Next.Title = \"x\"
+		i++
+	}
+	for _, &d := range docs {
+		d.Title = \"x\"
+		d.Tags[0] = \"x\"
+		d.N++
+		_ = &d
+	}
+	for k, &d := range byName {
+		d.N += len(k)
+	}
+	for _, x := range nums {
+		x *= 2
+		x++
+	}
+	for _, row := range grid {
+		row = append(row, 1)
+		_ = row[0]
+	}
+	for _, p := range ptrs {
+		p.Title = \"x\"
+		p.Tags[0] = \"x\"
+	}
+	for d := range ch {
+		d.Title = \"x\"
+		_ = &d
+	}
+	for i := range 3 {
+		i++
+	}
+}
+
+func bad(docs []Doc, grid [][]int, byName map[Key]map[string]int, arr [4]Doc) {
+	for _, d := range docs {
+		d.Title = \"x\"
+		d.Tags[0] = \"x\"
+		d.Tags = append(d.Tags, \"x\")
+		d.N++
+		d.N += 2
+		d.Own.Title = \"x\"
+		_ = &d
+		_ = &d.Tags[0]
+		_ = &d.Tags[1:]
+		(d).Title, d.N = \"x\", 1
+	}
+	for _, row := range grid {
+		row[0] = 1
+		clear(row)
+	}
+	for k, v := range byName {
+		k.N = 1
+		v[\"a\"] = 1
+		delete(v, \"a\")
+		clear(v)
+	}
+	for _, d := range arr {
+		d.N = 1
+	}
+}
+
+func views(files []File, byName map[string]File) {
+	for _, f := range files {
+		_ = f.fd
+		check(&f)
+		keep(f)
+		keep(move(f))
+		f = openLog()
+		f.fd = 1
+	}
+	for _, &f := range files {
+		check(&f)
+		f.fd = 1
+		f = openLog()
+		keep(f)
+		keep(move(f))
+	}
+	for _, f := range byName {
+		keep(f)
+	}
+	var f File
+	for _, f = range files {
+	}
+	var name string
+	for name, f = range byName {
+	}
+	_ = name
+}
+";
+    let expected = [
+        "a.gopp:63:3: cannot assign to d.Title: d is a copy of an element, and the change would be \
+         lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:64:3: cannot assign to d.Tags[0]: d is a copy of an element, and the change would \
+         be lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:65:3: cannot assign to d.Tags: d is a copy of an element, and the change would be \
+         lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:66:3: cannot assign to d.N: d is a copy of an element, and the change would be \
+         lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:67:3: cannot assign to d.N: d is a copy of an element, and the change would be \
+         lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:68:3: cannot assign to d.Own.Title: d is a copy of an element, and the change \
+         would be lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:69:8: cannot take the address of d: d is a copy of an element, and the change \
+         would be lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:70:8: cannot take the address of d.Tags[0]: d is a copy of an element, and the \
+         change would be lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:71:8: cannot take the address of d.Tags[1:]: d is a copy of an element, and the \
+         change would be lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:72:3: cannot assign to (d).Title: d is a copy of an element, and the change would \
+         be lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:72:14: cannot assign to d.N: d is a copy of an element, and the change would be \
+         lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:75:3: cannot assign to row[0]: row is a copy of an element, and the change would \
+         be lost",
+        "    write &row in the range clause to name the element itself",
+        "a.gopp:76:9: cannot clear row: row is a copy of an element, and the change would be lost",
+        "    write &row in the range clause to name the element itself",
+        "a.gopp:79:3: cannot assign to k.N: k is a copy of a key, and the change would be lost",
+        "a.gopp:80:3: cannot assign to v[\"a\"]: v is a copy of an element, and the change would \
+         be lost",
+        "    write &v in the range clause to name the element itself",
+        "a.gopp:81:10: cannot delete v: v is a copy of an element, and the change would be lost",
+        "    write &v in the range clause to name the element itself",
+        "a.gopp:82:9: cannot clear v: v is a copy of an element, and the change would be lost",
+        "    write &v in the range clause to name the element itself",
+        "a.gopp:85:3: cannot assign to d.N: d is a copy of an element, and the change would be \
+         lost",
+        "    write &d in the range clause to name the element itself",
+        "a.gopp:92:10: cannot take the address of f: f is an element that the loop only reads",
+        "    write &f in the range clause to name the element itself",
+        "a.gopp:93:8: cannot copy f (variable of struct type File) out of what is ranged over: \
+         File has a drop method and no Clone() File",
+        "    write &f in the range clause, and use mem.Take(&f) or mem.Replace(&f, v)",
+        "a.gopp:94:13: cannot move f (variable of struct type File): the loop only reads f",
+        "    write &f in the range clause, and use mem.Take(&f) or mem.Replace(&f, v)",
+        "a.gopp:95:3: cannot assign to f: f is an element that the loop only reads",
+        "    write &f in the range clause to name the element itself",
+        "a.gopp:96:3: cannot assign to f.fd: f is an element that the loop only reads",
+        "    write &f in the range clause to name the element itself",
+        "a.gopp:102:8: cannot copy f (variable of struct type File) out of its place: File has a \
+         drop method and no Clone() File",
+        "    use &f, mem.Take(&f) or mem.Replace(&f, v)",
+        "a.gopp:103:13: cannot move f (variable of struct type File): move takes a local variable \
+         or a parameter",
+        "    use mem.Take(&f)",
+        "a.gopp:106:8: cannot copy f (variable of struct type File) out of what is ranged over: \
+         File has a drop method and no Clone() File",
+        "    write &f in the range clause, and use mem.Take(&f) or mem.Replace(&f, v)",
+        "a.gopp:109:9: cannot copy what files (variable of type []File) holds to f: File has a \
+         drop method and no Clone() File",
+        "    declare the variable in the range clause, with := and &",
+        "a.gopp:112:12: cannot copy what byName (variable of type map[string]File) holds to f: \
+         File has a drop method and no Clone() File",
+        "    declare the variable in the range clause, with := and &",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // In a Go file the variable is Go's.
+    let text = "package p\ntype Doc struct{ N int }\nfunc f(docs []Doc) { for _, d := range docs { d.N = 1; _ = &d } }\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+// rule: OWN-R4, OWN-R10
+#[test]
+fn what_is_taken_out_of_a_place_leaves_a_value_there() {
+    let names = ThreadedRodeo::new();
+    let mem = "package mem\nfunc Take[T any](p *T) T\nfunc Replace[T any](p *T, v T) T\n";
+    let loader = with_packages(&names, &[("mem", mem)]);
+    let text = "package p
+
+import \"mem\"
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Node struct {
+	Name string @Required
+}
+
+@Pinned
+type Mutex struct{ state int }
+
+type Holder struct {
+	Out   File
+	Owner Unique[File]
+	Opt   Option[File]
+	Node  Node
+	Run   func()
+	mu    Mutex
+}
+
+func good(h *Holder, f File, files []File, byName map[string]File) {
+	a := mem.Take(&h.Out)
+	b := mem.Replace(&h.Owner, NewUnique(File{}))
+	c := mem.Take(&h.Opt)
+	d := mem.Take[File](&files[0])
+	e := mem.Take(&f)
+	g := mem.Replace(&h.Node, Node{Name: \"n\"})
+	_, _, _, _, _, _ = a, b, c, d, e, g
+	for _, &f := range files {
+		_ = mem.Take(&f)
+	}
+	for _, &f := range byName {
+		_ = mem.Replace(&f, File{})
+	}
+	_ = func() { _ = mem.Take(&f) }
+}
+
+func bad(h *Holder, mu *Mutex, files []File) {
+	a := mem.Take(&h.Owner)
+	b := mem.Take(&h.Node)
+	c := mem.Take(&h.Run)
+	d := mem.Take(mu)
+	e := mem.Replace(&h.mu, Mutex{})
+	_, _, _, _, _ = a, b, c, d, e
+	for _, f := range files {
+		_ = mem.Take(&f)
+	}
+}
+
+func generic[T any, C Copy, N ~int | ~string](p *T, v T, c *C, n *N) T {
+	_ = mem.Replace(p, move(v))
+	_ = mem.Take(c)
+	_ = mem.Take(n)
+	return mem.Take(p)
+}
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:43:7: cannot use mem.Take(&h.Owner): Unique[File] has no zero value to leave in \
+         the place",
+        "    use mem.Replace, which leaves a value of yours",
+        "a.gopp:44:7: cannot use mem.Take(&h.Node): Node has no zero value to leave in the place",
+        "    use mem.Replace, which leaves a value of yours",
+        "a.gopp:45:7: cannot use mem.Take(&h.Run): func() has no zero value to leave in the place",
+        "    use mem.Replace, which leaves a value of yours",
+        "a.gopp:46:7: cannot use mem.Take(mu): Mutex is @Pinned, and stays in its place",
+        "a.gopp:47:7: cannot use mem.Replace(&h.mu, Mutex{}): Mutex is @Pinned, and stays in its \
+         place",
+        "a.gopp:50:17: cannot take the address of f: f is an element that the loop only reads",
+        "    write &f in the range clause to name the element itself",
+        "a.gopp:56:6: cannot use mem.Take(c): C may be a type with no zero value to leave in the \
+         place",
+        "    use mem.Replace, which leaves a value of yours",
+        "a.gopp:58:9: cannot use mem.Take(p): T may be a type with no zero value to leave in the \
+         place",
+        "    use mem.Replace, which leaves a value of yours",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+// rule: GEN-3, GEN-4, OWN-R3, OWN-R3a
+#[test]
+fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
+    // Each use in a function of its own, by the line of the function.
+    let uses = [
+        "a := v; _ = a",
+        "keep(v)",
+        "xs = append(xs, v); _ = xs",
+        "m[\"a\"] = v",
+        "_ = Cell[X]{f: v}",
+        "ch <- v",
+        "b := xs[0]; _ = b",
+        "c := *p; _ = c",
+        "d, ok := m[\"a\"]; _, _ = d, ok",
+        "for _, e := range xs { keep(e) }",
+        "_ = func() { keep(v) }",
+        "return xs[0]",
+        "return *p",
+        "return v",
+        "c := move(v); _ = c",
+        "keep(move(v))",
+        "xs = append(xs, move(v)); _ = xs",
+        "_ = &v",
+        "borrow(&v); borrow(p); borrow(&xs[0])",
+        "xs[0], xs[1] = xs[1], xs[0]",
+        "for _, &e := range xs { borrow(&e) }",
+        "xs = xs[1:]; xs = append(xs, zero()); _ = len(xs)",
+    ];
+    let helpers =
+        "type Cell[U any] struct{ f U }\nfunc keep[U any](u U) {}\nfunc borrow[U any](u *U) {}\n";
+    // The lines whose function is refused, for a type that is declared
+    // or for a type parameter with the constraint.
+    let refused = |declared: &str, constraint: &str| {
+        let mut text = format!("package p\n{declared}\n{helpers}");
+        let first = text.lines().count() + 1;
+        for (at, body) in uses.iter().enumerate() {
+            let (generic, of) = match constraint {
+                "" => (String::new(), ""),
+                constraint => (format!("[X {constraint}]"), "[X]"),
+            };
+            let zero = format!("zero := func() X {{ return zero{of}() }}; _ = zero");
+            text += &format!(
+                "func f{at}{generic}(v X, xs []X, p *X, m map[string]X, ch chan X) X {{ {zero}; \
+                 {body}; return zero() }}\n"
+            );
+        }
+        let made = match constraint {
+            "" => "func zero() X { panic(0) }\n".to_owned(),
+            constraint => format!("func zero[X {constraint}]() X {{ panic(0) }}\n"),
+        };
+        text += &made;
+        let checked = messages("a.gopp", &text);
+        let mut lines: Vec<usize> = checked
+            .iter()
+            .filter(|message| !message.starts_with("    "))
+            .map(|message| {
+                let line: usize = message.split(':').nth(1).unwrap().parse().unwrap();
+                assert!(line >= first && line < first + uses.len(), "{message}");
+                line - first
+            })
+            .collect();
+        lines.dedup();
+        lines
+    };
+    let file = "type X struct{ fd int }\nfunc (x *X) drop() {}";
+    let copies: Vec<usize> = (0..=12).collect();
+    assert_eq!(refused(file, ""), copies);
+    assert_eq!(refused("", "any"), copies);
+    assert_eq!(refused("", "interface{ String() string }"), copies);
+    let none: [usize; 0] = [];
+    assert_eq!(refused("type X struct{ name string }", ""), none);
+    assert_eq!(refused("", "Clone"), none);
+    assert_eq!(refused("", "~string | ~[]int"), none);
+    assert_eq!(refused("type X int", ""), none);
+    assert_eq!(refused("", "Copy"), none);
+    assert_eq!(refused("", "~int | ~uint8"), none);
+}
+
+// rule: OWN-R3a
+#[test]
+fn the_steps_of_places_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let checked = check_texts(
+            "p",
+            &[("a.gopp", &text)],
+            &Loader::default(),
+            &ThreadedRodeo::new(),
+        );
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    let header = "package p\ntype Doc struct{ Title string; Tags []string; Next *Doc }\n\
+                  func show(d Doc) {}\n";
+    // Many uses that give a value, and many assignments over a place.
+    let siblings = |count: usize| {
+        let uses: String = (0..count)
+            .map(|i| format!("\tshow(d)\n\tt{i} := docs[{i}].Title\n\tdocs[{i}].Tags = append(docs[{i}].Tags, t{i})\n"))
+            .collect();
+        format!("{header}func f(d Doc, docs []Doc) {{\n{uses}}}\n")
+    };
+    // One place under many fields, each in a struct of its own.
+    let deep = |depth: usize| {
+        let types: String = (0..depth)
+            .map(|i| format!("type T{i} struct{{ f T{} }}\n", i + 1))
+            .collect();
+        let path = ".f".repeat(depth);
+        format!(
+            "{header}{types}type T{depth} struct{{ f Doc }}\n\
+             func f(v T0, vs []T0) Doc {{\n\tv{path}.f.Title = \"x\"\n\tfor _, &e := range vs {{ \
+             e{path}.f.Tags[0] = \"x\" }}\n\tshow(v{path}.f)\n\treturn T0{{}}{path}.f\n}}\n"
+        )
+    };
+    // One assignment that exchanges many places.
+    let swap = |count: usize| {
+        let left: Vec<String> = (0..count).map(|i| format!("docs[{i}]")).collect();
+        let right: Vec<String> = (0..count).rev().map(|i| format!("docs[{i}]")).collect();
+        format!(
+            "{header}func f(docs []Doc) {{\n\t{} = {}\n}}\n",
+            left.join(", "),
+            right.join(", ")
+        )
+    };
+    // A function literal in a function literal, each with a variable of
+    // the one around it.
+    let nested = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("d{} := d{i}\n_ = func() {{ show(d{})\n", i + 1, i + 1))
+            .collect();
+        format!(
+            "{header}func f(d0 Doc) {{\n{open}{}\n}}\n",
+            "}\n".repeat(depth)
+        )
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(deep(n)));
+    linear::assert_near_linear(&sizes, |n| steps(swap(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
 }
 
 /// Calls of a generic function build a type that holds another one twice

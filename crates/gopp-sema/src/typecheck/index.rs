@@ -311,6 +311,7 @@ impl<'a> Checker<'a> {
     ) -> Operand {
         let x = self.value(cx, of);
         let x = self.read(cx, x);
+        self.sliced(cx, of);
         let span = cx.tree.exprs[of].span;
         let open = self.open(x.ty) || self.may_overload(cx, x.ty);
         let sliced = match x.mode == Mode::Unknown || open {

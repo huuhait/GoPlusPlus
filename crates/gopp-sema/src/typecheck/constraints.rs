@@ -266,7 +266,7 @@ impl<'a> Checker<'a> {
     /// copied one of these ways asks it too, of the declared types that
     /// a term `~T` holds (GEN-1, GEN-2).
     fn not_copied(&self, param: TypeId, arg: TypeId, bound: TypeId) -> Option<String> {
-        use crate::types::{Category, NotCopied};
+        use crate::types::Category;
         let set = self.types.type_set(bound)?;
         let wanted = self.types.constraint_category(&set);
         // A constraint is no type argument, which was said. A type
@@ -279,18 +279,12 @@ impl<'a> Checker<'a> {
         }
         let at_all = wanted == Category::Copyable;
         let (part, why) = self.types.not_copied(arg, at_all)?;
-        let (shown, part) = (self.type_string(arg), self.type_string(part));
+        let shown = self.type_string(arg);
         let asked = match at_all {
             true => "Clone",
             false => "Copy",
         };
-        let why = match why {
-            NotCopied::Drop if at_all => format!("{part} has a drop method and no Clone() {part}"),
-            NotCopied::Drop | NotCopied::CopyMethod => format!("{part} has a drop method"),
-            NotCopied::Pinned => format!("{part} is @Pinned"),
-            NotCopied::Param => format!("{part} is not constrained by {asked}"),
-            NotCopied::OwnRule => format!("a copy of {part} is more than its bytes"),
-        };
+        let why = self.not_copied_text(part, why, at_all);
         let written = match at_all {
             true => set.markers.contains(&Marker::Clone),
             false => set.markers.contains(&Marker::Copy),
@@ -305,6 +299,29 @@ impl<'a> Checker<'a> {
             self.type_string(param),
             terms.join(" | ")
         ))
+    }
+
+    /// Why the type `part` is not copied by its bytes, or not at all if
+    /// `at_all`, as a message says it.
+    pub(super) fn not_copied_text(
+        &self,
+        part: TypeId,
+        why: crate::types::NotCopied,
+        at_all: bool,
+    ) -> String {
+        use crate::types::NotCopied;
+        let part = self.type_string(part);
+        let asked = match at_all {
+            true => "Clone",
+            false => "Copy",
+        };
+        match why {
+            NotCopied::Drop if at_all => format!("{part} has a drop method and no Clone() {part}"),
+            NotCopied::Drop | NotCopied::CopyMethod => format!("{part} has a drop method"),
+            NotCopied::Pinned => format!("{part} is @Pinned"),
+            NotCopied::Param => format!("{part} is not constrained by {asked}"),
+            NotCopied::OwnRule => format!("a copy of {part} is more than its bytes"),
+        }
     }
 
     /// Holds the type arguments of an instance to the constraints of the

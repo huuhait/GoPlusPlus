@@ -141,6 +141,15 @@ impl<'a> Checker<'a> {
         if let Some(to) = to {
             self.note_interface(cx, expr, &x, to, writes);
         }
+        if own
+            && matches!(x.mode, Mode::Variable | Mode::MapIndex)
+            && let Some(how) = Self::gives(context)
+        {
+            // The value is of the type that the operand is read as.
+            let read = to.and_then(|to| self.fit_own(&x, to, writes));
+            let ty = read.map_or(x.ty, |(from, _)| from);
+            self.given(cx, expr, &x, ty, how);
+        }
         x
     }
 
@@ -256,6 +265,8 @@ impl<'a> Checker<'a> {
         }
         // `v, ok = m[k]`, `v, ok = x.(T)`, `v, ok = <-ch`.
         if count == 2 && matches!(x.mode, Mode::MapIndex | Mode::CommaOk) {
+            // The entry of the map stays in it.
+            self.given(cx, expr, &x, x.ty, place::Given::Stored);
             let first = Operand::value(x.ty);
             return vec![first, self.value_of(Basic::UntypedBool)];
         }
@@ -412,6 +423,7 @@ impl<'a> Checker<'a> {
             }
         }
         if matches!(x.mode, Mode::Variable | Mode::MapIndex) {
+            self.changed(cx, lhs, place::Change::Assigned);
             return Some(x.ty);
         }
         if let ExprKind::Selector { x: of, .. } = cx.tree.exprs[inner].kind
@@ -429,6 +441,17 @@ impl<'a> Checker<'a> {
 
     /// `lhs = rhs`.
     pub(super) fn assign_vars(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) {
+        // A use of the one place in its new value is assigned over.
+        if let ([place], true) = (lhs, self.own_rules(cx))
+            && self.is_plain_place(cx, *place)
+        {
+            self.target = Some(self.expr_string(cx, *place));
+        }
+        self.assign_places(cx, lhs, rhs);
+        self.target = None;
+    }
+
+    fn assign_places(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) {
         let is_call = match rhs {
             [one] => matches!(
                 cx.tree.exprs[self.unparen(cx, *one)].kind,
@@ -437,6 +460,11 @@ impl<'a> Checker<'a> {
             _ => false,
         };
         if lhs.len() == rhs.len() && !is_call {
+            self.swapping = self.is_swap(cx, lhs, rhs);
+            if self.swapping && self.memo.is_some() {
+                let places: Vec<ExprId> = lhs.iter().map(|&x| self.unparen(cx, x)).collect();
+                self.swaps.extend(places);
+            }
             for (&place, &value) in lhs.iter().zip(rhs) {
                 match self.lhs_var(cx, place) {
                     Some(invalid) if invalid == Types::INVALID => {
@@ -453,6 +481,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            self.swapping = false;
             return;
         }
         if rhs.len() != 1 {

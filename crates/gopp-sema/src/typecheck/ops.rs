@@ -689,6 +689,7 @@ impl<'a> Checker<'a> {
                     self.error(Code::AddressOfUnaddressable, self.span(cx, inner), message);
                     return Operand::UNKNOWN;
                 }
+                self.changed(cx, inner, place::Change::Addressed);
                 return Operand::value(self.types.pointer(x.ty));
             }
             UnaryOp::Recv => {

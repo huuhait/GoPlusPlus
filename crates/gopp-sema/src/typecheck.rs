@@ -19,6 +19,7 @@ mod literal;
 mod methods;
 mod ops;
 mod own;
+mod place;
 mod stmt;
 
 use gopp_diag::{Code, Diagnostic, Sink};
@@ -231,6 +232,21 @@ struct Checker<'a> {
     /// While a body is walked: the left sides of its assignments that
     /// write what a pointer points to.
     writes_through: FxHashSet<ExprId>,
+    /// While a body is walked: how its places give their values, the
+    /// places that swaps assign to, and the uses that are assigned over.
+    var_modes: FxHashMap<ExprId, crate::object::Transfer>,
+    swaps: FxHashSet<ExprId>,
+    self_moves: FxHashSet<ExprId>,
+    /// While a body is walked: what the variables of its range clauses
+    /// are.
+    bindings: FxHashMap<LocalId, place::Binding>,
+    /// The function literals that are being walked, the innermost last.
+    literals: Vec<Span>,
+    /// While the value of an assignment to one place is walked: the
+    /// place, as it is written.
+    target: Option<String>,
+    /// While the values of a swap are assigned.
+    swapping: bool,
     /// While a body is walked: the expressions whose values are put into
     /// an interface, each with its type and the interface type.
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
@@ -328,6 +344,9 @@ struct BodyTypes {
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     instances: FxHashMap<ExprId, crate::object::Instance>,
     bangs: FxHashMap<ExprId, Bang>,
+    var_modes: FxHashMap<ExprId, crate::object::Transfer>,
+    swaps: FxHashSet<ExprId>,
+    self_moves: FxHashSet<ExprId>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -382,6 +401,13 @@ pub fn declarations(
         excused: Vec::new(),
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
+        var_modes: FxHashMap::default(),
+        swaps: FxHashSet::default(),
+        self_moves: FxHashSet::default(),
+        bindings: FxHashMap::default(),
+        literals: Vec::new(),
+        target: None,
+        swapping: false,
         iface_conversions: FxHashMap::default(),
         interfaces: Vec::new(),
         embedded_fields: Vec::new(),
@@ -458,6 +484,9 @@ pub fn declarations(
             body.types = found.exprs;
             body.selections = found.selections;
             body.writes_through = found.writes_through;
+            body.var_modes = found.var_modes;
+            body.swaps = found.swaps;
+            body.self_moves = found.self_moves;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
@@ -1914,7 +1943,11 @@ impl<'a> Checker<'a> {
                 // Its body is walked with the body it is in.
                 if self.memo.is_some() {
                     self.signature_locals(cx, *ty);
+                    self.literals.push(cx.tree.exprs[expr].span);
+                    let target = self.target.take();
                     self.function_body(cx, *ty, sig, body);
+                    self.target = target;
+                    self.literals.pop();
                 }
                 Operand::value(sig)
             }
@@ -2168,6 +2201,7 @@ impl<'a> Checker<'a> {
                     self.error(Code::MethodExprPointerReceiver, sel.span, message);
                     return Operand::UNKNOWN;
                 }
+                self.receiver_given(cx, (expr, sel.name), base, &x, pointer_receiver);
                 Operand::value(sig)
             }
             // `T.m`: a function that takes the receiver first.
@@ -2477,14 +2511,16 @@ impl<'a> Checker<'a> {
                 let Type::Func { results, .. } = &*self.types.get(sig) else {
                     return Operand::UNKNOWN;
                 };
-                match &results[..] {
+                let called = match &results[..] {
                     [] => Operand {
                         mode: Mode::NoValue,
                         ty: Types::INVALID,
                     },
                     [one] => Operand::value(*one),
                     many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
-                }
+                };
+                self.taken(cx, expr, fun, &called);
+                called
             }
             _ => Operand::UNKNOWN,
         }
@@ -2741,6 +2777,7 @@ impl<'a> Checker<'a> {
             };
             let mut cx = self.cx(&Decl { unit, body, form }, None);
             self.locals.clear();
+            self.bindings.clear();
             self.local_groups.clear();
             self.shifted.clear();
             self.memo = Some(FxHashMap::default());
@@ -2846,6 +2883,9 @@ impl<'a> Checker<'a> {
                 excused: std::mem::take(&mut self.excused),
                 selections: std::mem::take(&mut self.selections),
                 writes_through: std::mem::take(&mut self.writes_through),
+                var_modes: std::mem::take(&mut self.var_modes),
+                swaps: std::mem::take(&mut self.swaps),
+                self_moves: std::mem::take(&mut self.self_moves),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
                 bangs: std::mem::take(&mut self.bangs),

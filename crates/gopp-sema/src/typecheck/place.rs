@@ -1,0 +1,485 @@
+//! Where the value that an expression names lives, how a use gives it to
+//! a new owner (OWN-R3, OWN-R3a), and which variables only name a value
+//! that is read (OWN-R3b).
+
+use super::*;
+use crate::object::Transfer;
+use crate::types::{Category, NotCopied};
+
+/// Where the value of an expression lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Place {
+    /// In a variable of the function that names it.
+    Local(LocalId),
+    /// In no variable: the result of a call, a literal, what `move`
+    /// gives, and a part of one of these.
+    Temporary,
+    /// Anywhere else: a field, an element, an entry of a map, a variable
+    /// of the package or of a function around, what a pointer points to.
+    Elsewhere,
+}
+
+/// What a variable of a range clause is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Binding {
+    /// The plain second variable over a slice, an array or a map: a copy
+    /// of an element, which is not made while the loop only reads it.
+    Element,
+    /// The first variable over one of these: a copy of an index or of a
+    /// key, likewise.
+    Key,
+    /// `&v`: the element itself.
+    Alias,
+}
+
+/// Where a value is given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Given {
+    /// To a variable, a field, an element, a parameter, a channel.
+    Stored,
+    /// To the caller, which ends the variables of the function.
+    Returned,
+}
+
+/// What is done to a place that a variable of a range clause may not be
+/// done to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Change {
+    Assigned,
+    Addressed,
+    /// `delete` and `clear`, by the name of the function.
+    Emptied(&'static str),
+}
+
+impl<'a> Checker<'a> {
+    /// Whether what a value of the type reaches with a selector or an
+    /// index is in the storage of another owner.
+    fn reaches_out(&self, mut ty: TypeId) -> bool {
+        loop {
+            ty = match &*self.types.get(self.types.underlying(ty)) {
+                Type::Pointer(_) | Type::Shared(_) | Type::Weak(_) => return true,
+                Type::Option(elem) => *elem,
+                _ => return false,
+            };
+        }
+    }
+
+    /// The type that the expression was given when it was walked.
+    fn walked_type(&self, expr: ExprId) -> Option<TypeId> {
+        let memo = self.memo.as_ref()?;
+        memo.get(&expr).map(|x| x.ty)
+    }
+
+    /// Whether the local is a variable of a function around the function
+    /// literal that is being walked.
+    fn captured(&self, cx: &Cx<'a>, local: LocalId) -> bool {
+        let declared = cx.body.locals[local.0 as usize].span;
+        self.literals
+            .last()
+            .is_some_and(|literal| declared.lo < literal.lo || literal.hi < declared.hi)
+    }
+
+    /// The local variable that the name `expr` denotes.
+    fn variable(&self, cx: &Cx<'a>, expr: ExprId) -> Option<LocalId> {
+        use LocalKind::*;
+        match cx.body.uses.get(&expr) {
+            Some(&Ref::Local(local)) => {
+                let kind = cx.body.locals[local.0 as usize].kind;
+                matches!(kind, Var | Receiver | Param | Result).then_some(local)
+            }
+            _ => None,
+        }
+    }
+
+    /// Where the value of the expression lives.
+    pub(super) fn place_of(&mut self, cx: &Cx<'a>, mut expr: ExprId) -> Place {
+        let mut part = false;
+        loop {
+            self.steps += 1;
+            let of = match cx.tree.exprs[expr].kind {
+                ExprKind::Paren(x) => {
+                    expr = x;
+                    continue;
+                }
+                ExprKind::Name(_) => {
+                    return match (self.variable(cx, expr), cx.body.uses.get(&expr)) {
+                        (Some(local), _) => {
+                            let alias = self.bindings.get(&local) == Some(&Binding::Alias);
+                            match part || alias || self.captured(cx, local) {
+                                true => Place::Elsewhere,
+                                false => Place::Local(local),
+                            }
+                        }
+                        (None, Some(Ref::Object(_) | Ref::Member { .. })) => Place::Elsewhere,
+                        _ => Place::Temporary,
+                    };
+                }
+                // `pkg.Name` is a variable of another package.
+                ExprKind::Selector { .. } if cx.body.uses.contains_key(&expr) => {
+                    return Place::Elsewhere;
+                }
+                ExprKind::Selector { x, .. } | ExprKind::Index { x, .. } => x,
+                ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => x,
+                _ => return Place::Temporary,
+            };
+            if self.walked_type(of).is_none_or(|ty| self.reaches_out(ty)) {
+                return Place::Elsewhere;
+            }
+            // A part of a temporary is one; a part of a variable is not
+            // the variable.
+            part = true;
+            expr = of;
+        }
+    }
+
+    /// The plain range variable that a change of the place `expr`
+    /// changes: the place is the variable or a part of it, which is said
+    /// too. A part that a pointer points to is none.
+    fn bound(&mut self, cx: &Cx<'a>, mut expr: ExprId) -> Option<(LocalId, bool)> {
+        let mut part = false;
+        loop {
+            self.steps += 1;
+            let of = match cx.tree.exprs[expr].kind {
+                ExprKind::Paren(x) => {
+                    expr = x;
+                    continue;
+                }
+                ExprKind::Name(_) => {
+                    let local = self.variable(cx, expr)?;
+                    let copied = matches!(
+                        self.bindings.get(&local),
+                        Some(Binding::Element | Binding::Key)
+                    );
+                    return copied.then_some((local, part));
+                }
+                ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Slice { x, .. } => x,
+                _ => return None,
+            };
+            if self.reaches_out(self.walked_type(of)?) {
+                return None;
+            }
+            part = true;
+            expr = of;
+        }
+    }
+
+    /// The place `expr` is changed: a variable of a plain range clause is
+    /// a copy that the loop only reads, so a change of a part of it would
+    /// be lost, and one that is not copied is the element, which is read
+    /// only (OWN-R3b, RNG-1).
+    pub(super) fn changed(&mut self, cx: &Cx<'a>, expr: ExprId, change: Change) {
+        if !self.own_rules(cx) || self.memo.is_none() {
+            return;
+        }
+        let Some((local, part)) = self.bound(cx, expr) else {
+            return;
+        };
+        let ty = self.locals.get(&local).map_or(Types::INVALID, |x| x.ty);
+        let whole = !part && change == Change::Assigned;
+        if whole && self.types.category(ty) != Category::NoCopy {
+            return;
+        }
+        let name = self.names.resolve(&cx.body.locals[local.0 as usize].name);
+        let text = self.expr_string(cx, expr);
+        let is_key = self.bindings.get(&local) == Some(&Binding::Key);
+        let of = match is_key {
+            true => "a key",
+            false => "an element",
+        };
+        let what = match self.types.category(ty) {
+            Category::NoCopy => format!("{name} is {of} that the loop only reads"),
+            _ => format!("{name} is a copy of {of}, and the change would be lost"),
+        };
+        let (code, message) = match change {
+            Change::Assigned => (
+                Code::OwnRangeVarWrite,
+                format!("cannot assign to {text}: {what}"),
+            ),
+            Change::Addressed => (
+                Code::OwnBorrowedAddress,
+                format!("cannot take the address of {text}: {what}"),
+            ),
+            Change::Emptied(function) => (
+                Code::OwnRangeVarWrite,
+                format!("cannot {function} {text}: {what}"),
+            ),
+        };
+        let span = cx.tree.exprs[expr].span;
+        // Only an element has another name.
+        if is_key {
+            return self.error(code, span, message);
+        }
+        let fix = format!("write &{name} in the range clause to name the element itself");
+        self.error_with_fix(code, span, message, (Code::NoteOwnFixAlias, fix));
+    }
+
+    /// Whether a value is given to a new owner where a message says
+    /// `context`, and how.
+    pub(super) fn gives(context: &str) -> Option<Given> {
+        match context {
+            "return statement" => Some(Given::Returned),
+            "assignment"
+            | "variable declaration"
+            | "send"
+            | "struct literal"
+            | "array or slice literal"
+            | "map literal" => Some(Given::Stored),
+            // The key is looked up, and these functions only read.
+            "argument to delete" => None,
+            _ if context.starts_with("argument to built-in ") => None,
+            _ if context.starts_with("argument to unsafe.") => None,
+            _ if context.starts_with("argument to ") => Some(Given::Stored),
+            _ => None,
+        }
+    }
+
+    /// The value of the place `expr` is given to a new owner as a value
+    /// of the type `ty`: a copy of it is, unless it cannot be copied
+    /// (OWN-R3, OWN-R3a). A temporary is given as it is, and nothing is
+    /// noted of a value that is copied by its bytes.
+    pub(super) fn given(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand, ty: TypeId, how: Given) {
+        let is_place = matches!(x.mode, Mode::Variable | Mode::MapIndex);
+        if !self.own_rules(cx) || self.memo.is_none() || !is_place {
+            return;
+        }
+        let category = self.types.category(ty);
+        if category == Category::Trivial {
+            return;
+        }
+        let expr = self.unparen(cx, expr);
+        // What a pointer or a handle is read as is where it points.
+        let direct = x.ty == ty;
+        let place = match direct {
+            true => self.place_of(cx, expr),
+            false => Place::Elsewhere,
+        };
+        if place == Place::Temporary {
+            return;
+        }
+        if self.swapping {
+            self.var_modes.insert(expr, Transfer::Move);
+            return;
+        }
+        let same = |target: &String| *target == self.expr_string(cx, expr);
+        let assigned_over = self.target.as_ref().is_some_and(same);
+        if assigned_over {
+            self.self_moves.insert(expr);
+        }
+        if category == Category::Copyable {
+            self.var_modes.insert(expr, Transfer::Copy);
+            return;
+        }
+        let binding = match place {
+            Place::Local(local) => self.bindings.get(&local).copied(),
+            _ => None,
+        };
+        let element = binding.is_some();
+        let Some((part, why)) = self.types.not_copied(ty, true) else {
+            return;
+        };
+        // Nothing is known of a type parameter whose constraint is in
+        // error.
+        if self.open(part) {
+            return;
+        }
+        // What is assigned over is given once, and a returned variable
+        // ends with its function.
+        let returned = matches!(place, Place::Local(_)) && how == Given::Returned && !element;
+        let over = assigned_over && why != NotCopied::Pinned;
+        if over || returned {
+            if over {
+                self.target = None;
+            }
+            self.var_modes.insert(expr, Transfer::Move);
+            return;
+        }
+        let text = self.expr_string(cx, expr);
+        let shown = self.describe(cx, expr, x);
+        let cause = self.not_copied_text(part, why, true);
+        let (code, message, fix) = match (place, why) {
+            (_, NotCopied::Pinned) => (
+                Code::OwnPinnedCopy,
+                format!("cannot copy {shown}: {cause}"),
+                direct.then(|| (Code::NoteOwnFixAddress, format!("use &{text}"))),
+            ),
+            (Place::Local(_), _) if element => {
+                let fix = format!(
+                    "write &{text} in the range clause, and use mem.Take(&{text}) or \
+                     mem.Replace(&{text}, v)"
+                );
+                (
+                    Code::OwnR3aNeedsOwnership,
+                    format!("cannot copy {shown} out of what is ranged over: {cause}"),
+                    (binding == Some(Binding::Element)).then_some((Code::NoteOwnFixAlias, fix)),
+                )
+            }
+            (Place::Local(_), _) => {
+                let code = match why {
+                    NotCopied::Param => Code::OwnGenericCopy,
+                    _ => Code::OwnCopyLocal,
+                };
+                let fix = format!("use move({text}) to give the value, or &{text} to lend it");
+                (
+                    code,
+                    format!("cannot copy {shown}: {cause}"),
+                    Some((Code::NoteOwnFixMove, fix)),
+                )
+            }
+            _ => {
+                let code = match why {
+                    NotCopied::Param => Code::OwnGenericCopy,
+                    _ => Code::OwnR3aNeedsOwnership,
+                };
+                // An entry of a map has no address.
+                let fix = match (&x.mode, direct, self.may_lack_zero(ty)) {
+                    (Mode::MapIndex, ..) => None,
+                    (_, false, true) => Some(format!("use mem.Replace({text}, v)")),
+                    (_, false, false) => {
+                        Some(format!("use mem.Take({text}) or mem.Replace({text}, v)"))
+                    }
+                    (_, true, true) => Some(format!("use &{text} or mem.Replace(&{text}, v)")),
+                    (_, true, false) => Some(format!(
+                        "use &{text}, mem.Take(&{text}) or mem.Replace(&{text}, v)"
+                    )),
+                };
+                (
+                    code,
+                    format!("cannot copy {shown} out of its place: {cause}"),
+                    fix.map(|fix| (Code::NoteOwnFixTake, fix)),
+                )
+            }
+        };
+        let span = cx.tree.exprs[expr].span;
+        match fix {
+            Some(fix) => self.error_with_fix(code, span, message, fix),
+            None => self.error(code, span, message),
+        }
+    }
+
+    /// The receiver `base` of the method that the selector `expr` reaches
+    /// is given to the method: a value receiver gets a copy (PAR-1). The
+    /// copy method reads its receiver where it is, and what a receiver
+    /// that is not copied does with the value, its method says.
+    pub(super) fn receiver_given(
+        &mut self,
+        cx: &Cx<'a>,
+        (expr, name): (ExprId, Spur),
+        base: ExprId,
+        x: &Operand,
+        pointer_receiver: bool,
+    ) {
+        if pointer_receiver || !self.own_rules(cx) || self.names.resolve(&name) == "Clone" {
+            return;
+        }
+        let Some(holder) = self.selections.get(&expr).map(|selection| selection.holder) else {
+            return;
+        };
+        let stands_for = self.types.is_interface(holder) || self.is_param(holder);
+        if stands_for || self.types.category(holder) == Category::NoCopy {
+            return;
+        }
+        self.given(cx, base, x, holder, Given::Stored);
+    }
+
+    /// `x[lo:hi]` as the new value of `x` is the part of `x` itself: the
+    /// rest of `x` is assigned over (OWN-R4).
+    pub(super) fn sliced(&mut self, cx: &Cx<'a>, x: ExprId) {
+        let x = self.unparen(cx, x);
+        let same = |target: &String| *target == self.expr_string(cx, x);
+        if self.memo.is_some() && self.target.as_ref().is_some_and(same) {
+            self.self_moves.insert(x);
+        }
+    }
+
+    /// Whether the two lists name the same places, each once, in another
+    /// order: `a, b = b, a`, `xs[i], xs[j] = xs[j], xs[i]`. No bytes move
+    /// before every index is evaluated, so no value is copied.
+    pub(super) fn is_swap(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) -> bool {
+        if !self.own_rules(cx) || lhs.len() < 2 || lhs.len() != rhs.len() {
+            return false;
+        }
+        let all: Vec<ExprId> = lhs.iter().chain(rhs).copied().collect();
+        if !all.iter().all(|&expr| self.is_plain_place(cx, expr)) {
+            return false;
+        }
+        let texts = |this: &Self, exprs: &[ExprId]| {
+            let mut texts: Vec<String> = exprs.iter().map(|&x| this.expr_string(cx, x)).collect();
+            texts.sort();
+            texts
+        };
+        let (left, right) = (texts(self, lhs), texts(self, rhs));
+        left == right && left.windows(2).all(|pair| pair[0] != pair[1])
+    }
+
+    /// Whether the expression is written with names, fields, indexes,
+    /// stars and operators only: it is the same place each time it is
+    /// evaluated in one statement.
+    pub(super) fn is_plain_place(&mut self, cx: &Cx<'a>, expr: ExprId) -> bool {
+        let mut rest = vec![expr];
+        while let Some(expr) = rest.pop() {
+            self.steps += 1;
+            match &cx.tree.exprs[expr].kind {
+                ExprKind::Name(_) | ExprKind::BasicLit { .. } => {}
+                ExprKind::Paren(x) | ExprKind::Selector { x, .. } => rest.push(*x),
+                ExprKind::Unary { op, x } if *op != UnaryOp::Recv => rest.push(*x),
+                ExprKind::Binary { x, y, .. } => rest.extend([*x, *y]),
+                ExprKind::Index { x, indices } => {
+                    rest.push(*x);
+                    rest.extend(indices);
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// `mem.Take(&place)` leaves the zero value of the type in the place,
+    /// which the type must have, and neither it nor `mem.Replace` moves a
+    /// value that stays where it is (OWN-R4, OWN-R10).
+    pub(super) fn taken(&mut self, cx: &Cx<'a>, call: ExprId, fun: ExprId, result: &Operand) {
+        // `mem.Take[T]` names the function too.
+        let mut fun = self.unparen(cx, fun);
+        if let ExprKind::Index { x, .. } = cx.tree.exprs[fun].kind {
+            fun = self.unparen(cx, x);
+        }
+        let Some(&Ref::Member { import, member }) = cx.body.uses.get(&fun) else {
+            return;
+        };
+        let ObjKind::Import { package, .. } = &self.package.object(import).kind else {
+            return;
+        };
+        let name = self.names.resolve(&package.object(member).name);
+        if package.path != "mem" || !matches!(name, "Take" | "Replace") || !result.is_value() {
+            return;
+        }
+        let ty = result.ty;
+        let text = self.expr_string(cx, call);
+        let span = cx.tree.exprs[call].span;
+        if let Some((part, NotCopied::Pinned)) = self.types.not_copied(ty, true) {
+            let cause = self.not_copied_text(part, NotCopied::Pinned, true);
+            let message = format!("cannot use {text}: {cause}, and stays in its place");
+            self.error(Code::OwnPinnedMove, span, message);
+        } else if name == "Take" && self.may_lack_zero(ty) {
+            let lacks = match self.is_param(ty) {
+                true => "may be a type with no zero value",
+                false => "has no zero value",
+            };
+            let message = format!(
+                "cannot use {text}: {} {lacks} to leave in the place",
+                self.type_string(ty)
+            );
+            let fix = "use mem.Replace, which leaves a value of yours".to_owned();
+            self.error_with_fix(
+                Code::NoZeroValue,
+                span,
+                message,
+                (Code::NoteOwnFixTake, fix),
+            );
+        }
+    }
+}
