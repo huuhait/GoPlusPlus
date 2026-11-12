@@ -10,7 +10,9 @@
 // It reads from standard input, fields separated by tabs:
 //
 //	file <path>                          a file that was checked
-//	err <path> <line> <column> <message> an error reported in a checked file
+//	err <path> <line> <column> <message> an error reported in a checked file;
+//	                                     \n, \t and \\ in the message stand for a
+//	                                     line end, a tab and a backslash
 //
 // and prints:
 //
@@ -104,6 +106,10 @@ func matchesText(want comment, message string) bool {
 	return regexp.MustCompile(unquoted).MatchString(message)
 }
 
+// A message arrives on one line: its line ends, tabs and backslashes are
+// written with a backslash.
+var unescape = strings.NewReplacer(`\\`, `\`, `\n`, "\n", `\t`, "\t")
+
 type reported struct {
 	line, col int
 	message   string
@@ -124,7 +130,8 @@ func main() {
 			check(err)
 			col, err := strconv.Atoi(fields[3])
 			check(err)
-			errs[fields[1]] = append(errs[fields[1]], reported{line, col, fields[4]})
+			message := unescape.Replace(fields[4])
+			errs[fields[1]] = append(errs[fields[1]], reported{line, col, message})
 		}
 	}
 	check(in.Err())
@@ -152,11 +159,11 @@ func main() {
 				}
 			}
 			if index < 0 {
-				fmt.Fprintf(out, "unexpected %s:%d:%d: %s\n", path, got.line, got.col, got.message)
+				fmt.Fprintf(out, "unexpected %s:%d:%d: %s\n", path, got.line, got.col, oneLine(got.message))
 				continue
 			}
 			if delta > 0 {
-				fmt.Fprintf(out, "column %s:%d:%d: %s\n", path, got.line, list[index].col, got.message)
+				fmt.Fprintf(out, "column %s:%d:%d: %s\n", path, got.line, list[index].col, oneLine(got.message))
 			} else {
 				ok++
 			}
@@ -174,6 +181,10 @@ func main() {
 		}
 	}
 	fmt.Fprintf(out, "ok %d\n", ok)
+}
+
+func oneLine(message string) string {
+	return strings.ReplaceAll(message, "\n", " ")
 }
 
 func check(err error) {

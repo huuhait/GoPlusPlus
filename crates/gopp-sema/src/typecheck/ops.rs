@@ -40,6 +40,8 @@ impl<'a> Checker<'a> {
 
     /// Reports an error once: an expression may be looked at twice.
     pub(super) fn error(&mut self, code: Code, span: Span, message: String) {
+        // In a value that a constant repeats, an error is at the constant.
+        let span = self.error_at.unwrap_or(span);
         if self.reported.insert((span, code)) {
             self.sink.push(Diagnostic::new(code, span, message));
         }
@@ -394,7 +396,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The constant `expr`, which has no type yet, has the value `value`.
-    fn update_expr_value(&mut self, expr: ExprId, value: &Value) {
+    pub(super) fn update_expr_value(&mut self, expr: ExprId, value: &Value) {
         let untyped = |operand: &&mut Operand| self.types.is_untyped(operand.ty);
         let known = self.memo.as_mut().and_then(|memo| memo.get_mut(&expr));
         if let Some(operand) = known.filter(untyped) {
@@ -592,6 +594,7 @@ impl<'a> Checker<'a> {
                 if !x.is_value() {
                     return Operand::UNKNOWN;
                 }
+                self.called_or_received = true;
                 return match &*self.types.get(self.types.underlying(x.ty)) {
                     Type::Chan { elem, .. } => Operand {
                         mode: Mode::CommaOk,
@@ -774,7 +777,7 @@ impl<'a> Checker<'a> {
 
     /// Whether the operand `x` is surely no value of the type `to`. What
     /// an interface or a type parameter takes is not decided here yet.
-    fn not_assignable(&self, x: &Operand, to: TypeId) -> bool {
+    pub(super) fn not_assignable(&self, x: &Operand, to: TypeId) -> bool {
         if self.open(x.ty) || self.open(to) || self.is_interface(x.ty) || self.is_interface(to) {
             return false;
         }

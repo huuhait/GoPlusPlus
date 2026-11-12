@@ -6,6 +6,8 @@
 //! value that needs the type of an expression that is not constant) is
 //! left invalid, which fits everywhere and is no error.
 
+mod assign;
+mod conversion;
 mod ops;
 
 use gopp_diag::{Code, Diagnostic, Sink};
@@ -22,6 +24,7 @@ use crate::package::Package;
 use crate::resolve::Unit;
 use crate::types::{ChanDir, DeclaredMethod, Field, Member, Method, Term, Type, TypeId, Types};
 use crate::universe::{Predeclared, PredeclaredKind};
+use assign::Init;
 
 /// Where an expression stands: its file, what its names denote, and the
 /// type parameters in scope.
@@ -30,6 +33,7 @@ struct Cx<'a> {
     tree: &'a File,
     body: &'a Body,
     text: &'a str,
+    dialect: Dialect,
     /// The index of the constant in its group, inside a constant
     /// declaration.
     iota: Option<i64>,
@@ -42,6 +46,8 @@ enum Form<'a> {
         ty: Option<ExprId>,
         value: Option<ExprId>,
         iota: i64,
+        /// The value is that of the constant above, written there.
+        repeats: bool,
     },
     Var {
         ty: Option<ExprId>,
@@ -184,7 +190,15 @@ struct Checker<'a> {
     fresh: bool,
     /// While a body is walked: the types of the results of the function
     /// that the statements are in, the innermost last.
-    results: Vec<Vec<TypeId>>,
+    /// With whether the results have names: `return` alone returns them.
+    results: Vec<Option<(Vec<TypeId>, bool)>>,
+    /// Whether a function was called or a channel received from since the
+    /// flag was last cleared: the length of an array is a constant only
+    /// if neither happens to get the array.
+    called_or_received: bool,
+    /// While the value that a constant repeats from the one above it is
+    /// worked out: the name of the constant, where its errors are.
+    error_at: Option<Span>,
     /// While a body is walked: its groups of constants.
     local_groups: FxHashMap<u32, LocalGroup>,
     /// While a body is walked: the variables that got no type from an
@@ -267,6 +281,8 @@ pub fn declarations(
         memo: None,
         fresh: false,
         results: Vec::new(),
+        called_or_received: false,
+        error_at: None,
         local_groups: FxHashMap::default(),
         excused: Vec::new(),
         by_span,
@@ -362,9 +378,17 @@ impl<'a> Checker<'a> {
                         None => 0,
                     };
                     let (mut ty, mut values) = (*ty, values.as_slice());
+                    let mut repeats = false;
                     match repeated {
-                        Some(last) if values.is_empty() && last.group == node.group => {
+                        // Only inside one `const ( … )`.
+                        Some(last)
+                            if ty.is_none()
+                                && values.is_empty()
+                                && node.group.is_some()
+                                && last.group == node.group =>
+                        {
                             (ty, values, body) = (last.ty, last.values, last.body);
+                            repeats = true;
                         }
                         _ => {
                             repeated = Some(Repeated {
@@ -377,7 +401,13 @@ impl<'a> Checker<'a> {
                     }
                     for (position, &name) in names.iter().enumerate() {
                         let value = values.get(position).copied();
-                        declare(name, body, Form::Const { ty, value, iota });
+                        let form = Form::Const {
+                            ty,
+                            value,
+                            iota,
+                            repeats,
+                        };
+                        declare(name, body, form);
                     }
                 }
                 DeclKind::Var { names, ty, values } => {
@@ -427,6 +457,7 @@ impl<'a> Checker<'a> {
             tree: decl.unit.file,
             body: decl.body,
             text: decl.unit.source.text(),
+            dialect: decl.unit.source.dialect(),
             iota,
             params: FxHashMap::default(),
         }
@@ -477,11 +508,13 @@ impl<'a> Checker<'a> {
             false => Vec::new(),
         };
         let current = std::mem::replace(&mut self.current, current);
+        let error_at = self.error_at.take();
         let in_type_params = std::mem::replace(&mut self.in_type_params, false);
         let outer = std::mem::replace(&mut self.incomplete, false);
         let defines_type = self.define(object);
         let incomplete = std::mem::replace(&mut self.incomplete, outer);
         self.in_type_params = in_type_params;
+        self.error_at = error_at;
         self.current = current;
         self.under_way.pop();
         if self.broken[object] {
@@ -803,20 +836,26 @@ impl<'a> Checker<'a> {
             return false;
         };
         match decl.form {
-            Form::Const { ty, value, iota } => {
+            Form::Const {
+                ty,
+                value,
+                iota,
+                repeats,
+            } => {
                 let cx = self.cx(&decl, Some(iota));
-                let declared = ty.map(|ty| self.typ(&cx, ty));
-                let Some((own, value)) = value.and_then(|value| self.constant(&cx, value)) else {
+                let declared = ty.map(|ty| self.const_type(&cx, ty));
+                let Some(value) = value.filter(|_| declared != Some(Types::INVALID)) else {
                     self.incomplete = true;
                     return false;
                 };
-                let (ty, value) = match declared {
-                    None => (own, Some(value)),
-                    Some(ty) => (ty, self.converted(&value, ty)),
-                };
-                match value {
-                    Some(value) => (self.ty[object], self.value[object]) = (ty, value),
-                    None => self.incomplete = true,
+                self.error_at = repeats.then_some(self.package.objects[object].span);
+                let x = self.const_value(&cx, declared, value);
+                self.error_at = None;
+                match x.mode {
+                    Mode::Const(value) if value != Value::Unknown => {
+                        (self.ty[object], self.value[object]) = (x.ty, value);
+                    }
+                    _ => self.incomplete = true,
                 }
             }
             Form::Var { ty: Some(ty), .. } => {
@@ -1393,7 +1432,7 @@ impl<'a> Checker<'a> {
                 spread,
                 unwrap,
             } => {
-                let called = self.call(cx, *fun, args, *spread);
+                let called = self.call(cx, expr, *fun, args, *spread);
                 match unwrap {
                     true => self.unwrapped(called),
                     false => called,
@@ -1404,7 +1443,7 @@ impl<'a> Checker<'a> {
                 // Its body is walked with the body it is in.
                 if self.memo.is_some() {
                     self.signature_locals(cx, *ty);
-                    self.function_body(cx, sig, &body.stmts);
+                    self.function_body(cx, *ty, sig, &body.stmts);
                 }
                 Operand::value(sig)
             }
@@ -1416,7 +1455,11 @@ impl<'a> Checker<'a> {
                 if self.memo.is_some() {
                     self.elements(cx, literal, elems);
                 }
-                Operand::value(literal)
+                // Nothing more is said about a type that is in error.
+                match self.types.underlying(literal) {
+                    Types::INVALID => Operand::UNKNOWN,
+                    _ => Operand::value(literal),
+                }
             }
             ExprKind::Index { x, indices } => self.index(cx, expr, *x, indices),
             ExprKind::Slice { x, lo, hi, max, .. } => {
@@ -1563,7 +1606,24 @@ impl<'a> Checker<'a> {
             }
             (_, Some(Member::Method { sig, .. })) if x.is_value() => Operand::value(sig),
             // `T.m`: a function that takes the receiver first.
-            (Mode::Type, Some(Member::Method { sig, .. })) => {
+            (
+                Mode::Type,
+                Some(Member::Method {
+                    sig,
+                    pointer_receiver,
+                }),
+            ) => {
+                let through_pointer = matches!(&*self.types.get(x.ty), Type::Pointer(_));
+                if pointer_receiver && !through_pointer && !self.types.is_interface(x.ty) {
+                    let text = self.expr_string(cx, expr);
+                    let message = format!(
+                        "invalid method expression {text} (needs pointer receiver (*{}).{})",
+                        self.type_string(x.ty),
+                        self.names.resolve(&sel.name)
+                    );
+                    self.error(Code::MethodExprPointerReceiver, sel.span, message);
+                    return Operand::UNKNOWN;
+                }
                 let Type::Func {
                     params,
                     results,
@@ -1814,13 +1874,28 @@ impl<'a> Checker<'a> {
     }
 
     /// A call: of a function, a conversion, or a built-in function.
-    fn call(&mut self, cx: &Cx<'a>, fun: ExprId, args: &[ExprId], spread: bool) -> Operand {
+    fn call(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        fun: ExprId,
+        args: &[ExprId],
+        spread: bool,
+    ) -> Operand {
         let callee = self.operand(cx, fun);
         match callee.mode {
-            Mode::Type => self.conversion(cx, callee.ty, args),
-            Mode::Builtin(builtin) => self.builtin(cx, builtin, args, spread),
-            Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
+            Mode::Type => self.conversion(cx, expr, callee.ty, args),
+            Mode::Builtin(_) | Mode::Unsafe(_) => {
+                let called = match callee.mode {
+                    Mode::Builtin(builtin) => self.builtin(cx, builtin, args, spread),
+                    Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
+                    _ => Operand::UNKNOWN,
+                };
+                self.called_or_received |= !matches!(called.mode, Mode::Const(_) | Mode::Unknown);
+                called
+            }
             _ if callee.is_value() => {
+                self.called_or_received = true;
                 for &arg in args {
                     self.operand(cx, arg);
                 }
@@ -1955,52 +2030,24 @@ impl<'a> Checker<'a> {
         }
         // A constant of no type gives a parameter its default type, if no
         // other argument said what the parameter is.
+        // Of several, the one of the latest kind: `f(1, 2.5)` is a float.
+        let mut kinds: Vec<Option<TypeId>> = vec![None; params.len()];
         for (wanted, ty) in untyped {
             let at = params.iter().position(|&param| param == wanted);
             if let Some(at) = at.filter(|&at| bound[at].is_none()) {
-                bound[at] = Some(self.types.default_type(ty));
+                kinds[at] = match kinds[at] {
+                    Some(kind) => Some(self.larger_kind(kind, ty)?),
+                    None => Some(ty),
+                };
+            }
+        }
+        for (slot, kind) in bound.iter_mut().zip(kinds) {
+            if let Some(kind) = kind {
+                *slot = Some(self.types.default_type(kind));
             }
         }
         let bound: Vec<TypeId> = bound.into_iter().collect::<Option<_>>()?;
         Some(self.types.substitute(sig, params, &bound))
-    }
-
-    /// `T(x)`: a constant where `T` is a type of constants and holds `x`.
-    fn conversion(&mut self, cx: &Cx<'a>, target: TypeId, args: &[ExprId]) -> Operand {
-        let &[arg] = args else {
-            return Operand::UNKNOWN;
-        };
-        let x = self.operand(cx, arg);
-        // The argument takes the type it is converted to, if that is a
-        // type of constants; an integer made a string keeps its kind.
-        let to_string = self.basic_of(target) == Some(Basic::String) && self.is_integer(x.ty);
-        match self.basic_of(target) {
-            Some(_) if !to_string => self.convert(cx, arg, target),
-            Some(_) => {}
-            None => self.convert_default(cx, arg),
-        }
-        let (Mode::Const(value), Some(basic)) = (&x.mode, self.basic_of(target)) else {
-            return match x.is_value() {
-                true => Operand::value(target),
-                false => Operand::UNKNOWN,
-            };
-        };
-        if let Some(value) = representable(value, basic) {
-            return match value {
-                Value::Unknown => Operand::UNKNOWN,
-                value => Operand::constant(target, value),
-            };
-        }
-        // An integer converts to the string of that character.
-        if basic == Basic::String && self.is_integer(x.ty) {
-            let code = value.as_i64().and_then(|code| u32::try_from(code).ok());
-            let c = code
-                .and_then(char::from_u32)
-                .unwrap_or(char::REPLACEMENT_CHARACTER);
-            let value = Value::string(c.encode_utf8(&mut [0; 4]).as_bytes());
-            return Operand::constant(target, value);
-        }
-        Operand::UNKNOWN
     }
 
     /// The type of `expr` as an argument that is a type: of `make`, `new`.
@@ -2052,7 +2099,12 @@ impl<'a> Checker<'a> {
             | Predeclared::Println => no_value,
             Predeclared::CopyFunc => self.value_of(Basic::Int),
             Predeclared::Len | Predeclared::Cap => {
+                let outer = std::mem::replace(&mut self.called_or_received, false);
                 let x = self.operand(cx, first);
+                let is_static = !std::mem::replace(&mut self.called_or_received, outer);
+                if self.types.underlying(x.ty) == Types::INVALID {
+                    return Operand::UNKNOWN;
+                }
                 match &x.mode {
                     // The length of a constant string is a constant of
                     // type int.
@@ -2060,10 +2112,10 @@ impl<'a> Checker<'a> {
                         let len = Value::Int64(text.bytes().len() as i64);
                         Operand::constant(self.types.basic(Basic::Int), len)
                     }
+                    Mode::Const(_) => self.value_of(Basic::Int),
                     // The length of an array is constant if nothing is
                     // called or received to get the array.
-                    Mode::Const(_) => self.value_of(Basic::Int),
-                    _ if x.is_value() && self.is_static(cx, first) => {
+                    _ if x.is_value() && is_static => {
                         let array = match &*self.types.get(self.types.underlying(x.ty)) {
                             Type::Pointer(elem) => self.types.underlying(*elem),
                             _ => self.types.underlying(x.ty),
@@ -2081,7 +2133,14 @@ impl<'a> Checker<'a> {
                 }
             }
             Predeclared::Append => {
-                let x = self.operand(cx, first);
+                let mut x = self.operand(cx, first);
+                // `append(f())` appends the other results of `f` to its
+                // first one.
+                if let (Type::Tuple(results), [_]) = (&*self.types.get(x.ty), args) {
+                    x = results
+                        .first()
+                        .map_or(Operand::UNKNOWN, |&ty| Operand::value(ty));
+                }
                 // What is appended has the type of the elements.
                 if let Type::Slice(elem) = &*self.types.get(self.types.underlying(x.ty)) {
                     for &arg in &args[1..] {
@@ -2124,28 +2183,13 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether `expr` is evaluated without a call and without a receive
-    /// from a channel.
-    fn is_static(&self, cx: &Cx<'a>, expr: ExprId) -> bool {
-        match &cx.tree.exprs[expr].kind {
-            ExprKind::Name(_) | ExprKind::BasicLit { .. } => true,
-            ExprKind::Paren(x) | ExprKind::Selector { x, .. } => self.is_static(cx, *x),
-            ExprKind::Unary { op, x } => *op != UnaryOp::Recv && self.is_static(cx, *x),
-            ExprKind::Index { x, indices } => {
-                self.is_static(cx, *x) && indices.iter().all(|&index| self.is_static(cx, index))
-            }
-            ExprKind::CompositeLit { elems, .. } => elems.is_empty(),
-            _ => false,
-        }
-    }
-
     /// A function of package unsafe, which takes a value of any type.
     fn unsafe_call(&mut self, cx: &Cx<'a>, name: Spur, args: &[ExprId]) -> Operand {
         let Some(&first) = args.first() else {
             return Operand::UNKNOWN;
         };
         let pointer = |this: &Self| {
-            let object = this.package_unsafe_pointer(cx);
+            let object = this.package_unsafe_pointer();
             object.map_or(Operand::UNKNOWN, Operand::value)
         };
         match self.names.resolve(&name) {
@@ -2162,7 +2206,10 @@ impl<'a> Checker<'a> {
                         let value = Value::Int64(bytes as i64);
                         Operand::constant(self.types.basic(Basic::Uintptr), value)
                     }
-                    None => self.value_of(Basic::Uintptr),
+                    // The size of a type parameter is known when the
+                    // function is used; a type in error has none.
+                    None if self.types.has_param(ty) => self.value_of(Basic::Uintptr),
+                    None => Operand::UNKNOWN,
                 }
             }
             // `Offsetof(x.f)`: where the field `f` starts in `x`.
@@ -2214,7 +2261,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The type `unsafe.Pointer`, found in a package that imports unsafe.
-    fn package_unsafe_pointer(&self, _cx: &Cx<'a>) -> Option<TypeId> {
+    fn package_unsafe_pointer(&self) -> Option<TypeId> {
         let pointer = self.names.get("Pointer")?;
         self.package
             .objects
@@ -2236,6 +2283,9 @@ impl<'a> Checker<'a> {
     fn bodies(&mut self, file: usize, unit: Unit<'a>) -> Vec<BodyTypes> {
         let tree = unit.file;
         let mut all = Vec::new();
+        // How many values a constant without values of its own repeats,
+        // in its group.
+        let mut repeated_values: Option<(Option<u32>, usize)> = None;
         for (index, &decl) in tree.decls.iter().enumerate() {
             let body = &self.package.files[file].bodies[index];
             let form = Form::Var {
@@ -2268,29 +2318,44 @@ impl<'a> Checker<'a> {
                     }
                     self.signature_locals(&cx, *ty);
                     let sig = self.typ(&cx, *ty);
-                    self.function_body(&cx, sig, &block.stmts);
+                    self.function_body(&cx, *ty, sig, &block.stmts);
                 }
                 // The value of a constant is worked out with its
                 // declaration; variables are walked here too, for the
                 // function literals in their values.
                 DeclKind::Var { names, ty, values } => {
                     let declared = ty.map(|ty| self.typ(&cx, ty));
-                    for (position, &value) in values.iter().enumerate() {
-                        // `a, b = f()` gives both the one value.
-                        let declared_here = match values.len() {
-                            1 => &names[..],
-                            _ => names.get(position..=position).unwrap_or(&[]),
-                        };
-                        self.current = declared_here
-                            .iter()
-                            .filter_map(|name| self.by_span.get(&name.span).copied())
-                            .collect();
-                        self.operand(&cx, value);
-                        match declared {
-                            Some(declared) => self.convert(&cx, value, declared),
-                            None => self.convert_default(&cx, value),
+                    self.arity(&cx, names, values, None);
+                    let objects = |this: &Self, names: &[Ident]| -> Vec<usize> {
+                        let object = |name: &Ident| this.by_span.get(&name.span).copied();
+                        names.iter().filter_map(object).collect()
+                    };
+                    // `a, b = f()` gives both the one value.
+                    if values.len() == 1 && names.len() > 1 {
+                        self.current = objects(self, names);
+                        self.var_decl(&cx, names.len(), declared, values);
+                    } else {
+                        for (position, &value) in values.iter().enumerate() {
+                            let declared_here = names.get(position..=position).unwrap_or(&[]);
+                            self.current = objects(self, declared_here);
+                            match declared_here.is_empty() {
+                                true => drop(self.operand(&cx, value)),
+                                false => drop(self.var_decl(&cx, 1, declared, &[value])),
+                            }
                         }
                     }
+                }
+                DeclKind::Const { names, ty, values } => {
+                    let group = tree.decl_nodes[decl].group;
+                    let repeated = match (ty.is_none() && values.is_empty(), repeated_values) {
+                        (true, Some((last, count))) if last == group && group.is_some() => count,
+                        (true, _) => 0,
+                        (false, _) => {
+                            repeated_values = Some((group, values.len()));
+                            values.len()
+                        }
+                    };
+                    self.arity(&cx, names, values, Some(repeated));
                 }
                 _ => {}
             }
@@ -2330,10 +2395,17 @@ impl<'a> Checker<'a> {
     }
 
     /// Walks the statements of a function of the type `sig`.
-    fn function_body(&mut self, cx: &Cx<'a>, sig: TypeId, stmts: &[StmtId]) {
+    fn function_body(&mut self, cx: &Cx<'a>, ty: ExprId, sig: TypeId, stmts: &[StmtId]) {
+        let named = match &cx.tree.exprs[ty].kind {
+            ExprKind::FuncType { results, .. } => {
+                results.first().is_some_and(|result| result.name.is_some())
+            }
+            _ => false,
+        };
+        // The results of a signature that is in error are not known.
         let results = match &*self.types.get(sig) {
-            Type::Func { results, .. } => results.to_vec(),
-            _ => Vec::new(),
+            Type::Func { results, .. } => Some((results.to_vec(), named)),
+            _ => None,
         };
         self.results.push(results);
         self.stmts(cx, stmts);
@@ -2404,31 +2476,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `lhs := rhs`, or `var lhs = rhs`: each new variable gets the type
-    /// of its value.
-    fn define_locals(&mut self, cx: &Cx<'a>, lhs: &[Option<LocalId>], rhs: &[ExprId]) {
-        if rhs.len() == 1 && lhs.len() > 1 {
-            for (position, &local) in lhs.iter().enumerate() {
-                let ty = self.result_type(cx, rhs[0], position, lhs.len());
-                self.set_local(local, ty);
-            }
-            return;
-        }
-        for (position, &local) in lhs.iter().enumerate() {
-            let ty = rhs
-                .get(position)
-                .and_then(|&value| self.result_type(cx, value, 0, 1));
-            self.set_local(local, ty);
-            // A value of no type has its default type in the variable.
-            if let Some(&value) = rhs.get(position) {
-                self.convert_default(cx, value);
-            }
-        }
-        for &extra in rhs.iter().skip(lhs.len()) {
-            self.operand(cx, extra);
-        }
-    }
-
     fn stmts(&mut self, cx: &Cx<'a>, stmts: &[StmtId]) {
         for &stmt in stmts {
             gopp_syntax::with_stack(|| self.stmt(cx, stmt));
@@ -2454,24 +2501,29 @@ impl<'a> Checker<'a> {
                 self.operand(cx, *x);
             }
             StmtKind::Send { chan, value } => {
-                let chan = self.operand(cx, *chan);
-                self.operand(cx, *value);
-                if let Type::Chan { elem, .. } = &*self.types.get(self.types.underlying(chan.ty)) {
-                    self.convert(cx, *value, *elem);
-                }
-            }
-            StmtKind::Return(results) => {
-                for &result in results {
-                    self.operand(cx, result);
-                }
-                // A value of no type takes the type of the result.
-                let wanted = self.results.last().cloned().unwrap_or_default();
-                if wanted.len() == results.len() {
-                    for (&result, ty) in results.iter().zip(wanted) {
-                        self.convert(cx, result, ty);
+                let chan = self.value(cx, *chan);
+                match &*self.types.get(self.types.underlying(chan.ty)) {
+                    Type::Chan { elem, .. } => {
+                        self.assign(cx, *value, Some(*elem), "send");
+                    }
+                    _ => {
+                        self.operand(cx, *value);
                     }
                 }
             }
+            StmtKind::Return(results) => match self.results.last().cloned().flatten() {
+                // `return` alone returns the results that have names.
+                Some((wanted, named)) if !(results.is_empty() && named) => {
+                    let wanted: Vec<Option<TypeId>> = wanted.into_iter().map(Some).collect();
+                    let whole = Init::Return(tree.stmts[id].span);
+                    self.init_vars(cx, &wanted, results, whole);
+                }
+                _ => {
+                    for &result in results {
+                        self.operand(cx, result);
+                    }
+                }
+            },
             StmtKind::Decl(decls) => {
                 for &decl in decls {
                     self.local_decl(cx, decl);
@@ -2483,8 +2535,28 @@ impl<'a> Checker<'a> {
                 rhs,
             } => {
                 let locals: Vec<_> = lhs.iter().map(|&x| self.declared_local(cx, x)).collect();
-                self.define_locals(cx, &locals, rhs);
+                // A name on the left that is declared already is assigned
+                // to: it has its type.
+                let mut places = Vec::new();
+                for (&place, local) in lhs.iter().zip(&locals) {
+                    let is_blank = matches!(tree.exprs[place].kind, ExprKind::Name(name) if name == self.blank);
+                    places.push(match local.is_some() || is_blank {
+                        true => None,
+                        false => Some(self.operand(cx, place).ty),
+                    });
+                }
+                let types = self.init_vars(cx, &places, rhs, Init::Variables);
+                for (local, ty) in locals.into_iter().zip(types) {
+                    if let Some(local) = local {
+                        self.locals.insert(local, Operand::variable(ty));
+                    }
+                }
             }
+            StmtKind::Assign {
+                op: AssignOp::Assign,
+                lhs,
+                rhs,
+            } => self.assign_vars(cx, lhs, rhs),
             StmtKind::Assign { op, lhs, rhs } => {
                 let targets: Vec<Operand> = lhs.iter().map(|&x| self.operand(cx, x)).collect();
                 for &x in rhs {
@@ -2619,7 +2691,7 @@ impl<'a> Checker<'a> {
             }
             // `range 10` counts with the type of the number.
             Type::Basic(basic) if self.is_integer(x.ty) => match basic.is_untyped() {
-                true => (int, None),
+                true => (Some(self.types.default_type(x.ty)), None),
                 false => (Some(x.ty), None),
             },
             Type::Slice(elem) | Type::Array { elem, .. } => (int, Some(*elem)),
@@ -2650,51 +2722,50 @@ impl<'a> Checker<'a> {
         match &node.kind {
             DeclKind::Var { names, ty, values } => {
                 let locals: Vec<_> = names.iter().map(|&name| local(name)).collect();
-                match ty {
-                    Some(ty) => {
-                        let ty = self.typ(cx, *ty);
-                        for &value in values {
-                            self.operand(cx, value);
-                            self.convert(cx, value, ty);
-                        }
-                        for local in locals.into_iter().flatten() {
-                            self.locals.insert(local, Operand::variable(ty));
-                        }
+                let declared = ty.map(|ty| self.typ(cx, ty));
+                self.arity(cx, names, values, None);
+                let types = self.var_decl(cx, names.len(), declared, values);
+                for (local, ty) in locals.into_iter().zip(types) {
+                    if let Some(local) = local {
+                        self.locals.insert(local, Operand::variable(ty));
                     }
-                    None => self.define_locals(cx, &locals, values),
                 }
             }
             DeclKind::Const { names, ty, values } => {
                 // A constant without a value repeats the one above it in
                 // its group, with the next `iota`.
+                let own = values;
                 let (mut ty, mut values, mut iota) = (*ty, values.clone(), 0);
+                let mut repeats = false;
                 if let Some(group) = node.group {
                     let last = self.local_groups.entry(group).or_default();
-                    if values.is_empty() {
+                    if ty.is_none() && values.is_empty() {
                         (ty, values) = (last.ty, last.values.clone());
+                        repeats = true;
                     } else {
                         (last.ty, last.values) = (ty, values.clone());
                     }
                     iota = last.next;
                     last.next += 1;
                 }
+                self.arity(cx, names, own, Some(values.len()));
                 let mut inner = cx.clone();
                 inner.iota = Some(iota);
-                let declared = ty.map(|ty| self.typ(&inner, ty));
+                let declared = ty.map(|ty| self.const_type(&inner, ty));
                 for (position, &name) in names.iter().enumerate() {
-                    // A repeated value is worked out anew with its `iota`.
+                    // A repeated value is worked out anew with its `iota`,
+                    // and what is wrong with it is said at the constant.
                     self.fresh = true;
-                    let constant = values
-                        .get(position)
-                        .and_then(|&value| self.constant(&inner, value));
+                    self.error_at = repeats.then_some(name.span);
+                    let operand = match values.get(position) {
+                        Some(&value) => self.const_value(&inner, declared, value),
+                        None => Operand::UNKNOWN,
+                    };
+                    self.error_at = None;
                     self.fresh = false;
-                    let operand = match (constant, declared) {
-                        (Some((own, value)), None) => Operand::constant(own, value),
-                        (Some((_, value)), Some(ty)) => match self.converted(&value, ty) {
-                            Some(value) => Operand::constant(ty, value),
-                            None => Operand::UNKNOWN,
-                        },
-                        (None, _) => Operand::UNKNOWN,
+                    let operand = match operand.mode {
+                        Mode::Const(_) => operand,
+                        _ => Operand::UNKNOWN,
                     };
                     if let Some(local) = local(name) {
                         self.locals.insert(local, operand);

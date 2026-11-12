@@ -1,0 +1,543 @@
+//! Assignments: a value given to a variable, a constant, a parameter, a
+//! result, a channel. The functions follow `go/types` (assignments.go),
+//! and the messages are Go's.
+
+use super::ops::Unfit;
+use super::*;
+
+/// What gives variables their first values.
+#[derive(Clone, Copy)]
+pub(super) enum Init {
+    /// `a, b := x, y` and `var a, b = x, y`.
+    Variables,
+    /// `return x, y`: the statement, for an error about all of it.
+    Return(Span),
+}
+
+impl<'a> Checker<'a> {
+    /// The operand `x` of the expression `expr` is assigned to a place of
+    /// the type `to`, or to a place that takes its type from the value.
+    /// `context` says where, for the messages.
+    pub(super) fn assignment(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        mut x: Operand,
+        to: Option<TypeId>,
+        context: &str,
+    ) -> Operand {
+        let span = cx.tree.exprs[expr].span;
+        if x.mode == Mode::Unknown {
+            return x;
+        }
+        if self.own_rules(cx) {
+            if self.is_untyped(x.ty) {
+                let target = match to {
+                    Some(to) if !self.types.is_interface(to) => to,
+                    _ => self.types.default_type(x.ty),
+                };
+                self.convert_untyped(cx, expr, &mut x, target, false);
+            }
+            return x;
+        }
+        if x.mode == Mode::Value && matches!(&*self.types.get(x.ty), Type::Tuple(_)) {
+            let message = format!(
+                "multiple-value {} in single-value context",
+                self.describe(cx, expr, &x)
+            );
+            self.error(Code::MultiValueInSingle, span, message);
+            return Operand::UNKNOWN;
+        }
+        if !x.is_value() {
+            return Operand::UNKNOWN;
+        }
+        if self.is_untyped(x.ty) {
+            let nil = self.types.basic(Basic::UntypedNil);
+            // In an interface, and where the place has no type of its
+            // own, a value has the default type of its kind.
+            let target = match to {
+                Some(to) if !self.types.is_interface(to) => to,
+                None if x.ty == nil => {
+                    let message = format!("use of untyped nil in {context}");
+                    self.error(Code::UseOfUntypedNil, span, message);
+                    return Operand::UNKNOWN;
+                }
+                _ => self.types.default_type(x.ty),
+            };
+            match self.implicit(&x, target) {
+                Err(unfit) => {
+                    let why = match unfit {
+                        Unfit::Truncated => " (truncated)",
+                        Unfit::Overflows => " (overflows)",
+                        Unfit::Other => "",
+                    };
+                    let message = format!(
+                        "cannot use {} as {} value in {context}{why}",
+                        self.describe(cx, expr, &x),
+                        self.type_string(target)
+                    );
+                    self.error(Code::CannotAssign, span, message);
+                    return Operand::UNKNOWN;
+                }
+                Ok((ty, value)) => {
+                    if let Some(value) = value {
+                        self.update_expr_value(expr, &value);
+                        x.mode = Mode::Const(value);
+                    }
+                    if ty != x.ty {
+                        x.ty = ty;
+                        self.update_expr_type(cx, expr, ty, false);
+                    }
+                }
+            }
+        }
+        if let Some(to) = to
+            && self.not_assignable(&x, to)
+        {
+            let message = format!(
+                "cannot use {} as {} value in {context}",
+                self.describe(cx, expr, &x),
+                self.type_string(to)
+            );
+            self.error(Code::CannotAssign, span, message);
+            return Operand::UNKNOWN;
+        }
+        x
+    }
+
+    /// What a place takes in a `.gopp` file follows rules of its own: an
+    /// assignment may write through a pointer, a value is its own option,
+    /// a function that can fail returns its error by itself. There, only
+    /// the type of a value of no type is settled here.
+    fn own_rules(&self, cx: &Cx<'a>) -> bool {
+        cx.dialect == Dialect::Gopp
+    }
+
+    /// The one value of `expr`, assigned as `assignment` says.
+    pub(super) fn assign(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        to: Option<TypeId>,
+        context: &str,
+    ) -> Operand {
+        let x = self.value(cx, expr);
+        self.assignment(cx, expr, x, to, context)
+    }
+
+    /// `(int, string)`: types as a message about a count lists them. A
+    /// number of no type is a number, whatever its kind.
+    fn types_summary(&self, types: &[TypeId], variadic: bool, spread: bool) -> String {
+        let mut shown = Vec::new();
+        for (at, &ty) in types.iter().enumerate() {
+            let last = at + 1 == types.len();
+            let mut text = match self.basic_of(ty).filter(|basic| basic.is_untyped()) {
+                _ if ty == Types::INVALID => "unknown type".to_owned(),
+                Some(Basic::UntypedBool) => "bool".to_owned(),
+                Some(Basic::UntypedString) => "string".to_owned(),
+                Some(Basic::UntypedNil) => "nil".to_owned(),
+                Some(_) => "number".to_owned(),
+                None => self.type_string(ty),
+            };
+            if last && variadic {
+                if let Type::Slice(elem) = &*self.types.get(ty) {
+                    text = self.type_string(*elem);
+                }
+                text.insert_str(0, "...");
+            } else if last && spread {
+                text += "...";
+            }
+            shown.push(text);
+        }
+        format!("({})", shown.join(", "))
+    }
+
+    fn unparen(&self, cx: &Cx<'a>, mut expr: ExprId) -> ExprId {
+        while let ExprKind::Paren(inner) = cx.tree.exprs[expr].kind {
+            expr = inner;
+        }
+        expr
+    }
+
+    /// `assignment mismatch: 2 variables but f() returns 1 value`.
+    fn assign_error(&mut self, cx: &Cx<'a>, rhs: &[ExprId], variables: usize, values: usize) {
+        let measure = |count: usize, unit: &str| match count {
+            1 => format!("1 {unit}"),
+            count => format!("{count} {unit}s"),
+        };
+        let (variables, values) = (measure(variables, "variable"), measure(values, "value"));
+        let Some(&first) = rhs.first().filter(|_| !self.own_rules(cx)) else {
+            return;
+        };
+        let message = match (rhs.len(), &cx.tree.exprs[self.unparen(cx, first)].kind) {
+            (1, ExprKind::Call { fun, .. }) => format!(
+                "assignment mismatch: {variables} but {} returns {values}",
+                self.expr_string(cx, *fun)
+            ),
+            _ => format!("assignment mismatch: {variables} but {values}"),
+        };
+        self.error(Code::AssignMismatch, cx.tree.exprs[first].span, message);
+    }
+
+    /// `not enough return values`, with what there is and what is wanted.
+    fn return_error(&mut self, cx: &Cx<'a>, at: Span, wanted: &[TypeId], given: &[(Span, TypeId)]) {
+        if self.own_rules(cx) {
+            return;
+        }
+        let (code, qualifier, at) = match given.len() > wanted.len() {
+            // At the first value that is too many, or at the last one.
+            true => (Code::TooManyReturnValues, "too many", given[wanted.len()].0),
+            false => (
+                Code::NotEnoughReturnValues,
+                "not enough",
+                given.last().map_or(at, |last| last.0),
+            ),
+        };
+        let have: Vec<TypeId> = given.iter().map(|&(_, ty)| ty).collect();
+        let diagnostic = Diagnostic::new(code, at, format!("{qualifier} return values"))
+            .with_note(
+                Code::NoteHave,
+                None,
+                format!("have {}", self.types_summary(&have, false, false)),
+            )
+            .with_note(
+                Code::NoteWant,
+                None,
+                format!("want {}", self.types_summary(wanted, false, false)),
+            );
+        if self.reported.insert((at, code)) {
+            self.sink.push(diagnostic);
+        }
+    }
+
+    /// The values of the one expression `expr` where `count` are wanted:
+    /// the results of a call, or `v, ok` of a comma-ok expression.
+    fn multi_value(&mut self, cx: &Cx<'a>, expr: ExprId, count: usize) -> Vec<Operand> {
+        let x = self.operand(cx, expr);
+        if let Type::Tuple(types) = &*self.types.get(x.ty)
+            && x.mode == Mode::Value
+        {
+            return types.iter().map(|&ty| Operand::value(ty)).collect();
+        }
+        // `v, ok = m[k]`, `v, ok = x.(T)`, `v, ok = <-ch`.
+        if count == 2 && matches!(x.mode, Mode::MapIndex | Mode::CommaOk) {
+            let first = Operand::value(x.ty);
+            return vec![first, self.value_of(Basic::UntypedBool)];
+        }
+        vec![self.value(cx, expr)]
+    }
+
+    /// Gives variables or results of the types `lhs` their values `rhs`;
+    /// a variable without a type takes the type of its value. The types
+    /// that the variables have then, invalid where the value is in error.
+    pub(super) fn init_vars(
+        &mut self,
+        cx: &Cx<'a>,
+        lhs: &[Option<TypeId>],
+        rhs: &[ExprId],
+        init: Init,
+    ) -> Vec<TypeId> {
+        let context = match init {
+            Init::Variables => "assignment",
+            Init::Return(_) => "return statement",
+        };
+        let unknown = vec![Types::INVALID; lhs.len()];
+        let is_call = match rhs {
+            [one] => matches!(
+                cx.tree.exprs[self.unparen(cx, *one)].kind,
+                ExprKind::Call { .. }
+            ),
+            _ => false,
+        };
+        if lhs.len() == rhs.len() && !is_call {
+            let mut types = Vec::new();
+            for (&to, &value) in lhs.iter().zip(rhs) {
+                types.push(self.init_var(cx, value, None, to, context).ty);
+            }
+            return types;
+        }
+        if rhs.len() != 1 {
+            let values: Vec<Operand> = rhs.iter().map(|&value| self.operand(cx, value)).collect();
+            if values.iter().all(|value| value.mode != Mode::Unknown) {
+                match init {
+                    Init::Return(at) => {
+                        let wanted: Vec<TypeId> = lhs.iter().flatten().copied().collect();
+                        let given: Vec<(Span, TypeId)> = rhs
+                            .iter()
+                            .zip(&values)
+                            .map(|(&value, operand)| (cx.tree.exprs[value].span, operand.ty))
+                            .collect();
+                        self.return_error(cx, at, &wanted, &given);
+                    }
+                    Init::Variables => self.assign_error(cx, rhs, lhs.len(), rhs.len()),
+                }
+            }
+            return unknown;
+        }
+        let values = self.multi_value(cx, rhs[0], lhs.len());
+        if values.len() == lhs.len() {
+            let mut types = Vec::new();
+            for (&to, value) in lhs.iter().zip(values) {
+                types.push(self.init_var(cx, rhs[0], Some(value), to, context).ty);
+            }
+            return types;
+        }
+        if values[0].mode != Mode::Unknown {
+            match init {
+                Init::Return(at) => {
+                    let wanted: Vec<TypeId> = lhs.iter().flatten().copied().collect();
+                    let span = cx.tree.exprs[rhs[0]].span;
+                    let given: Vec<(Span, TypeId)> =
+                        values.iter().map(|value| (span, value.ty)).collect();
+                    self.return_error(cx, at, &wanted, &given);
+                }
+                Init::Variables => self.assign_error(cx, rhs, lhs.len(), values.len()),
+            }
+        }
+        unknown
+    }
+
+    /// One variable of the type `to`, or without a type yet, gets the
+    /// value of `expr`: `x` if that is one of several results.
+    pub(super) fn init_var(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: Option<Operand>,
+        to: Option<TypeId>,
+        context: &str,
+    ) -> Operand {
+        let one_of_several = x.is_some();
+        let x = match x {
+            Some(x) => x,
+            None => self.value(cx, expr),
+        };
+        if x.mode == Mode::Unknown || to == Some(Types::INVALID) {
+            return Operand::UNKNOWN;
+        }
+        // One of several results is assigned as it is: it has a type.
+        if one_of_several {
+            return match to {
+                Some(to) if !self.own_rules(cx) && self.not_assignable(&x, to) => {
+                    let message = format!(
+                        "cannot use {} as {} value in {context}",
+                        self.describe(cx, expr, &x),
+                        self.type_string(to)
+                    );
+                    self.error(Code::CannotAssign, cx.tree.exprs[expr].span, message);
+                    Operand::UNKNOWN
+                }
+                Some(to) => Operand::variable(to),
+                None => Operand::variable(self.types.default_type(x.ty)),
+            };
+        }
+        let assigned = self.assignment(cx, expr, x, to, context);
+        match (assigned.mode == Mode::Unknown, to) {
+            (true, _) => Operand::UNKNOWN,
+            (false, Some(to)) => Operand::variable(to),
+            (false, None) => Operand::variable(assigned.ty),
+        }
+    }
+
+    /// The type of the place `lhs` on the left of `=`: `None` for `_`,
+    /// invalid for what cannot be assigned to, which is reported.
+    pub(super) fn lhs_var(&mut self, cx: &Cx<'a>, lhs: ExprId) -> Option<TypeId> {
+        let inner = self.unparen(cx, lhs);
+        if matches!(cx.tree.exprs[inner].kind, ExprKind::Name(name) if name == self.blank) {
+            return None;
+        }
+        let x = self.value(cx, lhs);
+        if x.mode == Mode::Unknown || x.ty == Types::INVALID {
+            return Some(Types::INVALID);
+        }
+        if matches!(x.mode, Mode::Variable | Mode::MapIndex) || self.own_rules(cx) {
+            return Some(x.ty);
+        }
+        let span = cx.tree.exprs[lhs].span;
+        let text = self.expr_string(cx, lhs);
+        if let ExprKind::Selector { x: of, .. } = cx.tree.exprs[inner].kind
+            && self.operand(cx, of).mode == Mode::MapIndex
+        {
+            let message = format!("cannot assign to struct field {text} in map");
+            self.error(Code::CannotAssignTo, span, message);
+            return Some(Types::INVALID);
+        }
+        let message =
+            format!("cannot assign to {text} (neither addressable nor a map index expression)");
+        self.error(Code::CannotAssignTo, span, message);
+        Some(Types::INVALID)
+    }
+
+    /// `lhs = rhs`.
+    pub(super) fn assign_vars(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) {
+        let is_call = match rhs {
+            [one] => matches!(
+                cx.tree.exprs[self.unparen(cx, *one)].kind,
+                ExprKind::Call { .. }
+            ),
+            _ => false,
+        };
+        if lhs.len() == rhs.len() && !is_call {
+            for (&place, &value) in lhs.iter().zip(rhs) {
+                match self.lhs_var(cx, place) {
+                    Some(Types::INVALID) => {
+                        self.operand(cx, value);
+                    }
+                    None => {
+                        self.assign(cx, value, None, "assignment to _ identifier");
+                    }
+                    to => {
+                        self.assign(cx, value, to, "assignment");
+                    }
+                }
+            }
+            return;
+        }
+        if rhs.len() != 1 {
+            // Nothing is said of the places when the count is wrong.
+            let places: Vec<Operand> = lhs.iter().map(|&place| self.operand(cx, place)).collect();
+            let values: Vec<Operand> = rhs.iter().map(|&value| self.operand(cx, value)).collect();
+            let known = |operands: &[Operand]| operands.iter().all(|x| x.mode != Mode::Unknown);
+            if known(&places) && known(&values) {
+                self.assign_error(cx, rhs, lhs.len(), rhs.len());
+            }
+            return;
+        }
+        let values = self.multi_value(cx, rhs[0], lhs.len());
+        if values.len() != lhs.len() {
+            if values[0].mode != Mode::Unknown {
+                self.assign_error(cx, rhs, lhs.len(), values.len());
+            }
+            for &place in lhs {
+                self.operand(cx, place);
+            }
+            return;
+        }
+        for (&place, value) in lhs.iter().zip(values) {
+            if let Some(to) = self.lhs_var(cx, place)
+                && value.mode != Mode::Unknown
+                && !self.own_rules(cx)
+                && self.not_assignable(&value, to)
+            {
+                let message = format!(
+                    "cannot use {} as {} value in assignment",
+                    self.describe(cx, rhs[0], &value),
+                    self.type_string(to)
+                );
+                self.error(Code::CannotAssign, cx.tree.exprs[rhs[0]].span, message);
+            }
+        }
+    }
+
+    /// A declaration of `names` with the values `values` has as many
+    /// values as names; `repeated` is how many values a constant without
+    /// values of its own repeats.
+    pub(super) fn arity(
+        &mut self,
+        cx: &Cx<'a>,
+        names: &[Ident],
+        values: &[ExprId],
+        repeated: Option<usize>,
+    ) {
+        let is_const = repeated.is_some();
+        let count = match values.is_empty() {
+            true => repeated.unwrap_or(0),
+            false => values.len(),
+        };
+        if count == 0 && !is_const {
+            return;
+        }
+        if let Some(&extra) = values.get(names.len()) {
+            let message = format!("extra init expr {}", self.expr_string(cx, extra));
+            self.error(Code::ExtraInitExpr, cx.tree.exprs[extra].span, message);
+        } else if names.len() > count
+            && (is_const || count != 1)
+            && let Some(name) = names.get(count)
+        {
+            let message = format!("missing init expr for {}", self.names.resolve(&name.name));
+            self.error(Code::MissingInitExpr, name.span, message);
+        }
+    }
+
+    /// `var a, b T = x, y`: the types of the variables, each that of its
+    /// value where none is declared.
+    pub(super) fn var_decl(
+        &mut self,
+        cx: &Cx<'a>,
+        count: usize,
+        declared: Option<TypeId>,
+        values: &[ExprId],
+    ) -> Vec<TypeId> {
+        let or_declared = |ty: TypeId| declared.unwrap_or(ty);
+        match values {
+            [] => vec![or_declared(Types::INVALID); count],
+            // `var a, b = f()`.
+            [_] if count > 1 => {
+                let places = vec![declared; count];
+                let types = self.init_vars(cx, &places, values, Init::Variables);
+                types.into_iter().map(or_declared).collect()
+            }
+            _ => {
+                let mut types = Vec::new();
+                for position in 0..count {
+                    let ty = match values.get(position) {
+                        Some(&value) => {
+                            let context = "variable declaration";
+                            self.init_var(cx, value, None, declared, context).ty
+                        }
+                        None => Types::INVALID,
+                    };
+                    types.push(or_declared(ty));
+                }
+                for &extra in values.iter().skip(count) {
+                    self.operand(cx, extra);
+                }
+                types
+            }
+        }
+    }
+
+    /// The value of a constant that is declared with the type `declared`,
+    /// or with none, and the value `expr`.
+    pub(super) fn const_value(
+        &mut self,
+        cx: &Cx<'a>,
+        declared: Option<TypeId>,
+        expr: ExprId,
+    ) -> Operand {
+        let x = self.value(cx, expr);
+        if x.mode == Mode::Unknown || declared == Some(Types::INVALID) {
+            return Operand::UNKNOWN;
+        }
+        if !matches!(x.mode, Mode::Const(_)) {
+            let message = format!("{} is not constant", self.describe(cx, expr, &x));
+            self.error(Code::NotConstant, cx.tree.exprs[expr].span, message);
+            return Operand::UNKNOWN;
+        }
+        let Some(ty) = declared else { return x };
+        // The constant has the declared type and holds the value as that
+        // type holds it.
+        let assigned = self.assignment(cx, expr, x, Some(ty), "constant declaration");
+        let Mode::Const(value) = assigned.mode else {
+            return Operand::UNKNOWN;
+        };
+        match self.converted(&value, ty) {
+            Some(value) => Operand::constant(ty, value),
+            None => Operand::UNKNOWN,
+        }
+    }
+
+    /// The type that a constant is declared with: a type of constants.
+    pub(super) fn const_type(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
+        let ty = self.typ(cx, expr);
+        let under = self.types.underlying(ty);
+        if ty == Types::INVALID || matches!(&*self.types.get(under), Type::Basic(_)) {
+            return ty;
+        }
+        if under != Types::INVALID && !self.types.has_param(ty) {
+            let message = format!("invalid constant type {}", self.type_string(ty));
+            self.error(Code::InvalidConstantType, cx.tree.exprs[expr].span, message);
+        }
+        Types::INVALID
+    }
+}

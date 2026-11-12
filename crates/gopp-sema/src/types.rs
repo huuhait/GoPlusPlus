@@ -151,6 +151,8 @@ pub enum Member {
     Method {
         /// A [`Type::Func`], without the receiver.
         sig: TypeId,
+        /// The method needs the address of its receiver, and the way to it
+        /// went through no pointer.
         pointer_receiver: bool,
     },
 }
@@ -447,6 +449,29 @@ impl Types {
 
     /// Makes the declared type invalid: its declaration is in error, and
     /// nothing more is said about what is made of it.
+    /// Whether the type is `unsafe.Pointer`, or declared as it.
+    pub fn is_unsafe_pointer(&self, mut ty: TypeId, names: &ThreadedRodeo) -> bool {
+        // A type that is declared as itself ends the walk.
+        for _ in 0..64 {
+            let Type::Named { id, .. } = &*self.get(ty) else {
+                return false;
+            };
+            let (name, package, declared_as) = self.read(|inner| {
+                let named = &inner.named[id.0 as usize];
+                (named.name, named.package, named.declared_as)
+            });
+            let package = package.map(|package| names.resolve(&package));
+            if names.resolve(&name) == "Pointer" && package == Some("unsafe") {
+                return true;
+            }
+            match declared_as {
+                Some(declared_as) => ty = declared_as,
+                None => return false,
+            }
+        }
+        false
+    }
+
     pub fn is_invalid(&self, named: NamedId) -> bool {
         self.read(|inner| inner.named[named.0 as usize].invalid)
     }
@@ -728,7 +753,7 @@ impl Types {
                     if let Some(method) = declared {
                         found.push(Member::Method {
                             sig: self.substitute(method.method.sig, &method.receiver_params, args),
-                            pointer_receiver: method.pointer_receiver,
+                            pointer_receiver: method.pointer_receiver && !indirect,
                         });
                         continue;
                     }
@@ -1038,12 +1063,22 @@ impl Types {
 
     /// Whether two types are identical.
     pub fn identical(&self, a: TypeId, b: TypeId, names: &ThreadedRodeo) -> bool {
+        self.identical_with(a, b, names, true)
+    }
+
+    /// `identical`, but the tags of struct fields do not count: what a
+    /// conversion asks of two struct types.
+    pub fn identical_ignoring_tags(&self, a: TypeId, b: TypeId, names: &ThreadedRodeo) -> bool {
+        self.identical_with(a, b, names, false)
+    }
+
+    fn identical_with(&self, a: TypeId, b: TypeId, names: &ThreadedRodeo, tags: bool) -> bool {
         if a == b {
             return true;
         }
         // Only interfaces have more than one spelling: two types with
         // different ids are identical if they differ in interfaces alone.
-        let same = |a: TypeId, b: TypeId| self.identical(a, b, names);
+        let same = |a: TypeId, b: TypeId| self.identical_with(a, b, names, tags);
         let all = |a: &[TypeId], b: &[TypeId]| {
             a.len() == b.len() && a.iter().zip(b).all(|(&a, &b)| same(a, b))
         };
@@ -1094,7 +1129,7 @@ impl Types {
                     a.name == b.name
                         && a.package == b.package
                         && a.embedded == b.embedded
-                        && a.tag == b.tag
+                        && (a.tag == b.tag || !tags)
                         && a.required == b.required
                         && same(a.ty, b.ty)
                 };

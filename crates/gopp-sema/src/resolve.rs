@@ -228,8 +228,9 @@ impl Collector<'_> {
     fn declare(&mut self, name: Ident, kind: ObjKind) {
         if name.name == self.blank {
             // `var _ = f()` names nothing, but its value is computed when
-            // the program starts.
-            if matches!(kind, ObjKind::Var) {
+            // the program starts; a constant or a type without a name is
+            // checked like any other.
+            if matches!(kind, ObjKind::Var | ObjKind::Const | ObjKind::Type) {
                 self.object(name.name, kind, name.span);
             }
             return;

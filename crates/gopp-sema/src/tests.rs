@@ -142,10 +142,10 @@ fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Nam
     let mut found: Vec<Names> = files.iter().map(|_| Names::default()).collect();
     for object in &package.objects {
         let kind = match &object.kind {
+            // What has no name is in no scope.
+            _ if names.resolve(&object.name) == "_" => continue,
             ObjKind::Const => "const",
             ObjKind::Type => "type",
-            // A blank variable is in no scope.
-            ObjKind::Var if names.resolve(&object.name) == "_" => continue,
             ObjKind::Var => "var",
             ObjKind::Func => "func",
             // Go's checker has no object in a scope for `import . "p"`,
@@ -1309,6 +1309,183 @@ fn operators_are_checked_as_go_checks_them() {
     );
 }
 
+#[test]
+fn assignments_are_checked_as_go_checks_them() {
+    let declared = "var (\n\ta int\n\tb string\n\tp *int\n\tc chan int\n\ts []int\n\t\
+                    m map[string]struct{ x int }\n\ti any\n)\n\
+                    func two() (int, string)\ntype T struct{}\nfunc (*T) ptr() {}\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "a = b",
+            &["16:6: cannot use b (variable of type string) as int value in assignment"],
+        ),
+        (
+            "a = 1.5",
+            &[
+                "16:6: cannot use 1.5 (untyped float constant) as int value in assignment (truncated)",
+            ],
+        ),
+        (
+            "var x int8 = 300\n\t_ = x",
+            &[
+                "16:15: cannot use 300 (untyped int constant) as int8 value in variable declaration \
+               (overflows)",
+            ],
+        ),
+        (
+            "a = nil",
+            &["16:6: cannot use nil as int value in assignment"],
+        ),
+        (
+            "x := nil\n\t_ = x",
+            &["16:7: use of untyped nil in assignment"],
+        ),
+        (
+            "a, b = 1",
+            &["16:9: assignment mismatch: 2 variables but 1 value"],
+        ),
+        (
+            "a = two()",
+            &["16:6: assignment mismatch: 1 variable but two returns 2 values"],
+        ),
+        (
+            "m[\"k\"].x = 1",
+            &["16:2: cannot assign to struct field m[\"k\"].x in map"],
+        ),
+        (
+            "len(s) = 1",
+            &["16:2: cannot assign to len(s) (neither addressable nor a map index expression)"],
+        ),
+        (
+            "c <- b",
+            &["16:7: cannot use b (variable of type string) as int value in send"],
+        ),
+        ("var x = 1, 2\n\t_ = x", &["16:13: extra init expr 2"]),
+        ("const k, l = 1", &["16:11: missing init expr for l"]),
+        (
+            "const k int = a",
+            &["16:16: a (variable of type int) is not constant"],
+        ),
+        (
+            "const k []int = nil",
+            &["16:10: invalid constant type []int"],
+        ),
+        (
+            "const k int8 = 1 << 7",
+            &[
+                "16:17: cannot use 1 << 7 (untyped int constant 128) as int8 value in constant \
+               declaration (overflows)",
+            ],
+        ),
+        (
+            "_ = int(b)",
+            &["16:10: cannot convert b (variable of type string) to type int"],
+        ),
+        ("_ = int8(300)", &["16:11: constant 300 overflows int8"]),
+        (
+            "_ = int(1.5)",
+            &["16:10: cannot convert 1.5 (untyped float constant) to type int"],
+        ),
+        (
+            "_ = int()",
+            &["16:10: missing argument in conversion to int"],
+        ),
+        (
+            "_ = int(1, 2)",
+            &["16:13: too many arguments in conversion to int"],
+        ),
+        (
+            "_ = T.ptr",
+            &["16:8: invalid method expression T.ptr (needs pointer receiver (*T).ptr)"],
+        ),
+        // What is right next to each of them.
+        (
+            "a, b = two()\n\ta, b = 1, \"x\"\n\tm[\"k\"] = struct{ x int }{1}\n\ts[0], *p = 1, 2",
+            &[],
+        ),
+        (
+            "c <- 1\n\ti = 1.5\n\ti = nil\n\tp = nil\n\tvar f float32 = 1\n\t_ = f",
+            &[],
+        ),
+        (
+            "const k int8 = 1<<7 - 1\n\tconst l, n = 1, k\n\tconst z = len(\"ab\") + len([2]int{})",
+            &[],
+        ),
+        (
+            "_ = int(1.0) + int(a) + int(float64(a)) + len(string(rune(a))+string(s2b(b)))",
+            &[],
+        ),
+        (
+            "_ = (*T).ptr\n\tvar v, ok = i.(int)\n\t_, _ = v, ok\n\tx, y := <-c\n\t_, _ = x, y",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!(
+            "package p\n{declared}func s2b(s string) []byte {{ return []byte(s) }}\n\
+             func _() {{\n\t{body}\n}}\n"
+        );
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap())
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+    // The values of a return are those of the results.
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "return",
+            &[
+                "3:2: not enough return values",
+                "    have ()",
+                "    want (int, string)",
+            ],
+        ),
+        (
+            "return 1",
+            &[
+                "3:9: not enough return values",
+                "    have (number)",
+                "    want (int, string)",
+            ],
+        ),
+        (
+            "return 1, \"a\", 2.5",
+            &[
+                "3:17: too many return values",
+                "    have (number, string, number)",
+                "    want (int, string)",
+            ],
+        ),
+        (
+            "return \"a\", 1",
+            &[
+                "3:9: cannot use \"a\" (untyped string constant) as int value in return statement",
+                "3:14: cannot use 1 (untyped int constant) as string value in return statement",
+            ],
+        ),
+        ("return 1, \"a\"", &[]),
+        ("return f()", &[]),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\nfunc f() (int, string) {{\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+    // A function with named results returns them with `return` alone.
+    let text = "package p\nfunc f() (n int, err error) {\n\treturn\n}\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+    // In a `.gopp` file, what a place takes follows other rules, which
+    // are checked on their own: an assignment may write through a pointer.
+    let text = "package p\nfunc f(p *int) {\n\tp = 9\n}\n";
+    assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -1927,7 +2104,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 696;
+const EXPECTED_ERRORS_REPORTED: usize = 1069;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
@@ -2000,12 +2177,22 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
                 }
                 let source = map.file(diagnostic.span.file);
                 let place = source.line_col(diagnostic.span.lo);
+                // As Go prints an error: what belongs to it on lines of
+                // its own, after a tab.
+                let mut message = diagnostic.message.clone();
+                for note in &diagnostic.notes {
+                    message += "\n\t";
+                    message += &note.message;
+                }
+                let escaped = message
+                    .replace('\\', "\\\\")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t");
                 input += &format!(
-                    "err\t{}\t{}\t{}\t{}\n",
+                    "err\t{}\t{}\t{}\t{escaped}\n",
                     source.path().display(),
                     place.line,
                     place.column,
-                    diagnostic.message.replace('\n', " ")
                 );
             }
         }
@@ -2022,9 +2209,18 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
     let output = compare.wait_with_output().unwrap();
     assert!(output.status.success());
     let report = String::from_utf8(output.stdout).unwrap();
-    // An alias is written here as the type it stands for.
-    let known =
-        ["fixedbugs/issue67628.go:16:6: invalid operation: b + \"foo\" (mismatched types int"];
+    // An alias is written here as the type it stands for, and a function
+    // type without the names of its parameters.
+    let known = [
+        "fixedbugs/issue67628.go:16:6: invalid operation: b + \"foo\" (mismatched types int",
+        "fixedbugs/issue46583.go:24:7: cannot use T1.m (value of type func(T1, int))",
+        "fixedbugs/issue46583.go:25:7: cannot use T2.m (value of type func(T2, int))",
+        "fixedbugs/issue46583.go:26:7: cannot use T3.m (value of type func(T3, int))",
+        "fixedbugs/issue46583.go:27:7: cannot use T4.m (value of type func(T4, int))",
+        "fixedbugs/issue69955.go:36:6: a (variable of struct type S) is not constant",
+        "fixedbugs/issue69955.go:37:6: b (variable of type int) is not constant",
+        "fixedbugs/issue69955.go:38:6: c (variable of int type N) is not constant",
+    ];
     let (mut ok, mut missing) = (0, 0);
     let mut wrong = Vec::new();
     for line in report.lines() {
