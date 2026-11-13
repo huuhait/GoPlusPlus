@@ -171,7 +171,7 @@ impl Run<'_> {
             return Ok(format!("{header}\n{text}{start}"));
         }
         let mut said = String::new();
-        let Some(package) = lowered(&job.inputs, target, false, &mut said) else {
+        let Some(package) = lowered(&job.inputs, (target, false), false, &mut said) else {
             return Err(said);
         };
         if !package.is_main {
@@ -186,6 +186,7 @@ impl Run<'_> {
                 false => Entry::Module,
             },
             swiftcall: target.swiftcall,
+            aborts: false,
         };
         emit_c23(&package.module, &options)
             .map_err(|error| format!("error[{}]: {error}\n", Code::Codegen))

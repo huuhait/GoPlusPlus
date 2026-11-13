@@ -124,8 +124,9 @@ pub(super) struct Pending {
 /// its start to its end (PAN-1).
 #[derive(Clone, Copy)]
 struct Frame {
-    /// `gopp_frame` of the runtime.
-    node: LocalId,
+    /// `gopp_frame` of the runtime; none where a panic ends the
+    /// program at once, and no deferred call is made for one.
+    node: Option<LocalId>,
     /// The addresses of the records of the statements, in the order of
     /// the source, and then those of the results: a slot whose address
     /// is known outside has its value in memory at every call, where a
@@ -859,7 +860,7 @@ impl FuncCx<'_, '_> {
                 let node = types.tuple(&[bytes, run_ty, bytes, marks]);
                 let records = types.tuple(&vec![bytes; count]);
                 self.frame = Some(Frame {
-                    node: self.b.temp(node),
+                    node: (!self.shared.aborts).then(|| self.b.temp(node)),
                     records: self.b.temp(records),
                     run,
                 });
@@ -928,6 +929,12 @@ impl FuncCx<'_, '_> {
         let records = Place::local(frame.records);
         let all = Rvalue::Aggregate(crate::AggKind::Tuple, addresses);
         self.b.assign(records.clone(), all)?;
+        // The runtime knows nothing of the function where no panic
+        // makes its deferred calls.
+        let Some(node) = frame.node else {
+            self.quiet = false;
+            return self.b.goto(body);
+        };
         let run = Operand::Const(Constant {
             kind: ConstantKind::Func(frame.run),
             ty: self.glue_sig(Glue::Drop),
@@ -939,7 +946,7 @@ impl FuncCx<'_, '_> {
             self.record(records)?,
             self.zero(marks),
         ];
-        let node = Place::local(frame.node);
+        let node = Place::local(node);
         self.b.assign(
             node.clone(),
             Rvalue::Aggregate(crate::AggKind::Tuple, fields),
@@ -1072,8 +1079,11 @@ impl FuncCx<'_, '_> {
         };
         let records = self.record(Place::local(frame.records))?;
         self.call_glue(frame.run, records)?;
+        let Some(node) = frame.node else {
+            return Ok(());
+        };
         let bytes = self.bytes_ty();
-        let node = self.record(Place::local(frame.node))?;
+        let node = self.record(Place::local(node))?;
         self.runtime_call("_gopp_defer_pop", &[bytes], vec![node])
     }
 
@@ -1450,7 +1460,8 @@ impl FuncCx<'_, '_> {
     /// ends what the function owns here (PAN-6), in blocks that all
     /// calls with the same owners share.
     pub fn unwind(&mut self) -> Built<UnwindAction> {
-        if self.quiet {
+        // Nothing is unwound where a panic ends the program.
+        if self.quiet || self.shared.aborts {
             return Ok(UnwindAction::Continue);
         }
         if self.ending > 0 {
@@ -1498,14 +1509,14 @@ impl FuncCx<'_, '_> {
     /// stopped the panic, and does not come back if so; if not, the
     /// results end too.
     fn frame_base(&mut self) -> Built<Option<BlockId>> {
-        let Some(frame) = self.frame else {
+        let Some(node) = self.frame.and_then(|frame| frame.node) else {
             return Ok(None);
         };
         if self.frame_block.is_none() {
             let results = self.results_owned.clone();
             let block = self.cleanup_block(None, |this| {
                 let bytes = this.bytes_ty();
-                let node = this.record(Place::local(frame.node))?;
+                let node = this.record(Place::local(node))?;
                 this.runtime_call("_gopp_defer_left", &[bytes], vec![node])?;
                 for at in results.rev() {
                     let (place, ends) = this.scopes[0].owned[at].clone();

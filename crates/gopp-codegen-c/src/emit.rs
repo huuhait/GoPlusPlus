@@ -41,6 +41,9 @@ pub struct EmitOptions {
     /// Whether Clang has `swiftcall` for the target: the convention of
     /// the Go++ functions then (ADR-0030).
     pub swiftcall: bool,
+    /// A panic ends the program at once (`-panic=abort`): the program
+    /// tells the runtime when it starts.
+    pub aborts: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,7 +249,7 @@ pub(crate) fn emit_counted(
         out.push_str(&text);
     }
     if options.entry != Entry::None {
-        entry(&cx, &funcs, options.entry, &mut out);
+        entry(&cx, &funcs, options, &mut out);
     }
     Ok((out, steps))
 }
@@ -276,7 +279,8 @@ const MAX_TRACE_NAME: usize = 256;
 /// starts and what its functions are called in a trace, then the `init`
 /// functions of the package run in their order, then its `main`. A
 /// package without a `main` gets none.
-fn entry(cx: &Cx<'_>, funcs: &[&Function], kind: Entry, out: &mut String) {
+fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut String) {
+    let kind = options.entry;
     let package = &cx.module.name;
     let defined = |name: &str| {
         let found = funcs.iter().position(|func| func.name() == name);
@@ -308,6 +312,9 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], kind: Entry, out: &mut String) {
         _ => "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n",
     });
     out.push_str("  _gopp_rt_funcs(&gopp_table);\n");
+    if options.aborts {
+        out.push_str("  _gopp_panic_aborts();\n");
+    }
     let mut number = 0;
     while let Some(init) = defined(&gopp_mangle::init_symbol(package, number)) {
         let _ = writeln!(out, "  {}();", cx.func_name(init));

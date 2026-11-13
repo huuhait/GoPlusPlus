@@ -51,6 +51,7 @@ fn module(name: &str, text: &str) -> Module {
         files: &files,
         types: &types,
         names: &names,
+        aborts: false,
     };
     let host = TargetSpec::named("linux/amd64").unwrap();
     let module = lower_package(&checked, host.layout(), &sink);
@@ -69,6 +70,7 @@ fn options(entry: Entry) -> EmitOptions {
         layout: target.layout(),
         entry,
         swiftcall: target.swiftcall,
+        aborts: false,
     }
 }
 
@@ -295,6 +297,19 @@ fn the_descriptor_of_a_type_is_static_data_that_names_its_glue() {
     let said = unit.find(" = {(uint8_t *)&gopp_g").unwrap();
     assert!(declared < prototype && prototype < said);
     insta::assert_snapshot!(unit);
+}
+
+#[test]
+fn a_program_whose_panics_end_it_tells_the_runtime_when_it_starts() {
+    let module = module("a.gopp", "package main\n\nfunc main() {}\n");
+    let told = "  _gopp_rt_funcs(&gopp_table);\n  _gopp_panic_aborts();\n";
+    let aborting = EmitOptions {
+        aborts: true,
+        ..options(Entry::Main)
+    };
+    assert!(emit_c23(&module, &aborting).unwrap().contains(told));
+    let unwinding = emit_c23(&module, &options(Entry::Main)).unwrap();
+    assert!(!unwinding.contains("\n  _gopp_panic_aborts();"));
 }
 
 #[test]

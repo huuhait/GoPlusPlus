@@ -1109,6 +1109,39 @@ fn go_prints_and_fails_as_the_table_says() {
     not(all(target_os = "linux", target_arch = "x86_64")),
     ignore = "links and runs programs for linux/amd64"
 )]
+fn a_program_built_with_panic_abort_ends_at_its_first_panic() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main\n\nfunc work(n int) (out int) {\n\tdefer println(\"deferred in work\")\n\
+                \tdefer func() {\n\t\tif recover() != nil {\n\t\t\tout = -1\n\t\t}\n\t}()\n\
+                \tif n > 1 {\n\t\tpanic(\"too much\")\n\t}\n\treturn n\n}\n\n\
+                func main() {\n\tdefer println(\"deferred in main\")\n\tprintln(work(1))\n\
+                \tprintln(work(2))\n\tprintln(\"after\")\n}\n";
+    let file = write_source(&dir, "stops.go", text);
+    let program = dir.path().join("stops");
+    let said = |flag: &str| {
+        let built = run(gopp().args(["build", flag, "-o"]).arg(&program).arg(&file));
+        assert_eq!(stderr(&built), "", "{flag}");
+        let ran = run(&mut Command::new(&program));
+        let written = stderr(&ran);
+        let before_trace = written.split("\n\ngoroutine ").next().unwrap_or_default();
+        (ran.status.code(), before_trace.to_owned())
+    };
+    // The deferred calls of a panic are made, and one of them stops it.
+    let unwinding = "deferred in work\n1\ndeferred in work\n-1\nafter\ndeferred in main\n";
+    assert_eq!(said("-panic=unwind"), (Some(0), unwinding.to_owned()));
+    // The panic is the end: no deferred call is made for it, but those
+    // of a function that returns are.
+    let aborting = "deferred in work\n1\npanic: too much";
+    assert_eq!(said("-panic=abort"), (Some(2), aborting.to_owned()));
+    let refused = run(gopp().args(["build", "-panic=never"]).arg(&file));
+    assert_ne!(refused.status.code(), Some(0));
+}
+
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
 fn build_links_the_runtime_which_ends_a_program_that_fails_a_check() {
     let dir = TempDir::new().unwrap();
     let text = "package main\n\nfunc at() int { return 3 }\n\n\

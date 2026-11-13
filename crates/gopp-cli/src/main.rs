@@ -84,6 +84,10 @@ enum Command {
         /// machine, or what GOPPOS and GOPPARCH say
         #[arg(long)]
         target: Option<String>,
+        /// What a panic does: `unwind` makes the deferred calls, which
+        /// may stop it; `abort` ends the program at once
+        #[arg(long, value_enum, default_value = "unwind")]
+        panic: PanicMode,
         /// What is made of the package
         #[arg(long, value_enum, default_value = "exe")]
         emit: EmitBuilt,
@@ -181,6 +185,14 @@ enum Emit {
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum PanicMode {
+    /// A panic makes the deferred calls, and `recover` stops it
+    Unwind,
+    /// A panic writes its message and ends the program
+    Abort,
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
 enum EmitBuilt {
     /// The module of the package as text
     Gir,
@@ -228,11 +240,13 @@ fn run() -> ExitCode {
         Command::Check { json, emit, paths } => check::run(&paths, json, emit.is_some()),
         Command::Build {
             target,
+            panic,
             emit,
             o,
             paths,
         } => build::run(&build::Options {
             target,
+            aborts: panic == PanicMode::Abort,
             emit,
             output: o,
             paths,

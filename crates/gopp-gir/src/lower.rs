@@ -44,6 +44,9 @@ pub struct Checked<'a> {
     pub files: &'a [(&'a File, &'a SourceFile)],
     pub types: &'a Types,
     pub names: &'a ThreadedRodeo,
+    /// A panic ends the program at once (`-panic=abort`, PAN-7): no
+    /// deferred call is made for it and nothing is unwound.
+    pub aborts: bool,
 }
 
 /// The least source that one run takes: lowering it costs more than
@@ -176,6 +179,8 @@ pub(crate) struct Shared<'a> {
     pub types: &'a Types,
     pub names: &'a ThreadedRodeo,
     pub layout: TargetLayout,
+    /// A panic ends the program at once.
+    pub aborts: bool,
     /// The path of the package, as a name.
     pub path: Spur,
     /// The name `_`.
@@ -456,6 +461,7 @@ impl<'a> Shared<'a> {
             types: checked.types,
             names: checked.names,
             layout,
+            aborts: checked.aborts,
             path: checked.names.get_or_intern(&checked.package.path),
             blank: checked.names.get_or_intern_static("_"),
             drop: checked.names.get_or_intern_static("drop"),

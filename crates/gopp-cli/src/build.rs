@@ -27,6 +27,8 @@ use crate::{EXIT_ERRORS, EmitBuilt};
 
 pub struct Options {
     pub target: Option<String>,
+    /// A panic ends the program at once (`-panic=abort`).
+    pub aborts: bool,
     pub emit: EmitBuilt,
     pub output: Option<PathBuf>,
     pub paths: Vec<PathBuf>,
@@ -75,7 +77,7 @@ pub(crate) struct Lowered {
 /// no package if an error is among it.
 pub(crate) fn lowered(
     paths: &[PathBuf],
-    target: &'static TargetSpec,
+    (target, aborts): (&'static TargetSpec, bool),
     color: bool,
     said: &mut String,
 ) -> Option<Lowered> {
@@ -131,6 +133,7 @@ pub(crate) fn lowered(
         files: &pairs,
         types: &types,
         names: &names,
+        aborts,
     };
     let sink = Sink::new(MAX_DIAGNOSTICS);
     let module = lower_package(&checked, target.layout(), &sink);
@@ -164,7 +167,7 @@ pub fn run(options: &Options) -> ExitCode {
     let mut said = String::new();
     let lowered = lowered(
         &options.paths,
-        target,
+        (target, options.aborts),
         io::stderr().is_terminal(),
         &mut said,
     );
@@ -187,6 +190,7 @@ pub fn run(options: &Options) -> ExitCode {
             false => Entry::None,
         },
         swiftcall: target.swiftcall,
+        aborts: options.aborts,
     };
     let unit = match emit_c23(&module, &emit) {
         Ok(unit) => unit,

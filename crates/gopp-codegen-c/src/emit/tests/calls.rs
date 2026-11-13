@@ -12,6 +12,7 @@ fn options_for(target: &TargetSpec, entry: Entry) -> EmitOptions {
         layout: target.layout(),
         entry,
         swiftcall: target.swiftcall,
+        aborts: false,
     }
 }
 

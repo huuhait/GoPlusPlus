@@ -76,10 +76,17 @@ typedef struct gopp_unwinding {
 
 static gopp_unwinding *unwindings;
 
+// A panic ends the program at once: no deferred call is made for it
+// (`-panic=abort`).
+static bool aborts;
+
+void _gopp_panic_aborts(void) { aborts = true; }
+
 void _gopp_panic_reset(void) {
   frames = 0;
   panics = 0;
   unwindings = 0;
+  aborts = false;
 }
 
 // A panic left the end of a value (`drop`): nothing can go on.
@@ -244,6 +251,10 @@ static bool listed(const gopp_frame *frame) {
   panic->below = panics;
   panic->again = panics != 0 && panics->recovered && same(&panics->value, &panic->value);
   panics = panic;
+  if (aborts) {
+    write_panics(panic, true);
+    die();
+  }
   for (;;) {
     // A panic that started while a value ended, where another panic
     // left a function, and that nothing stopped before its end.

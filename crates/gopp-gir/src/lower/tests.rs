@@ -56,6 +56,7 @@ fn checked<T>(texts: &[(&str, &str)], then: impl FnOnce(&Checked<'_>, Vec<String
         files: &pairs,
         types: &types,
         names: &names,
+        aborts: false,
     };
     let said = |diagnostic: &Diagnostic| {
         format!("{}: {}", map.location(diagnostic.span), diagnostic.message)
@@ -89,6 +90,21 @@ fn lowered_with(texts: &[(&str, &str)], source_each: usize) -> (Lowered, Vec<Str
             ));
         }
         (Lowered { module, steps }, messages)
+    })
+}
+
+/// The module of a file of the package `main` where a panic ends the
+/// program at once (`-panic=abort`), as text.
+fn gir_aborting(file: &str, text: &str) -> String {
+    checked(&[(file, text)], |checked, messages| {
+        assert_eq!(messages, [] as [&str; 0]);
+        let aborting = Checked {
+            aborts: true,
+            ..*checked
+        };
+        let (module, reported, _) = lower_counted(&aborting, TargetLayout::new(64), usize::MAX);
+        assert!(reported.is_empty(), "{file}");
+        print_module(&module)
     })
 }
 
@@ -1592,6 +1608,57 @@ func fail(m {map}, key string, reason string) {{
         if file == "a.gopp" {
             insta::assert_snapshot!(module);
         }
+    }
+}
+
+#[test]
+fn a_program_whose_panics_end_it_at_once_has_no_frames_and_no_cleanup_blocks() {
+    let text = "package main
+
+func make(n int) string {
+	s := \"a\"
+	for i := 0; i < n; i++ {
+		s += \"b\"
+	}
+	return s
+}
+
+func guarded(n int) (out string) {
+	defer func() { recover() }()
+	held := make(n)
+	if n > 2 {
+		panic(held)
+	}
+	for i := 0; i < n; i++ {
+		defer println(i)
+	}
+	return held + make(1)
+}
+";
+    for file in ["a.gopp", "a.go"] {
+        let module = gir_aborting(file, text);
+        // No function tells the runtime of itself, and no block is
+        // run by unwinding: a panic is the end.
+        for name in ["_gopp_defer_enter", "_gopp_defer_pop", "_gopp_defer_left"] {
+            assert!(!module.contains(name), "{file}: {name}\n{module}");
+        }
+        assert!(!module.contains("[cleanup]"), "{file}: {module}");
+        assert!(!module.contains("unwind: cleanup"), "{file}: {module}");
+        // The deferred calls are made where the function returns, and
+        // a panic is given to the runtime as ever.
+        let start = module.find("\nfn _GPF4mainE7guarded(").unwrap();
+        let guarded = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        assert_eq!(
+            guarded
+                .matches("call const fn @_GPC0_F4mainE7guarded(")
+                .count(),
+            1
+        );
+        assert_eq!(
+            guarded.matches("@_gopp_panic(").count(),
+            1,
+            "{file}: {guarded}"
+        );
     }
 }
 
