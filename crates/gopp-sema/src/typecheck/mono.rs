@@ -15,6 +15,7 @@ pub(super) enum Event {
     Method(Span, Vec<TypeId>, Vec<TypeId>),
     Local(crate::types::NamedId, Span, Vec<TypeId>),
     Record(Vec<TypeId>, Vec<TypeId>, Vec<Span>, Span),
+    Kept(Vec<TypeId>, Span, String),
 }
 
 impl Event {
@@ -31,7 +32,9 @@ impl Event {
                 all(&mut one);
                 *param = one[0];
             }
-            Event::Canon(params, _) | Event::Local(_, _, params) => all(params),
+            Event::Canon(params, _) | Event::Local(_, _, params) | Event::Kept(params, ..) => {
+                all(params)
+            }
             Event::Same(params, canon) => {
                 all(params);
                 all(canon);
@@ -194,6 +197,7 @@ impl<'a> Checker<'a> {
                 Event::Record(params, args, spans, at) => {
                     self.mono_record(&params, &args, &spans, at);
                 }
+                Event::Kept(params, span, what) => self.kept_where(&params, span, &what),
             }
         }
     }
@@ -228,9 +232,13 @@ impl<'a> Checker<'a> {
         Some(at)
     }
 
+    /// The type parameter of the type for one that a receiver names.
+    pub(super) fn mono_canon_of(&self, param: TypeId) -> TypeId {
+        self.mono.canon.get(&param).copied().unwrap_or(param)
+    }
+
     fn mono_vertex(&mut self, param: TypeId) -> std::option::Option<usize> {
-        let param = self.types.param_origin(param);
-        let param = self.mono.canon.get(&param).copied().unwrap_or(param);
+        let param = self.mono_canon_of(self.types.param_origin(param));
         // A type parameter of another package is in no cycle of this one.
         if !self.param_spans.contains_key(&param) {
             return None;
@@ -271,6 +279,7 @@ impl<'a> Checker<'a> {
         if let Some((of_receiver, given)) = receiver {
             self.mono_record(&of_receiver, &given, &[], at);
         }
+        self.kept_given(params, args, spans, at);
         for (position, (&param, &arg)) in params.iter().zip(args).enumerate() {
             let Some(dst) = self.mono_vertex(param) else {
                 continue;

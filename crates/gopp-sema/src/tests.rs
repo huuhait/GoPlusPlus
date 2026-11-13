@@ -6084,6 +6084,187 @@ func pair(p *Point) (*Point, bool) { return p, true }
 
 // rule: OWN-B5
 #[test]
+fn generic_code_keeps_a_pointer_where_plain_code_does() {
+    // Each line does one thing with the type `X`: once in plain code,
+    // and once in generic code that is used with the type.
+    let forms = [
+        ("()", "_ = []X{}"),
+        ("()", "_ = make([]X, 0)"),
+        ("()", "_ = make(map[string]X)"),
+        ("()", "_ = make(chan X)"),
+        ("(v X)", "var s []X; s = append(s, v); _ = s"),
+        ("(v X)", "_ = NewUnique(v)"),
+        ("(v X)", "_ = NewShared(v)"),
+        ("()", "var u Option[Unique[X]]; _ = u"),
+        ("(a [2]X)", "_ = a[:]"),
+        ("()", "_ = [][2]X{}"),
+        ("()", "_ = []struct{ a X }{}"),
+        ("()", "_ = []Pair[X]{}"),
+        // What keeps nothing of the type on the heap.
+        ("(v X)", "p := Pair[X]{v, 1}; _ = p"),
+        ("()", "_ = []func(X){}"),
+        ("()", "_ = [][]X{}"),
+        ("(a [2]X)", "_ = &a[:]"),
+        ("(v X)", "a := [1]X{v}; _ = a"),
+    ];
+    let types = [
+        ("int", false),
+        ("string", false),
+        ("Point", false),
+        ("[2]Point", false),
+        ("func(*int)", false),
+        ("[]int", false),
+        ("*int", true),
+        ("*Point", true),
+        ("Node", true),
+        ("[2]*int", true),
+        ("struct{ p *int }", true),
+        ("Pair[*int]", true),
+        ("Option[*Point]", true),
+    ];
+    let head = "package p\ntype Point struct{ x, y int }\ntype Node struct{ p *Point }\n\
+                type Pair[A Clone] struct { a A; n int }\n";
+    let first = head.lines().count() + 1;
+    // The forms that are refused, by the lines that say so.
+    let refused = |text: &str, from: usize| -> Vec<usize> {
+        let said = messages("a.gopp", text);
+        let mut lines = Vec::new();
+        for message in said.iter().filter(|message| !message.starts_with("    ")) {
+            let heap = message.contains("may outlive what it points to")
+                || message.contains("not kept on the heap");
+            assert!(heap, "{message}\n{text}");
+            let line: usize = message.split(':').nth(1).unwrap().parse().unwrap();
+            if !lines.contains(&(line - from)) {
+                lines.push(line - from);
+            }
+        }
+        lines
+    };
+    for (ty, holds) in types {
+        let plain: String = (forms.iter().enumerate())
+            .map(|(at, (params, body))| {
+                let (params, body) = (params.replace('X', ty), body.replace('X', ty));
+                format!("func f{at}{params} {{ {body} }}\n")
+            })
+            .collect();
+        let generic: String = (forms.iter().enumerate())
+            .map(|(at, (params, body))| {
+                let (params, body) = (params.replace('X', "T"), body.replace('X', "T"));
+                format!("func f{at}[T Clone]{params} {{ {body} }}\n")
+            })
+            .collect();
+        let uses: String = (0..forms.len())
+            .map(|at| format!("\t_ = f{at}[{ty}]\n"))
+            .collect();
+        let in_plain = refused(&format!("{head}{plain}"), first);
+        let in_generic = refused(
+            &format!("{head}{generic}func use() {{\n{uses}}}\n"),
+            first + forms.len() + 1,
+        );
+        assert_eq!(in_plain, in_generic, "{ty}");
+        let expected: Vec<usize> = match holds {
+            true => (0..12).collect(),
+            false => Vec::new(),
+        };
+        assert_eq!(in_plain, expected, "{ty}");
+    }
+}
+
+// rule: OWN-B5
+#[test]
+fn a_type_argument_for_what_generic_code_keeps_holds_no_pointer() {
+    let names = ThreadedRodeo::new();
+    let lib = "package lib
+
+type List[T Clone] struct{ items []T }
+
+func (l *List[T]) Add(x T) { l.items = append(l.items, x) }
+
+func Of[T Clone](x T) List[T] {
+	var l List[T]
+	l.Add(x)
+	return l
+}
+
+func Same[T Clone](x T) T { return x }
+";
+    let loader = with_packages(&names, &[("lib", lib)]);
+    // `Stack` keeps its `T` in a method, `Zip` its own `U`; `through`
+    // and `twice` give theirs to what keeps it; `handlers`, `Pair` and
+    // `lib.Same` keep nothing of theirs. `Firsts` keeps the `A` of its
+    // receiver, and is a function of its own for each `Pair`.
+    let text = "package p
+
+import \"lib\"
+
+type Stack[T Clone] struct{ items []T }
+
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
+
+func (s *Stack[T]) Zip[U Clone](x U) []U { return []U{x} }
+
+type Pair[A, B Clone] struct {
+	a A
+	b B
+}
+
+type Handler[T Clone] struct{ f func(T) }
+
+func list[T Clone](x T) []T { return []T{x} }
+
+func through[U Clone](x U) int { return len(list(Pair[int, U]{1, x})) }
+
+func twice[A, B Clone](a A, b B) int { return through(b) }
+
+func handlers[T Clone](f func(T)) []Handler[T] { return []Handler[T]{{f}} }
+
+func pointers[T Clone](x *T) []*T { return []*T{x} }
+
+func use(n int, p *int) {
+	var a Stack[*int]
+	var b Stack[int]
+	b.Push(n)
+	c := b.Zip(p)
+	d := b.Zip(n)
+	e := list(p)
+	f := through(p)
+	g := twice(p, n)
+	h := twice(n, p)
+	i := handlers(func(p *int) {})
+	j := Pair[*int, *int]{p, p}
+	k := lib.Of(p)
+	l := lib.Of(n)
+	m := lib.Same(p)
+	var o lib.List[*int]
+	q := Pair[int, int]{n, n}
+	r := j.Firsts(n)
+	t := q.Firsts(p)
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = a, c, d, e, f, g, h, i, k, l, m, o, b, q, r, t
+}
+
+func (p *Pair[A, B]) Firsts[U Clone](x U) []A { return []A{p.a} }
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let said: Vec<&str> = (checked.messages.iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| message.split(", and a pointer").next().unwrap_or(message))
+        .collect();
+    let expected = [
+        "a.gopp:26:44: cannot keep a *T in a slice: a pointer in it may outlive what it points to",
+        "a.gopp:29:14: cannot use *int for T: a value of it is kept in a slice that grows",
+        "a.gopp:32:7: cannot use *int for U: a value of it is kept in a slice",
+        "a.gopp:34:7: cannot use *int for T: a value of it is kept in a slice",
+        "a.gopp:35:7: cannot use *int for U: a value of it is kept in a slice",
+        "a.gopp:37:7: cannot use *int for B: a value of it is kept in a slice",
+        "a.gopp:40:7: cannot use *int for T: a value of it is kept in a slice that grows",
+        "a.gopp:43:17: cannot use *int for T: a value of it is kept in a slice that grows",
+        "a.gopp:45:7: cannot use *int for A: a value of it is kept in a slice",
+    ];
+    assert_eq!(said, expected);
+}
+
+// rule: OWN-B5
+#[test]
 fn the_steps_of_where_pointers_are_kept_grow_with_the_input_not_faster() {
     let steps = |text: String| {
         let loader = Loader::default();
@@ -6129,11 +6310,52 @@ fn the_steps_of_where_pointers_are_kept_grow_with_the_input_not_faster() {
              [{count}]Option[*int]{{{values}}}\n}}\n"
         )
     };
+    // Each generic function gives its type parameter to the next, and
+    // the last keeps it; with `up`, the one that keeps it is declared
+    // first. Every one is used.
+    let given = |count: usize, up: bool| {
+        let mut functions: Vec<String> = (0..count)
+            .map(|i| match i + 1 == count {
+                true => format!("func f{i}[T Clone](x T) int {{ return len([]T{{x}}) }}\n"),
+                false => format!("func f{i}[T Clone](x T) int {{ return f{}(x) }}\n", i + 1),
+            })
+            .collect();
+        if up {
+            functions.reverse();
+        }
+        let uses: String = (0..count).map(|i| format!("\t_ = f{i}[int]\n")).collect();
+        format!("package p\n{}func use() {{\n{uses}}}\n", functions.concat())
+    };
+    // Each generic type holds the one before it, and one body keeps
+    // each: from the first to the last, and from the last to the first.
+    let nested = |count: usize, down: bool| {
+        let types: String = (1..count)
+            .map(|i| format!("type G{i}[T Clone] struct{{ a G{}[T]; n int }}\n", i - 1))
+            .collect();
+        let order: Vec<usize> = match down {
+            true => (0..count).rev().collect(),
+            false => (0..count).collect(),
+        };
+        let kept: String = (order.iter())
+            .map(|i| format!("\t_ = []G{i}[T]{{}}\n"))
+            .collect();
+        format!(
+            "package p\ntype G0[T Clone] struct{{ v T }}\n{types}func keep[T Clone]() {{\n{kept}}}\n\
+             func use() {{ keep[int]() }}\n"
+        )
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(deep(n)));
     linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+    linear::assert_near_linear(&sizes, |n| steps(given(n, false)));
+    linear::assert_near_linear(&sizes, |n| steps(given(n, true)));
+    // A long chain of generic types takes long to declare, whatever
+    // is done with it.
+    let short = [25, 50, 100, 200];
+    linear::assert_near_linear(&short, |n| steps(nested(n, false)));
+    linear::assert_near_linear(&short, |n| steps(nested(n, true)));
 }
 
 // rule: TYP-24, OWN-R6

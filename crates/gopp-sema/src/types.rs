@@ -561,9 +561,11 @@ struct Inner {
     /// whether it is abstract.
     tables: FxHashMap<TypeId, bool>,
     abstracts: FxHashMap<TypeId, bool>,
-    /// Whether a value of each type that was asked holds a pointer
-    /// where it is.
-    pointing: FxHashMap<TypeId, bool>,
+    /// What a value of each type that was asked holds where it is, and
+    /// into what a declaration puts a value of a type parameter on the
+    /// heap.
+    holding: FxHashMap<TypeId, Held>,
+    kept: FxHashMap<TypeId, Arc<str>>,
     open_abstracts: FxHashMap<TypeId, Arc<Vec<(TypeId, Method)>>>,
     /// For a type that was asked: whether it is `Send` and `Sync`.
     labels: FxHashMap<TypeId, Labels>,
@@ -3102,7 +3104,7 @@ mod zero;
 pub use category::{Category, CopyRule, NotCopied};
 pub use constant::NotConstant;
 pub use fork::Imported;
-pub use hierarchy::PARENT;
+pub use hierarchy::{Held, PARENT};
 pub use label::{Labels, Unlabeled};
 pub use methodset::MethodSet;
 pub use typeset::{NoCommon, TypeSet};

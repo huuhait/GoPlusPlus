@@ -21,6 +21,7 @@ mod implements;
 mod index;
 mod infer;
 mod inherit;
+mod kept;
 mod literal;
 mod methods;
 mod mono;
@@ -47,7 +48,7 @@ use crate::object::{
 use crate::package::Package;
 use crate::resolve::Unit;
 use crate::types::{
-    ChanDir, DeclaredMethod, Field, Imported, Member, Method, Term, Type, TypeId, Types,
+    ChanDir, DeclaredMethod, Field, Held, Imported, Member, Method, Term, Type, TypeId, Types,
 };
 use crate::universe::{Predeclared, PredeclaredKind};
 use assign::Init;
@@ -364,6 +365,7 @@ struct Checker<'a> {
     /// The type parameters of the package and what each is instantiated
     /// as.
     mono: mono::Mono,
+    kept: kept::Kept,
     /// The type parameters of the function whose body is being checked,
     /// those that its receiver names too.
     around: Vec<TypeId>,
@@ -648,6 +650,7 @@ pub fn declarations(
         index_stores: FxHashMap::default(),
         case_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
+        kept: kept::Kept::default(),
         around: Vec::new(),
         aside: None,
         foreign_members: FxHashMap::default(),
@@ -738,6 +741,7 @@ pub fn declarations(
     checker.monomorph();
     let types_of_files = checker.bodies_aside(units);
     checker.mono_report();
+    checker.kept_report();
     let Checker {
         ty,
         value,
@@ -1333,13 +1337,17 @@ impl<'a> Checker<'a> {
             self.option_of(of, span, in_body);
         }
         for (held, span, written) in std::mem::take(&mut self.heaped) {
-            if !self.types.has_param(held) && self.types.holds_pointer(held) {
-                let message = format!(
-                    "invalid type {written}: a {} holds a pointer, and what holds one is not kept \
-                     on the heap",
-                    self.type_string(held)
-                );
-                self.error(Code::InvalidHandleType, span, message);
+            match self.types.held(held) {
+                Held::Pointer => {
+                    let message = format!(
+                        "invalid type {written}: a {} holds a pointer, and what holds one is not \
+                         kept on the heap",
+                        self.type_string(held)
+                    );
+                    self.error(Code::InvalidHandleType, span, message);
+                }
+                Held::Params(params) if params.is_empty() => {}
+                Held::Params(params) => self.kept_where(&params, span, &written),
             }
         }
         for (ty, span) in std::mem::take(&mut self.required_fields) {

@@ -529,7 +529,8 @@ pub fn explain(code: Code) -> Option<Explanation> {
              what it points to: into a slice, a map or a channel that is made, into a \
              `Unique` or a `Shared`, or into a variable of the package. A pointer lives in \
              the variables, the parameters and the results of functions, where the compiler \
-             follows it.",
+             follows it. Generic code that puts a value of its type parameter in such a place \
+             takes no type argument that holds a pointer.",
             "Let the heap own the value with a `Unique`, a `Shared` or a `Weak`, or keep the \
              pointers in an array.",
             "nodes := []*Node{&a, &b}  // error\nnodes := [2]*Node{&a, &b} // \

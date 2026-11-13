@@ -7,6 +7,23 @@ use rustc_hash::FxHashSet;
 
 use super::{Marks, NamedId, Type, TypeId, Types};
 
+/// What a value of a type holds where it is, of what is not kept on the
+/// heap.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Held {
+    /// A pointer, or a `Local`, which may be made of one.
+    Pointer,
+    /// No pointer, but values of these type parameters, each of which
+    /// stands for a type that may hold one.
+    Params(Arc<[TypeId]>),
+}
+
+impl Default for Held {
+    fn default() -> Held {
+        Held::Params([].into())
+    }
+}
+
 /// In the path of a member that is found: the step to the parent with
 /// the index in the other bits. A step without the bit is a field.
 pub const PARENT: u32 = 1 << 31;
@@ -208,50 +225,87 @@ impl Types {
         names
     }
 
-    /// Whether a value of the type holds a pointer where it is: a
-    /// pointer, a `Local`, which may be made of one, or a struct, an
-    /// array, an option or a tuple with one. What a slice, a map, a channel or a handle leads to is on the
-    /// heap, where no pointer is kept (OWN-B5).
+    /// Whether a value of the type holds a pointer where it is.
     pub fn holds_pointer(&self, ty: TypeId) -> bool {
-        self.points(ty, &mut (FxHashSet::default(), 0))
+        matches!(self.held(ty), Held::Pointer)
     }
 
-    /// `holds_pointer`, with the types that are being looked into and
-    /// how often one of them was met again: a type that holds itself is
-    /// refused elsewhere, and is taken to hold nothing more here. "No"
-    /// is kept only when no type was met again below, so what is kept
-    /// for a type is the same whoever asks first.
-    fn points(&self, ty: TypeId, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
-        if let Some(known) = self.read(|inner| inner.pointing.get(&ty).copied()) {
+    /// What a value of the type holds where it is, of what is not kept
+    /// on the heap (OWN-B5): in itself, in a field (of a parent too),
+    /// an element of an array, an option or a part of a tuple. What a
+    /// slice, a map, a channel or a handle leads to is on the heap,
+    /// where no pointer is kept.
+    pub fn held(&self, ty: TypeId) -> Held {
+        self.holds(ty, &mut (FxHashSet::default(), 0))
+    }
+
+    /// `held`, with the types that are being looked into and how often
+    /// one of them was met again: a type that holds itself is refused
+    /// elsewhere, and is taken to hold nothing more here. Without a
+    /// pointer, the answer is kept only when no type was met again
+    /// below, so what is kept for a type is the same whoever asks first.
+    fn holds(&self, ty: TypeId, seen: &mut (FxHashSet<TypeId>, usize)) -> Held {
+        if let Some(known) = self.read(|inner| inner.holding.get(&ty).cloned()) {
             return known;
         }
         if !seen.0.insert(ty) {
             seen.1 += 1;
-            return false;
+            return Held::default();
         }
         let before = seen.1;
         self.steps
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut any = |parts: &[TypeId]| {
-            parts
-                .iter()
-                .any(|&part| super::deep(|| self.points(part, seen)))
-        };
-        let found = match &*self.get(self.underlying(ty)) {
-            Type::Pointer(_) | Type::Local(_) => true,
+        let under = self.underlying(ty);
+        let parts: Vec<TypeId> = match &*self.get(under) {
             Type::Struct(fields) => {
-                let own: Vec<TypeId> = fields.iter().map(|field| field.ty).collect();
-                any(&own) || any(&self.parents(ty))
+                let own = fields.iter().map(|field| field.ty);
+                own.chain(self.parents(ty)).collect()
             }
-            Type::Array { elem, .. } | Type::Option(elem) => any(&[*elem]),
-            Type::Tuple(parts) => any(parts),
-            _ => false,
+            Type::Array { elem, .. } | Type::Option(elem) => vec![*elem],
+            Type::Tuple(parts) => parts.to_vec(),
+            _ => Vec::new(),
         };
+        let mut found = match &*self.get(under) {
+            Type::Pointer(_) | Type::Local(_) => Held::Pointer,
+            Type::Param(_) => Held::Params([under].into()),
+            _ => Held::default(),
+        };
+        for part in parts {
+            let Held::Params(so_far) = &found else {
+                break;
+            };
+            found = match super::deep(|| self.holds(part, seen)) {
+                Held::Pointer => Held::Pointer,
+                Held::Params(more) if more.iter().all(|param| so_far.contains(param)) => continue,
+                Held::Params(more) => {
+                    let mut all = so_far.to_vec();
+                    for &param in more.iter() {
+                        if !all.contains(&param) {
+                            all.push(param);
+                        }
+                    }
+                    Held::Params(all.into())
+                }
+            };
+        }
         seen.0.remove(&ty);
-        if found || seen.1 == before {
-            self.write(|inner| inner.pointing.insert(ty, found));
+        if found == Held::Pointer || seen.1 == before {
+            self.write(|inner| inner.holding.insert(ty, found.clone()));
         }
         found
+    }
+
+    /// Notes that a declaration puts a value of its type parameter
+    /// `param` on the heap, into `what`: no type argument for it holds
+    /// a pointer (OWN-B5).
+    pub fn set_kept(&self, param: TypeId, what: Arc<str>) {
+        self.write(|inner| inner.kept.insert(param, what));
+    }
+
+    /// Into what a declaration puts a value of the type parameter on
+    /// the heap, if one does.
+    pub fn kept(&self, param: TypeId) -> Option<Arc<str>> {
+        self.read(|inner| inner.kept.get(&param).cloned())
     }
 
     /// Forgets what was worked out of hierarchies: the methods of a type
@@ -260,7 +314,7 @@ impl Types {
         self.write(|inner| {
             inner.tables.clear();
             inner.abstracts.clear();
-            inner.pointing.clear();
+            inner.holding.clear();
             inner.open_abstracts.clear();
         });
     }

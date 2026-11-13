@@ -5,6 +5,10 @@
 
 use super::*;
 
+/// What to do with a pointer that may not be kept where it is put.
+pub(super) const HEAP_FIX: &str = "let the heap own the value with a Unique, a Shared or a Weak, \
+                                   or keep the pointers in an array";
+
 impl<'a> Checker<'a> {
     /// The types that a value of the type `ty` is read as: its own, what
     /// a pointer points to, a pointer to what a `Unique` or `Shared` owns,
@@ -381,21 +385,23 @@ impl<'a> Checker<'a> {
     /// it holds a pointer, which the compiler follows only in the
     /// variables of functions (OWN-B5). Whether it was refused.
     pub(super) fn on_the_heap(&mut self, ty: TypeId, span: Span, what: &str) -> bool {
-        if self.types.has_param(ty) || !self.types.holds_pointer(ty) {
-            return false;
+        match self.types.held(ty) {
+            Held::Pointer => {}
+            // What a type parameter stands for may hold one: the type
+            // arguments are held to it.
+            Held::Params(params) => {
+                if !params.is_empty() {
+                    self.kept_where(&params, span, what);
+                }
+                return false;
+            }
         }
         let message = format!(
             "cannot keep a {} in {what}: a pointer in it may outlive what it points to",
             self.type_string(ty)
         );
-        let fix = "let the heap own the value with a Unique, a Shared or a Weak, or keep the \
-                   pointers in an array";
-        self.error_with_fix(
-            Code::OwnPointerOnHeap,
-            span,
-            message,
-            (Code::NoteOwnFixHeapPointer, fix.to_owned()),
-        );
+        let fix = (Code::NoteOwnFixHeapPointer, HEAP_FIX.to_owned());
+        self.error_with_fix(Code::OwnPointerOnHeap, span, message, fix);
         true
     }
 
