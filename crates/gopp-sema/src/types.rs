@@ -1203,6 +1203,12 @@ impl Types {
         self.write(|inner| inner.named[named.0 as usize].drops = true);
     }
 
+    /// Whether `named` has a `drop` method, which ends its values
+    /// (OWN-R7).
+    pub fn drops(&self, named: NamedId) -> bool {
+        self.read(|inner| inner.named[named.0 as usize].drops)
+    }
+
     /// Whether the type is a declared type with parents: it also has
     /// their members and is a value of their types.
     pub fn extends(&self, ty: TypeId) -> bool {

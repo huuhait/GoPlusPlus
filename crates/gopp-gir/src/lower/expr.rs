@@ -1300,7 +1300,7 @@ impl FuncCx<'_, '_> {
     /// What is known of the function that the key names: the checker
     /// is asked once in a run, and the function is declared in the
     /// module of the run then.
-    fn callee(&mut self, key: CalleeKey) -> Built<Result<Callee, &'static str>> {
+    pub(super) fn callee(&mut self, key: CalleeKey) -> Built<Result<Callee, &'static str>> {
         if let Some(known) = self.memo.callees.get(&key) {
             return Ok(known.clone());
         }

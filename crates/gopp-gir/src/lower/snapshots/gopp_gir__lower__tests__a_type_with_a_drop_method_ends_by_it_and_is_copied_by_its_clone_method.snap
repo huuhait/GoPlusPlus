@@ -1,0 +1,131 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: gir(text)
+---
+module "main"
+file 0 "a.gopp"
+
+fn _GPM4dropN4mainE4File(_1: *_GPTiN4mainE4File) -> () [go, external] {
+  let _0: ()
+  let _1: *_GPTiN4mainE4File "f"
+  bb0:
+    return  ; a.gopp:8:24
+}
+
+fn _GPM4dropN4mainE6Handle(_1: *_GPTiN4mainE6Handle) -> () [go, external] {
+  let _0: ()
+  let _1: *_GPTiN4mainE6Handle "h"
+  bb0:
+    return  ; a.gopp:12:26
+}
+
+fn _GPM5CloneN4mainE6Handle(_1: _GPTiN4mainE6Handle) -> _GPTiN4mainE6Handle [go, external] {
+  let _0: _GPTiN4mainE6Handle
+  let _1: _GPTiN4mainE6Handle "h"
+  let _2: _GPTiN4mainE6Handle
+  bb0:
+    _2 = _GPTiN4mainE6Handle {copy _1.0}  ; a.gopp:14:34
+    _0 = copy _2  ; a.gopp:14:34
+    return  ; a.gopp:14:34
+}
+
+fn _GPF4mainE3use(_1: _GPTiN4mainE6Handle) -> i64 [go, external] {
+  let _0: i64
+  let _1: _GPTiN4mainE6Handle "h"
+  let _2: _GPTiN4mainE4File
+  let _3: _GPTiN4mainE4File "f"
+  let _4: _GPTiN4mainE6Handle
+  let _5: *_GPTiN4mainE6Handle
+  let _6: *u8
+  let _7: ()
+  let _8: _GPTiN4mainE6Handle "g"
+  let _9: i64
+  let _10: *_GPTiN4mainE6Handle
+  let _11: *u8
+  let _12: ()
+  let _13: *_GPTiN4mainE4File
+  let _14: *u8
+  let _15: ()
+  bb0:
+    _2 = _GPTiN4mainE4File {const 1: i64, const str#0 "n"}  ; a.gopp:17:2
+    storage_live(_3)  ; a.gopp:17:2
+    _3 = copy _2  ; a.gopp:17:2
+    _4 = copy _1  ; a.gopp:18:2
+    _5 = &mut _4  ; a.gopp:18:2
+    _6 = ptr_to_ptr(copy _5) as *u8  ; a.gopp:18:2
+    _7 = call const fn @_GPTcN4mainE6Handle(copy _6) -> [return: bb1, unwind: continue]  ; a.gopp:18:2
+  bb1:
+    storage_live(_8)  ; a.gopp:18:2
+    _8 = copy _4  ; a.gopp:18:2
+    _9 = add(copy _3.0, copy _8.0)  ; a.gopp:19:2
+    _0 = add(copy _9, copy _1.0)  ; a.gopp:19:2
+    _10 = &mut _8  ; a.gopp:19:2
+    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:19:2
+    _12 = call const fn @_GPTdN4mainE6Handle(copy _11) -> [return: bb2, unwind: continue]  ; a.gopp:19:2
+  bb2:
+    _13 = &mut _3  ; a.gopp:19:2
+    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:19:2
+    _15 = call const fn @_GPTdN4mainE4File(copy _14) -> [return: bb3, unwind: continue]  ; a.gopp:19:2
+  bb3:
+    storage_dead(_8)  ; a.gopp:19:2
+    storage_dead(_3)  ; a.gopp:19:2
+    return  ; a.gopp:19:2
+}
+
+fn _GPTcN4mainE6Handle(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *_GPTiN4mainE6Handle
+  let _3: _GPTiN4mainE6Handle
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *_GPTiN4mainE6Handle
+    _3 = call const fn @_GPM5CloneN4mainE6Handle(copy (*_2)) -> [return: bb1, unwind: continue]
+  bb1:
+    (*_2) = copy _3
+    return
+}
+
+fn _GPTdN4mainE4File(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *_GPTiN4mainE4File
+  let _3: ()
+  let _4: *string
+  let _5: *u8
+  let _6: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *_GPTiN4mainE4File
+    _3 = call const fn @_GPM4dropN4mainE4File(copy _2) -> [return: bb1, unwind: continue]
+  bb1:
+    _4 = &mut (*_2).1
+    _5 = ptr_to_ptr(copy _4) as *u8
+    _6 = call const fn @_GPTdr(copy _5) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
+fn _GPTdN4mainE6Handle(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *_GPTiN4mainE6Handle
+  let _3: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *_GPTiN4mainE6Handle
+    _3 = call const fn @_GPM4dropN4mainE6Handle(copy _2) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *string
+  let _3: bool
+  let _4: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *string
+    _3 = ne(copy (*_2).2, const zero: *u8)
+    switch copy _3 [0: bb2, otherwise: bb1]
+  bb1:
+    _4 = call const fn @_gopp_string_release(copy (*_2)) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]

@@ -174,6 +174,10 @@ pub(crate) struct Shared<'a> {
     pub path: Spur,
     /// The name `_`.
     pub blank: Spur,
+    /// The names of the method that ends a value and of the method
+    /// that copies one.
+    pub drop: Spur,
+    pub clone: Spur,
     jobs: Vec<Job>,
     pub methods: FxHashMap<(NamedId, Spur), Method>,
     /// For each type that a function declares: which job, and which of
@@ -254,6 +258,9 @@ pub(crate) struct Memo<'a> {
     /// The types that are being lowered: one that is met again holds
     /// itself.
     pub open: Vec<CheckedTypeId>,
+    /// The structs of the module whose types have a `drop` method: a
+    /// value of one ends by a call of it, whatever its fields are.
+    pub dropped: rustc_hash::FxHashSet<TypeId>,
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
     /// The global of each variable that the run has named.
@@ -283,6 +290,7 @@ impl<'a> Memo<'a> {
             glue_of: FxHashMap::default(),
             glues: Vec::new(),
             open: Vec::new(),
+            dropped: rustc_hash::FxHashSet::default(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
             global_keys: FxHashMap::default(),
@@ -313,6 +321,8 @@ impl<'a> Shared<'a> {
             layout,
             path: checked.names.get_or_intern(&checked.package.path),
             blank: checked.names.get_or_intern_static("_"),
+            drop: checked.names.get_or_intern_static("drop"),
+            clone: checked.names.get_or_intern_static("Clone"),
             jobs: Vec::new(),
             methods: FxHashMap::default(),
             locals: FxHashMap::default(),

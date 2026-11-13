@@ -1014,6 +1014,100 @@ func taken(c bool) int {
 }
 
 #[test]
+fn a_type_with_a_drop_method_ends_by_it_and_is_copied_by_its_clone_method() {
+    let text = "package main
+
+type File struct {
+	fd   int
+	name string
+}
+
+func (f *File) drop() {}
+
+type Handle struct{ id int }
+
+func (h *Handle) drop() {}
+
+func (h Handle) Clone() Handle { return Handle{id: h.id} }
+
+func use(h Handle) int {
+	f := File{fd: 1, name: \"n\"}
+	g := h
+	return f.fd + g.id + h.id
+}
+";
+    let calls = |module: &str| {
+        let count = |method: &str| {
+            module
+                .matches(&format!("call const fn @_GPM{method}"))
+                .count()
+        };
+        [count("4drop"), count("5Clone")]
+    };
+    let module = gir(text);
+    // The drop glue of each type calls its `drop`, and the clone glue
+    // of `Handle` its `Clone`.
+    assert_eq!(calls(&module), [2, 1]);
+    insta::assert_snapshot!(module);
+    // In a Go file the two are methods like any other: nothing calls
+    // them.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    assert_eq!(calls(&print_module(&lowered.module)), [0, 0]);
+}
+
+#[test]
+fn drop_and_clone_methods_that_are_not_supported_yet_say_so() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main
+
+type Fd int
+
+func (f *Fd) drop() {}
+
+type Buf struct{ data []int }
+
+func (b *Buf) drop() {}
+
+func (b Buf) Clone() Buf {
+	b.data = nil
+	return Buf{}
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+func main() {
+	var f Fd
+	_ = f
+	a := Buf{}
+	b := a
+	_, _ = a, b
+	m := map[string]File{}
+	_ = m
+}
+",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        [
+            "a.gopp:5:14: not supported yet: a `drop` method of a type that is no struct",
+            "a.gopp:21:6: not supported yet: a `drop` method of a type that is no struct",
+            "a.gopp:22:6: not supported yet: a `drop` method of a type that is no struct",
+            "a.gopp:24:7: not supported yet: a `Clone` method that does more than read its \
+             receiver",
+            "a.gopp:26:7: not supported yet: a map whose values cannot be copied",
+            "a.gopp:26:2: not supported yet: a map whose values cannot be copied",
+        ]
+    );
+}
+
+#[test]
 fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
     let (_, messages) = lowered_with(
         &[(
@@ -1436,6 +1530,25 @@ fn the_steps_grow_with_the_glue_of_types() {
         steps_of(&format!(
             "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
              func f(t T{}) int {{\n\tu := t\n\treturn len(u.inner)\n}}\n",
+            n - 1
+        ))
+    });
+    // Many types with a `drop` and a `Clone` method that each hold the
+    // one before.
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (1..n)
+            .map(|at| {
+                format!(
+                    "type T{at} struct {{\n\tinner T{}\n\trows []int\n}}\n\n\
+                     func (t *T{at}) drop() {{}}\n\nfunc (t T{at}) Clone() T{at} {{ return \
+                     T{at}{{}} }}\n\n",
+                    at - 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
+             func f(t T{}) int {{\n\tu := t\n\treturn len(u.rows) + len(t.rows)\n}}\n",
             n - 1
         ))
     });

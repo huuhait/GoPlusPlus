@@ -33,8 +33,9 @@ fn slot(local: LocalId) -> Operand {
 
 impl FuncCx<'_, '_> {
     /// Whether a value of the type is copied by its bytes and owns
-    /// nothing that is freed: no string, no slice and no map is in it,
-    /// behind no pointer.
+    /// nothing that is freed or ended: no string, no slice, no map and
+    /// no value of a type with a `drop` method is in it, behind no
+    /// pointer.
     pub fn flat(&mut self, ty: TypeId) -> bool {
         if let Some(&known) = self.memo.flat.get(&ty) {
             return known;
@@ -53,6 +54,7 @@ impl FuncCx<'_, '_> {
             Type::Ptr(_) => return !self.is_map(ty),
             Type::Array(of, _) | Type::Option(of) => vec![of],
             Type::Tuple(parts) => parts.to_vec(),
+            Type::Struct(_) if self.memo.dropped.contains(&ty) => return false,
             Type::Struct(id) => {
                 let fields = self.b.types().struct_fields(id).unwrap_or_default();
                 fields.to_vec()

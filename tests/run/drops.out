@@ -1,0 +1,48 @@
+inner 2
+close 2 b
+turn 10
+close 10 c
+close 11 c
+close 12 c
+end 1
+close 1 a
+close 20 a
+20
+close 21 b
+close 20 a
+41
+keep 30
+close 30 a
+moved 31
+close 32 a2
+close 31 b
+close 33 a3
+fd 40
+close 40 t
+keep 41
+close 41 t
+pair 42 43
+close 42 pa
+close 43 pb
+len 3
+close 51 e
+close 52 e
+cut
+close 50 e
+clone 60
+copies 0 1
+last 1
+clone 60
+called 1
+release 60 1
+release 60 1
+release 60 0
+made 70
+made 71
+made 73
+made 74
+held 70 1
+close 73 made
+close 74 made
+close 70 made
+close 71 made

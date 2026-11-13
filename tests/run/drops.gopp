@@ -1,0 +1,132 @@
+package main
+
+type File struct {
+	fd   int
+	name string
+}
+
+// The zero value is a file that was moved away or never opened.
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd, f.name)
+	}
+}
+
+func open(fd int, name string) File { return File{fd: fd, name: name} }
+
+type Pair struct {
+	a File
+	b File
+}
+
+// A value with a copy method: a copy is one more of it.
+type Handle struct {
+	id    int
+	count int
+}
+
+func (h *Handle) drop() {
+	if h.id != 0 {
+		println("release", h.id, h.count)
+	}
+}
+
+func (h Handle) Clone() Handle {
+	println("clone", h.id)
+	return Handle{id: h.id, count: h.count + 1}
+}
+
+func keep(f File) { println("keep", f.fd) }
+
+// A variable ends where its block is left, by every way out.
+func scopes(n int) {
+	a := open(1, "a")
+	{
+		b := open(2, "b")
+		println("inner", b.fd)
+	}
+	for i := 0; i < n; i++ {
+		c := open(10+i, "c")
+		if i == 1 {
+			continue
+		}
+		if i == 2 {
+			break
+		}
+		println("turn", c.fd)
+	}
+	println("end", a.fd)
+}
+
+func early(n int) int {
+	a := open(20, "a")
+	if n > 0 {
+		b := open(21, "b")
+		return b.fd + a.fd
+	}
+	return a.fd
+}
+
+// A value that was moved away ends with its new owner, once.
+func moves() {
+	a := open(30, "a")
+	keep(move(a))
+	b := open(31, "b")
+	c := move(b)
+	println("moved", c.fd)
+	a = open(32, "a2")
+	a = open(33, "a3")
+}
+
+// A temporary ends with its statement, and a struct ends its fields.
+func temporaries() {
+	println("fd", open(40, "t").fd)
+	keep(open(41, "t"))
+	p := Pair{a: open(42, "pa"), b: open(43, "pb")}
+	println("pair", p.a.fd, p.b.fd)
+}
+
+func elements() {
+	fs := []File{open(50, "e"), open(51, "e")}
+	fs = append(fs, open(52, "e"))
+	println("len", len(fs))
+	fs = fs[:1]
+	println("cut")
+}
+
+// A copy calls the copy method, and the last use of a variable does
+// not.
+func clones() {
+	h := Handle{id: 60}
+	g := h
+	println("copies", h.count, g.count)
+	k := g
+	println("last", k.count)
+	c := h.Clone()
+	println("called", c.count)
+}
+
+func made(fd int) File {
+	f := open(fd, "made")
+	println("made", f.fd)
+	return f
+}
+
+// What holds such values ends each of them: an array, a struct in a
+// slice.
+func held() {
+	two := [2]File{made(70), made(71)}
+	pairs := []Pair{{a: made(73), b: made(74)}}
+	println("held", two[0].fd, len(pairs))
+}
+
+func main() {
+	scopes(3)
+	println(early(0))
+	println(early(1))
+	moves()
+	temporaries()
+	elements()
+	clones()
+	held()
+}

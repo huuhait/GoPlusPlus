@@ -150,6 +150,10 @@ impl FuncCx<'_, '_> {
                 Err(_) => Err("a map whose entries cannot be copied"),
             },
         };
+        // The copy of a map copies its values.
+        if shared.types.copy_rule(value).is_none() {
+            return Err("a map whose values cannot be copied");
+        }
         let copy = glue(self, Glue::Clone, value_ty, value)?;
         let drop = glue(self, Glue::Drop, value_ty, value)?;
         // A key that is put into the map is a copy of its own too.

@@ -195,9 +195,15 @@ impl Memo<'_> {
                 let fields: Vec<(&str, TypeId)> = names.zip(parts).collect();
                 Self::runtime(types, "gopp.iface", &fields)
             }
-            CheckedType::Named { .. } => {
+            CheckedType::Named { id, .. } => {
                 let under = checked.underlying(ty);
+                let drops = checked.drops(*id);
                 if !matches!(&*checked.get(under), CheckedType::Struct(_)) {
+                    // Its values are those of what it is declared as,
+                    // which nothing would end.
+                    if drops {
+                        return Err("a `drop` method of a type that is no struct");
+                    }
                     // What the type is declared as; a type that is met
                     // again on the way there holds itself.
                     if self.open.contains(&ty) {
@@ -215,7 +221,11 @@ impl Memo<'_> {
                 // every package, and no other type has it.
                 let name = symbol_of(&mut self.namer, Entity::TypeInfo(ty))
                     .map_err(|_| "a type that has no symbol")?;
-                self.strukt(shared, types, ty, under, &name)?
+                let lowered = self.strukt(shared, types, ty, under, &name)?;
+                if drops {
+                    self.dropped.insert(lowered);
+                }
+                lowered
             }
             CheckedType::Param(_) => return Err("a type parameter"),
         })
