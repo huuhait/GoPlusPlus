@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc count(n int8) int8 {\n\tvar total int8\n
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE5count(_1: i8) -> i8 [gopp, external] {
+fn _GPF4mainE5count(_1: i8) -> i8 [go, external] {
   scope 1: block in 0  ; a.gopp:5:6
   let _0: i8
   let _1: i8 "n"
@@ -38,7 +38,7 @@ fn _GPF4mainE5count(_1: i8) -> i8 [gopp, external] {
     return  ; a.gopp:8:2
 }
 
-fn _GPF4mainE4walk(_1: [3]i64, _2: [2]string, _3: *[3]i64) -> i64 [gopp, external] {
+fn _GPF4mainE4walk(_1: [3]i64, _2: [2]string, _3: *[3]i64) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:13:6
   scope 2: block in 0  ; a.gopp:16:6
   scope 3: block in 0  ; a.gopp:19:9
@@ -146,7 +146,7 @@ fn _GPF4mainE4walk(_1: [3]i64, _2: [2]string, _3: *[3]i64) -> i64 [gopp, externa
     return  ; a.gopp:25:2
 }
 
-fn _GPF4mainE5runes(_1: string) -> i64 [gopp, external] {
+fn _GPF4mainE5runes(_1: string) -> i64 [go, external] {
   let _0: i64
   let _1: string "s"
   let _2: i64 "at"

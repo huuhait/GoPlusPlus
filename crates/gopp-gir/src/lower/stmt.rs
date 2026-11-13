@@ -405,8 +405,8 @@ impl FuncCx<'_, '_> {
     }
 
     /// The array whose elements a range loop reads. An array whose
-    /// elements are copied by their bytes is copied first: the loop does
-    /// not see what its body writes. Any other, one behind a
+    /// elements are copied by their bytes is copied first, as in Go: the
+    /// loop does not see what its body writes. Any other, one behind a
     /// pointer, and one whose elements the loop names with `&` (`live`),
     /// is walked where it is (RNG-6).
     fn ranged_array(&mut self, x: ExprId, live: bool) -> Built<Place> {

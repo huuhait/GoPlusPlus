@@ -1,4 +1,5 @@
-//! Binds every identifier to what it denotes.
+//! Binds every identifier to what it denotes: Go's scope rules, with the
+//! messages of Go's type checker.
 //!
 //! The package-level names of all files are collected first. Each top-level
 //! declaration is then resolved on its own, in parallel; what the threads

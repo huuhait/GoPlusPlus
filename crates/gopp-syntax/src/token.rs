@@ -214,7 +214,7 @@ impl TokenKind {
         })
     }
 
-    /// Whether a line end after this token inserts a semicolon.
+    /// Whether a line end after this token inserts a semicolon (Go's rule).
     pub(crate) fn ends_statement(self) -> bool {
         matches!(
             self,

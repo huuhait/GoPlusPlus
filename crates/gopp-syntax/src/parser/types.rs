@@ -302,7 +302,7 @@ impl Parser<'_> {
             .collect()
     }
 
-    /// A parameter list: either every parameter has a name
+    /// Go's rule for a parameter list: either every parameter has a name
     /// or none has, and a name without a type takes the type that follows.
     fn raw_param_list(
         &mut self,

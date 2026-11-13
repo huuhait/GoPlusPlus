@@ -176,8 +176,8 @@ impl Parser<'_> {
                 StmtKind::Return(results)
             }
             T::Semi => {
-                // The statement is the `;` itself. One that stands for a
-                // line end has no width.
+                // The statement is the `;` itself. As in Go's tree, one
+                // that stands for a line end has no width.
                 let mut span = self.here();
                 if !self.text[span.lo as usize..].starts_with(';') {
                     span.hi = span.lo;

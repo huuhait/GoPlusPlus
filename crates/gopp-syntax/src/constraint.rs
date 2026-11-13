@@ -10,6 +10,9 @@ use la_arena::Arena;
 
 use crate::ast::{self, Attribute, BinaryOp, ExprId, ExprKind, File, UnaryOp};
 
+/// The Go release the language is based on: `go1.1` to `go1.25` hold.
+const GO_RELEASE: u32 = 25;
+
 const KNOWN_OS: &[&str] = &[
     "aix",
     "android",
@@ -46,7 +49,7 @@ const UNIX_OS: &[&str] = &[
     "solaris",
 ];
 
-/// The architectures that a build condition may name.
+/// Go's list, and `wasm32`, which is this compiler's name for `wasm`.
 const KNOWN_ARCH: &[&str] = &[
     "386",
     "amd64",
@@ -97,6 +100,7 @@ impl BuildContext {
             || word == self.profile
             || word == "unix" && UNIX_OS.contains(&self.os.as_str())
             || self.tags.iter().any(|tag| tag == word)
+            || is_go_release(word)
     }
 
     fn knows(&self, word: &str) -> bool {
@@ -107,8 +111,9 @@ impl BuildContext {
             || self.known.iter().any(|known| known == word)
     }
 
-    /// A file named `name_OS`, `name_ARCH` or `name_OS_ARCH` before the
-    /// extension, with `_test` after them, is for that system only.
+    /// Go's rule for `name_GOOS`, `name_GOARCH` and `name_GOOS_GOARCH` before
+    /// the extension, with `_test` after them: such a file is for that
+    /// system only.
     pub fn takes_file_name(&self, name: &str) -> bool {
         let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
         // What stands before the first `_` is never a system name.
@@ -129,6 +134,13 @@ impl BuildContext {
             _ => true,
         }
     }
+}
+
+fn is_go_release(word: &str) -> bool {
+    let minor = word
+        .strip_prefix("go1.")
+        .and_then(|n| n.parse::<u32>().ok());
+    minor.is_some_and(|minor| (1..=GO_RELEASE).contains(&minor))
 }
 
 /// Whether the file holds tests: its name ends in `_test` before the

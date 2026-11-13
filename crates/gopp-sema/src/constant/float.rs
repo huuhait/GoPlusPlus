@@ -1,14 +1,15 @@
 //! A binary floating-point number with a mantissa of any length.
 //!
-//! An operation gives its exact result rounded to the precision asked for,
-//! to the nearest value, ties to even. A result past the largest exponent is no number (`None`); one
+//! It computes as Go's `big.Float` does: an operation gives its exact
+//! result rounded to the precision asked for, to the nearest value, ties to
+//! even. A result past the largest exponent is no number (`None`); one
 //! under the smallest is zero.
 
 use std::cmp::Ordering;
 
 use num_bigint::{BigInt, BigUint, Sign};
 
-/// The largest and the smallest exponent of two.
+/// Go's `big.MaxExp` and `big.MinExp`.
 const MAX_EXP: i64 = i32::MAX as i64;
 const MIN_EXP: i64 = i32::MIN as i64;
 
@@ -314,7 +315,7 @@ impl Float {
     }
 
     /// `-0x.8p+1`: the mantissa in hexadecimal after the point, then the
-    /// exponent of two.
+    /// exponent of two, as Go's `big.Float` writes with `%p`.
     pub fn text_p(&self) -> String {
         if self.is_zero() {
             return "0".to_owned();

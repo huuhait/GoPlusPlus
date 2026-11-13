@@ -19,7 +19,7 @@ func open(fd int) File {
 
 func sync(f *File) { println("sync", f.fd) }
 
-// Every file of the loop lives until the function returns.
+// Every file of the loop lives until the function returns, as in Go.
 func read(n int) {
 	for i := 1; i <= n; i++ {
 		f := open(i)

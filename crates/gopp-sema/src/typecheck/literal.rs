@@ -1,4 +1,4 @@
-//! Composite literals.
+//! Composite literals, after `go/types` (literals.go).
 
 use super::*;
 
@@ -38,8 +38,8 @@ impl<'a> Checker<'a> {
             }
         };
         // A literal of a type whose declaration is under way needs the
-        // type for itself, as in the length of an array of its own (said
-        // at the literal).
+        // type for itself, as in the length of an array of its own (as
+        // Go: said at the literal).
         let under_way = |this: &Self| {
             let declared = this.under_way.iter();
             declared

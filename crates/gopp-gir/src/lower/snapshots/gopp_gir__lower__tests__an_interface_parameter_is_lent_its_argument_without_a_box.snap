@@ -42,7 +42,7 @@ global const @_GPTiSi: gopp.type [linkonce_odr]
     const zero: *u8
     const 0: u64
 
-fn _GPM4AreaN4mainE4Rect(_1: _GPTiN4mainE4Rect) -> i64 [gopp, external] {
+fn _GPM4AreaN4mainE4Rect(_1: _GPTiN4mainE4Rect) -> i64 [go, external] {
   let _0: i64
   let _1: _GPTiN4mainE4Rect "r"
   bb0:
@@ -50,7 +50,7 @@ fn _GPM4AreaN4mainE4Rect(_1: _GPTiN4mainE4Rect) -> i64 [gopp, external] {
     return  ; a.gopp:7:28
 }
 
-fn _GPM4growN4mainE4Rect(_1: *_GPTiN4mainE4Rect) -> () [gopp, external] {
+fn _GPM4growN4mainE4Rect(_1: *_GPTiN4mainE4Rect) -> () [go, external] {
   let _0: ()
   let _1: *_GPTiN4mainE4Rect "r"
   bb0:
@@ -58,7 +58,7 @@ fn _GPM4growN4mainE4Rect(_1: *_GPTiN4mainE4Rect) -> () [gopp, external] {
     return  ; a.gopp:9:31
 }
 
-fn _GPF4mainE4read(_1: gopp.iface) -> bool [gopp, external] {
+fn _GPF4mainE4read(_1: gopp.iface) -> bool [go, external] {
   let _0: bool
   let _1: gopp.iface "v"
   let _2: gopp.iface
@@ -68,7 +68,7 @@ fn _GPF4mainE4read(_1: gopp.iface) -> bool [gopp, external] {
     return  ; a.gopp:13:25
 }
 
-fn _GPF4mainE4area(_1: gopp.iface) -> i64 [gopp, external] {
+fn _GPF4mainE4area(_1: gopp.iface) -> i64 [go, external] {
   let _0: i64
   let _1: gopp.iface "s"
   let _2: **u8
@@ -89,7 +89,7 @@ fn _GPF4mainE4area(_1: gopp.iface) -> i64 [gopp, external] {
     return  ; a.gopp:15:26
 }
 
-fn _GPF4mainE4keep(_1: gopp.iface) -> () [gopp, external] {
+fn _GPF4mainE4keep(_1: gopp.iface) -> () [go, external] {
   let _0: ()
   let _1: gopp.iface "v"
   let _2: *gopp.iface
@@ -115,7 +115,7 @@ fn _GPF4mainE4keep(_1: gopp.iface) -> () [gopp, external] {
     return  ; a.gopp:17:29
 }
 
-fn _GPF4mainE8returned(_1: gopp.iface) -> gopp.iface [gopp, external] {
+fn _GPF4mainE8returned(_1: gopp.iface) -> gopp.iface [go, external] {
   let _0: gopp.iface
   let _1: gopp.iface "s"
   let _2: gopp.iface
@@ -133,7 +133,7 @@ fn _GPF4mainE8returned(_1: gopp.iface) -> gopp.iface [gopp, external] {
     return  ; a.gopp:19:32
 }
 
-fn _GPF4mainE8assigned(_1: gopp.iface, _2: gopp.iface) -> i64 [gopp, external] {
+fn _GPF4mainE8assigned(_1: gopp.iface, _2: gopp.iface) -> i64 [go, external] {
   let _0: i64
   let _1: gopp.iface "s"
   let _2: gopp.iface "other"
@@ -188,7 +188,7 @@ fn _GPF4mainE8assigned(_1: gopp.iface, _2: gopp.iface) -> i64 [gopp, external] {
     return  ; a.gopp:23:2
 }
 
-fn _GPF4mainE5field(_1: struct{s gopp.iface}) -> i64 [gopp, external] {
+fn _GPF4mainE5field(_1: struct{s gopp.iface}) -> i64 [go, external] {
   let _0: i64
   let _1: struct{s gopp.iface} "h"
   let _2: **u8
@@ -225,7 +225,7 @@ fn _GPF4mainE5field(_1: struct{s gopp.iface}) -> i64 [gopp, external] {
     return  ; a.gopp:26:39
 }
 
-fn _GPF4mainE6passes(_1: gopp.iface) -> i64 [gopp, external] {
+fn _GPF4mainE6passes(_1: gopp.iface) -> i64 [go, external] {
   let _0: i64
   let _1: gopp.iface "s"
   let _2: gopp.iface
@@ -265,7 +265,7 @@ fn _GPF4mainE6passes(_1: gopp.iface) -> i64 [gopp, external] {
     return  ; a.gopp:28:28
 }
 
-fn _GPF4mainE5twice(_1: gopp.iface) -> i64 [gopp, external] {
+fn _GPF4mainE5twice(_1: gopp.iface) -> i64 [go, external] {
   let _0: i64
   let _1: gopp.iface "s"
   let _2: gopp.iface
@@ -337,7 +337,7 @@ fn _GPF4mainE5twice(_1: gopp.iface) -> i64 [gopp, external] {
     return  ; a.gopp:30:27
 }
 
-fn _GPF4mainE4main() -> () [gopp, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   let _1: _GPTiN4mainE4Rect "r"
   let _2: []i64
@@ -590,7 +590,7 @@ fn _GPF4mainE4main() -> () [gopp, external] {
     return  ; a.gopp:40:1
 }
 
-fn _GPTIM4AreaN4mainE4Rect(_1: *u8) -> i64 [gopp, linkonce_odr] {
+fn _GPTIM4AreaN4mainE4Rect(_1: *u8) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _2: **_GPTiN4mainE4Rect
   let _3: *_GPTiN4mainE4Rect
@@ -604,7 +604,7 @@ fn _GPTIM4AreaN4mainE4Rect(_1: *u8) -> i64 [gopp, linkonce_odr] {
     return
 }
 
-fn _GPTIM4growN4mainE4Rect(_1: *u8) -> () [gopp, linkonce_odr] {
+fn _GPTIM4growN4mainE4Rect(_1: *u8) -> () [go, linkonce_odr] {
   let _0: ()
   let _2: **_GPTiN4mainE4Rect
   let _3: *_GPTiN4mainE4Rect

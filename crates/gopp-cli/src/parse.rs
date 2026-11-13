@@ -14,7 +14,7 @@ use rayon::prelude::*;
 
 use crate::{EXIT_ERRORS, Emit, exit_code};
 
-/// The errors after the tenth are rarely worth reading.
+/// As Go's compiler: the errors after the tenth are rarely worth reading.
 pub const MAX_DIAGNOSTICS: usize = 10;
 
 /// What parsing one file printed, and whether it failed.

@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc tail(xs *[]int) *[]int {\n\treturn &xs[1
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4tail(_1: *[]i64, _2: *[]i64) -> *[]i64 [gopp, external] {
+fn _GPF4mainE4tail(_1: *[]i64, _2: *[]i64) -> *[]i64 [go, external] {
   let _0: *[]i64
   let _1: *[]i64 "xs"
   let _3: []i64
@@ -38,7 +38,7 @@ fn _GPF4mainE4tail(_1: *[]i64, _2: *[]i64) -> *[]i64 [gopp, external] {
     return  ; a.gopp:4:2
 }
 
-fn _GPF4mainE5twice(_1: *[]i64, _2: *[]i64) -> *[]i64 [gopp, external] {
+fn _GPF4mainE5twice(_1: *[]i64, _2: *[]i64) -> *[]i64 [go, external] {
   let _0: *[]i64
   let _1: *[]i64 "xs"
   let _3: []i64
@@ -56,7 +56,7 @@ fn _GPF4mainE5twice(_1: *[]i64, _2: *[]i64) -> *[]i64 [gopp, external] {
     return  ; a.gopp:8:2
 }
 
-fn _GPF4mainE4both(_1: *[]i64, _2: i64, _3: *[]i64, _4: *[]i64) -> (*[]i64, i64, *[]i64) [gopp, external] {
+fn _GPF4mainE4both(_1: *[]i64, _2: i64, _3: *[]i64, _4: *[]i64) -> (*[]i64, i64, *[]i64) [go, external] {
   let _0: (*[]i64, i64, *[]i64)
   let _1: *[]i64 "xs"
   let _2: i64 "n"
@@ -129,7 +129,7 @@ fn _GPF4mainE4both(_1: *[]i64, _2: i64, _3: *[]i64, _4: *[]i64) -> (*[]i64, i64,
     return  ; a.gopp:15:2
 }
 
-fn _GPF4mainE3all(_1: *[]i64, _2: *[]i64, _3: *[]i64) -> (*[]i64, i64, *[]i64) [gopp, external] {
+fn _GPF4mainE3all(_1: *[]i64, _2: *[]i64, _3: *[]i64) -> (*[]i64, i64, *[]i64) [go, external] {
   let _0: (*[]i64, i64, *[]i64)
   let _1: *[]i64 "xs"
   let _4: u64

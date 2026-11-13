@@ -1,7 +1,8 @@
 package main
 
 // An array whose elements are not copied by their bytes is walked where
-// it is: the loop sees what its body writes to a later element.
+// it is: the loop sees what its body writes to a later element. Go
+// walks a copy of every array.
 func main() {
 	names := [3]string{"a", "b", "c"}
 	for i, name := range names {

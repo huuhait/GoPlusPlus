@@ -200,9 +200,9 @@ fn what_cannot_be_computed_is_unknown() {
     assert_eq!(Value::Unknown.sign(), 1);
 }
 
-/// `literal = same value`.
+/// `literal = same value`, from the tests of Go's `go/constant`.
 #[test]
-fn number_literals_are_read_in_every_spelling() {
+fn number_literals_are_read_as_go_reads_them() {
     let ints = [
         "0_123 = 0123",
         "0123_456 = 0123456",
@@ -262,7 +262,7 @@ fn a_fraction_too_large_to_stay_exact_becomes_a_float() {
     );
     assert_eq!(show("F:1e5000").split(" | ").nth(1), Some("1e+5000"));
     assert_eq!(show("F:1e-5000 neg").split(" | ").nth(1), Some("-1e-5000"));
-    // A small number whose first digit is behind the point.
+    // Go's own way of writing a small number, kept for equal messages.
     assert_eq!(
         show("F:894562232.7516972e-4245").split(" | ").nth(1),
         Some("0.894562e-4236")
@@ -309,7 +309,7 @@ fn rounding_to_a_float_type_takes_one_step() {
 }
 
 #[test]
-fn a_value_is_shown_in_its_short_form() {
+fn a_value_is_shown_as_go_shows_it() {
     let cases = [
         ("F:1e100", "1e+100"),
         ("F:123456.789", "123456.789"),

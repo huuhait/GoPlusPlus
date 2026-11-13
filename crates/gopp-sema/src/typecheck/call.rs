@@ -1,4 +1,5 @@
-//! The arguments of a call and an expression that stands as a statement.
+//! The arguments of a call and an expression that stands as a statement,
+//! after `go/types` (call.go, stmt.go).
 
 use super::*;
 

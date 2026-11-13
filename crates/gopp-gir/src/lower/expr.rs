@@ -1,4 +1,5 @@
-//! Expressions: values, places, calls, and their checks (gir.md §5).
+//! Expressions: values, places, calls, and the checks that Go's
+//! semantics ask for (gir.md §5).
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::constant::Value;
@@ -1765,7 +1766,7 @@ impl<'a> FuncCx<'a, '_> {
             params: [bytes].into(),
             ret: string,
             has_env: false,
-            cc: CallConv::Gopp,
+            cc: CallConv::Go,
         }));
         let says = self.table_slot(&error, 0, code, None)?;
         let held = self.b.field(&error, 1)?;

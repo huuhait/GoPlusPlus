@@ -1,9 +1,9 @@
-//! Command-line flags with one dash.
+//! Go-style command-line flags.
 
 use std::ffi::OsString;
 
 /// Rewrites `-flag` and `-flag=value` to `--flag`, so long flags work with one
-/// dash. One-letter flags, negative numbers, and everything after
+/// dash as in Go. One-letter flags, negative numbers, and everything after
 /// `--` are left alone.
 pub fn normalize(args: impl Iterator<Item = OsString>) -> Vec<OsString> {
     let mut flags_ended = false;

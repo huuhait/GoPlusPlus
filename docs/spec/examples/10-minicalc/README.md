@@ -1,10 +1,10 @@
 # 10 minicalc
 
-A recursive-descent calculator. The AST lives in an arena, number nodes record trivial byte spans into the source string, and parse and eval errors use `!`.
+A recursive-descent calculator. The AST lives in an arena, number nodes record trivial byte spans into the source string, and parse and eval errors use `!`. Run: `go run main.go`.
 
 ## Spec rules exercised
 
-- [ERR-1, ERR-2, ERR-5, ERR-6](../../09-errors-and-panics.md): `func (p *Parser) expr!() *Node`, methods that can fail; `p.term!()` returns the error to the caller; `calc!(&arena, "6 * 7")` in `main` panics on failure; `calc(&arena, src)` is the form with the error as a result.
+- [ERR-1, ERR-2, ERR-5, ERR-6](../../09-errors-and-panics.md): `func (p *Parser) expr!() *Node`, methods that can fail; `p.term!()` returns the error to the caller; `calc!(&arena, "6 * 7")` in `main` panics on failure; `calc(&arena, src)` is the Go form.
 - [ERR-3](../../09-errors-and-panics.md): `return n` is a success; `return nil, p.fail(...)` and `return 0, errors.New(...)` fail explicitly. The `nil` in `return nil, p.fail(...)` stands for the unset `*Node` result, which no caller can read (pointers are never nil, ADR-0018).
 - [OWN-P9, OWN-P10](../../04-ownership.md): `L, R Option[*Node]` (a missing child is `nil`); `operand!` checks `o == nil` and then uses `o` as a `*Node`.
 - [ERR-2](../../09-errors-and-panics.md): `fail` returns `error` as its last result, so it is a normal function that returns an error value.
@@ -14,3 +14,16 @@ A recursive-descent calculator. The AST lives in an arena, number nodes record t
 - [SLC-3](../../08-slices-and-range.md), [OWN-B2](../../04-ownership.md#45-borrow-checking-adr-0021), [UB-5](../../16-undefined-behavior.md): `mem.Arena` frees its chunks automatically on drop (`SLC-3`); `arena.Reset()` reuses chunks per expression and ends borrows of the previous tree (checked in safe code by `OWN-B2`).
 - [PAN-3](../../09-errors-and-panics.md): `defer arena.Free()` evaluates `&arena` at the `defer`, and `arena` lives to the end of `main`; later `arena.Reset()` calls are legal and seen by the deferred call.
 - [RNG-1](../../08-slices-and-range.md): `range exprs`: the body only reads `src`, so the string element is not copied.
+
+## Differences from the Go version
+
+- Go allocates nodes with `&Node{}` and the GC frees them. Go++ uses `mem.ArenaNew[Node]` with a trivial `Span` field and one `Reset` per expression.
+- Go returns `(*Node, error)` and checks `err` after every call; Go++ uses `!`.
+- Go uses nil child pointers; Go++ uses `Option[*Node]` and an `operand!` helper that checks them.
+- Output is identical.
+
+## Assumptions about other phases
+
+- `mem.Arena` has a usable zero value; `Reset` and `Free` take a pointer receiver (P05 D5.3 / P05.03).
+- `mem.ArenaNew[Node]` accepts `Node` because it is trivial (D5.3).
+- The package path is written `"mem"`.

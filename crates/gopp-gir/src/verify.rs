@@ -194,9 +194,9 @@ impl<'m> Verifier<'m> {
                         .params
                         .first()
                         .is_some_and(|&first| self.is_bytes(first));
-                    if func.cc != CallConv::Gopp || !env {
+                    if func.cc != CallConv::Go || !env {
                         let message = format!(
-                            "{}: an environment needs the Go++ convention and a first *u8",
+                            "{}: an environment needs the Go convention and a first *u8",
                             self.shown(ty)
                         );
                         self.error(78, message);

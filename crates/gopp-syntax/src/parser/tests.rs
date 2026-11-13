@@ -159,7 +159,7 @@ func use(extends, base int) {
 }
 
 #[test]
-fn forms_that_need_care() {
+fn go_forms_that_need_care() {
     insta::assert_snapshot!(tree(
         "package p
 

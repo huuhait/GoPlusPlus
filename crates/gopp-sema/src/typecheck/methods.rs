@@ -1,5 +1,6 @@
 //! Method declarations: what a method may be declared for, and the names
-//! of the methods and the fields of a type.
+//! of the methods and the fields of a type. The checks follow `go/types`
+//! (signature.go, decl.go), and the messages are Go's.
 
 use super::*;
 use crate::types::{Marks, NamedId};

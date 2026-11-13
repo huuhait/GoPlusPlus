@@ -108,7 +108,7 @@ enum Choice {
 
 /// How an operator expression is decided.
 pub(super) enum Overload {
-    /// No method stands for it: it is the built-in operator.
+    /// No method stands for it: it has the meaning that Go gives it.
     Builtin,
     /// It is in error, which was reported.
     Refused,
@@ -312,8 +312,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Checks the declaration of a `@Convert` method: one for each type
-    /// that it converts to, and none where a conversion is built in
-    /// (EXP-25).
+    /// that it converts to, and none where Go converts already (EXP-25).
     pub(super) fn convert_declared(&mut self, marked: &Marked<'_>) {
         let (_, results, _) = self.func_parts(marked.method.method.sig);
         let [target] = results[..] else {
@@ -435,7 +434,7 @@ impl<'a> Checker<'a> {
 
     /// Whether the type argument `v` meets the method `method` of a
     /// constraint as an operator element: with an `@Operator` method of
-    /// that type, or with its built-in operator. The `@Operator`
+    /// that type, or with the operator that Go gives it. The `@Operator`
     /// methods of the name decide for a type that has some; `None` where
     /// the plain methods of the type decide (GEN-13). `same` says whether
     /// two method types are the same.
@@ -452,8 +451,8 @@ impl<'a> Checker<'a> {
 
     /// The types of the methods that stand for the method `method` of a
     /// constraint where the type argument is `v`: those of the
-    /// `@Operator` methods of that name, and that of the built-in
-    /// operator of the type; and whether the type has `@Operator` methods of
+    /// `@Operator` methods of that name, and that of the operator that Go
+    /// gives the type; and whether the type has `@Operator` methods of
     /// the name at all.
     fn element_sigs(&self, v: TypeId, method: &Method) -> (Vec<TypeId>, bool) {
         let name = self.names.resolve(&method.name);
@@ -490,7 +489,7 @@ impl<'a> Checker<'a> {
             "Sub" | "Mul" | "Div" => self.is_numeric(under),
             _ => self.is_integer(under),
         };
-        // The operand on the right of the built-in operator: a value of the type
+        // The operand on the right of Go's operator: a value of the type
         // itself, or the count of a shift, of any integer type.
         let operand = |name: &str| match (name, &params[..]) {
             ("Shl" | "Shr", [count]) if self.is_integer(*count) => Some(*count),
@@ -659,8 +658,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether the built-in operator `op` takes the two operands as they
-    /// are.
+    /// Whether Go's operator `op` takes the two operands as they are.
     fn builtin_binary(&self, op: BinaryOp, x: &Operand, y: &Operand) -> bool {
         if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
             let count = self.is_untyped(y.ty) || self.all_integer(y.ty);
@@ -710,7 +708,7 @@ impl<'a> Checker<'a> {
         if x.ty == Types::INVALID || y.ty == Types::INVALID {
             return Choice::Builtin;
         }
-        // `nil` is compared by the built-in operator.
+        // `nil` is compared as Go compares it.
         let nil = self.types.basic(Basic::UntypedNil);
         if x.ty == nil || y.ty == nil {
             return Choice::Builtin;
@@ -732,7 +730,7 @@ impl<'a> Checker<'a> {
             .cloned()
             .collect();
         let of_right: Vec<Operator> = all_right.iter().filter(|m| is_right(m)).cloned().collect();
-        // A comparison that a type inherits hides the built-in one of
+        // A comparison that a type inherits hides the one that Go gives
         // the type (EXP-30).
         let hidden = matches!(name, "Eq" | "Cmp")
             && self.types.identical(x.ty, y.ty)
@@ -1105,7 +1103,7 @@ impl<'a> Checker<'a> {
             "invalid operation: {written} ({left} has no operator {symbol} (@Operator {name}) \
              for {right})"
         );
-        // An inherited comparison hides the built-in one of the type.
+        // An inherited comparison hides the one that Go gives the type.
         let inherited = matches!(name, "Eq" | "Cmp")
             && !of_left.is_empty()
             && self.types.identical(x.ty, y.ty)

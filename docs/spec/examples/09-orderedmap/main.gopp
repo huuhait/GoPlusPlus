@@ -26,7 +26,7 @@ func (m *OrderedMap[K, V]) search(k K) (int, bool) {
 	return lo, lo < len(m.keys) && m.keys[lo] == k
 }
 
-// Put inserts or replaces (k, v).
+// Put inserts or replaces (k, v) using a plain Go signature.
 // v is moved in, so V can be any type, also one that cannot be copied (GEN-3, PAR-1, PAR-5).
 func (m *OrderedMap[K, V]) Put(k K, v V) {
 	i, found := m.search(k) // search only reads k: no copy

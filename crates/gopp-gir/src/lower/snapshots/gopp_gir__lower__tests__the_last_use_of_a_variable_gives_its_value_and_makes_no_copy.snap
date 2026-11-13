@@ -7,7 +7,7 @@ file 0 "a.gopp"
 
 global var @_GPR4mainE4kept: [][]i64 [external]
 
-fn _GPF4mainE4keep(_1: []i64) -> () [gopp, external] {
+fn _GPF4mainE4keep(_1: []i64) -> () [go, external] {
   let _0: ()
   let _1: []i64 "xs"
   let _2: []i64
@@ -66,7 +66,7 @@ fn _GPF4mainE4keep(_1: []i64) -> () [gopp, external] {
     return  ; a.gopp:8:1
 }
 
-fn _GPF4mainE4uses(_1: bool) -> i64 [gopp, external] {
+fn _GPF4mainE4uses(_1: bool) -> i64 [go, external] {
   let _0: i64
   let _1: bool "c"
   let _2: []i64
@@ -176,7 +176,7 @@ fn _GPF4mainE4uses(_1: bool) -> i64 [gopp, external] {
     return  ; a.gopp:18:2
 }
 
-fn _GPF4mainE5taken(_1: bool) -> i64 [gopp, external] {
+fn _GPF4mainE5taken(_1: bool) -> i64 [go, external] {
   let _0: i64
   let _1: bool "c"
   let _2: []i64

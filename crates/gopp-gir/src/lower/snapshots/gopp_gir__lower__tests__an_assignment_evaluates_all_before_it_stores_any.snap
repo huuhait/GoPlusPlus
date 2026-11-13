@@ -5,14 +5,14 @@ expression: "gir(\"package main\n\ntype Node struct {\n\tvalue int\n\tnext  *Nod
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4next() -> i64 [gopp, external] {
+fn _GPF4mainE4next() -> i64 [go, external] {
   let _0: i64
   bb0:
     _0 = const 1: i64  ; a.gopp:8:19
     return  ; a.gopp:8:19
 }
 
-fn _GPF4mainE7assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *_GPTiN4mainE4Node, _6: *_GPTiN4mainE4Node) -> i64 [gopp, external] {
+fn _GPF4mainE7assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *_GPTiN4mainE4Node, _6: *_GPTiN4mainE4Node) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: i64 "b"

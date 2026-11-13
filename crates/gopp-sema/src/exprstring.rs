@@ -1,5 +1,5 @@
-//! An expression as a message shows it: the tree in one spelling, with
-//! what is long shortened.
+//! An expression as a message shows it: Go's `types.ExprString`, which
+//! writes the tree in one spelling and shortens what is long.
 
 use gopp_syntax::ast::*;
 use lasso::ThreadedRodeo;
@@ -183,7 +183,7 @@ impl Writer<'_> {
                 });
                 self.expr(out, *elem);
             }
-            // What has no spelling of its own is shown as it was written.
+            // What Go has no spelling for is shown as it was written.
             ExprKind::Bad
             | ExprKind::KeyValue { .. }
             | ExprKind::TypeSwitchGuard { .. }

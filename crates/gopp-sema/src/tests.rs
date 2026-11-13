@@ -147,8 +147,8 @@ fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Nam
             ObjKind::Type => "type",
             ObjKind::Var => "var",
             ObjKind::Func => "func",
-            // `import . "p"` has no object in a scope, and an import
-            // without a name declares no identifier.
+            // Go's checker has no object in a scope for `import . "p"`,
+            // and an import without a name declares no identifier.
             ObjKind::Import { .. } if names.resolve(&object.name) == "." => continue,
             ObjKind::Import { package, .. } if package.name == names.resolve(&object.name) => {
                 continue;
@@ -202,7 +202,7 @@ fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Nam
 }
 
 #[test]
-fn undefined_and_redeclared_names_are_reported() {
+fn undefined_and_redeclared_names_are_reported_as_go_reports_them() {
     let cases: &[(&str, &[&str])] = &[
         ("func f() { _ = x }", &["a.gopp:2:16: undefined: x"]),
         // A name is not in scope before its declaration.
@@ -332,7 +332,7 @@ fn with_lib(names: &ThreadedRodeo) -> Loader {
 }
 
 #[test]
-fn imports_are_checked() {
+fn imports_are_checked_as_go_checks_them() {
     let cases: &[(&str, &[&str])] = &[
         ("import \"example.com/lib\"\nvar _ = lib.Value", &[]),
         (
@@ -440,7 +440,7 @@ fn the_universe_has_the_names_of_gopp_and_no_new() {
             "    Go++ has no new: write NewUnique(T{}) for one owner or NewShared(T{}) for several",
         ]
     );
-    // A predeclared name may be declared again.
+    // As in Go, a predeclared name of Go++ may be declared again.
     let text = "package p\ntype Option int\nfunc move() {}\nvar _ Option\n";
     assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
 }
@@ -793,8 +793,9 @@ fn a_type_may_not_hold_a_value_of_itself() {
 
 #[test]
 fn a_long_chain_of_generic_types_is_checked() {
-    // Wall time is not measured here; this only has to end. A type that
-    // is written with a type parameter is looked into again in each place.
+    // Wall time is not measured here; this only has to end. As in Go's
+    // type checker, a type that is written with a type parameter is looked
+    // into again in each place.
     let chain: String = (0..500)
         .map(|i| format!("type G{i}[P any] struct{{ g G{}[P] }}\n", i + 1))
         .collect();
@@ -896,7 +897,7 @@ fn the_signature_of_a_function_is_not_needed_at_the_start() {
 }
 
 #[test]
-fn operators_are_checked() {
+fn operators_are_checked_as_go_checks_them() {
     let declared = "var (\n\ta int\n\tb string\n\tt bool\n\tu uint\n\tp = &a\n\tf = h\n\t\
                     s struct{ b []int }\n\ti any = 0\n\ty uint8\n)\nconst c int8 = 100\n\
                     func g() (int, int)\nfunc h()\n";
@@ -1004,7 +1005,7 @@ fn operators_are_checked() {
 }
 
 #[test]
-fn assignments_are_checked() {
+fn assignments_are_checked_as_go_checks_them() {
     let declared = "var (\n\ta int\n\tb string\n\tp = &a\n\tc chan int\n\ts []int\n\t\
                     m map[string]struct{ x int }\n\ti any\n)\n\
                     func two() (int, string)\ntype T struct{}\nfunc (*T) ptr() {}\n";
@@ -1183,7 +1184,7 @@ fn assignments_are_checked() {
 }
 
 #[test]
-fn calls_and_indexes_are_checked() {
+fn calls_and_indexes_are_checked_as_go_checks_them() {
     let declared = "var (\n\ta int\n\tb string\n\ts []int\n\tarr [4]int\n\tm map[string]int\n\t\
                     p = &arr\n)\nfunc f(x int, y string)\nfunc v(xs ...int)\n\
                     func two() (int, string)\ntype G[P any] struct{ p P }\n";
@@ -1298,7 +1299,7 @@ fn calls_and_indexes_are_checked() {
 }
 
 #[test]
-fn built_in_functions_are_checked() {
+fn built_in_functions_are_checked_as_go_checks_them() {
     let declared = "var (\n\ta int\n\tb string\n\ts []int\n\tbs []byte\n\tarr [4]int\n\t\
                     m map[string]int\n\tc chan int\n\tr <-chan int\n\tf float64\n\tz complex128\n)\n";
     let cases: &[(&str, &[&str])] = &[
@@ -1458,7 +1459,7 @@ fn built_in_functions_are_checked() {
 }
 
 #[test]
-fn composite_literals_are_checked() {
+fn composite_literals_are_checked_as_go_checks_them() {
     let declared = "type P struct{ x, y int }\nvar a int\nvar b string\nconst k = 1\n";
     let cases: &[(&str, &[&str])] = &[
         ("P{1}", &["7:9: too few values in struct literal of type P"]),
@@ -1532,7 +1533,7 @@ fn composite_literals_are_checked() {
 }
 
 #[test]
-fn selectors_and_channels_are_checked() {
+fn selectors_and_channels_are_checked_as_go_checks_them() {
     let declared = "type S struct {\n\tx  int\n\tUp int\n}\nfunc (S) val()  {}\nfunc (*S) ptr() {}\n\
                     type E1 struct{ f int }\ntype E2 struct{ f int }\ntype B struct {\n\te1 E1\n\te2 E2\n}\n\
                     var (\n\ts    S\n\tb    B\n\tp    = &s\n\ta    int\n\tsend chan<- int\n\t\
@@ -1684,7 +1685,7 @@ fn a_function_is_not_generic_for_what_another_one_is() {
 }
 
 #[test]
-fn what_stands_for_a_type_or_an_unsafe_argument_is_checked() {
+fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
     let names = ThreadedRodeo::new();
     let mut loader = Loader::default();
     let stub = "package unsafe\ntype ArbitraryType int\ntype IntegerType int\n\
@@ -1812,7 +1813,7 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked() {
 }
 
 #[test]
-fn statements_that_compute_and_assign_are_checked() {
+fn statements_that_compute_and_assign_are_checked_as_go_checks_them() {
     let declared = "func g() int { return 0 }\ntype myint int\nconst (\n\tsmall int8  = 1\n\
                     \tbig   myint = 1 << 100\n)\n";
     let locals = "const c = 3.14\n\tvar (\n\t\tx int\n\t\ts string\n\t\tf float64\n\t\tb bool\n\
@@ -1907,7 +1908,7 @@ fn statements_that_compute_and_assign_are_checked() {
 }
 
 #[test]
-fn tildes_literals_indexes_and_map_keys_are_checked() {
+fn tildes_literals_indexes_and_map_keys_are_checked_as_go_checks_them() {
     let declared = "type F func()\ntype K struct{ f []int }\ntype M map[M]int\nvar (\n\ti  int\n\
                     \tf  float64\n\tm  map[int]int\n\ta  [3]int\n)\n";
     let key = "4:12: invalid map key type M";
@@ -2335,7 +2336,7 @@ func wrong!() int             { return \"a\" }
 fn with_packages(names: &ThreadedRodeo, packages: &[(&str, &str)]) -> Loader {
     let mut loader = Loader::default();
     for &(path, text) in packages {
-        // Package unsafe is declared without bodies.
+        // Package unsafe is declared without bodies, as Go declares it.
         let file = match path {
             "unsafe" => "unsafe.gopp".to_owned(),
             _ => format!("{path}.gopp"),
@@ -3379,7 +3380,7 @@ func g(dst, src []int, p *[]int, b []byte, s string) {
 
 /// The second function is what is right next to each error of the first.
 #[test]
-fn labels_and_jumps_are_checked() {
+fn labels_and_jumps_are_checked_as_go_checks_them() {
     let text = r#"package p
 
 func f(x bool) {
@@ -3537,7 +3538,7 @@ fn a_function_with_results_ends_in_a_statement_that_does_not_go_on() {
 }
 
 #[test]
-fn conditions_go_defer_and_switch_cases_are_checked() {
+fn conditions_go_defer_and_switch_cases_are_checked_as_go_checks_them() {
     let text = r#"package p
 
 type T struct{ f func() }
@@ -3679,7 +3680,7 @@ func f(x int, s string, b bool, c chan int, i interface{}, fn func(), sl []int, 
 }
 
 #[test]
-fn range_clauses_are_checked() {
+fn range_clauses_are_checked_as_go_checks_them() {
     let text = r#"package p
 
 type MyBool bool
@@ -3831,7 +3832,7 @@ func f(a [3]int, p *[3]int, s []string, m map[string]bool, c chan int, send chan
 }
 
 #[test]
-fn returns_type_switches_and_values_of_interfaces_are_checked() {
+fn returns_type_switches_and_values_of_interfaces_are_checked_as_go_checks_them() {
     let text = r#"package p
 
 type E1 struct{ X int }
@@ -3938,7 +3939,7 @@ func take(c C) {}
 }
 
 #[test]
-fn what_implements_an_interface_is_checked() {
+fn what_implements_an_interface_is_checked_as_go_checks_it() {
     let text = "package p
 
 type I interface{ m() }
@@ -4251,7 +4252,7 @@ fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
 }
 
 #[test]
-fn method_declarations_are_checked() {
+fn method_declarations_are_checked_as_go_checks_them() {
     let text = "package p
 
 type T1 struct {
@@ -4451,7 +4452,7 @@ type S2 struct {
 }
 
 #[test]
-fn a_constraint_is_no_type_of_a_variable() {
+fn a_constraint_is_no_type_of_a_variable_as_go_checks_it() {
     let text = "package p
 
 type I1 interface{ comparable }
@@ -4547,7 +4548,7 @@ func g[P I2, Q comparable](p P) {}
 }
 
 #[test]
-fn the_terms_of_a_union_are_checked() {
+fn the_terms_of_a_union_are_checked_as_go_checks_them() {
     let text = "package p
 
 type MyInt int
@@ -4711,7 +4712,7 @@ type Plain interface{ String() string }
 }
 
 #[test]
-fn type_arguments_satisfy_their_constraints() {
+fn type_arguments_satisfy_their_constraints_as_go_checks_it() {
     let text = "package p
 
 type MyInt int
@@ -4815,7 +4816,7 @@ func use() {
 }
 
 #[test]
-fn type_arguments_are_inferred() {
+fn type_arguments_are_inferred_as_go_infers_them() {
     let text = "package p
 
 type MyInt int
@@ -4882,6 +4883,7 @@ func rec[P any](p P, n int) {
 	rec(&p, n)
 }
 ";
+    // Go says where a type parameter is declared inside the message.
     let expected = [
         "a.gopp:7:52: cannot declare e without a value: E may be a type with no zero value",
         "    give e a value, or declare it as Option[E]",
@@ -4953,7 +4955,7 @@ func use(l List, pl *List, ps *[]string, n int, pn *int) {
 /// The work of finding type arguments grows with the calls and with the
 /// size of the types, not faster. For one function it grows with the
 /// square of the number of its type parameters where each is found from
-/// the one after it.
+/// the one after it, as in Go.
 #[test]
 fn the_steps_of_inference_grow_with_the_input_not_faster() {
     let steps = |text: String| {
@@ -4994,7 +4996,7 @@ fn the_steps_of_inference_grow_with_the_input_not_faster() {
 }
 
 #[test]
-fn values_of_type_parameters_are_used() {
+fn values_of_type_parameters_are_used_as_go_checks_it() {
     let text = "package p
 
 type Num interface{ ~int | ~float64 }
@@ -5209,7 +5211,8 @@ func _() {
 	h(p[int], p[string])
 }
 ";
-    // A result that has a name is a result variable in the message.
+    // Go names a result that has a name by it; it is a result variable
+    // here.
     let expected = [
         "a.gopp:4:32: cannot declare x without a value: P may be a type with no zero value",
         "    give x a value, or declare it as Option[P]",
@@ -5240,7 +5243,7 @@ func _() {
 }
 
 #[test]
-fn values_of_type_parameters_are_indexed_sliced_and_ranged_over() {
+fn values_of_type_parameters_are_indexed_sliced_and_ranged_over_as_go_checks_it() {
     let text = "package p
 
 type Bytes interface{ ~string | ~[]byte }
@@ -5363,7 +5366,7 @@ func f[P C, Q M, R any, T S](p P, q Q, r R, t T, pp *P, pq *Q) {
 }
 
 #[test]
-fn conversions_and_built_in_functions_take_type_parameters() {
+fn conversions_and_built_in_functions_take_type_parameters_as_go_checks_it() {
     let text = "package p
 
 type Int interface{ ~int | ~int64 }
@@ -5480,8 +5483,8 @@ func built[S ~[]int, M ~map[string]int, C ~chan int, R ~<-chan int, B ~string | 
         "a.gopp:69:10: invalid argument: k (variable of type K constrained by ~complex128) cannot be ordered",
         "a.gopp:70:13: invalid argument: mismatched types N (previous argument) and F (type of f)",
         "a.gopp:71:10: invalid argument: a (variable of type A constrained by any) cannot be ordered",
-        "a.gopp:72:11: k (variable of type K constrained by ~complex128) not supported as argument to built-in real",
-        "a.gopp:73:14: f (variable of type F constrained by ~float64) not supported as argument to built-in complex",
+        "a.gopp:72:11: k (variable of type K constrained by ~complex128) not supported as argument to built-in real for go1.18 (see go.dev/issue/50937)",
+        "a.gopp:73:14: f (variable of type F constrained by ~float64) not supported as argument to built-in complex for go1.18 (see go.dev/issue/50937)",
         "a.gopp:74:11: invalid argument: argument has type N, expected complex type",
     ];
     assert_eq!(messages("a.gopp", text), expected);
@@ -9472,7 +9475,7 @@ func (g G[T]) Add(o G[T]) G[T] { return g }
 
 // rule: EXP-17
 #[test]
-fn a_type_has_no_second_meaning_of_a_built_in_operator() {
+fn a_type_has_no_second_meaning_of_what_go_gives_it() {
     let text = "package p
 
 type Meters float64
@@ -9898,7 +9901,7 @@ func change(p Pairs) {
 
 // rule: GEN-13
 #[test]
-fn a_constraint_lists_operators_that_the_basic_types_have_too() {
+fn a_constraint_lists_operators_that_the_types_of_go_have_too() {
     let declared = "package p
 
 type Vec2 struct{ X, Y float64 }
@@ -11087,7 +11090,7 @@ fn the_bodies_of_a_package_are_checked_side_by_side_with_the_same_result() {
 }
 
 #[test]
-fn what_stands_in_the_wrong_place_is_refused() {
+fn what_go_refuses_in_these_places_is_refused() {
     let text = "package p
 
 import \"unsafe\"
@@ -11679,7 +11682,7 @@ func generic[P any](p []P) P { return first(p) }
 }
 
 #[test]
-fn literals_and_calls_of_type_parameters_are_checked() {
+fn literals_and_calls_of_type_parameters_are_checked_as_go_checks_them() {
     let text = "package p
 
 type S struct{ f int }
@@ -11926,7 +11929,7 @@ func f(n *int, m *int, xs *[]int, l *List, o *List, v int, pair func() (int, *in
 }
 
 #[test]
-fn the_cases_of_a_type_switch_have_their_types_as_the_runtime_names_them() {
+fn the_cases_of_a_type_switch_have_their_types_as_the_runtime_of_go_names_them() {
     let text = "package p
 
 type point struct{ x, y int }

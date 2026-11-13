@@ -1,6 +1,6 @@
 //! The syntax tree of one file.
 //!
-//! Types are expressions: `a[i]`, `*T` and `(T)`
+//! Types are expressions, as in Go's own syntax tree: `a[i]`, `*T` and `(T)`
 //! read the same as a value and as a type, and only the checker can tell.
 
 mod dump;

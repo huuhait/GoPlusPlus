@@ -189,7 +189,7 @@ fn bang_joins_only_an_equals_sign() {
 }
 
 #[test]
-fn a_line_end_inserts_a_semicolon_after_a_token_that_ends_a_statement() {
+fn a_line_end_inserts_a_semicolon_after_go_s_tokens() {
     for text in [
         "x",
         "1",
@@ -388,7 +388,7 @@ fn well_formed_numbers() {
 }
 
 #[test]
-fn a_number_ends_where_its_digits_end() {
+fn a_number_ends_where_go_s_does() {
     assert_eq!(kinds("1..2"), [Float, Float, Semi]);
     assert_eq!(kinds("1.x"), [Float, Ident, Semi]);
     assert_eq!(kinds("0x1e+1"), [Int, Plus, Int, Semi]);

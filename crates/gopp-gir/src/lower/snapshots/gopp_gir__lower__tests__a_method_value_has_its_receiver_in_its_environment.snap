@@ -28,7 +28,7 @@ global const @_GPTmN4mainE4List: (u64, [2](string, *u8)) [linkonce_odr]
     const str#2 "Len||_GPTiG0_0_LELiE"
     const fn @_GPTIM3LenN4mainE4List
 
-fn _GPM3LenN4mainE4List(_1: _GPTiN4mainE4List) -> i64 [gopp, external] {
+fn _GPM3LenN4mainE4List(_1: _GPTiN4mainE4List) -> i64 [go, external] {
   let _0: i64
   let _1: _GPTiN4mainE4List "l"
   let _2: u64
@@ -38,7 +38,7 @@ fn _GPM3LenN4mainE4List(_1: _GPTiN4mainE4List) -> i64 [gopp, external] {
     return  ; a.gopp:5:27
 }
 
-fn _GPM3AddN4mainE4List(_1: *_GPTiN4mainE4List, _2: string) -> () [gopp, external] {
+fn _GPM3AddN4mainE4List(_1: *_GPTiN4mainE4List, _2: string) -> () [go, external] {
   let _0: ()
   let _1: *_GPTiN4mainE4List "l"
   let _2: string "s"
@@ -73,7 +73,7 @@ fn _GPM3AddN4mainE4List(_1: *_GPTiN4mainE4List, _2: string) -> () [gopp, externa
     return  ; a.gopp:7:61
 }
 
-fn _GPF4mainE5bound(_1: gopp.iface) -> ((fn env(*u8) -> i64, *u8), (fn env(*u8, string) -> (), *u8), (fn env(*u8) -> i64, *u8)) [gopp, external] {
+fn _GPF4mainE5bound(_1: gopp.iface) -> ((fn env(*u8) -> i64, *u8), (fn env(*u8, string) -> (), *u8), (fn env(*u8) -> i64, *u8)) [go, external] {
   let _0: ((fn env(*u8) -> i64, *u8), (fn env(*u8, string) -> (), *u8), (fn env(*u8) -> i64, *u8))
   let _1: gopp.iface "s"
   let _2: _GPTiN4mainE4List
@@ -198,7 +198,7 @@ fn _GPF4mainE5bound(_1: gopp.iface) -> ((fn env(*u8) -> i64, *u8), (fn env(*u8, 
     return  ; a.gopp:13:2
 }
 
-fn _GPF4mainE5plain() -> ((fn env(*u8, _GPTiN4mainE4List) -> i64, *u8), (fn env(*u8, *_GPTiN4mainE4List, string) -> (), *u8), (fn env(*u8, *_GPTiN4mainE4List) -> i64, *u8)) [gopp, external] {
+fn _GPF4mainE5plain() -> ((fn env(*u8, _GPTiN4mainE4List) -> i64, *u8), (fn env(*u8, *_GPTiN4mainE4List, string) -> (), *u8), (fn env(*u8, *_GPTiN4mainE4List) -> i64, *u8)) [go, external] {
   let _0: ((fn env(*u8, _GPTiN4mainE4List) -> i64, *u8), (fn env(*u8, *_GPTiN4mainE4List, string) -> (), *u8), (fn env(*u8, *_GPTiN4mainE4List) -> i64, *u8))
   let _1: (fn env(*u8, _GPTiN4mainE4List) -> i64, *u8)
   let _2: (fn env(*u8, *_GPTiN4mainE4List, string) -> (), *u8)
@@ -238,7 +238,7 @@ fn _GPF4mainE5plain() -> ((fn env(*u8, _GPTiN4mainE4List) -> i64, *u8), (fn env(
     return  ; a.gopp:17:2
 }
 
-fn _GPF4mainE4main() -> () [gopp, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   let _1: _GPTiN4mainE4List
   let _2: *_GPTiN4mainE4List
@@ -501,7 +501,7 @@ fn _GPF4mainE4main() -> () [gopp, external] {
     return  ; a.gopp:27:1
 }
 
-fn _GPTEM3AddN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List, _3: string) -> () [gopp, linkonce_odr] {
+fn _GPTEM3AddN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List, _3: string) -> () [go, linkonce_odr] {
   let _0: ()
   let _4: ()
   let _5: bool
@@ -517,7 +517,7 @@ fn _GPTEM3AddN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List, _3: string) -> () [go
     return
 }
 
-fn _GPTEM3LenN4mainE4List(_1: *u8, _2: _GPTiN4mainE4List) -> i64 [gopp, linkonce_odr] {
+fn _GPTEM3LenN4mainE4List(_1: *u8, _2: _GPTiN4mainE4List) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _3: i64
   let _4: *_GPTiN4mainE4List
@@ -534,7 +534,7 @@ fn _GPTEM3LenN4mainE4List(_1: *u8, _2: _GPTiN4mainE4List) -> i64 [gopp, linkonce
     return
 }
 
-fn _GPTETpM3LenN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List) -> i64 [gopp, linkonce_odr] {
+fn _GPTETpM3LenN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _3: bool
   let _4: i64
@@ -548,7 +548,7 @@ fn _GPTETpM3LenN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List) -> i64 [gopp, linko
     return
 }
 
-fn _GPTIM3AddN4mainE4List(_1: *u8, _2: string) -> () [gopp, linkonce_odr] {
+fn _GPTIM3AddN4mainE4List(_1: *u8, _2: string) -> () [go, linkonce_odr] {
   let _0: ()
   let _3: **_GPTiN4mainE4List
   let _4: *_GPTiN4mainE4List
@@ -568,7 +568,7 @@ fn _GPTIM3AddN4mainE4List(_1: *u8, _2: string) -> () [gopp, linkonce_odr] {
     return
 }
 
-fn _GPTIM3LenN4mainE4List(_1: *u8) -> i64 [gopp, linkonce_odr] {
+fn _GPTIM3LenN4mainE4List(_1: *u8) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _2: **_GPTiN4mainE4List
   let _3: *_GPTiN4mainE4List
@@ -582,7 +582,7 @@ fn _GPTIM3LenN4mainE4List(_1: *u8) -> i64 [gopp, linkonce_odr] {
     return
 }
 
-fn _GPTVM3AddN4mainE4List(_1: *u8, _2: string) -> () [gopp, linkonce_odr] {
+fn _GPTVM3AddN4mainE4List(_1: *u8, _2: string) -> () [go, linkonce_odr] {
   let _0: ()
   let _3: *(u64, u64, *(u64, *_GPTiN4mainE4List), fn "C"(*u8) -> ())
   let _4: *(u64, *_GPTiN4mainE4List)
@@ -602,7 +602,7 @@ fn _GPTVM3AddN4mainE4List(_1: *u8, _2: string) -> () [gopp, linkonce_odr] {
     return
 }
 
-fn _GPTVM3LenN4mainE4List(_1: *u8) -> i64 [gopp, linkonce_odr] {
+fn _GPTVM3LenN4mainE4List(_1: *u8) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _2: *(u64, u64, *(u64, _GPTiN4mainE4List), fn "C"(*u8) -> ())
   let _3: *(u64, _GPTiN4mainE4List)
@@ -616,7 +616,7 @@ fn _GPTVM3LenN4mainE4List(_1: *u8) -> i64 [gopp, linkonce_odr] {
     return
 }
 
-fn _GPTVM3LenN4mainE5Sized(_1: *u8) -> i64 [gopp, linkonce_odr] {
+fn _GPTVM3LenN4mainE5Sized(_1: *u8) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _2: *(u64, u64, *(u64, gopp.iface), fn "C"(*u8) -> ())
   let _3: *(u64, gopp.iface)

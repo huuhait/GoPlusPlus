@@ -5,7 +5,7 @@ expression: gir(text)
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE3say(_1: string, _2: i64) -> () [gopp, external] {
+fn _GPF4mainE3say(_1: string, _2: i64) -> () [go, external] {
   let _0: ()
   let _1: string "s"
   let _2: i64 "n"
@@ -13,7 +13,7 @@ fn _GPF4mainE3say(_1: string, _2: i64) -> () [gopp, external] {
     return  ; a.gopp:3:28
 }
 
-fn _GPF4mainE1f(_1: i64, _2: string) -> i64 [gopp, external] {
+fn _GPF4mainE1f(_1: i64, _2: string) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "n"
   let _2: string "s"

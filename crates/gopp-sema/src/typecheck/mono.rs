@@ -1,4 +1,4 @@
-//! Instantiation cycles: a generic type or
+//! Instantiation cycles, after `go/types` (mono.go): a generic type or
 //! function that instantiates itself, directly or through others, with a
 //! type argument built around its own type parameter would need
 //! instances without end (GEN-5).
@@ -401,7 +401,7 @@ impl<'a> Checker<'a> {
         cyclic.contains(&true)
     }
 
-    /// Finds the cycle that is reported (Bellman-Ford over the edges in
+    /// Finds the cycle that Go reports (Bellman-Ford over the edges in
     /// the order they were recorded). Only a graph that has a cycle is
     /// searched: the search takes the vertices times the edges.
     fn mono_search(&mut self) {
@@ -449,14 +449,14 @@ impl<'a> Checker<'a> {
         self.mono.found = stack.split_off(from);
     }
 
-    /// Reports the cycle: at the first type parameter, with
+    /// Reports the cycle, as Go does: at the first type parameter, with
     /// what each parameter on it is instantiated as. Only a package with
     /// no other error is told.
     pub(super) fn mono_report(&mut self) {
         if !self.sink.is_empty() || !self.mono_cyclic() {
             return;
         }
-        // With the instantiations of the bodies.
+        // With the instantiations of the bodies, as Go searches.
         self.mono_search();
         let first = &self.mono.vertices[self.mono.found[0]];
         let at = match first.local {

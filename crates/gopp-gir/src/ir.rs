@@ -28,7 +28,7 @@ pub struct Span {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CallConv {
     /// Between Go++ functions.
-    Gopp,
+    Go,
     /// The C convention of the target.
     C,
 }

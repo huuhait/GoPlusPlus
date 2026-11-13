@@ -181,7 +181,7 @@ impl Memo<'_> {
                     params: params.into(),
                     ret: plain.ret,
                     has_env: true,
-                    cc: CallConv::Gopp,
+                    cc: CallConv::Go,
                 }));
                 let value = types.tuple(&[code, bytes]);
                 self.func_types.insert(value);
@@ -330,7 +330,7 @@ impl Memo<'_> {
             params: lowered.into(),
             ret,
             has_env: false,
-            cc: CallConv::Gopp,
+            cc: CallConv::Go,
         })))
     }
 }

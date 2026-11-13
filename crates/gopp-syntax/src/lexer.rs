@@ -1,4 +1,5 @@
-//! Turns source text into tokens (spec chapter 2).
+//! Turns source text into tokens: Go's lexical rules plus `#`, `@` and the
+//! keyword `macro`.
 
 mod number;
 mod string;
@@ -24,7 +25,7 @@ pub struct Lexed {
 pub struct Scan {
     file: FileId,
     invalid_utf8: Vec<u32>,
-    /// The last token on a line decides whether the line end is a `;`.
+    /// Go's rule: the last token on a line decides whether the line end is a `;`.
     insert_semi: bool,
     /// Whether a token was read: the comments before the first one are the
     /// header of the file.
@@ -150,7 +151,7 @@ pub fn lex(file: FileId, source: &SourceFile, sink: &Sink) -> Lexed {
     }
 }
 
-/// A character as a message names it: `U+0024 '$'`.
+/// `U+0024 '$'`, as Go's `%#U` prints a character.
 fn describe_char(c: char) -> String {
     if c.is_control() {
         format!("U+{:04X}", u32::from(c))
@@ -271,7 +272,7 @@ pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
         lo: lexer.span().start as u32,
         hi: lexer.span().end as u32,
     };
-    // A `//go:build` line would be a comment like any other, and the file
+    // Go's build line would be a comment like any other, and the file
     // would be built for every system.
     if !scan.past_header
         && let Some(condition) = go_build_text(comment)
@@ -302,7 +303,7 @@ pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     TokenKind::Skipped
 }
 
-/// A comment with a line end in it ends the line.
+/// A comment with a line end in it ends the line, as in Go.
 pub(crate) fn block_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     let start = lexer.span().start;
     let rest = lexer.remainder();

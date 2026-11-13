@@ -47,7 +47,7 @@ fn go_sig(module: &mut Module, params: &[TypeId], ret: TypeId) -> TypeId {
         params: params.into(),
         ret,
         has_env: false,
-        cc: CallConv::Gopp,
+        cc: CallConv::Go,
     }))
 }
 
@@ -94,7 +94,7 @@ file 0 \"src/hello.gopp\"
 
 declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
 
-fn main.main() -> () [gopp, external] {
+fn main.main() -> () [go, external] {
   let _0: ()
   let _1: string
   let _2: i64
@@ -285,7 +285,7 @@ global var @p.counter: i64 [internal]
 
 declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
 
-fn p.f(_1: []p.Point, _2: i64) -> f64 [gopp, linkonce_odr, noinline] {
+fn p.f(_1: []p.Point, _2: i64) -> f64 [go, linkonce_odr, noinline] {
   scope 1: block in 0  ; hello.gopp:9:3
   let _0: f64
   let _1: []p.Point \"ps\"
@@ -329,7 +329,7 @@ fn p.f(_1: []p.Point, _2: i64) -> f64 [gopp, linkonce_odr, noinline] {
     _12 = call const fn @write(const 2: i32, const null: *u8, const 0: u64) -> [unwind: continue]  ; hello.gopp:7:2
 }
 
-fn p.g(_1: []p.Point, _2: i64) -> f64 [gopp, internal, noreturn] {
+fn p.g(_1: []p.Point, _2: i64) -> f64 [go, internal, noreturn] {
   let _0: f64
   let _3: f64
   bb0: [catch]
@@ -611,7 +611,7 @@ fn one_type_is_one_id_and_a_type_that_holds_itself_is_one_by_its_shape() {
         params: [node, slice].into(),
         ret: TypeInterner::BOOL,
         has_env: true,
-        cc: CallConv::Gopp,
+        cc: CallConv::Go,
     }));
     assert_eq!(types.display(func), "fn env(p.Node, []i64) -> bool");
 }
@@ -649,7 +649,7 @@ fn a_type_is_as_large_as_the_target_lays_it_out() {
         params: [].into(),
         ret: TypeInterner::UNIT,
         has_env: false,
-        cc: CallConv::Gopp,
+        cc: CallConv::Go,
     }));
     let table = |types: &TypeInterner, target: &str| {
         let target = TargetSpec::named(target).unwrap().layout();

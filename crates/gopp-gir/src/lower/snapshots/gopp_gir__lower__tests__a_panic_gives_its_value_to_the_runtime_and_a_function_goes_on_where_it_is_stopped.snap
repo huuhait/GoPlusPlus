@@ -34,7 +34,7 @@ global const @_GPTir: gopp.type [linkonce_odr]
     const zero: *u8
     const 5: u64
 
-fn _GPM5ErrorN4mainE7Failure(_1: _GPTiN4mainE7Failure) -> string [gopp, external] {
+fn _GPM5ErrorN4mainE7Failure(_1: _GPTiN4mainE7Failure) -> string [go, external] {
   let _0: string
   let _1: _GPTiN4mainE7Failure "f"
   bb0:
@@ -42,7 +42,7 @@ fn _GPM5ErrorN4mainE7Failure(_1: _GPTiN4mainE7Failure) -> string [gopp, external
     return  ; a.gopp:5:35
 }
 
-fn _GPF4mainE4fail(_1: i64) -> () [gopp, external] {
+fn _GPF4mainE4fail(_1: i64) -> () [go, external] {
   let _0: ()
   let _1: i64 "n"
   let _2: bool
@@ -99,7 +99,7 @@ fn _GPF4mainE4fail(_1: i64) -> () [gopp, external] {
     unreachable  ; a.gopp:11:2
 }
 
-fn _GPF4mainE7guarded(_1: i64) -> (i64, string) [gopp, external] {
+fn _GPF4mainE7guarded(_1: i64) -> (i64, string) [go, external] {
   let _0: (i64, string)
   let _1: i64 "n"
   let _2: i64 "code"
@@ -268,7 +268,7 @@ fn _GPC0_F4mainE7guarded(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:14:6
 }
 
-fn _GPC1_F4mainE7guarded(_1: *u8) -> () [gopp, internal] {
+fn _GPC1_F4mainE7guarded(_1: *u8) -> () [go, internal] {
   scope 1: block in 0  ; a.gopp:16:10
   scope 2: block in 0  ; a.gopp:16:10
   let _0: ()
@@ -407,7 +407,7 @@ fn _GPC1_F4mainE7guarded(_1: *u8) -> () [gopp, internal] {
     return  ; a.gopp:22:2
 }
 
-fn _GPF4mainE5plain(_1: i64) -> i64 [gopp, external] {
+fn _GPF4mainE5plain(_1: i64) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "n"
   let _2: i64
@@ -532,7 +532,7 @@ fn _GPC0_F4mainE5plain(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:27:6
 }
 
-fn _GPC1_F4mainE5plain(_1: *u8) -> () [gopp, internal] {
+fn _GPC1_F4mainE5plain(_1: *u8) -> () [go, internal] {
   let _0: ()
   let _2: gopp.iface
   let _3: *gopp.iface
@@ -556,7 +556,7 @@ fn _GPC1_F4mainE5plain(_1: *u8) -> () [gopp, internal] {
     return  ; a.gopp:29:27
 }
 
-fn _GPF4mainE4main() -> () [gopp, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   let _1: (i64, string)
   let _2: i64 "code"
@@ -616,7 +616,7 @@ fn _GPF4mainE4main() -> () [gopp, external] {
     return  ; a.gopp:36:1
 }
 
-fn _GPTIM5ErrorN4mainE7Failure(_1: *u8) -> string [gopp, linkonce_odr] {
+fn _GPTIM5ErrorN4mainE7Failure(_1: *u8) -> string [go, linkonce_odr] {
   let _0: string
   let _2: *_GPTiN4mainE7Failure
   let _3: string

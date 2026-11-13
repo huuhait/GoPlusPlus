@@ -5,14 +5,14 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-fn _GPM5CloseN4mainE4File(_1: *_GPTiN4mainE4File) -> () [gopp, external] {
+fn _GPM5CloseN4mainE4File(_1: *_GPTiN4mainE4File) -> () [go, external] {
   let _0: ()
   let _1: *_GPTiN4mainE4File "f"
   bb0:
     return  ; a.gopp:5:25
 }
 
-fn _GPM4NameN4mainE4File(_1: _GPTiN4mainE4File) -> i64 [gopp, external] {
+fn _GPM4NameN4mainE4File(_1: _GPTiN4mainE4File) -> i64 [go, external] {
   let _0: i64
   let _1: _GPTiN4mainE4File "f"
   bb0:
@@ -20,14 +20,14 @@ fn _GPM4NameN4mainE4File(_1: _GPTiN4mainE4File) -> i64 [gopp, external] {
     return  ; a.gopp:7:28
 }
 
-fn _GPF4mainE4sync(_1: *_GPTiN4mainE4File) -> () [gopp, external] {
+fn _GPF4mainE4sync(_1: *_GPTiN4mainE4File) -> () [go, external] {
   let _0: ()
   let _1: *_GPTiN4mainE4File "f"
   bb0:
     return  ; a.gopp:9:21
 }
 
-fn _GPF4mainE4read(_1: i64) -> () [gopp, external] {
+fn _GPF4mainE4read(_1: i64) -> () [go, external] {
   scope 1: block in 0  ; a.gopp:14:6
   scope 2: block in 1  ; a.gopp:15:3
   let _0: ()

@@ -158,7 +158,8 @@ fn ran(opt: OptLevel, body: &str, runs: &[&str]) -> Vec<(String, Option<i32>)> {
     runs.iter().map(one).collect()
 }
 
-/// Every failure with the text of its panic (runtime.md).
+/// Every failure with what Go says for it; the texts are those of
+/// `runtime/error.go` and `runtime/panic.go` of Go.
 const FAILURES: [(&str, &str); 22] = [
     (
         "_gopp_panic_bounds(5, 3, true)",
@@ -265,7 +266,7 @@ static gopp_string text(const char *of) {
     not(all(target_os = "linux", target_arch = "x86_64")),
     ignore = "links and runs programs for linux/amd64"
 )]
-fn a_failure_says_its_text_and_ends_with_status_2() {
+fn a_failure_says_what_go_says_and_ends_with_status_2() {
     let mut body = format!(
         "{HELPERS}\nint main(int argc, char **argv) {{\n  _gopp_rt_init(argc, argv);\n  \
          switch (argv[1][0] - 'A') {{\n"
@@ -294,8 +295,9 @@ fn a_failure_says_its_text_and_ends_with_status_2() {
     not(all(target_os = "linux", target_arch = "x86_64")),
     ignore = "links and runs programs for linux/amd64"
 )]
-fn print_writes_each_value_in_its_form() {
-    // Each value on a line of its own, with what is printed for it.
+fn print_writes_each_value_as_go_does() {
+    // Each value on a line of its own, with what a program of Go
+    // prints for it.
     let values = [
         ("_gopp_print_bool(true)", "true"),
         ("_gopp_print_bool(false)", "false"),

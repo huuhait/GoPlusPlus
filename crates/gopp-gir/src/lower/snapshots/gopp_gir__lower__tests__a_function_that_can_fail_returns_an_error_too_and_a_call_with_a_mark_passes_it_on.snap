@@ -26,7 +26,7 @@ global const @_GPTmN4mainE7Problem: (u64, [1](string, *u8)) [linkonce_odr]
     const str#2 "Error||_GPTiG0_0_LELrE"
     const fn @_GPTIM5ErrorN4mainE7Problem
 
-fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [gopp, external] {
+fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [go, external] {
   let _0: string
   let _1: _GPTiN4mainE7Problem "p"
   bb0:
@@ -34,7 +34,7 @@ fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [gopp, external
     return  ; a.gopp:5:35
 }
 
-fn _GPF4mainE4half(_1: i64) -> (i64, gopp.iface) [gopp, external] {
+fn _GPF4mainE4half(_1: i64) -> (i64, gopp.iface) [go, external] {
   let _0: (i64, gopp.iface)
   let _1: i64 "n"
   let _2: bool
@@ -64,7 +64,7 @@ fn _GPF4mainE4half(_1: i64) -> (i64, gopp.iface) [gopp, external] {
     return  ; a.gopp:11:2
 }
 
-fn _GPF4mainE4name(_1: i64) -> (string, gopp.iface) [gopp, external] {
+fn _GPF4mainE4name(_1: i64) -> (string, gopp.iface) [go, external] {
   let _0: (string, gopp.iface)
   let _1: i64 "n"
   let _2: bool
@@ -92,7 +92,7 @@ fn _GPF4mainE4name(_1: i64) -> (string, gopp.iface) [gopp, external] {
     return  ; a.gopp:18:2
 }
 
-fn _GPF4mainE4both(_1: i64) -> (string, i64, gopp.iface) [gopp, external] {
+fn _GPF4mainE4both(_1: i64) -> (string, i64, gopp.iface) [go, external] {
   let _0: (string, i64, gopp.iface)
   let _1: i64 "n"
   let _2: (string, gopp.iface)
@@ -187,7 +187,7 @@ fn _GPF4mainE4both(_1: i64) -> (string, i64, gopp.iface) [gopp, external] {
     return  ; a.gopp:23:2
 }
 
-fn _GPF4mainE5check(_1: i64) -> gopp.iface [gopp, external] {
+fn _GPF4mainE5check(_1: i64) -> gopp.iface [go, external] {
   let _0: gopp.iface
   let _1: i64 "n"
   let _2: (i64, gopp.iface)
@@ -210,7 +210,7 @@ fn _GPF4mainE5check(_1: i64) -> gopp.iface [gopp, external] {
     return  ; a.gopp:26:20
 }
 
-fn _GPF4mainE5plain(_1: i64) -> i64 [gopp, external] {
+fn _GPF4mainE5plain(_1: i64) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "n"
   let _2: (i64, gopp.iface)
@@ -255,7 +255,7 @@ fn _GPF4mainE5plain(_1: i64) -> i64 [gopp, external] {
     return  ; a.gopp:31:2
 }
 
-fn _GPTIM5ErrorN4mainE7Problem(_1: *u8) -> string [gopp, linkonce_odr] {
+fn _GPTIM5ErrorN4mainE7Problem(_1: *u8) -> string [go, linkonce_odr] {
   let _0: string
   let _2: *_GPTiN4mainE7Problem
   let _3: string

@@ -45,7 +45,7 @@ fn declared<'m>(
     params: &[TypeId],
     ret: TypeId,
 ) -> FuncBuilder<'m> {
-    let sig = sig(module, CallConv::Gopp, params, ret);
+    let sig = sig(module, CallConv::Go, params, ret);
     FuncBuilder::new(module, name, sig, Linkage::External, Span::default()).unwrap()
 }
 
@@ -86,7 +86,7 @@ fn base() -> Module {
     let stop = stop.finish().unwrap();
     let make_pair = declared(&mut module, "p.pair", &[], pair).finish().unwrap();
 
-    let sig = sig(&mut module, CallConv::Gopp, &[ints, int64], int64);
+    let sig = sig(&mut module, CallConv::Go, &[ints, int64], int64);
     let mut f = FuncBuilder::new(&mut module, "p.f", sig, Linkage::External, HERE).unwrap();
     let [
         entry,
@@ -231,15 +231,15 @@ file 0 \"p.gopp\"
 
 global var @p.counter: i64 [internal]
 
-declare fn p.ext(_1: i64) -> i64 [gopp, external]
+declare fn p.ext(_1: i64) -> i64 [go, external]
 
-declare fn p.quiet(_1: i64) -> i64 [gopp, external, nounwind]
+declare fn p.quiet(_1: i64) -> i64 [go, external, nounwind]
 
-declare fn p.stop() -> () [gopp, external, noreturn]
+declare fn p.stop() -> () [go, external, noreturn]
 
-declare fn p.pair() -> (i64, bool) [gopp, external]
+declare fn p.pair() -> (i64, bool) [go, external]
 
-fn p.f(_1: []i64, _2: i64) -> i64 [gopp, external] {
+fn p.f(_1: []i64, _2: i64) -> i64 [go, external] {
   scope 1: block in 0  ; p.gopp:3:1
   let _0: i64
   let _3: u64
@@ -1155,13 +1155,13 @@ const CASES: &[(u16, Change, Change, &str)] = &[
         78,
         |m| {
             let params = [bytes(m), int64(m)];
-            with_env(m, CallConv::Gopp, &params);
+            with_env(m, CallConv::Go, &params);
         },
         |m| {
             let params = [int64(m)];
-            with_env(m, CallConv::Gopp, &params);
+            with_env(m, CallConv::Go, &params);
         },
-        "V078: fn env(i64) -> (): an environment needs the Go++ convention and a first *u8",
+        "V078: fn env(i64) -> (): an environment needs the Go convention and a first *u8",
     ),
     (
         78,
@@ -1170,7 +1170,7 @@ const CASES: &[(u16, Change, Change, &str)] = &[
             let params = [bytes(m)];
             with_env(m, CallConv::C, &params);
         },
-        "V078: fn \"C\"(*u8) -> (): an environment needs the Go++ convention and a first *u8",
+        "V078: fn \"C\"(*u8) -> (): an environment needs the Go convention and a first *u8",
     ),
     (
         79,

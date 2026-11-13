@@ -25,7 +25,7 @@ type Config struct {
 
 func main() {
 	a := Config{Name: "demo", Tags: []string{"a", "b"}, Limits: map[string]int{"cpu": 2, "mem": 512}}
-	b := a // a copy: b has its own Tags slice and Limits map
+	b := a // a copy: b has its own Tags slice and Limits map (in Go, b would share them with a)
 
 	#Assert(a.Equal(b), "configs should be equal") // panics with the expression text if false
 	fmt.Println(#Stringify(a.Equal(b)), "=", a.Equal(b))

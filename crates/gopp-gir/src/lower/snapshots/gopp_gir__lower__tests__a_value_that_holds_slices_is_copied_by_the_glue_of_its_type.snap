@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\ntype Table struct {\n\tname string\n\trows []
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE6copies(_1: _GPTiN4mainE5Table, _2: [][]i64, _3: _GPTiN4mainE4Tree) -> i64 [gopp, external] {
+fn _GPF4mainE6copies(_1: _GPTiN4mainE5Table, _2: [][]i64, _3: _GPTiN4mainE4Tree) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:20:9
   let _0: i64
   let _1: _GPTiN4mainE5Table "t"

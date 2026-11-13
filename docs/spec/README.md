@@ -45,7 +45,7 @@ The list may only become shorter: the same test fails when a rule loses its last
 
 ## Samples (D1.16)
 
-Each sample has `main.gopp`, `expected_output.txt` and a README with the spec rules it uses.
+Each sample has `main.gopp`, a Go counterpart `main.go`, `expected_output.txt` and a README with the spec rules it uses.
 
 | # | Sample | Shows |
 |---|---|---|

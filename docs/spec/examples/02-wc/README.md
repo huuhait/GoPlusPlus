@@ -1,8 +1,8 @@
 # 02 wc
 
-Counts lines, words and bytes of two files and finds the longest word.
+Counts lines, words and bytes of two files and finds the longest word. Run from this directory: `go run main.go`.
 
-Files: `input1.txt`, `input2.txt` (inputs), `main.gopp`, `expected_output.txt`.
+Files: `input1.txt`, `input2.txt` (inputs), `main.gopp`, `main.go`, `expected_output.txt`.
 
 ## Spec rules exercised
 
@@ -12,3 +12,9 @@ Files: `input1.txt`, `input2.txt` (inputs), `main.gopp`, `expected_output.txt`.
 - [PAR-1, PAR-8, PAR-9](../../05-parameters.md): `name` and `s` are `string` parameters that their functions only read, so the arguments are passed as they are (0 retain/release at the call boundary); `nextWord` returns sub-strings sharing `s`'s backing.
 - [EXP-9](../../06-expressions.md): `string(data)` converts `[]byte` to `string`.
 - [RNG-1](../../08-slices-and-range.md): `range inputs`: the body only reads `name`, so the string element is not copied.
+
+## Differences from the Go version
+
+- `main.go` returns an error with `(Stats, string, error)`; `main.gopp` uses `func count!()` and `!`.
+- Everything else — `string` parameters, slicing, and returning `best` — is written identically to Go, with deterministic reference-counted buffer cleanup instead of GC.
+- Output is identical.

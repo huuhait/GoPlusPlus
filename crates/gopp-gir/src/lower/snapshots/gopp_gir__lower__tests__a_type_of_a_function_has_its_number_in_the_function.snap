@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\ntype T struct{ a int }\n\nfunc (T) f() int {\
 module "main"
 file 0 "a.gopp"
 
-fn _GPM1fN4mainE1T(_1: _GPTiN4mainE1T) -> i64 [gopp, external] {
+fn _GPM1fN4mainE1T(_1: _GPTiN4mainE1T) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:9:3
   let _0: i64
   let _2: _GPTig1_1TM1fN4mainE1T "x"
@@ -21,7 +21,7 @@ fn _GPM1fN4mainE1T(_1: _GPTiN4mainE1T) -> i64 [gopp, external] {
     return  ; a.gopp:14:2
 }
 
-fn _GPF4mainE1g() -> () [gopp, external] {
+fn _GPF4mainE1g() -> () [go, external] {
   let _0: ()
   let _1: _GPTig0_1TF4mainE1g "z"
   let _2: struct{t _GPTig0_1TF4mainE1g; n i64} "anonymous"

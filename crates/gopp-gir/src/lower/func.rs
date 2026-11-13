@@ -97,7 +97,7 @@ pub(super) enum Waits {
     Delete(super::map::MapOf),
     Clear(super::map::MapOf),
     /// `recover()`, which stops no panic when it is the deferred call
-    /// itself.
+    /// itself, as in Go.
     Nothing,
 }
 
@@ -405,7 +405,7 @@ pub(super) fn lower_start<'a>(shared: &'a Shared<'a>, module: &mut Module, memo:
         params: [].into(),
         ret: TypeInterner::UNIT,
         has_env: false,
-        cc: crate::CallConv::Gopp,
+        cc: crate::CallConv::Go,
     }));
     let link = Linkage::External;
     let built = FuncBuilder::new(module, &symbol, sig, link, Span::default()).and_then(|b| {

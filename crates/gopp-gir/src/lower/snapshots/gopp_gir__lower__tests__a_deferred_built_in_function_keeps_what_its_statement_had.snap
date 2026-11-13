@@ -17,7 +17,7 @@ global const @_GPTir: gopp.type [linkonce_odr]
     const zero: *u8
     const 5: u64
 
-fn _GPF4mainE4fail(_1: **gopp.map, _2: string, _3: string) -> () [gopp, external] {
+fn _GPF4mainE4fail(_1: **gopp.map, _2: string, _3: string) -> () [go, external] {
   let _0: ()
   let _1: **gopp.map "m"
   let _2: string "key"

@@ -1,6 +1,6 @@
 # 07 vecsort
 
-Fills a C++ `std::vector<int32_t>`, sorts it with `std::sort`, searches it and reverses it.
+Fills a C++ `std::vector<int32_t>`, sorts it with `std::sort`, searches it and reverses it. Run: `go run main.go` (the Go version uses `slices.Sort`, `slices.BinarySearch` and `slices.Reverse`).
 
 ## Spec rules exercised
 
@@ -10,3 +10,14 @@ Fills a C++ `std::vector<int32_t>`, sorts it with `std::sort`, searches it and r
 - [SLC-9](../../08-slices-and-range.md): `out = out[:0]` resets the buffer and keeps its capacity.
 - [RNG-6](../../08-slices-and-range.md): `for _, x := range v` over a C++ container works like a slice: each `int32` element is a trivial value, so `x` is a copy. (For a non-trivial C++ class element, `for _, &x := range v` borrows each element in place, like `auto&`.)
 - [FOR-6](../../14-foreign-surface.md): `int32(19)` is an ordinary Go++ conversion; no C-specific types.
+
+## Differences from the Go version
+
+- Go sorts a slice; Go++ sorts a real `std::vector` with `std::sort`.
+- Output is identical.
+
+## Assumptions about other phases (P08)
+
+- `for _, x := range v` yields the element value (`int32`) as for a slice (RNG-6). P08 D8.6 lowers `range` to `begin()`/`end()` iterator calls.
+- `v.size()` returns `uint64` (`size_t` on Linux), hence `int(v.size())`.
+- `algorithm.binary_search` returns a Go++ `bool`.

@@ -67,8 +67,8 @@ impl FuncCx<'_, '_> {
         parts.into_iter().all(|part| self.flat(part))
     }
 
-    /// Whether a value of the type holds a pointer: the room of such
-    /// values is rounded otherwise.
+    /// Whether Go finds a pointer in a value of the type: its
+    /// allocator rounds the room of such values otherwise.
     fn has_pointers(&mut self, ty: TypeId) -> bool {
         let mut rest = vec![ty];
         while let Some(ty) = rest.pop() {
@@ -594,8 +594,9 @@ impl FuncCx<'_, '_> {
     }
 
     /// `x[lo:hi]` and `x[lo:hi:max]` of a slice or an array. The bounds
-    /// are checked, the high one against the length (SLC-13): past the
-    /// length there are no elements.
+    /// are checked as Go checks them, and the high one also against the
+    /// length where Go takes the capacity (SLC-13): past the length
+    /// there are no elements.
     pub fn slice_part(
         &mut self,
         expr: ExprId,

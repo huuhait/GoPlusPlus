@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\ntype Point struct {\n\tx, y int\n}\n\ntype Bo
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE8literals(_1: i64, _2: *_GPTiN4mainE3Box) -> _GPTiN4mainE3Box [gopp, external] {
+fn _GPF4mainE8literals(_1: i64, _2: *_GPTiN4mainE3Box) -> _GPTiN4mainE3Box [go, external] {
   let _0: _GPTiN4mainE3Box
   let _1: i64 "a"
   let _2: *_GPTiN4mainE3Box "next"
@@ -39,7 +39,7 @@ fn _GPF4mainE8literals(_1: i64, _2: *_GPTiN4mainE3Box) -> _GPTiN4mainE3Box [gopp
     return  ; a.gopp:21:2
 }
 
-fn _GPF4mainE6places(_1: *_GPTiN4mainE3Box, _2: i64, _3: *[4][2]f64) -> f64 [gopp, external] {
+fn _GPF4mainE6places(_1: *_GPTiN4mainE3Box, _2: i64, _3: *[4][2]f64) -> f64 [go, external] {
   let _0: f64
   let _1: *_GPTiN4mainE3Box "b"
   let _2: i64 "i"

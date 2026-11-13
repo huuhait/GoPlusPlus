@@ -14,6 +14,7 @@ The runner is written for Linux. On `windows/amd64`, and with `-real` or `GOPP_F
 | Consumer | How it uses the runner |
 |---|---|
 | Run test suite (`tests/run`) | Batches all test programs into one `gopp test-run` invocation; each test checks its recorded JSONL result. |
+| Differential corpus (`P04.14`) | Feeds a manifest of 100+ programs and compares JSONL outputs against Go goldens. |
 | `gopp test` (`P10` / `P14`, `_test.gopp` packages) | Compiles a test package once into a shared module and dispatches individual test functions through `ExecutorPool`. |
 | Fuzzing campaigns ([fuzzing.md](fuzzing.md)) | Compiles and runs generated programs in bulk; the workers' limits and isolation are the sandbox for programs nobody has read. |
 | Content-addressed build cache (`P06`) | Skips `batch_compile` on cache hits and passes cached runtime/`std` shared objects directly to `ExecutorPool`. |

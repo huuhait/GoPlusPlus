@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\ntype box struct{ items []int }\n\nfunc build(
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE5build(_1: i64) -> []i64 [gopp, external] {
+fn _GPF4mainE5build(_1: i64) -> []i64 [go, external] {
   let _0: []i64
   let _1: i64 "n"
   let _2: i64
@@ -24,7 +24,7 @@ fn _GPF4mainE5build(_1: i64) -> []i64 [gopp, external] {
     return  ; a.gopp:5:27
 }
 
-fn _GPF4mainE3two(_1: i64) -> ([]i64, _GPTiN4mainE3box) [gopp, external] {
+fn _GPF4mainE3two(_1: i64) -> ([]i64, _GPTiN4mainE3box) [go, external] {
   let _0: ([]i64, _GPTiN4mainE3box)
   let _1: i64 "n"
   let _2: []i64
@@ -51,7 +51,7 @@ fn _GPF4mainE3two(_1: i64) -> ([]i64, _GPTiN4mainE3box) [gopp, external] {
     return  ; a.gopp:7:32
 }
 
-fn _GPF4mainE6owners(_1: _GPTiN4mainE3box, _2: i64) -> []i64 [gopp, external] {
+fn _GPF4mainE6owners(_1: _GPTiN4mainE3box, _2: i64) -> []i64 [go, external] {
   scope 1: block in 0  ; a.gopp:17:9
   let _0: []i64
   let _1: _GPTiN4mainE3box "b"

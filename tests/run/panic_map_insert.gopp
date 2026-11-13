@@ -5,7 +5,8 @@ func grow(m *map[int]int) {
 	m[len(m)+100] = 1
 }
 
-// A new key in a map that a range loop walks is a panic on every run.
+// A new key in a map that a range loop walks is a panic on every run:
+// Go lets the loop see the key or not.
 func main() {
 	m := map[int]int{1: 1, 2: 2}
 	for key := range m {

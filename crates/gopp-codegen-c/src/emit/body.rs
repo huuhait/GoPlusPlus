@@ -732,7 +732,7 @@ impl Writer<'_, '_> {
                 for arg in args {
                     said.push(format!("(uint64_t){}", self.operand(arg)?));
                 }
-                // The message has a negative index as it is.
+                // The message of Go has a negative index as it is.
                 if let Some(first) = args.first() {
                     let ty = self.operand_ty(first);
                     let signed = matches!(self.cx.kind(ty), Type::Int { signed: true, .. });

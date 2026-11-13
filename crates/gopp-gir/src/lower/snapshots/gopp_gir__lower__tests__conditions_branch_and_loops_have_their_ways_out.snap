@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc sign(a int) int {\n\tif a < 0 {\n\t\tret
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4sign(_1: i64) -> i64 [gopp, external] {
+fn _GPF4mainE4sign(_1: i64) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: bool
@@ -27,7 +27,7 @@ fn _GPF4mainE4sign(_1: i64) -> i64 [gopp, external] {
     return  ; a.gopp:9:2
 }
 
-fn _GPF4mainE4both(_1: i64, _2: i64) -> bool [gopp, external] {
+fn _GPF4mainE4both(_1: i64, _2: i64) -> bool [go, external] {
   let _0: bool
   let _1: i64 "a"
   let _2: i64 "b"
@@ -73,7 +73,7 @@ fn _GPF4mainE4both(_1: i64, _2: i64) -> bool [gopp, external] {
     return  ; a.gopp:17:2
 }
 
-fn _GPF4mainE5loops(_1: i64) -> i64 [gopp, external] {
+fn _GPF4mainE5loops(_1: i64) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:22:6
   scope 2: block in 0  ; a.gopp:36:7
   let _0: i64

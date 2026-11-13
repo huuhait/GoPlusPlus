@@ -5,7 +5,7 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE1a() -> i64 [gopp, external] {
+fn _GPF4mainE1a() -> i64 [go, external] {
   let _0: i64
   let _1: i64
   let _2: i64
@@ -18,7 +18,7 @@ fn _GPF4mainE1a() -> i64 [gopp, external] {
     return  ; a.gopp:11:16
 }
 
-fn _GPF4mainE1b() -> (i64, string, u8) [gopp, external] {
+fn _GPF4mainE1b() -> (i64, string, u8) [go, external] {
   let _0: (i64, string, u8)
   let _1: (fn env(*u8, u8) -> u8, *u8)
   let _2: *(fn env(*u8, u8) -> u8, *u8)
@@ -80,7 +80,7 @@ fn _GPF4mainE1b() -> (i64, string, u8) [gopp, external] {
     return  ; a.gopp:15:2
 }
 
-fn _GPF4mainE4main() -> () [gopp, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   let _1: (i64, string, u8)
   let _2: i64 "n"
@@ -148,7 +148,7 @@ fn _GPF4mainE4main() -> () [gopp, external] {
     return  ; a.gopp:21:1
 }
 
-fn _GPIF4mainE2idiE(_1: i64) -> i64 [gopp, linkonce_odr] {
+fn _GPIF4mainE2idiE(_1: i64) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _1: i64 "x"
   bb0:
@@ -156,7 +156,7 @@ fn _GPIF4mainE2idiE(_1: i64) -> i64 [gopp, linkonce_odr] {
     return  ; a.gopp:5:25
 }
 
-fn _GPIF4mainE5outeriE(_1: i64) -> i64 [gopp, linkonce_odr] {
+fn _GPIF4mainE5outeriE(_1: i64) -> i64 [go, linkonce_odr] {
   let _0: i64
   let _1: i64 "x"
   let _2: i64
@@ -167,7 +167,7 @@ fn _GPIF4mainE5outeriE(_1: i64) -> i64 [gopp, linkonce_odr] {
     return  ; a.gopp:7:30
 }
 
-fn _GPIF4mainE2idhE(_1: u8) -> u8 [gopp, linkonce_odr] {
+fn _GPIF4mainE2idhE(_1: u8) -> u8 [go, linkonce_odr] {
   let _0: u8
   let _1: u8 "x"
   bb0:
@@ -175,7 +175,7 @@ fn _GPIF4mainE2idhE(_1: u8) -> u8 [gopp, linkonce_odr] {
     return  ; a.gopp:5:25
 }
 
-fn _GPIF4mainE2idrE(_1: string) -> string [gopp, linkonce_odr] {
+fn _GPIF4mainE2idrE(_1: string) -> string [go, linkonce_odr] {
   let _0: string
   let _1: string "x"
   let _2: string
@@ -193,7 +193,7 @@ fn _GPIF4mainE2idrE(_1: string) -> string [gopp, linkonce_odr] {
     return  ; a.gopp:5:25
 }
 
-fn _GPTEIF4mainE2idhE(_1: *u8, _2: u8) -> u8 [gopp, linkonce_odr] {
+fn _GPTEIF4mainE2idhE(_1: *u8, _2: u8) -> u8 [go, linkonce_odr] {
   let _0: u8
   let _3: u8
   bb0:

@@ -1,4 +1,4 @@
-//! Rune and string literals.
+//! Rune and string literals, with the rules and messages of Go's scanner.
 
 use gopp_diag::Code;
 

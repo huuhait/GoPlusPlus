@@ -48,6 +48,7 @@ The generator writes Go++ programs that are valid, terminate, have no undefined 
 - **Bounded.** Loops have constant bounds, recursion has a depth parameter, allocation sizes are small. A generated program finishes in milliseconds.
 - **No outside world.** No files, network, clock, environment or randomness. Concurrent programs make their output deterministic by construction (results are collected and sorted, or protected by one lock).
 - **Feature knobs.** A config sets the weight of each feature: copies of slices and maps (assignment, by-value arguments, stores, sends), `move(x)`, pointer parameters (`*[]T`, `*map[K]V`), `&s[i:j]` views, generics, generic methods, closures and captures, interfaces and type switches, `!` functions and `call!()`, `defer`/`panic`/`recover`, range forms including `&`, `@Operator` methods, `@Extends` with `@Virtual`/`@Override`, composite `const` and `@Const`, arenas, `Mutex[T]`, channels and `sync.Scope`. Campaigns rotate configs so no feature starves.
+- **A Go twin.** In "Go subset" mode the generator uses only what Go and Go++ agree on and writes the same program as `main.go` and `main.gopp`. Real Go is then the reference. Go shares the elements of a slice or map between two variables and with a by-value parameter; Go++ copies them. So the twin never changes a slice or map through one variable while another variable or a by-value parameter made from it is still read.
 - **Size classes.** Small programs (tens of lines) for speed and easy reduction; large programs (thousands of lines, many packages) for the build system, export data and the cache.
 
 ## 4. Oracles for valid programs
@@ -58,6 +59,7 @@ A valid generated program is run through the oracles below. Any "no" is a findin
 |---|---|
 | Accept | Does `gopp check` accept it with no diagnostic? |
 | Stage health | Did every stage finish with no panic, no `E0439`/`E0440`, `verify_module` clean after every pass, and emitted C that compiles with `-Wall -Werror` under the mandatory flags? |
+| Go differential | In Go subset mode, is stdout, stderr and the exit code the same as Go's? |
 | Opt matrix | Is the output identical at `-opt=0`, `1`, `2`, `3`, `s` and `z`? |
 | Targets | Is the output identical on `linux/amd64` and on `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md))? |
 | Backend modes | Is the output identical when the package is emitted as `.c` and as `.cpp`? Through the fast runner and as a real binary? With `-panic=abort` where no `recover` is used? |
@@ -159,4 +161,4 @@ The targets today are `parse_gopp` and `symbol_name` (a text is refused, or it i
 
 ## 11. Open points
 
-None.
+None. The Go reference is the Go of the dev shell (`flake.nix`).

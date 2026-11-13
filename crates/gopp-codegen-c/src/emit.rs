@@ -109,7 +109,7 @@ impl Cx<'_> {
     /// for every target alike.
     pub fn go_call(&self, func: &FuncType) -> bool {
         let whole = |&ty: &TypeId| !matches!(self.layout(ty).size % 8, 3 | 5 | 6 | 7);
-        func.cc == CallConv::Gopp && func.params.iter().chain([&func.ret]).all(whole)
+        func.cc == CallConv::Go && func.params.iter().chain([&func.ret]).all(whole)
     }
 
     /// The name that the function of the number has in the unit: the

@@ -1,11 +1,12 @@
 //! Type inference: the type arguments of a generic function that a call
-//! does not write.
+//! does not write, after `go/types` (infer.go, unify.go), with Go's
+//! messages.
 
 use super::constraints::Instance;
 use super::*;
 use crate::types::MethodSet;
 
-/// How deep unification goes into types before it gives up.
+/// How deep unification goes into types before it gives up, as in Go.
 const DEPTH_LIMIT: u32 = 50;
 
 /// How alike two types must be to unify.

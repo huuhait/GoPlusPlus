@@ -5,7 +5,7 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE7counter(_1: i64, _2: string) -> ((fn env(*u8) -> i64, *u8), (fn env(*u8) -> string, *u8)) [gopp, external] {
+fn _GPF4mainE7counter(_1: i64, _2: string) -> ((fn env(*u8) -> i64, *u8), (fn env(*u8) -> string, *u8)) [go, external] {
   let _0: ((fn env(*u8) -> i64, *u8), (fn env(*u8) -> string, *u8))
   let _1: i64 "start"
   let _2: string "name"
@@ -122,7 +122,7 @@ fn _GPF4mainE7counter(_1: i64, _2: string) -> ((fn env(*u8) -> i64, *u8), (fn en
     return  ; a.gopp:10:2
 }
 
-fn _GPC2_F4mainE7counter(_1: *u8) -> string [gopp, internal] {
+fn _GPC2_F4mainE7counter(_1: *u8) -> string [go, internal] {
   let _0: string
   let _2: *(u64, u64, *(u64, string), fn "C"(*u8) -> ())
   let _3: *(u64, string)
@@ -146,7 +146,7 @@ fn _GPC2_F4mainE7counter(_1: *u8) -> string [gopp, internal] {
     return  ; a.gopp:9:27
 }
 
-fn _GPC1_F4mainE7counter(_1: *u8) -> i64 [gopp, internal] {
+fn _GPC1_F4mainE7counter(_1: *u8) -> i64 [go, internal] {
   let _0: i64
   let _2: *(u64, u64, *(u64, i64), fn "C"(*u8) -> ())
   let _3: *(u64, i64)
@@ -162,7 +162,7 @@ fn _GPC1_F4mainE7counter(_1: *u8) -> i64 [gopp, internal] {
     return  ; a.gopp:7:3
 }
 
-fn _GPF4mainE4each(_1: []i64) -> [](fn env(*u8) -> i64, *u8) [gopp, external] {
+fn _GPF4mainE4each(_1: []i64) -> [](fn env(*u8) -> i64, *u8) [go, external] {
   scope 1: block in 0  ; a.gopp:15:6
   let _0: [](fn env(*u8) -> i64, *u8)
   let _1: []i64 "values"
@@ -302,7 +302,7 @@ fn _GPF4mainE4each(_1: []i64) -> [](fn env(*u8) -> i64, *u8) [gopp, external] {
     return  ; a.gopp:18:2
 }
 
-fn _GPC1_F4mainE4each(_1: *u8) -> i64 [gopp, internal] {
+fn _GPC1_F4mainE4each(_1: *u8) -> i64 [go, internal] {
   let _0: i64
   let _2: *(u64, u64, *(u64, []i64), fn "C"(*u8) -> (), *(u64, i64), fn "C"(*u8) -> ())
   let _3: *(u64, []i64)
@@ -333,7 +333,7 @@ fn _GPC1_F4mainE4each(_1: *u8) -> i64 [gopp, internal] {
     return  ; a.gopp:16:34
 }
 
-fn _GPF4mainE4main() -> () [gopp, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   let _1: ((fn env(*u8) -> i64, *u8), (fn env(*u8) -> string, *u8))
   let _2: (fn env(*u8) -> i64, *u8) "inc"

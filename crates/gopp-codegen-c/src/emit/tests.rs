@@ -213,7 +213,7 @@ fn a_unit_starts_its_program_as_it_is_built_for() {
 }
 
 #[test]
-fn arithmetic_is_written_with_the_helpers_that_keep_its_results() {
+fn arithmetic_is_written_with_the_helpers_that_keep_the_results_of_go() {
     insta::assert_snapshot!(unit("a.gopp", ARITHMETIC));
 }
 
@@ -320,7 +320,7 @@ fn a_cleanup_block_is_a_function_of_its_own_and_a_module_that_breaks_a_rule_is_r
         params: [].into(),
         ret: TypeInterner::UNIT,
         has_env: false,
-        cc: CallConv::Gopp,
+        cc: CallConv::Go,
     }));
     fn new<'m>(module: &'m mut Module, name: &str, sig: gopp_gir::TypeId) -> FuncBuilder<'m> {
         FuncBuilder::new(module, name, sig, Linkage::External, Span::default()).unwrap()
@@ -500,7 +500,7 @@ func main() {
 ";
 
 /// A program that checks itself: `expect` indexes past an array when a
-/// value is not what the specification says, which panics.
+/// value is not what Go says, which panics.
 const CHECKS: &str = "package main
 
 var calls int
@@ -664,7 +664,7 @@ func main() {
     not(all(target_os = "linux", target_arch = "x86_64")),
     ignore = "links and runs programs for linux/amd64"
 )]
-fn a_program_computes_the_same_at_every_level() {
+fn a_program_computes_what_go_says_at_every_level() {
     let toolchain = HostToolchain::discover().unwrap();
     let fails = |body: &str| {
         format!("package main\n\nfunc zero() int {{ return 0 }}\n\nfunc main() {{\n{body}\n}}\n")

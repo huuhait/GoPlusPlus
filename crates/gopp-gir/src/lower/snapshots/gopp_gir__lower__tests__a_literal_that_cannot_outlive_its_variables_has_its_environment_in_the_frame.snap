@@ -5,7 +5,7 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE5apply(_1: []i64, _2: (fn env(*u8, i64) -> (), *u8)) -> () [gopp, external] {
+fn _GPF4mainE5apply(_1: []i64, _2: (fn env(*u8, i64) -> (), *u8)) -> () [go, external] {
   scope 1: block in 0  ; a.gopp:4:9
   let _0: ()
   let _1: []i64 "values"
@@ -42,7 +42,7 @@ fn _GPF4mainE5apply(_1: []i64, _2: (fn env(*u8, i64) -> (), *u8)) -> () [gopp, e
     return  ; a.gopp:7:1
 }
 
-fn _GPF4mainE4keep(_1: (fn env(*u8, i64) -> (), *u8)) -> (fn env(*u8, i64) -> (), *u8) [gopp, external] {
+fn _GPF4mainE4keep(_1: (fn env(*u8, i64) -> (), *u8)) -> (fn env(*u8, i64) -> (), *u8) [go, external] {
   let _0: (fn env(*u8, i64) -> (), *u8)
   let _1: (fn env(*u8, i64) -> (), *u8) "f"
   let _2: (fn env(*u8, i64) -> (), *u8)
@@ -60,7 +60,7 @@ fn _GPF4mainE4keep(_1: (fn env(*u8, i64) -> (), *u8)) -> (fn env(*u8, i64) -> ()
     return  ; a.gopp:9:36
 }
 
-fn _GPF4mainE6direct(_1: i64) -> i64 [gopp, external] {
+fn _GPF4mainE6direct(_1: i64) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "n"
   let _2: i64 "sum"
@@ -107,7 +107,7 @@ fn _GPF4mainE6direct(_1: i64) -> i64 [gopp, external] {
     return  ; a.gopp:14:2
 }
 
-fn _GPC1_F4mainE6direct(_1: *u8) -> () [gopp, internal] {
+fn _GPC1_F4mainE6direct(_1: *u8) -> () [go, internal] {
   let _0: ()
   let _2: *(u64, *i64)
   let _3: *i64 "sum"
@@ -120,7 +120,7 @@ fn _GPC1_F4mainE6direct(_1: *u8) -> () [gopp, internal] {
     return  ; a.gopp:13:20
 }
 
-fn _GPF4mainE8deferred(_1: i64) -> i64 [gopp, external] {
+fn _GPF4mainE8deferred(_1: i64) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "n"
   let _2: i64 "out"
@@ -241,7 +241,7 @@ fn _GPC0_F4mainE8deferred(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:17:6
 }
 
-fn _GPC1_F4mainE8deferred(_1: *u8) -> () [gopp, internal] {
+fn _GPC1_F4mainE8deferred(_1: *u8) -> () [go, internal] {
   let _0: ()
   let _2: *(u64, *i64, *i64)
   let _3: *i64 "n"
@@ -258,7 +258,7 @@ fn _GPC1_F4mainE8deferred(_1: *u8) -> () [gopp, internal] {
     return  ; a.gopp:18:26
 }
 
-fn _GPF4mainE5inner(_1: bool) -> i64 [gopp, external] {
+fn _GPF4mainE5inner(_1: bool) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:24:3
   let _0: i64
   let _1: bool "flag"
@@ -471,7 +471,7 @@ fn _GPC0_F4mainE5inner(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:22:6
 }
 
-fn _GPC1_F4mainE5inner(_1: *u8) -> () [gopp, internal] {
+fn _GPC1_F4mainE5inner(_1: *u8) -> () [go, internal] {
   let _0: ()
   let _2: *(u64, u64, *(u64, i64), fn "C"(*u8) -> (), *(u64, i64), fn "C"(*u8) -> ())
   let _3: *(u64, i64)
@@ -492,7 +492,7 @@ fn _GPC1_F4mainE5inner(_1: *u8) -> () [gopp, internal] {
     return  ; a.gopp:25:30
 }
 
-fn _GPF4mainE4lent(_1: []i64) -> i64 [gopp, external] {
+fn _GPF4mainE4lent(_1: []i64) -> i64 [go, external] {
   let _0: i64
   let _1: []i64 "values"
   let _2: i64 "sum"
@@ -582,7 +582,7 @@ fn _GPF4mainE4lent(_1: []i64) -> i64 [gopp, external] {
     return  ; a.gopp:33:2
 }
 
-fn _GPC1_F4mainE4lent(_1: *u8, _2: i64) -> () [gopp, internal] {
+fn _GPC1_F4mainE4lent(_1: *u8, _2: i64) -> () [go, internal] {
   let _0: ()
   let _2: i64 "v"
   let _3: *(u64, *i64)
@@ -596,7 +596,7 @@ fn _GPC1_F4mainE4lent(_1: *u8, _2: i64) -> () [gopp, internal] {
     return  ; a.gopp:32:39
 }
 
-fn _GPF4mainE6helper(_1: []i64) -> i64 [gopp, external] {
+fn _GPF4mainE6helper(_1: []i64) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:39:9
   let _0: i64
   let _1: []i64 "values"
@@ -683,7 +683,7 @@ fn _GPF4mainE6helper(_1: []i64) -> i64 [gopp, external] {
     return  ; a.gopp:42:2
 }
 
-fn _GPC1_F4mainE6helper(_1: *u8, _2: i64) -> () [gopp, internal] {
+fn _GPC1_F4mainE6helper(_1: *u8, _2: i64) -> () [go, internal] {
   let _0: ()
   let _2: i64 "v"
   let _3: *(u64, *i64)
@@ -697,7 +697,7 @@ fn _GPC1_F4mainE6helper(_1: *u8, _2: i64) -> () [gopp, internal] {
     return  ; a.gopp:38:32
 }
 
-fn _GPF4mainE7escapes(_1: []i64) -> i64 [gopp, external] {
+fn _GPF4mainE7escapes(_1: []i64) -> i64 [go, external] {
   let _0: i64
   let _1: []i64 "values"
   let _2: *u8
@@ -874,7 +874,7 @@ fn _GPF4mainE7escapes(_1: []i64) -> i64 [gopp, external] {
     return  ; a.gopp:50:2
 }
 
-fn _GPC1_F4mainE7escapes(_1: *u8, _2: i64) -> () [gopp, internal] {
+fn _GPC1_F4mainE7escapes(_1: *u8, _2: i64) -> () [go, internal] {
   let _0: ()
   let _2: i64 "v"
   let _3: *(u64, u64, *(u64, i64), fn "C"(*u8) -> ())
@@ -890,7 +890,7 @@ fn _GPC1_F4mainE7escapes(_1: *u8, _2: i64) -> () [gopp, internal] {
     return  ; a.gopp:47:32
 }
 
-fn _GPF4mainE6passed(_1: []i64) -> i64 [gopp, external] {
+fn _GPF4mainE6passed(_1: []i64) -> i64 [go, external] {
   let _0: i64
   let _1: []i64 "values"
   let _2: *u8
@@ -1004,7 +1004,7 @@ fn _GPF4mainE6passed(_1: []i64) -> i64 [gopp, external] {
     return  ; a.gopp:56:2
 }
 
-fn _GPC1_F4mainE6passed(_1: *u8, _2: i64) -> () [gopp, internal] {
+fn _GPC1_F4mainE6passed(_1: *u8, _2: i64) -> () [go, internal] {
   let _0: ()
   let _2: i64 "v"
   let _3: *(u64, u64, *(u64, i64), fn "C"(*u8) -> ())
@@ -1020,7 +1020,7 @@ fn _GPC1_F4mainE6passed(_1: *u8, _2: i64) -> () [gopp, internal] {
     return  ; a.gopp:55:44
 }
 
-fn _GPF4mainE4main() -> () [gopp, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   let _1: []i64
   let _2: *[]i64

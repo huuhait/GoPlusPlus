@@ -8,7 +8,7 @@ Go++ calls C with the exact C ABI of the target ([ADR-0001](../adr/0001-implemen
 |---|---|---|
 | `CTypeRules` | `crates/gopp-gir` | Decides which Go++ types may cross the C ABI, shared by semantic checking (`E0442` invalid, `E0439` unsupported) and the GIR verifier (`V067`). Pure Rust, zero `libclang` dependency. |
 | `CImport` | `crates/gopp-cimport` | Loads `libclang` 23.1.0 on demand (`clang-sys` `1.9.1` with `runtime` feature) to read imported headers (`P07`), and invokes `clang++ -std=c++20 -Xclang -ast-dump=json` plus layout probes when a package imports C++ headers (`P08`). |
-| `C23Emitter` | `crates/gopp-codegen-c` | Emits C-compatible `struct` definitions with compile-time `_Static_assert(sizeof(...) == ... && _Alignof(...) == ...)` guards against `gopp-target`'s `TargetLayout`, plain C prototypes for `CallConv::C` declarations and `@Export("C")` thunks, and `__attribute__((swiftcall))` prototypes for `CallConv::Gopp` functions. |
+| `C23Emitter` | `crates/gopp-codegen-c` | Emits C-compatible `struct` definitions with compile-time `_Static_assert(sizeof(...) == ... && _Alignof(...) == ...)` guards against `gopp-target`'s `TargetLayout`, plain C prototypes for `CallConv::C` declarations and `@Export("C")` thunks, and `__attribute__((swiftcall))` prototypes for `CallConv::Go` functions. |
 
 ## Which types cross (`gopp_gir::CTypeRules`)
 
