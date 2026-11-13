@@ -331,6 +331,9 @@ pub(super) fn lower_function<'a>(
     memo: &mut Memo<'a>,
     job: &'a Job,
 ) {
+    if let Some(first) = shared.initializer(job) {
+        return lower_initializer(shared, module, memo, job, first);
+    }
     let (tree, source) = shared.files[job.file as usize];
     let DeclKind::Func {
         receiver,
@@ -386,6 +389,111 @@ pub(super) fn lower_function<'a>(
         let message = format!("{} could not be lowered: {error}", job.symbol);
         let diagnostic = Diagnostic::new(Code::GirVerify, name.span, message);
         memo.diagnostics.push(diagnostic);
+    }
+}
+
+/// Adds what starts the package to the module, if a variable of the
+/// package has a first value: the function that calls, in the order of
+/// the start, each function that gives variables their first value.
+pub(super) fn lower_start<'a>(shared: &'a Shared<'a>, module: &mut Module, memo: &mut Memo<'a>) {
+    let steps = shared.initializers();
+    if steps.is_empty() {
+        return;
+    }
+    let symbol = gopp_mangle::pkg_init_symbol(&shared.package.path);
+    let sig = module.types.intern(Type::Func(crate::FuncType {
+        params: [].into(),
+        ret: TypeInterner::UNIT,
+        has_env: false,
+        cc: crate::CallConv::Go,
+    }));
+    let link = Linkage::External;
+    let built = FuncBuilder::new(module, &symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
+        let entry = cx.b.new_block();
+        cx.b.switch_to(entry);
+        for step in steps {
+            let step = cx.function_named(step, sig)?;
+            let callee = Operand::Const(Constant {
+                kind: ConstantKind::Func(step),
+                ty: sig,
+            });
+            let (nothing, next) = (cx.b.temp(TypeInterner::UNIT), cx.b.new_block());
+            let unwind = crate::UnwindAction::Continue;
+            cx.b.call(
+                callee,
+                Vec::new(),
+                Place::local(nothing),
+                Some(next),
+                unwind,
+            )?;
+            cx.b.switch_to(next);
+        }
+        cx.b.ret()?;
+        cx.b.finish().map(drop)
+    });
+    if let Err(error) = built {
+        let message = format!("{symbol} could not be lowered: {error}");
+        let named = shared.files.first().and_then(|(tree, _)| tree.package);
+        if let Some(named) = named {
+            memo.diagnostics
+                .push(Diagnostic::new(Code::GirVerify, named.span, message));
+        }
+    }
+}
+
+/// Adds the function of a step of the start of the package to the
+/// module: it gives variables of the package their first value.
+fn lower_initializer<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    job: &'a Job,
+    first: &'a gopp_sema::Initializer,
+) {
+    let (tree, source) = shared.files[job.file as usize];
+    let span = tree.exprs[first.value].span;
+    let report = |memo: &mut Memo<'a>, code: Code, message: String| {
+        memo.diagnostics.push(Diagnostic::new(code, span, message));
+    };
+    let sig = match memo.signature(shared, &mut module.types, None, job.sig) {
+        Ok(sig) => sig,
+        Err(what) => {
+            return report(
+                memo,
+                Code::GirUnsupported,
+                format!("not supported yet: {what}"),
+            );
+        }
+    };
+    let at = source.line_col(span.lo);
+    let loc = Span {
+        file: job.file + 1,
+        line: at.line,
+        col: at.column,
+    };
+    let built = FuncBuilder::new(module, &job.symbol, sig, Linkage::External, loc).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            job.file,
+            (shared.body(job), &job.facts),
+        );
+        cx.owner = Some((job, None));
+        cx.initializer(&first.lhs, first.value)?;
+        cx.b.drop_unreached();
+        cx.b.finish().map(drop)
+    });
+    if let Err(error) = built {
+        let message = format!("{} could not be lowered: {error}", job.symbol);
+        report(memo, Code::GirVerify, message);
     }
 }
 
@@ -738,6 +846,40 @@ impl FuncCx<'_, '_> {
     /// The body of a function whose first parameter of the source has
     /// the number `first`: an environment comes before the parameters
     /// of a function literal.
+    /// The body of the function that gives the variables `lhs` of the
+    /// package their first value: `value` is worked out, and each
+    /// variable is the owner of what it gets. Nothing ends them
+    /// (INI-5).
+    fn initializer(&mut self, lhs: &[gopp_sema::ObjId], value: ExprId) -> Built {
+        let entry = self.b.new_block();
+        self.b.switch_to(entry);
+        self.scopes.push(Scope::default());
+        let span = self.tree.exprs[value].span;
+        self.at(span);
+        let mark = self.temps.len();
+        let package = self.shared.package;
+        // A variable named `_` has no place: its value ends here.
+        let named = |object: &gopp_sema::ObjId| package.object(*object).name != self.shared.blank;
+        let mut wanted = Vec::with_capacity(lhs.len());
+        for object in lhs {
+            wanted.push(match named(object) {
+                true => Some(self.lower(package.object(*object).ty, span)),
+                false => None,
+            });
+        }
+        let values = self.owned_values(&[value], &wanted)?;
+        for (object, value) in lhs.iter().zip(values) {
+            if named(object) {
+                let key = super::CalleeKey::Object(*object);
+                let place = self.global(key, package, *object, span)?;
+                self.store(place, value)?;
+            }
+        }
+        self.drop_temps(mark)?;
+        self.exit_scopes(0)?;
+        self.b.ret()
+    }
+
     fn function(
         &mut self,
         receiver: Option<&Param>,

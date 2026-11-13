@@ -1,0 +1,60 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func open(fd int) File {
+	opened++
+	return File{fd: fd}
+}
+
+func size(f File) int { return f.fd }
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+func parse!(text string) int {
+	if text == "" {
+		return 0, Problem{what: "empty"}
+	}
+	return len(text)
+}
+
+// A variable of the package is never ended: the file stays open.
+var log = open(1)
+
+// What a first value makes and no variable gets ends where it was made.
+var measured = size(open(2)) + size(open(3))
+
+var name = "pre" + "fix"
+var names = []string{name, name + "!"}
+var sizes = map[string]int{name: len(name), names[1]: measured}
+var port = parse!("8080")
+var files = []File{open(4), open(5)}
+var total = count()
+
+func count() int {
+	sum := 0
+	for i := range files {
+		sum += files[i].fd
+	}
+	return sum + log.fd
+}
+
+func init() {
+	names = append(names, "added")
+	files = append(files, open(6))
+}
+
+func main() {
+	println(log.fd, measured, name, len(names), names[2], sizes["prefix!"], port, total)
+	println(len(files), opened, closed)
+}

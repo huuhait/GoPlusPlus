@@ -60,10 +60,12 @@ impl FuncCx<'_, '_> {
 
     /// Whether the expression names a map, or a pointer to one.
     pub fn holds_map(&mut self, x: ExprId) -> bool {
+        // The type of a map is known once a type with a map is lowered:
+        // that of `x` may be the first.
+        let ty = self.ty_of(x);
         if self.memo.map.is_none() {
             return false;
         }
-        let ty = self.ty_of(x);
         let behind = self.pointee(ty);
         self.is_map(ty) || self.is_map(behind)
     }

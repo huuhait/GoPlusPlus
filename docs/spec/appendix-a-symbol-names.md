@@ -124,7 +124,7 @@ Which child a node may have is fixed, and `Context::add` and the parser reject a
 
 - the receiver of a Method or an OpMethod is a named or local-named type, or an instance of one;
 - the first child of an Instance is a named type, a local-named type, a `Universe` type, a function, a method or an operator method, and it has at least one type argument;
-- the entity of a Closure or a LocalNamed is one that code is written in: a function, a method, an operator method, an instance of one of these, a variable, an `init` function or a closure;
+- the entity of a Closure or a LocalNamed is one that code is written in: a function, a method, an operator method, an instance of one of these, a variable, an `init` function, a closure, or the package's init entry point (its closure with the number *n*, from 1, is the function that gives the variables of the *n*th step of the start their first value);
 - `TC`, `TV`, `TE`, `TP` and `TI` are made around a function, a method, an operator method, an instance of one of these, a closure or another thunk;
 - the child of an IfacePtrThunk or a BaseAdjustThunk is a method or an operator method, or an instance of one;
 - every other child is a type where the table says type, a Field in a Struct and an IMethod in an Interface.

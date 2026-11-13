@@ -42,6 +42,12 @@ pub fn init_symbol(path: &str, ordinal: u64) -> String {
     leaf_symbol(&Node::InitFunc { package, ordinal })
 }
 
+/// The symbol of what gives the variables of the package at `path`
+/// their first values.
+pub fn pkg_init_symbol(path: &str) -> String {
+    leaf_symbol(&Node::PkgInit(path.as_bytes().into()))
+}
+
 /// The symbol of an entity without children: all of it is its head.
 fn leaf_symbol(node: &Node) -> String {
     let mut symbol = String::from(PREFIX);

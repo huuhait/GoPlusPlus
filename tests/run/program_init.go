@@ -1,0 +1,101 @@
+package main
+
+type Point struct{ x, y int }
+
+type Config struct {
+	name  string
+	sizes []int
+	tags  map[string]int
+}
+
+var order []string
+
+func step(name string, n int) int {
+	order = append(order, name)
+	return n
+}
+
+// The variables get their values in the order of what they need, not of
+// the source.
+var (
+	total = first + second
+	first = step("first", 1)
+)
+
+var second = step("second", first+1)
+
+var origin = Point{x: step("origin", 3), y: 4}
+
+var config = Config{
+	name:  "main" + suffix(),
+	sizes: []int{1, 2, total},
+	tags:  map[string]int{"a": 1, "b": second},
+}
+
+func suffix() string {
+	order = append(order, "suffix")
+	return "!"
+}
+
+var left, right = pair()
+
+func pair() (int, string) {
+	order = append(order, "pair")
+	return origin.x * 10, config.name
+}
+
+var _ = step("blank", 0)
+
+var double = func(n int) int { return n * 2 }
+
+var handlers = map[string]func(int) int{
+	"double": double,
+	"square": func(n int) int { return n * n },
+	"scaled": func(n int) int { return n * total },
+}
+
+var counter = makeCounter()
+
+func makeCounter() func() int {
+	n := second
+	return func() int {
+		n++
+		return n
+	}
+}
+
+var words = []string{"a", "b"}
+var text = join(words)
+var zero int
+var named string = "set"
+var grid [2][2]int = [2][2]int{{1, 2}, {3, total}}
+var pointer = &origin
+
+func join(parts []string) string {
+	out := ""
+	for _, part := range parts {
+		out += part
+	}
+	return out
+}
+
+func init() {
+	order = append(order, "init one")
+	zero = len(order)
+}
+
+func init() {
+	order = append(order, "init two")
+	words = append(words, "c")
+}
+
+func main() {
+	println(total, first, second, origin.x, origin.y)
+	println(config.name, len(config.sizes), config.sizes[2], config.tags["b"], len(config.tags))
+	println(left, right, double(4), handlers["square"](5), handlers["scaled"](2), len(handlers))
+	println(counter(), counter(), text, len(words), zero, named, grid[1][1], pointer.y)
+	for _, name := range order {
+		print(name, "; ")
+	}
+	println()
+}

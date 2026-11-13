@@ -223,6 +223,9 @@ enum JobName {
     /// A method with type parameters of its own, of the type, with type
     /// arguments: the instance of the package has them last.
     OwnMethod(CheckedTypeId, Spur, usize),
+    /// What gives variables of the package their first value: which
+    /// step of the start of the program (`Package::init_order`).
+    Initializer(usize),
 }
 
 /// A generic function, or a method with type parameters of its own of
@@ -562,7 +565,7 @@ impl<'a> Memo<'a> {
         }
         let within = match literal.within {
             Some(within) => func::deeper(|| self.literal_node(shared, job, within))?,
-            None => self.namer.entity(shared.entity(job.named)).ok()?,
+            None => shared.home_node(&mut self.namer, job)?,
         };
         self.namer.closure(within, literal.ordinal).ok()
     }
@@ -579,7 +582,7 @@ impl<'a> Memo<'a> {
     ) -> Option<String> {
         let within = match literal {
             Some(literal) => self.literal_node(shared, job, literal)?,
-            None => self.namer.entity(shared.entity(job.named)).ok()?,
+            None => shared.job_node(&mut self.namer, job)?,
         };
         let node = self.namer.closure(within, 0).ok()?;
         Some(self.namer.symbol(node))
@@ -660,9 +663,47 @@ impl<'a> Shared<'a> {
         for (number, at) in inits.into_iter().enumerate() {
             shared.jobs[at].named = JobName::Init(number as u64);
         }
+        // A first value of a variable is given by a function of its
+        // own, in the order that the checker found for the start. The
+        // declarations of each file, by where they are, say which one
+        // a value is written in.
+        let mut placed: FxHashMap<u32, Vec<(u32, u32, usize)>> = FxHashMap::default();
+        for (step, first) in shared.package.init_order.iter().enumerate() {
+            let (tree, _) = files[first.file as usize];
+            let decls = placed.entry(first.file).or_insert_with(|| {
+                let spans = tree.decls.iter().enumerate().map(|(at, &decl)| {
+                    let span = tree.decl_nodes[decl].span;
+                    (span.lo, span.hi, at)
+                });
+                let mut decls: Vec<_> = spans.collect();
+                decls.sort_unstable();
+                decls
+            });
+            let span = tree.exprs[first.value].span;
+            let before = decls.partition_point(|&(start, _, _)| start <= span.lo);
+            let around = before.checked_sub(1).map(|at| decls[at]);
+            if let Some((lo, hi, at)) = around.filter(|&(_, end, _)| span.hi <= end) {
+                shared.jobs.push(Job {
+                    file: first.file,
+                    at,
+                    decl: tree.decls[at],
+                    named: JobName::Initializer(step),
+                    symbol: String::new(),
+                    receiver: None,
+                    sig: shared.types.func(&[], &[], false),
+                    source: (hi - lo) as usize,
+                    facts: facts::Facts::default(),
+                    made: None,
+                    by: None,
+                });
+            }
+        }
         let mut namer = Namer::new(shared.types, shared.names);
         let symbols: Vec<String> = (shared.jobs.iter())
-            .map(|job| symbol_of(&mut namer, shared.entity(job.named)).unwrap_or_default())
+            .map(|job| {
+                let node = shared.job_node(&mut namer, job);
+                node.map_or(String::new(), |node| namer.symbol(node))
+            })
             .collect();
         for (at, symbol) in symbols.into_iter().enumerate() {
             let job = &mut shared.jobs[at];
@@ -785,7 +826,57 @@ impl<'a> Shared<'a> {
                     args: &instance.args[instance.of_receiver..],
                 }
             }
+            JobName::Initializer(_) => Entity::PkgInit(self.package),
         }
+    }
+
+    /// The node that the function literals of the function of a job
+    /// are numbered in: the function; for a first value its variable,
+    /// or the function that gives it if no variable has a name.
+    fn home_node(&self, namer: &mut Namer<'_>, job: &Job) -> Option<gopp_mangle::NodeId> {
+        let named = self.initializer(job).and_then(|first| {
+            let named = |object: &&ObjId| self.package.object(**object).name != self.blank;
+            first.lhs.iter().find(named)
+        });
+        match named {
+            Some(&object) => namer.entity(Entity::Object(self.package, object)).ok(),
+            None => self.job_node(namer, job),
+        }
+    }
+
+    /// The node of the function of a job, for its symbol: a function
+    /// that gives variables their first value is the function with its
+    /// number, from 1, of what starts the package.
+    fn job_node(&self, namer: &mut Namer<'_>, job: &Job) -> Option<gopp_mangle::NodeId> {
+        match job.named {
+            JobName::Initializer(step) => {
+                let start = namer.entity(Entity::PkgInit(self.package)).ok()?;
+                namer.closure(start, step as u64 + 1).ok()
+            }
+            named => namer.entity(self.entity(named)).ok(),
+        }
+    }
+
+    /// The step of the start of the program that the job makes, if it
+    /// makes one.
+    pub fn initializer(&self, job: &Job) -> Option<&gopp_sema::Initializer> {
+        match job.named {
+            JobName::Initializer(step) => self.package.init_order.get(step),
+            _ => None,
+        }
+    }
+
+    /// The symbols of the functions that give the variables of the
+    /// package their first values, in the order of the start.
+    pub fn initializers(&self) -> Vec<&str> {
+        let mut steps = Vec::new();
+        for job in &self.jobs {
+            if let JobName::Initializer(step) = job.named {
+                steps.push((step, &*job.symbol));
+            }
+        }
+        steps.sort_unstable();
+        steps.into_iter().map(|(_, symbol)| symbol).collect()
     }
 
     /// Whether the function of the job is an instance of a generic
@@ -1474,7 +1565,7 @@ impl<'a> Shared<'a> {
                 JobName::Method(ty, name) | JobName::OwnMethod(ty, name, _) => {
                     self.used_name(Used::Method(ty, name))
                 }
-                JobName::Object(_) | JobName::Init(_) => break,
+                JobName::Object(_) | JobName::Init(_) | JobName::Initializer(_) => break,
             };
             let note = format!("{name} is instantiated here");
             report = report.with_note(Code::NoteRefersTo, Some(at), note);
@@ -1622,19 +1713,9 @@ impl<'a> Shared<'a> {
                 });
             }
         }
-        // No function runs the first values of the variables yet: a
-        // variable would silently start as zero.
-        for first in &self.package.init_order {
-            if let Some((tree, _)) = self.files.get(first.file as usize) {
-                let span = tree.exprs[first.value].span;
-                let message = "not supported yet: a first value of a variable of the package";
-                memo.diagnostics.push(Diagnostic::new(
-                    Code::GirUnsupported,
-                    span,
-                    message.to_owned(),
-                ));
-            }
-        }
+        // What starts the package gives the variables their first
+        // values, one step after another.
+        func::lower_start(self, &mut module, &mut memo);
         Part {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,

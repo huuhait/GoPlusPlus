@@ -665,7 +665,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The variable of a package as a place: what the pointer to it
     /// leads to. `key` is how the source names it.
-    fn global(
+    pub(super) fn global(
         &mut self,
         key: CalleeKey,
         package: &Package,

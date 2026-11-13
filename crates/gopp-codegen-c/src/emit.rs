@@ -315,6 +315,11 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut Stri
     if options.aborts {
         out.push_str("  _gopp_panic_aborts();\n");
     }
+    // The variables of the package get their first values, then its
+    // `init` functions run (INI-1).
+    if let Some(start) = defined(&gopp_mangle::pkg_init_symbol(package)) {
+        let _ = writeln!(out, "  {}();", cx.func_name(start));
+    }
     let mut number = 0;
     while let Some(init) = defined(&gopp_mangle::init_symbol(package, number)) {
         let _ = writeln!(out, "  {}();", cx.func_name(init));

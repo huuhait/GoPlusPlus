@@ -410,6 +410,7 @@ impl Context {
                     | Node::Var { .. }
                     | Node::Closure { .. }
                     | Node::InitFunc { .. }
+                    | Node::PkgInit(_)
             )
     }
 

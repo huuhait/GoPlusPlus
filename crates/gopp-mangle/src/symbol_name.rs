@@ -1226,7 +1226,6 @@ fn only_what_the_mangler_writes_is_a_name() {
         ("_GPTCi", 3),
         ("_GPTCR4mainE1v", 3),
         ("_GPTpF4mainE1f", 3),
-        ("_GPC1_J4mainE", 3),
         ("_GPIiiE", 3),
         ("_GPIN4mainE1TE", 3),
         ("_GPIE", 3),

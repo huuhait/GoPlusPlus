@@ -3845,18 +3845,110 @@ func main() {
 }
 
 #[test]
-fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
-    let (_, messages) = lowered_with(
-        &[(
-            "a.gopp",
-            "package main\n\nvar count = 5\n\nvar name string\n\nfunc main() {}\n",
-        )],
-        usize::MAX,
-    );
-    assert_eq!(
-        messages,
-        ["a.gopp:3:13: not supported yet: a first value of a variable of the package"]
-    );
+fn a_map_of_the_package_is_read_where_no_other_map_was_met() {
+    let text = "package main
+
+var sizes map[string]int
+
+func main() {
+	println(sizes[\"a\"], len(sizes))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        assert!(
+            print_module(&lowered.module).contains("@_gopp_map_"),
+            "{file}"
+        );
+    }
+}
+
+#[test]
+fn the_variables_of_a_package_get_their_first_values_when_it_starts() {
+    let text = "package main
+
+var total = first + second
+
+var first = 1
+
+var second = double(first)
+
+var name, size = named()
+
+var _ = double(size)
+
+var twice = func(n int) int { return double(n) }
+
+var zero int
+
+func double(n int) int { return n * 2 }
+
+func named() (string, int) { return \"n\", total }
+
+func init() { zero = total }
+
+func main() {
+	println(total, name, size, twice(zero))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        // What starts the package calls a function for each step, in
+        // the order of what the values need: `first`, `second`,
+        // `total`, then the others as they are written. A variable
+        // without a first value has no step.
+        let start = module.find("\nfn _GPJ4mainE(").unwrap();
+        let start = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        let calls: Vec<&str> = (start.lines())
+            .filter_map(|line| line.split_once("call const fn @"))
+            .map(|(_, rest)| &rest[..rest.find('(').unwrap()])
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                "_GPC1_J4mainE",
+                "_GPC2_J4mainE",
+                "_GPC3_J4mainE",
+                "_GPC4_J4mainE",
+                "_GPC5_J4mainE",
+                "_GPC6_J4mainE",
+            ],
+            "{file}"
+        );
+        let step = |number: usize| {
+            let start = module.find(&format!("\nfn _GPC{number}_J4mainE(")).unwrap();
+            &module[start..][..module[start..].find("\n}\n").unwrap()]
+        };
+        assert!(
+            step(1).contains("(*_1) = const 1: i64"),
+            "{file}: {}",
+            step(1)
+        );
+        assert!(
+            step(2).contains("@_GPF4mainE6double("),
+            "{file}: {}",
+            step(2)
+        );
+        assert!(step(3).contains("add("), "{file}: {}", step(3));
+        assert!(
+            step(4).contains("@_GPF4mainE5named("),
+            "{file}: {}",
+            step(4)
+        );
+        // The function literal of a first value is that of its
+        // variable.
+        assert!(
+            step(6).contains("@_GPC1_R4mainE5twice"),
+            "{file}: {}",
+            step(6)
+        );
+        if file == "a.gopp" {
+            insta::assert_snapshot!(format!("{start}\n}}\n{}\n}}\n{}\n}}", step(4), step(5)));
+        }
+    }
 }
 
 #[test]
@@ -3996,7 +4088,9 @@ func f(xs []int, s Shape, name string) (int, string) {
 /// A package of `count` functions that call one another, with types of
 /// their own, strings, a global, and one thing that is not supported.
 fn many_functions(count: usize) -> String {
-    let mut text = "package main\n\nvar total int\n\ntype Pair struct{ a, b int }\n\n\
+    let mut text = "package main\n\nvar total = first(nil, 3) + len(twice(4))\n\n\
+                    var scaled = func(n int) int { return n * total }\n\n\
+                    type Pair struct{ a, b int }\n\n\
                     type Sized interface{ Size() int }\n\n\
                     func (p Pair) Size() int { return p.a + p.b }\n\n\
                     func first[T Clone](xs []T, or T) T {\n\tif len(xs) > 0 {\n\t\treturn xs[0]\n\t}\n\t\
@@ -4040,7 +4134,7 @@ func f{at}(n int, p Pair) (int, string) {{
 	total += next(n)
 	total += len(twice(l)) + first([]int{{n}}, {at}) + len(twice(p))
 	total += int(Cell[Local]{{v: l}}.get().v) + Cell[Pair]{{v: p}}.get().a
-	total += wrap(l) + wrap(n) + Cell[Pair]{{v: p}}.with(l)
+	total += wrap(l) + wrap(n) + Cell[Pair]{{v: p}}.with(l) + scaled({at})
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}
@@ -4348,6 +4442,33 @@ fn the_steps_grow_with_the_instances_of_generic_functions() {
             "{}\n{all}",
             function(&format!("\tx += h{}(x)\n", n - 1))
         ))
+    });
+}
+
+/// Many variables of a package with a first value: each needs the one
+/// before it, each needs the one after it, and each has a function
+/// literal.
+#[test]
+fn the_steps_grow_with_the_first_values_of_the_variables_of_a_package() {
+    let sizes = [100, 200, 400, 800];
+    let package = |vars: String| format!("{}\n{vars}", function(""));
+    assert_near_linear(&sizes, |n| {
+        let vars: String = (1..n)
+            .map(|at| format!("var v{at} = v{} + g()\n\n", at - 1))
+            .collect();
+        steps_of(&package(format!("var v0 = 1\n\n{vars}")))
+    });
+    assert_near_linear(&sizes, |n| {
+        let vars: String = (0..n)
+            .map(|at| format!("var v{at} = v{} + g()\n\n", at + 1))
+            .collect();
+        steps_of(&package(format!("{vars}var v{n} = 1\n")))
+    });
+    assert_near_linear(&sizes, |n| {
+        let vars: String = (0..n)
+            .map(|at| format!("var f{at} = func(n int) int {{ return n + {at} + g() }}\n\n"))
+            .collect();
+        steps_of(&package(vars))
     });
 }
 

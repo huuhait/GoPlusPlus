@@ -1,0 +1,24 @@
+// exit: 2
+package main
+
+var seen = note("first")
+
+var broken = must(0)
+
+var never = note("never")
+
+func note(text string) string {
+	println(text)
+	return text
+}
+
+func must(n int) int {
+	if n == 0 {
+		panic("no value for broken")
+	}
+	return n
+}
+
+func init() { println("no init function runs") }
+
+func main() { println("main does not run", seen, broken, never) }

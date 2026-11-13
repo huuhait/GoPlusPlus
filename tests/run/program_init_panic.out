@@ -1,0 +1,10 @@
+first
+panic: no value for broken
+
+goroutine 1 [running]:
+main.must()
+	+0x?
+main.init.func2()
+	+0x?
+main.init()
+	+0x?
