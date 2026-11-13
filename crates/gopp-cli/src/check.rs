@@ -3,40 +3,22 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use gopp_diag::{Diagnostic, Severity, Sink, render_json, render_text};
+use gopp_sema::info_text;
 use gopp_sema::types::Types;
-use gopp_sema::{Package, PackageLoader, Unit, check, info_text};
 use gopp_span::{SourceFile, SourceMap, is_source_path};
 use gopp_syntax::ast::File;
-use gopp_syntax::parser::parse;
 use lasso::ThreadedRodeo;
 use rayon::prelude::*;
 
 use crate::parse::MAX_DIAGNOSTICS;
-use crate::{EXIT_ERRORS, exit_code};
+use crate::{EXIT_ERRORS, exit_code, packages};
 
 /// With `--json` every diagnostic is wanted.
 const MAX_JSON_DIAGNOSTICS: usize = 10_000;
-
-/// The files of one package, parsed.
-pub(crate) struct Parsed {
-    pub path: String,
-    pub files: Vec<(File, Arc<SourceFile>)>,
-}
-
-/// Finds the packages that a package imports: each is a stand-in whose
-/// names are all taken to exist, until packages are built and loaded.
-pub(crate) struct Imports;
-
-impl PackageLoader for Imports {
-    fn load(&self, path: &str) -> Result<Arc<Package>, String> {
-        Ok(Arc::new(Package::fake(path)))
-    }
-}
 
 pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
     let sources = SourceMap::new();
@@ -56,38 +38,28 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
             }
         }
     }
-    // Each package is parsed and checked on its own, with a copy of the
-    // type table to itself; what it says is printed in the order of the
-    // arguments.
-    let sinks: Vec<Sink> = groups.iter().map(|_| Sink::new(cap)).collect();
-    let loaded: Vec<Result<Parsed, String>> = groups
-        .par_iter()
-        .zip(&sinks)
-        .map(|((path, files), sink)| parse_package(path, files, &sources, &names, sink))
-        .collect();
-    let mut parsed = Vec::new();
-    for package in loaded {
-        match package {
-            Ok(package) => parsed.push(package),
-            Err(message) => {
-                eprintln!("error: {message}");
-                return ExitCode::from(EXIT_ERRORS);
-            }
+    let target = match packages::target(None) {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::from(EXIT_ERRORS);
         }
-    }
+    };
+    let (roots, cx) = (packages::roots(), packages::build_context(target));
+    // Each package is loaded and checked on its own, with the packages
+    // that it imports and a copy of the type table to itself; what it
+    // says is printed in the order of the arguments.
     let types = Types::new(&names);
-    let results: Vec<(String, Vec<Diagnostic>)> = parsed
-        .par_iter()
-        .zip(sinks)
-        .map(|(package, sink)| {
-            let units: Vec<Unit> = package
-                .files
-                .iter()
-                .map(|(file, source)| Unit { file, source })
-                .collect();
-            let types = types.fork();
-            let checked = check(&package.path, &units, &Imports, &names, &types, &sink);
-            let files: Vec<(&File, &SourceFile)> = package
+    let checked = |(name, files): &(String, Vec<PathBuf>)| {
+        let sink = Sink::new(cap);
+        let path = packages::import_path(name, files, &roots);
+        let graph = gopp_build::load((&path, files), &roots, &cx, &sources, &names, &sink)?;
+        let types = types.fork();
+        let all = packages::checked(graph, &names, &types, &sink);
+        let mut text = String::new();
+        let last = all.len() - 1;
+        for (at, (parsed, package)) in all.iter().enumerate() {
+            let files: Vec<(&File, &SourceFile)> = parsed
                 .files
                 .iter()
                 .map(|(file, source)| (file, &**source))
@@ -96,7 +68,7 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
             // error are held to their bounds, as a build holds them.
             if sink.is_empty() {
                 let accepted = gopp_gir::Checked {
-                    package: &checked,
+                    package,
                     files: &files,
                     types: &types,
                     names: &names,
@@ -104,13 +76,21 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
                 };
                 gopp_gir::check_instances(&accepted, &sink);
             }
-            let text = match info {
-                true => info_text(&checked, &files, &types, &names),
-                false => String::new(),
-            };
-            (text, sink.finish())
-        })
-        .collect();
+            if info && at == last {
+                text = info_text(package, &files, &types, &names);
+            }
+        }
+        Ok((text, sink.finish()))
+    };
+    let results: Result<Vec<(String, Vec<Diagnostic>)>, String> =
+        groups.par_iter().map(checked).collect();
+    let results = match results {
+        Ok(results) => results,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_ERRORS);
+        }
+    };
     let color = io::stderr().is_terminal();
     let mut failed = false;
     for (text, diagnostics) in results {
@@ -162,32 +142,4 @@ pub(crate) fn grouped(paths: &[PathBuf]) -> Vec<Result<(String, Vec<PathBuf>), S
         groups.push(Ok(("command-line-arguments".to_owned(), loose)));
     }
     groups
-}
-
-pub(crate) fn parse_package(
-    path: &str,
-    files: &[PathBuf],
-    sources: &SourceMap,
-    names: &ThreadedRodeo,
-    sink: &Sink,
-) -> Result<Parsed, String> {
-    let mut parsed = Vec::new();
-    for file in files {
-        let source = load(file)?;
-        let id = sources.add(source);
-        let source = sources.file(id);
-        parsed.push((parse(id, &source, names, sink), source));
-    }
-    Ok(Parsed {
-        path: path.to_owned(),
-        files: parsed,
-    })
-}
-
-fn load(path: &Path) -> Result<SourceFile, String> {
-    if !is_source_path(path) {
-        return Err(format!("{}: not a .gopp file", path.display()));
-    }
-    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    SourceFile::from_bytes(path.to_owned(), &bytes).map_err(|error| error.to_string())
 }

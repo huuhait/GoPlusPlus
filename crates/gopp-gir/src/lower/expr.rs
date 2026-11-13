@@ -729,6 +729,7 @@ impl<'a> FuncCx<'a, '_> {
                     link: Linkage::External,
                     mutable: true,
                     parts: Vec::new(),
+                    defined: std::ptr::eq(package, self.shared.package),
                 };
                 let id = self.b.module().globals.alloc(global);
                 self.memo.globals.insert(symbol, id);

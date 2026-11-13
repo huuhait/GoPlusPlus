@@ -74,6 +74,7 @@ fn base() -> Module {
         link: Linkage::Internal,
         mutable: true,
         parts: Vec::new(),
+        defined: true,
     });
     let ext = declared(&mut module, "p.ext", &[int64], int64)
         .finish()
@@ -424,6 +425,7 @@ fn global(module: &mut Module, name: &str, ty: TypeId) {
         link: Linkage::Internal,
         mutable: false,
         parts: Vec::new(),
+        defined: true,
     });
 }
 
@@ -438,6 +440,7 @@ fn data(module: &mut Module, parts: fn(TypeId, TypeId) -> Vec<Constant>) {
         link: Linkage::Internal,
         mutable: false,
         parts: parts(int, TypeInterner::BOOL),
+        defined: true,
     });
 }
 

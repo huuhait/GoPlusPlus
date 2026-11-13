@@ -15,9 +15,13 @@ pub fn print_module(module: &Module) -> String {
     for (_, global) in module.globals.iter() {
         let kind = if global.mutable { "var" } else { "const" };
         let ty = module.types.display(global.ty);
+        let declared = match global.defined {
+            true => "",
+            false => "declare ",
+        };
         let _ = writeln!(
             out,
-            "\nglobal {kind} @{}: {ty} [{}]",
+            "\n{declared}global {kind} @{}: {ty} [{}]",
             global.name,
             link(global.link)
         );

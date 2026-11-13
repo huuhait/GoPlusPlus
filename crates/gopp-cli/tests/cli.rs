@@ -1165,3 +1165,188 @@ fn build_links_the_runtime_which_ends_a_program_that_fails_a_check() {
         "error: no folder for the cache: GOPPCACHE says where it is\n"
     );
 }
+
+/// Writes the packages under `root/std` in `dir`, each file with its
+/// path, and gives the root: what `GOPPROOT` names for the test.
+fn library(dir: &TempDir, files: &[(&str, &str)]) -> PathBuf {
+    let root = dir.path().join("root");
+    for (name, text) in files {
+        let path = root.join("std").join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    root
+}
+
+const BASE: &str = "package base
+
+var Scale = start()
+
+func start() int {
+	println(\"base: Scale gets its value\")
+	return 3
+}
+
+func init() { println(\"base: init\") }
+
+func Double(n int) int { return n * 2 }
+
+func At(xs []int, at int) int { return xs[at] }
+";
+
+const SHAPES: &str = "package shapes
+
+import \"base\"
+
+const Sides = 4
+
+type Sized interface{ Area() int }
+
+type Square struct{ Side int }
+
+func (s Square) Area() int { return s.Side * s.Side * base.Scale }
+
+func (s *Square) Grow(by int) { s.Side += by }
+
+var Count = base.Double(2)
+
+func init() { println(\"shapes: init, Count is\", Count) }
+
+func New(side int) Square { return Square{side} }
+";
+
+#[test]
+fn check_holds_a_package_to_the_packages_that_it_imports() {
+    let dir = TempDir::new().unwrap();
+    let files = [
+        ("base/base.gopp", BASE),
+        ("shapes/shapes.gopp", SHAPES),
+        (
+            "broken/b.gopp",
+            "package broken\n\nfunc F() int { return \"no\" }\n",
+        ),
+        (
+            "ring/a/a.gopp",
+            "package a\n\nimport \"ring/b\"\n\nvar A = b.B\n",
+        ),
+        (
+            "ring/b/b.gopp",
+            "package b\n\nimport \"ring/a\"\n\nvar B = a.A\n",
+        ),
+    ];
+    let root = library(&dir, &files);
+    let checked = |text: &str| {
+        let file = write_source(&dir, "main.gopp", text);
+        let output = run(gopp().env("GOPPROOT", &root).arg("check").arg(&file));
+        let said = stderr(&output).replace('\\', "/");
+        let errors: Vec<String> = said
+            .lines()
+            .filter(|line| line.contains(": error["))
+            .map(|line| {
+                line[line.find("/main.gopp:").or(line.find("/std/")).unwrap() + 1..].to_owned()
+            })
+            .collect();
+        (errors, output.status.code())
+    };
+    let good = "package main\n\nimport (\n\t\"base\"\n\t\"shapes\"\n)\n\n\
+                func main() {\n\ts := shapes.New(base.Double(shapes.Sides))\n\ts.Grow(base.Scale)\n\t\
+                var sized shapes.Sized = s\n\tprintln(sized.Area(), shapes.Count)\n}\n";
+    assert_eq!(checked(good), (vec![], Some(0)));
+    // The names, the types and what is exported are those of the package.
+    let bad = "package main\n\nimport \"base\"\n\n\
+               func main() { println(base.Double(\"x\"), base.start(), base.Missing) }\n";
+    let expected = [
+        "main.gopp:5:35: error[E0206]: cannot use \"x\" (untyped string constant) as int value in \
+         argument to base.Double",
+        "main.gopp:5:46: error[E0127]: name start not exported by package base",
+        "main.gopp:5:60: error[E0111]: undefined: base.Missing",
+    ];
+    assert_eq!(
+        checked(bad),
+        (expected.map(str::to_owned).to_vec(), Some(1))
+    );
+    // What is wrong in a package that is imported is said where it is.
+    let imports_broken =
+        "package main\n\nimport \"broken\"\n\nfunc main() { println(broken.F()) }\n";
+    let expected = "std/broken/b.gopp:3:23: error[E0206]: cannot use \"no\" (untyped string \
+                    constant) as int value in return statement";
+    assert_eq!(
+        checked(imports_broken),
+        (vec![expected.to_owned()], Some(1))
+    );
+    let cycle = "package main\n\nimport \"ring/a\"\n\nfunc main() { println(a.A) }\n";
+    let (errors, status) = checked(cycle);
+    let expected = "std/ring/b/b.gopp:3:8: error[E0106]: import cycle not allowed: ring/a imports \
+                    ring/b imports ring/a";
+    assert_eq!(
+        (errors.first().map(String::as_str), status),
+        (Some(expected), Some(1))
+    );
+}
+
+// rule: INI-1
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
+fn a_program_is_built_with_the_packages_that_it_imports() {
+    let dir = TempDir::new().unwrap();
+    let files = [
+        ("base/base.gopp", BASE),
+        ("shapes/shapes.gopp", SHAPES),
+        (
+            "consts/c.gopp",
+            "package consts\n\nconst Answer = 42\n\ntype Pair struct{ A, B int }\n",
+        ),
+    ];
+    let root = library(&dir, &files);
+    let text = "package main
+
+import (
+	\"base\"
+	\"consts\"
+	\"shapes\"
+)
+
+var first = shapes.New(base.Scale)
+
+func init() { println(\"main: init\") }
+
+func area(s shapes.Sized) int { return s.Area() }
+
+func main() {
+	s := shapes.New(2)
+	s.Grow(1)
+	p := consts.Pair{1, consts.Answer}
+	println(first.Area(), area(s), s.Side, shapes.Count, base.Double(21), p.A+p.B)
+	var held any = s
+	if sized, ok := held.(shapes.Sized); ok {
+		println(sized.Area())
+	}
+	println(base.At([]int{1}, shapes.Sides))
+}
+";
+    let file = write_source(&dir, "main.gopp", text);
+    let program = dir.path().join("program");
+    let mut build = gopp();
+    build.env("GOPPROOT", &root).arg("build").arg("-o");
+    let built = run_beside(build.arg(&program).arg(&file));
+    assert_eq!(stderr(&built), "");
+    assert_eq!(built.status.code(), Some(0));
+    let ran = run_beside(&mut Command::new(&program));
+    // Each package starts after those that it imports: its variables,
+    // then its `init` functions.
+    let written = stderr(&ran);
+    let expected = "base: Scale gets its value\nbase: init\nshapes: init, Count is 4\n\
+                    main: init\n27 27 3 4 42 43\n27\n\
+                    panic: runtime error: index out of range [4] with length 1\n";
+    assert_eq!(before_the_trace(&written), expected);
+    assert_eq!(ran.status.code(), Some(2));
+    // The trace names the function of the other package.
+    let names: Vec<&str> = written
+        .lines()
+        .filter(|line| line.ends_with("()"))
+        .collect();
+    assert_eq!(names, ["base.At()", "main.main()"], "{written}");
+}

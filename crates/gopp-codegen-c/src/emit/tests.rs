@@ -63,11 +63,12 @@ fn module(name: &str, text: &str) -> Module {
     module
 }
 
-fn options(entry: Entry) -> EmitOptions {
+fn options(entry: Entry) -> EmitOptions<'static> {
     let target = TargetSpec::named("linux/amd64").unwrap();
     EmitOptions {
         layout: target.layout(),
         entry,
+        imports: &[],
         swiftcall: target.swiftcall,
         aborts: false,
     }
@@ -210,6 +211,36 @@ fn a_unit_starts_its_program_as_it_is_built_for() {
             .replace("(argc, argv)", "(0, 0)"),
         loaded
     );
+}
+
+// rule: INI-1
+#[test]
+fn a_program_starts_the_packages_that_it_imports_in_their_order() {
+    let one = module("a.gopp", "package main\n\nvar n = 1\n\nfunc main() {}\n");
+    let imports = ["base".to_owned(), "text/tab".to_owned()];
+    let with_imports = EmitOptions {
+        imports: &imports,
+        ..options(Entry::Main)
+    };
+    let program = emit_c23(&one, &with_imports).unwrap();
+    let declared = "void gopp_start_0(void) __asm__(\"gopp.start.base\");\n\
+                    void gopp_start_1(void) __asm__(\"gopp.start.text/tab\");\n";
+    assert!(program.contains(declared), "{program}");
+    // The table of names, the packages, then the package itself.
+    let started = "  _gopp_rt_funcs(&gopp_table);\n  gopp_start_0();\n  gopp_start_1();\n  gopp_f";
+    assert!(program.contains(started), "{program}");
+
+    // A package that is imported has its start under the name that the
+    // program calls, and no `main`.
+    let package = emit_c23(&one, &options(Entry::Package)).unwrap();
+    let start = "void gopp_start(void) __asm__(\"gopp.start.main\");\n\
+                 void gopp_start(void) {\n  _gopp_rt_funcs(&gopp_table);\n  gopp_f";
+    assert!(package.contains(start), "{package}");
+    assert!(!package.contains("int main(") && !package.contains("gopp_start_0"));
+    // One without a function has a table without names.
+    let empty = module("a.gopp", "package consts\n\nconst Answer = 42\n");
+    let package = emit_c23(&empty, &options(Entry::Package)).unwrap();
+    assert!(package.contains("void gopp_start(void) {\n  _gopp_rt_funcs(&gopp_table);\n}\n"));
 }
 
 #[test]

@@ -92,6 +92,8 @@ codes! {
     73 NoteGoppModLine "note_gopp_mod_line",
     79 StmtOutsideFunc "err_stmt_outside_func",
     82 ExpectedLbraceAfter "err_expected_lbrace_after",
+    104 LoadNoSourceFiles "err_load_no_go_files",
+    106 LoadImportCycle "err_load_import_cycle",
     108 BadBuildConstraint "err_load_bad_build_constraint",
     109 BadImportPath "err_load_bad_import_path",
     111 Undefined "err_undefined",

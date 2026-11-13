@@ -26,6 +26,9 @@ use rayon::prelude::*;
 pub enum Entry {
     /// None: the unit is no program.
     None,
+    /// `gopp.start.<import path>`, for a package that a program imports:
+    /// the program calls it once, before anything of the package is used.
+    Package,
     /// `int main(int, char **)`, for an executable.
     Main,
     /// `int gopp_entry(void)`, for a shared module that the test runner
@@ -35,9 +38,13 @@ pub enum Entry {
 
 /// What a unit is written for.
 #[derive(Clone, Copy, Debug)]
-pub struct EmitOptions {
+pub struct EmitOptions<'a> {
     pub layout: TargetLayout,
     pub entry: Entry,
+    /// The import paths of the packages that the program needs, each
+    /// after those that it imports: the program starts them in this
+    /// order before its own package (INI-1).
+    pub imports: &'a [String],
     /// Whether Clang has `swiftcall` for the target: the convention of
     /// the Go++ functions then (ADR-0030).
     pub swiftcall: bool,
@@ -65,7 +72,7 @@ fn within(func: &Option<String>) -> String {
 }
 
 /// The module as one unit of C.
-pub fn emit_c23(module: &Module, options: &EmitOptions) -> Result<String, EmitError> {
+pub fn emit_c23(module: &Module, options: &EmitOptions<'_>) -> Result<String, EmitError> {
     emit_counted(module, options).map(|(text, _)| text)
 }
 
@@ -207,9 +214,13 @@ pub(crate) fn emit_counted(
         if cx.empty(global.ty) {
             continue;
         }
+        let declared = match global.defined {
+            true => "",
+            false => "extern ",
+        };
         let _ = writeln!(
             out,
-            "{}{}{} {} __asm__(\"{}\");",
+            "{declared}{}{}{} {} __asm__(\"{}\");",
             linkage(global.link),
             constness(global),
             cx.spelled(global.ty),
@@ -275,10 +286,18 @@ pub(crate) fn constness(global: &Global) -> &'static str {
 /// How long the name of a function in a trace may be.
 const MAX_TRACE_NAME: usize = 256;
 
+/// What the function that starts the package at the import path is
+/// called for the linker.
+fn start_symbol(path: &str) -> String {
+    format!("gopp.start.{}", quoted(path.as_bytes()))
+}
+
 /// The start of the program: the runtime is told that the program
-/// starts and what its functions are called in a trace, then the `init`
-/// functions of the package run in their order, then its `main`. A
-/// package without a `main` gets none.
+/// starts and what its functions are called in a trace, the packages
+/// that it imports are started, then the variables of the package get
+/// their first values and its `init` functions run in their order, then
+/// its `main`. A program without a `main` gets none. The start of a
+/// package that is imported is the part for the package alone.
 fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut String) {
     let kind = options.entry;
     let package = &cx.module.name;
@@ -286,9 +305,10 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut Stri
         let found = funcs.iter().position(|func| func.name() == name);
         found.filter(|&at| !funcs[at].is_declaration())
     };
-    let Some(main) = defined(&gopp_mangle::func_symbol(package, "main")) else {
+    let main = defined(&gopp_mangle::func_symbol(package, "main"));
+    if kind != Entry::Package && main.is_none() {
         return;
-    };
+    }
     out.push_str("\nstatic const gopp_func_name gopp_funcs[] = {\n");
     let mut count = 0;
     for (at, func) in funcs.iter().enumerate() {
@@ -307,13 +327,26 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut Stri
         out,
         "}};\nstatic gopp_func_table gopp_table = {{gopp_funcs, {count}, 0}};"
     );
-    out.push_str(match kind {
-        Entry::Module => "\nint gopp_entry(void) {\n  _gopp_rt_init(0, 0);\n",
-        _ => "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n",
-    });
-    out.push_str("  _gopp_rt_funcs(&gopp_table);\n");
-    if options.aborts {
-        out.push_str("  _gopp_panic_aborts();\n");
+    if kind == Entry::Package {
+        let symbol = start_symbol(package);
+        let _ = writeln!(out, "\nvoid gopp_start(void) __asm__(\"{symbol}\");");
+        out.push_str("void gopp_start(void) {\n  _gopp_rt_funcs(&gopp_table);\n");
+    } else {
+        for (at, import) in options.imports.iter().enumerate() {
+            let symbol = start_symbol(import);
+            let _ = writeln!(out, "void gopp_start_{at}(void) __asm__(\"{symbol}\");");
+        }
+        out.push_str(match kind {
+            Entry::Module => "\nint gopp_entry(void) {\n  _gopp_rt_init(0, 0);\n",
+            _ => "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n",
+        });
+        out.push_str("  _gopp_rt_funcs(&gopp_table);\n");
+        if options.aborts {
+            out.push_str("  _gopp_panic_aborts();\n");
+        }
+        for at in 0..options.imports.len() {
+            let _ = writeln!(out, "  gopp_start_{at}();");
+        }
     }
     // The variables of the package get their first values, then its
     // `init` functions run (INI-1).
@@ -325,7 +358,14 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut Stri
         let _ = writeln!(out, "  {}();", cx.func_name(init));
         number += 1;
     }
-    let _ = writeln!(out, "  {}();\n  return 0;\n}}", cx.func_name(main));
+    match main.filter(|_| kind != Entry::Package) {
+        Some(main) => drop(writeln!(
+            out,
+            "  {}();\n  return 0;\n}}",
+            cx.func_name(main)
+        )),
+        None => out.push_str("}\n"),
+    }
 }
 
 /// How a Go++ function is called, and how it gets the environment of a

@@ -364,6 +364,15 @@ dependencies = [
 [[package]]
 name = "gopp-build"
 version = "0.1.0"
+dependencies = [
+ "gopp-diag",
+ "gopp-span",
+ "gopp-syntax",
+ "lasso",
+ "rayon",
+ "rustc-hash",
+ "tempfile",
+]
 
 [[package]]
 name = "gopp-cimport"
@@ -374,6 +383,7 @@ name = "gopp-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "gopp-build",
  "gopp-codegen-c",
  "gopp-diag",
  "gopp-gir",
@@ -388,6 +398,7 @@ dependencies = [
  "libloading",
  "object 0.41.0",
  "rayon",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",

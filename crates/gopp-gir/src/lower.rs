@@ -605,6 +605,26 @@ impl<'a> Memo<'a> {
     }
 }
 
+/// The packages that the package imports, and those that they import,
+/// each once.
+fn imported(package: &Package) -> Vec<&Package> {
+    let mut found: Vec<&Package> = Vec::new();
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    let mut next = vec![package];
+    while let Some(package) = next.pop() {
+        for object in &package.objects {
+            let ObjKind::Import { package: of, .. } = &object.kind else {
+                continue;
+            };
+            if seen.insert(&of.path) {
+                found.push(of);
+                next.push(of);
+            }
+        }
+    }
+    found
+}
+
 impl<'a> Shared<'a> {
     /// What every run reads, without what each function does to its
     /// parameters and its variables (`facts`).
@@ -725,6 +745,39 @@ impl<'a> Shared<'a> {
             shared
                 .locals
                 .extend(declared.map(|(id, ordinal)| (id, (at, ordinal))));
+        }
+        // The methods of the types of the packages that are imported:
+        // the units of those packages have them.
+        for package in imported(shared.package) {
+            for object in &package.objects {
+                let CheckedType::Named { id, args } = &*shared.types.get(object.ty) else {
+                    continue;
+                };
+                if !matches!(object.kind, ObjKind::Type) || !args.is_empty() {
+                    continue;
+                }
+                for declared in shared.types.declared_methods(*id) {
+                    let name = declared.method.name;
+                    let entity = Entity::Method {
+                        receiver: object.ty,
+                        name,
+                    };
+                    let generic = !declared.receiver_params.is_empty();
+                    let Some(node) = namer.entity(entity).ok().filter(|_| !generic) else {
+                        continue;
+                    };
+                    let receiver = match declared.pointer_receiver {
+                        true => shared.types.pointer(object.ty),
+                        false => object.ty,
+                    };
+                    let method = Method {
+                        symbol: namer.symbol(node),
+                        receiver,
+                        sig: declared.method.sig,
+                    };
+                    shared.methods.entry((*id, name)).or_insert(method);
+                }
+            }
         }
         shared.instantiate(&generics, &methods, &own);
         shared.number_literals();
@@ -1706,6 +1759,7 @@ impl<'a> Shared<'a> {
                     link: Linkage::External,
                     mutable: true,
                     parts: Vec::new(),
+                    defined: true,
                 });
             }
         }

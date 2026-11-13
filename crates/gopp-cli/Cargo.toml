@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+gopp-build = { path = "../gopp-build" }
 gopp-codegen-c = { path = "../gopp-codegen-c" }
 gopp-diag = { path = "../gopp-diag" }
 gopp-gir = { path = "../gopp-gir" }
@@ -21,6 +22,7 @@ gopp-syntax = { path = "../gopp-syntax" }
 gopp-target = { path = "../gopp-target" }
 lasso.workspace = true
 rayon.workspace = true
+rustc-hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

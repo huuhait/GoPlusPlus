@@ -71,6 +71,10 @@ pub struct Global {
     /// of its type, in the order of `TypeInterner::leaves`. Empty for
     /// a global that starts as zeros.
     pub parts: Vec<Constant>,
+    /// Whether the module has the global itself. One that it only names
+    /// is a variable of another package, which the module of that
+    /// package has.
+    pub defined: bool,
 }
 
 /// A function: with blocks a definition, without a declaration. Its body

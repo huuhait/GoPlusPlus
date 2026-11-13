@@ -257,6 +257,7 @@ impl FuncCx<'_, '_> {
             link: Linkage::LinkOnceOdr,
             mutable: false,
             parts: Vec::new(),
+            defined: true,
         });
         let int = |value: u64| Constant {
             kind: ConstantKind::Int(value),
@@ -929,6 +930,7 @@ impl<'a> FuncCx<'a, '_> {
             link: Linkage::LinkOnceOdr,
             mutable: false,
             parts,
+            defined: true,
         });
         self.memo.globals.insert(symbol, id);
         Ok(Ok(id))
@@ -1085,6 +1087,7 @@ impl<'a> FuncCx<'a, '_> {
             link: Linkage::LinkOnceOdr,
             mutable: false,
             parts,
+            defined: true,
         });
         self.memo.globals.insert(symbol, id);
         id

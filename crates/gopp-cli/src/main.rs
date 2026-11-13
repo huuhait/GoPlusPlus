@@ -6,6 +6,7 @@ mod check;
 mod demangle;
 mod diff;
 mod fmt;
+mod packages;
 mod parse;
 mod runner;
 

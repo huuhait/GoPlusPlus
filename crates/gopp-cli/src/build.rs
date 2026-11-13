@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output};
 use gopp_codegen_c::runtime::{self, Form};
@@ -13,16 +14,17 @@ use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
 use gopp_diag::{Code, Diagnostic, Severity, Sink, render_text};
 use gopp_gir::{Checked, Module, lower_package, print_module};
+use gopp_sema::Package;
 use gopp_sema::types::Types;
-use gopp_sema::{Unit, check};
 use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::ast::File;
 use gopp_target::{Os, TargetSpec};
 use lasso::ThreadedRodeo;
+use rayon::prelude::*;
 
-use crate::check::{Imports, grouped, parse_package};
+use crate::check::grouped;
 use crate::parse::MAX_DIAGNOSTICS;
-use crate::{EXIT_ERRORS, EmitBuilt};
+use crate::{EXIT_ERRORS, EmitBuilt, packages};
 
 pub struct Options {
     pub target: Option<String>,
@@ -61,7 +63,7 @@ fn reported(
     failed
 }
 
-/// A package that was checked and lowered.
+/// A package that was checked and lowered, with those that it imports.
 pub(crate) struct Lowered {
     pub module: Module,
     /// Whether it is the package `main`.
@@ -69,11 +71,15 @@ pub(crate) struct Lowered {
     /// What the package is called for what is built of it: its
     /// directory, or its first file without the extension.
     pub name: OsString,
+    /// The packages that it needs, each after those that it imports,
+    /// with their import paths.
+    pub imports: Vec<(String, Module)>,
 }
 
-/// Checks and lowers the one package that `paths` name, for the target.
-/// What is said about it is added to `said` as it is printed; there is
-/// no package if an error is among it.
+/// Checks and lowers the one package that `paths` name, and the
+/// packages that it imports, for the target. What is said about them is
+/// added to `said` as it is printed; there is no package if an error is
+/// among it.
 pub(crate) fn lowered(
     paths: &[PathBuf],
     (target, aborts): (&'static TargetSpec, bool),
@@ -85,7 +91,7 @@ pub(crate) fn lowered(
         None
     };
     let mut groups = grouped(paths);
-    let (path, files) = match (groups.pop(), groups.is_empty()) {
+    let (name, files) = match (groups.pop(), groups.is_empty()) {
         (Some(Ok(group)), true) => group,
         (Some(Err(message)), true) => return stopped(&message),
         _ => return stopped(&"gopp build takes one package: a directory, or files"),
@@ -93,68 +99,64 @@ pub(crate) fn lowered(
     let sources = SourceMap::new();
     let names = ThreadedRodeo::new();
     let sink = Sink::new(MAX_DIAGNOSTICS);
-    let parsed = match parse_package(&path, &files, &sources, &names, &sink) {
-        Ok(parsed) => parsed,
+    let (roots, cx) = (packages::roots(), packages::build_context(target));
+    let path = packages::import_path(&name, &files, &roots);
+    let graph = match gopp_build::load((&path, &files), &roots, &cx, &sources, &names, &sink) {
+        Ok(graph) => graph,
         Err(message) => return stopped(&message),
     };
     let types = Types::new(&names);
-    let loader = Imports;
-    let units: Vec<Unit> = parsed
-        .files
-        .iter()
-        .map(|(file, source)| Unit { file, source })
-        .collect();
-    // The package `main` has that path in its symbols, wherever its
-    // files are, as in Go.
-    let named_main = units.iter().any(|unit| {
-        let name = unit.file.package;
-        name.is_some_and(|name| names.resolve(&name.name) == "main")
-    });
-    let path = match named_main {
-        true => "main",
-        false => &parsed.path,
-    };
-    let package = check(path, &units, &loader, &names, &types, &sink);
+    let all = packages::checked(graph, &names, &types, &sink);
     if reported(sink.finish(), &sources, color, said) {
         return None;
     }
-    let pairs: Vec<(&File, &SourceFile)> = parsed
-        .files
-        .iter()
-        .map(|(file, source)| (file, &**source))
-        .collect();
-    let checked = Checked {
-        package: &package,
-        files: &pairs,
-        types: &types,
-        names: &names,
-        aborts,
+    // The packages are lowered side by side; what is said about each is
+    // printed in the order of the packages.
+    let lower = |(parsed, package): &(gopp_build::Parsed, Arc<Package>)| {
+        let pairs: Vec<(&File, &SourceFile)> = parsed
+            .files
+            .iter()
+            .map(|(file, source)| (file, &**source))
+            .collect();
+        let checked = Checked {
+            package,
+            files: &pairs,
+            types: &types,
+            names: &names,
+            aborts,
+        };
+        let sink = Sink::new(MAX_DIAGNOSTICS);
+        let module = lower_package(&checked, target.layout(), &sink);
+        (module, sink.finish())
     };
-    let sink = Sink::new(MAX_DIAGNOSTICS);
-    let module = lower_package(&checked, target.layout(), &sink);
-    if reported(sink.finish(), &sources, color, said) {
+    let made: Vec<(Module, Vec<Diagnostic>)> = all.par_iter().map(lower).collect();
+    let mut failed = false;
+    let mut modules = Vec::with_capacity(made.len());
+    for ((module, diagnostics), (parsed, _)) in made.into_iter().zip(&all) {
+        failed |= reported(diagnostics, &sources, color, said);
+        modules.push((parsed.path.clone(), module));
+    }
+    let (_, module) = modules.pop()?;
+    if failed {
         return None;
     }
     let first = files.first().and_then(|file| file.file_stem());
-    let name = match parsed.path.as_str() {
+    let name = match name.as_str() {
         "command-line-arguments" => first.map_or("a".into(), |stem| stem.to_os_string()),
-        path => path.into(),
+        name => name.into(),
     };
     Some(Lowered {
         module,
-        is_main: package.name == "main",
+        is_main: all
+            .last()
+            .is_some_and(|(_, package)| package.name == "main"),
         name,
+        imports: modules,
     })
 }
 
 pub fn run(options: &Options) -> ExitCode {
-    let goppos = env::var("GOPPOS").ok();
-    let gopparch = env::var("GOPPARCH").ok();
-    let selected = TargetSpec::selected(
-        options.target.as_deref(),
-        goppos.as_deref(),
-        gopparch.as_deref(),
-    );
+    let selected = packages::target(options.target.as_deref());
     let target = match selected.and_then(TargetSpec::in_this_version) {
         Ok(target) => target,
         Err(error) => return stopped(error),
@@ -171,6 +173,7 @@ pub fn run(options: &Options) -> ExitCode {
         module,
         is_main,
         name,
+        imports,
     }) = lowered
     else {
         return ExitCode::from(EXIT_ERRORS);
@@ -178,12 +181,14 @@ pub fn run(options: &Options) -> ExitCode {
     if options.emit == EmitBuilt::Gir {
         return written(options.output.as_ref(), &print_module(&module));
     }
+    let paths: Vec<String> = imports.iter().map(|(path, _)| path.clone()).collect();
     let emit = EmitOptions {
         layout: target.layout(),
         entry: match is_main {
             true => Entry::Main,
             false => Entry::None,
         },
+        imports: &paths,
         swiftcall: target.swiftcall,
         aborts: options.aborts,
     };
@@ -234,10 +239,44 @@ pub fn run(options: &Options) -> ExitCode {
         }
         _ => Vec::new(),
     };
-    match driver.build(&unit, dir.path(), &output, kind, &runtime) {
+    // An executable is linked with the packages that it imports too,
+    // each a unit of its own.
+    let mut link_with = Vec::new();
+    if kind == Output::Executable {
+        let units = match imported_units(&imports, &emit, dir.path()) {
+            Ok(units) => units,
+            Err(message) => return codegen(message),
+        };
+        link_with = units;
+    }
+    link_with.extend(runtime);
+    match driver.build(&unit, dir.path(), &output, kind, &link_with) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => codegen(error),
     }
+}
+
+/// Writes the unit of C of each imported package to a file of `dir`,
+/// side by side: `import<n>.c`, for the driver to compile with the unit
+/// of the program.
+pub(crate) fn imported_units(
+    imports: &[(String, Module)],
+    of_program: &EmitOptions,
+    dir: &std::path::Path,
+) -> Result<Vec<PathBuf>, String> {
+    let options = EmitOptions {
+        entry: Entry::Package,
+        imports: &[],
+        aborts: false,
+        ..*of_program
+    };
+    let write = |(at, (_, module)): (usize, &(String, Module))| {
+        let unit = emit_c23(module, &options).map_err(|error| error.to_string())?;
+        let file = dir.join(format!("import{at}.c"));
+        fs::write(&file, unit).map_err(|error| format!("{}: {error}", file.display()))?;
+        Ok(file)
+    };
+    imports.par_iter().enumerate().map(write).collect()
 }
 
 /// Where what is built once is kept: what `GOPPCACHE` says, or the

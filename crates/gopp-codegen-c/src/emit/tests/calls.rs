@@ -7,10 +7,11 @@ use std::path::Path;
 
 use super::*;
 
-fn options_for(target: &TargetSpec, entry: Entry) -> EmitOptions {
+fn options_for(target: &TargetSpec, entry: Entry) -> EmitOptions<'static> {
     EmitOptions {
         layout: target.layout(),
         entry,
+        imports: &[],
         swiftcall: target.swiftcall,
         aborts: false,
     }

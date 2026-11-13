@@ -29,7 +29,7 @@ use gopp_target::TargetSpec;
 use rayon::prelude::*;
 
 use self::protocol::{JobResult, JobSpec, Outcome, VERSION, base64, job_of};
-use crate::build::{cache_dir, lowered};
+use crate::build::{cache_dir, imported_units, lowered};
 
 // Only the fast way, which is on Linux, reads all of it.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -154,8 +154,9 @@ impl Run<'_> {
     }
 
     /// The unit of C of a job: its package, lowered, or its one file of
-    /// C after the header of the runtime.
-    fn unit(&self, job: &JobSpec) -> Result<String, String> {
+    /// C after the header of the runtime. The units of the packages that
+    /// it imports are written to `dir`, and are what it is built with.
+    fn unit(&self, job: &JobSpec, dir: &Path) -> Result<(String, Vec<PathBuf>), String> {
         let target = self.driver.target;
         if let [file] = &job.inputs[..]
             && file.extension().is_some_and(|extension| extension == "c")
@@ -168,7 +169,7 @@ impl Run<'_> {
                 true => "\nint main(void) { return gopp_entry(); }\n",
                 false => "",
             };
-            return Ok(format!("{header}\n{text}{start}"));
+            return Ok((format!("{header}\n{text}{start}"), Vec::new()));
         }
         let mut said = String::new();
         let Some(package) = lowered(&job.inputs, (target, false), false, &mut said) else {
@@ -179,17 +180,24 @@ impl Run<'_> {
                 "error: the package is not `main`: there is no program to run\n".to_owned(),
             );
         }
+        let paths: Vec<String> = (package.imports.iter())
+            .map(|(path, _)| path.clone())
+            .collect();
         let options = EmitOptions {
             layout: target.layout(),
             entry: match self.real {
                 true => Entry::Main,
                 false => Entry::Module,
             },
+            imports: &paths,
             swiftcall: target.swiftcall,
             aborts: false,
         };
-        emit_c23(&package.module, &options)
-            .map_err(|error| format!("error[{}]: {error}\n", Code::Codegen))
+        let codegen = |error: String| format!("error[{}]: {error}\n", Code::Codegen);
+        let unit =
+            emit_c23(&package.module, &options).map_err(|error| codegen(error.to_string()))?;
+        let imported = imported_units(&package.imports, &options, dir).map_err(codegen)?;
+        Ok((unit, imported))
     }
 
     /// Builds the program of the job: a module, or an executable.
@@ -207,17 +215,18 @@ impl Run<'_> {
             let message = format!("error: a program for {target} cannot run on this machine\n");
             return Err(failed(message));
         }
-        let unit = self.unit(job).map_err(failed)?;
         let dir = self.dir(at);
         fs::create_dir_all(&dir)
             .map_err(|error| failed(format!("error: {}: {error}\n", dir.display())))?;
+        let (unit, mut link_with) = self.unit(job, &dir).map_err(failed)?;
+        link_with.extend(self.link_with.iter().cloned());
         let (kind, name) = match self.real {
             true => (Output::Executable, "program"),
             false => (Output::Module, "module.so"),
         };
         let program = dir.join(name);
         self.driver
-            .build(&unit, &dir, &program, kind, &self.link_with)
+            .build(&unit, &dir, &program, kind, &link_with)
             .map_err(|error| failed(format!("error[{}]: {error}\n", Code::Codegen)))?;
         Ok(Built {
             at,

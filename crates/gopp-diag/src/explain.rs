@@ -907,6 +907,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Write words joined by `&&`, `||` and `!`, with parentheses.",
             "//go:build linux &&   // error\n//go:build linux && amd64",
         ),
+        LoadNoSourceFiles => (
+            "An imported package has no source file that this build takes: its directory is \
+             empty, or the names and the build conditions of its files leave them all out.",
+            "Add a file for this system, or build for a system that the package has files for.",
+            "// only screen_windows.gopp exists, and the build is for linux\nimport \"screen\" // error",
+        ),
+        LoadImportCycle => (
+            "A package imports itself, directly or through other packages. A package is \
+             started after those that it imports, so there would be no order.",
+            "Move what both sides need into a package that imports neither.",
+            "// package a\nimport \"b\"\n// package b\nimport \"a\" // error",
+        ),
         BadImportPath => (
             "An import path has characters that are not allowed, or is empty.",
             "Fix the path.",
