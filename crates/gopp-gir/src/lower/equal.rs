@@ -61,13 +61,15 @@ impl FuncCx<'_, '_> {
         match &*kind {
             CheckedType::Struct(fields) => {
                 // The parts of the parents come before the fields.
+                // The address of a table is no part of the value.
                 let parents = shared.types.parents(ty);
-                let lead = parents.len() as u32;
+                let table = u32::from(shared.own_table(ty));
+                let lead = table + parents.len() as u32;
                 let named = fields.iter().enumerate();
                 let named = named.filter(|(_, field)| field.name != shared.blank);
                 let own = named.map(|(at, field)| (lead + at as u32, field.ty));
                 let parents = parents.iter().enumerate();
-                let parents = parents.map(|(at, &parent)| (at as u32, parent));
+                let parents = parents.map(|(at, &parent)| (table + at as u32, parent));
                 Ok(Compared::Fields(parents.chain(own).collect()))
             }
             CheckedType::Array { len, elem } => {

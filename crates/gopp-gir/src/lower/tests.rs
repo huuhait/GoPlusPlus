@@ -3713,6 +3713,91 @@ func main() {
     assert!(made.contains(".1.0 = const 2: i64"), "{made}");
 }
 
+// rule: TYP-22, EXP-13, EXP-14
+#[test]
+fn a_method_that_may_be_replaced_is_called_through_the_table_of_its_value() {
+    let text = "package main
+
+type Shape struct{ side int }
+
+@Abstract
+func (s *Shape) Area() int
+
+@Virtual
+func (s *Shape) Kind() int { return 0 }
+
+func (s *Shape) Twice() int { return 2 * s.Area() }
+
+type Tagged struct{ tag int }
+
+@Virtual
+func (t *Tagged) Tag() int { return t.tag }
+
+@Extends(Shape)
+@Extends(Tagged)
+type Square struct{ extra int }
+
+@Override
+func (s *Square) Area() int { return s.side * s.side }
+
+@Override
+func (s *Square) Tag() int { return s.tag + s.extra }
+
+func area(s *Shape) int { return s.Area() }
+
+func tag(t *Tagged) int { return t.Tag() }
+
+func direct(s Square) int { return s.Area() }
+
+func main() {
+	sq := Square{side: 3, tag: 1, extra: 2}
+	println(area(&sq), tag(&sq), sq.Twice(), direct(sq))
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    // The table of the type says that it is at the start of its value,
+    // and has its methods in the order of the first parent: its own
+    // `Area`, and the `Kind` that it did not replace.
+    let table = "global const @_GPTvN4mainE6Square: (i64, fn(*u8) -> i64, fn(*u8) -> i64) \
+                 [linkonce_odr]\n    const 0: i64\n    \
+                 const fn @_GPTt0_M4AreaN4mainE6Square\n    \
+                 const fn @_GPTt0_M4KindN4mainE5Shape\n";
+    assert!(module.contains(table), "{module}");
+    // The part of the second parent has a table of its own: it is 16
+    // bytes into the value, and the method gets the value back.
+    let part = "global const @_GPTsN4mainE6SquareN4mainE6Tagged: (i64, fn(*u8) -> i64) \
+                [linkonce_odr]\n    const -16: i64\n    \
+                const fn @_GPTtn16_M3TagN4mainE6Square\n";
+    assert!(module.contains(part), "{module}");
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let adjusted = body("_GPTtn16_M3TagN4mainE6Square");
+    assert!(
+        adjusted.contains("const 18446744073709551600: u64"),
+        "{adjusted}"
+    );
+    assert!(adjusted.contains("@_GPM3TagN4mainE6Square("), "{adjusted}");
+    // A call through a pointer reads the code from the table; a call
+    // on a value, whose type is known, is a call of the method.
+    let area = body("_GPF4mainE4area");
+    assert!(area.contains("as fn(*u8) -> i64"), "{area}");
+    assert!(!area.contains("@_GPM4Area"), "{area}");
+    let direct = body("_GPF4mainE6direct");
+    assert!(direct.contains("@_GPM4AreaN4mainE6Square("), "{direct}");
+    // A pointer to the value becomes one to the part of a parent after
+    // the value has the addresses of its tables.
+    let main = body("_GPF4mainE4main");
+    assert!(main.contains("const global @_GPTvN4mainE6Square"), "{main}");
+    assert!(
+        main.contains("const global @_GPTsN4mainE6SquareN4mainE6Tagged"),
+        "{main}"
+    );
+}
+
 // rule: EXP-16, EXP-17, EXP-19, EXP-20
 #[test]
 fn an_operator_is_a_call_of_the_method_that_stands_for_it() {

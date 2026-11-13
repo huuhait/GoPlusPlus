@@ -31,6 +31,20 @@ pub enum Entity<'a> {
         name: Spur,
         args: &'a [TypeId],
     },
+    /// The type table of a type with methods that may be replaced
+    /// (TYP-22): what a value of the type starts with.
+    Table(TypeId),
+    /// The table of the part of the ancestor `parent` in a value of
+    /// `child`, which is not at its start.
+    PartTable { child: TypeId, parent: TypeId },
+    /// What a table has for the method `name` of `receiver` where the
+    /// receiver that the call has is so many bytes after that of the
+    /// method.
+    Adjusted {
+        receiver: TypeId,
+        name: Spur,
+        by: i64,
+    },
     /// An `@Operator` method, as its type declares it.
     Operator {
         receiver: TypeId,
@@ -334,6 +348,14 @@ impl<'a> Namer<'a> {
                 Node::Wrap(Wrap::MethodExpr, method)
             }
             Entity::MethodTable(ty) => Node::Wrap(Wrap::MethodTable, self.ty(ty)?),
+            Entity::Table(ty) => Node::Wrap(Wrap::VTable, self.ty(ty)?),
+            Entity::PartTable { child, parent } => {
+                Node::Pair(Pair::SecondaryVTable, self.ty(child)?, self.ty(parent)?)
+            }
+            Entity::Adjusted { receiver, name, by } => {
+                let method = self.entity(Entity::Method { receiver, name })?;
+                Node::BaseAdjustThunk(by, method)
+            }
             Entity::IfaceDesc(ty) => Node::Wrap(Wrap::IfaceDesc, self.ty(ty)?),
             Entity::ITab(ty, iface) => Node::Pair(Pair::ITab, self.ty(ty)?, self.ty(iface)?),
             Entity::IfaceThunk {

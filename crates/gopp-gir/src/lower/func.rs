@@ -737,6 +737,44 @@ pub(super) fn lower_thunk<'a>(
     not_made(shared, memo, symbol, built);
 }
 
+/// Adds what a type table has for the method `name` of the type `ty`
+/// to the module, under its symbol.
+pub(super) fn lower_adjusted<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    symbol: &str,
+    (ty, name, by): (CheckedTypeId, Spur, i64),
+) {
+    let sig = match shared.method(ty, name) {
+        Some(method) => super::table::slot_sig(shared, memo, &mut module.types, method.sig),
+        None => Err("a method that its type does not have"),
+    };
+    let sig = match sig {
+        Ok(sig) => sig,
+        Err(what) => return not_made(shared, memo, symbol, Ok(Err(what))),
+    };
+    let link = Linkage::LinkOnceOdr;
+    let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
+        let made = cx.adjusted_body(ty, name, by)?;
+        // What cannot be made has no body: its reason is reported.
+        if made.is_err() {
+            return Ok(made);
+        }
+        cx.b.drop_unreached();
+        cx.b.finish()?;
+        Ok(made)
+    });
+    not_made(shared, memo, symbol, built);
+}
+
 /// What asked for a function of the package saw that it can be made:
 /// one that is not made is a fault of the lowering, which is reported
 /// at the start of the package.

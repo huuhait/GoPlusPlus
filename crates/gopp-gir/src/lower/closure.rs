@@ -471,6 +471,11 @@ impl FuncCx<'_, '_> {
             return Ok(self.placeholder(span, ty, "a method as a value"));
         };
         let (holder, path) = (selection.holder, &selection.path[..]);
+        // Which method runs is known only when the value is called.
+        if selection.indirect && shared.replaced(holder, sel.name) {
+            let what = "a method that may be replaced as a value";
+            return Ok(self.placeholder(span, ty, what));
+        }
         let of = (holder, sel.name, instance);
         let Some((_, dynamic)) = Self::bound_method(shared, of) else {
             let generic = matches!(&*shared.types.get(holder),

@@ -152,9 +152,13 @@ impl FuncCx<'_, '_> {
             CheckedType::Map { .. } => Cloned::Map,
             CheckedType::Struct(fields) => {
                 // The parts of the parents come before the fields.
+                // The address of a table, which owns nothing, comes
+                // before them.
                 let parents = types.parents(ty);
-                let lead = parents.len() as u32;
+                let table = usize::from(shared.own_table(ty));
+                let lead = (table + parents.len()) as u32;
                 let parents = parents.iter().copied().enumerate();
+                let parents = parents.map(|(at, parent)| (table + at, parent));
                 let own = fields.iter().enumerate();
                 let own = own.map(|(at, field)| (lead as usize + at, field.ty));
                 let mut parts = Vec::new();

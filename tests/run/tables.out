@@ -1,0 +1,22 @@
+9 shape sq: shape of 9 9
+4 red tile t: red tile of 4
+4 tile x/red! tile x/red! tile x/red
+no tile 0 red tile t: red tile of 4
+13
+4 tile x/blue! tile x/red!
+rex says woof pip says yip woof legs rex 5 legs pip puppy 1
+box says yip woof woof
+  end uni.toy
+  end uni.held
+yip woof sha says yip woof legs uni puppy 1 uni says yip woof!
+ends
+  end sha.toy
+  end sha.held
+  end snd.toy
+  end snd.held
+  end box.toy
+  end box.held
+  end pip.toy
+  end pip.held
+  end rex.toy
+  end rex.held

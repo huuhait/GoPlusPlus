@@ -20,6 +20,7 @@ mod option;
 mod panic;
 mod slice;
 mod stmt;
+mod table;
 mod types;
 
 #[cfg(test)]
@@ -547,6 +548,9 @@ pub(crate) enum Made {
     /// environment. A method with type parameters of its own is the
     /// instance of the job.
     MethodValue(Spur, Option<usize>),
+    /// What a type table has for the method `name` of a type: the
+    /// method with a receiver that is `by` bytes before its own.
+    Adjusted { name: Spur, by: i64 },
     /// The code of a method expression: the method `name` of a
     /// declared type as a function that takes its receiver first, by
     /// its address if `pointer` is set and the method takes a value.
@@ -612,10 +616,14 @@ pub(crate) struct Memo<'a> {
     /// of it, which the runtime keeps.
     pub shareds: FxHashMap<TypeId, TypeId>,
     pub weaks: FxHashMap<TypeId, TypeId>,
-    /// The structs of the types with parents, each with the number of
-    /// its parents: their parts come first, in the order of the
-    /// `@Extends`, and the fields of the type after them (TYP-22).
+    /// The structs of the types with parents or with a type table,
+    /// each with the number of the parts that come before its fields:
+    /// the address of its table if the type has one and its first
+    /// parent has none, then the parts of its parents in the order of
+    /// the `@Extends` (TYP-22). `tabled` has those that start with a
+    /// table of their own.
     pub leads: FxHashMap<TypeId, u32>,
+    pub tabled: rustc_hash::FxHashSet<TypeId>,
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
     /// The global of each variable that the run has named.
@@ -664,6 +672,7 @@ impl<'a> Memo<'a> {
             shareds: FxHashMap::default(),
             weaks: FxHashMap::default(),
             leads: FxHashMap::default(),
+            tabled: rustc_hash::FxHashSet::default(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
             global_keys: FxHashMap::default(),
@@ -1191,6 +1200,15 @@ impl<'a> Shared<'a> {
             }
         }
         declared
+    }
+
+    /// Whether a value of the type starts with the address of a table
+    /// of its own: it has a table, and its first parent has none whose
+    /// address it could share (TYP-22).
+    pub fn own_table(&self, ty: CheckedTypeId) -> bool {
+        let first = self.types.parents(ty).first().copied();
+        let shares = first.is_some_and(|first| self.types.has_table(first));
+        self.types.has_table(ty) && !shares
     }
 
     /// The receiver of the method of the body, if the expression is the
@@ -2145,6 +2163,9 @@ impl<'a> Shared<'a> {
                             &symbol,
                             (ty, name, pointer),
                         );
+                    }
+                    Made::Adjusted { name, by } => {
+                        func::lower_adjusted(self, &mut module, &mut memo, &symbol, (ty, name, by));
                     }
                     Made::Value(of) => {
                         func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty));

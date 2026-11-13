@@ -1,0 +1,127 @@
+package main
+
+type Shape struct{ name string }
+
+@Abstract
+func (s *Shape) Area() int
+
+@Virtual
+func (s *Shape) Kind() string { return "shape" }
+
+func (s *Shape) Describe() string { return s.name + ": " + s.Kind() + " of " + show(s.Area()) }
+
+func show(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return show(n/10) + string(rune('0'+n%10))
+}
+
+type Tagged struct{ tag string }
+
+@Virtual
+func (t *Tagged) Tag() string { return "tag " + t.tag }
+
+func (t *Tagged) Shout() string { return t.Tag() + "!" }
+
+@Extends(Shape)
+type Square struct{ side int }
+
+@Override
+func (s *Square) Area() int { return s.side * s.side }
+
+@Extends(Square)
+@Extends(Tagged)
+type Tile struct{ color string }
+
+@Override
+func (t *Tile) Kind() string { return t.color + " tile" }
+
+@Override
+func (t *Tile) Tag() string { return "tile " + t.tag + "/" + t.color }
+
+func area(s *Shape) int { return s.Area() }
+
+func tagged(t *Tagged) string { return t.Shout() }
+
+func shapes() {
+	sq := Square{name: "sq", side: 3}
+	println(sq.Area(), sq.Kind(), sq.Describe(), area(&sq))
+	tile := Tile{name: "t", side: 2, tag: "x", color: "red"}
+	println(tile.Area(), tile.Kind(), tile.Describe())
+	println(area(&tile), tagged(&tile), tile.Shout(), tile.Tag())
+	var zero Tile
+	zero.color = "no"
+	var s *Shape = &zero
+	var q *Square = &tile
+	println(s.Kind(), s.Area(), q.Kind(), q.Describe())
+	all := []*Shape{&sq, &tile, &zero}
+	total := 0
+	for _, each := range all {
+		total += each.Area()
+	}
+	println(total)
+	copy := tile
+	copy.color = "blue"
+	println(area(&copy), tagged(&copy), tagged(&tile))
+}
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Animal struct {
+	name string
+	held Res
+}
+
+@Virtual
+func (a *Animal) Sound() string { return "..." }
+
+func (a *Animal) Speak() string { return a.name + " says " + a.Sound() }
+
+@Virtual
+func (a *Animal) Legs(extra int, label string) string { return label + show(4+extra) }
+
+@Extends(Animal)
+type Dog struct{ toy Res }
+
+@Override
+func (d *Dog) Sound() string { return "woof" }
+
+@Extends(Dog)
+type Puppy struct{ age int }
+
+@Override
+func (p *Puppy) Sound() string { return "yip " + base.Sound() }
+
+@Override
+func (p *Puppy) Legs(extra int, label string) string { return label + "puppy " + show(extra) }
+
+type Speaker interface{ Speak() string }
+
+type Sounder interface{ Sound() string }
+
+func legs(a *Animal) string { return a.Legs(1, "legs "+a.name+" ") }
+
+func loud(u Unique[Puppy]) string { return u.Speak() + "!" }
+
+func animals() {
+	d := Dog{name: "rex", held: Res{"rex.held"}, toy: Res{"rex.toy"}}
+	p := Puppy{name: "pip", held: Res{"pip.held"}, toy: Res{"pip.toy"}, age: 1}
+	println(d.Speak(), p.Speak(), legs(&d), legs(&p))
+	var s Speaker = Puppy{name: "box", held: Res{"box.held"}, toy: Res{"box.toy"}}
+	var t Sounder = Dog{name: "snd", held: Res{"snd.held"}, toy: Res{"snd.toy"}}
+	println(s.Speak(), t.Sound())
+	u := NewUnique(Puppy{name: "uni", held: Res{"uni.held"}, toy: Res{"uni.toy"}})
+	sh := NewShared(Puppy{name: "sha", held: Res{"sha.held"}, toy: Res{"sha.toy"}})
+	println(u.Sound(), sh.Speak(), legs(u), loud(move(u)))
+	println("ends")
+}
+
+func main() {
+	shapes()
+	animals()
+}

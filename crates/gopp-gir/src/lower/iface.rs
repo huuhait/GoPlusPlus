@@ -1093,7 +1093,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// A global of the module of the run that the program never writes
     /// and every package that needs it says, with its static data.
-    fn said(&mut self, symbol: String, ty: TypeId, parts: Vec<Constant>) -> GlobalId {
+    pub(super) fn said(&mut self, symbol: String, ty: TypeId, parts: Vec<Constant>) -> GlobalId {
         let id = self.b.module().globals.alloc(Global {
             name: symbol.clone(),
             ty,
@@ -1275,6 +1275,12 @@ impl<'a> FuncCx<'a, '_> {
                 self.not_nil(&at)?;
             }
             let mut value = self.b.deref(&at)?;
+            // A method of a parent may call what the type replaces.
+            if !found.path.is_empty()
+                && let Err(what) = self.set_tables(&value, ty)?
+            {
+                return Ok(Err(what));
+            }
             for &step in &found.path {
                 if let Type::Ptr(_) = self.kind(self.b.place_ty(&value)) {
                     self.not_nil(&value)?;

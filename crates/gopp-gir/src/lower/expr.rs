@@ -287,6 +287,37 @@ impl<'a> FuncCx<'a, '_> {
             let handle = self.operand_of(value)?;
             return Ok(Rvalue::Cast(CastKind::PtrToPtr, handle, ty));
         }
+        // A pointer to a value where one to a part of a parent of it
+        // fits is the address of that part (EXP-13).
+        if let (Type::Ptr(_), Type::Ptr(_)) = (self.kind(own), self.kind(ty)) {
+            let types = self.shared.types;
+            let pointer = self.checked_as(expr, own);
+            let of = pointer.and_then(|pointer| match &*types.get(types.underlying(pointer)) {
+                CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
+                    Some(*to)
+                }
+                _ => None,
+            });
+            // A handle is lent as the address of its value first.
+            let mut handle = self.operand_of(value)?;
+            if let Some(held) = self.memo.held(own) {
+                let to = self.b.types().ptr(held);
+                let lent = Rvalue::Cast(CastKind::PtrToPtr, handle, to);
+                handle = Operand::Copy(Place::local(self.b.assign_temp(lent)?));
+            }
+            match self.upcast(handle.clone(), ty, of)? {
+                Some(Ok(part)) => return Ok(part),
+                Some(Err(what)) => {
+                    let span = self.tree.exprs[expr].span;
+                    return Ok(self.placeholder(span, ty, what));
+                }
+                None => {
+                    let span = self.tree.exprs[expr].span;
+                    self.unsupported(span, "a value whose type is not known");
+                    return Ok(Rvalue::Use(self.zero(ty)));
+                }
+            }
+        }
         if own != unit && ty != unit {
             let span = self.tree.exprs[expr].span;
             self.unsupported(span, "a value whose type is not known");
@@ -872,9 +903,11 @@ impl<'a> FuncCx<'a, '_> {
     /// names: a field of the type, which comes after the parts of its
     /// parents, or the part of a parent (TYP-22).
     pub(super) fn part(&mut self, of: &Place, step: u32) -> Built<Place> {
-        let lead = self.memo.leads.get(&self.b.place_ty(of)).copied();
+        let ty = self.b.place_ty(of);
+        let lead = self.memo.leads.get(&ty).copied();
+        let table = u32::from(self.memo.tabled.contains(&ty));
         match step & PARENT != 0 {
-            true => self.b.field(of, step & !PARENT),
+            true => self.b.field(of, table + (step & !PARENT)),
             false => self.b.field(of, lead.unwrap_or(0) + step),
         }
     }
@@ -1372,6 +1405,12 @@ impl<'a> FuncCx<'a, '_> {
         }
         if let Some(asked) = self.option_asked(callee) {
             return self.option_call(expr, asked);
+        }
+        if let Some(found) = self.table_called(span, callee, args, *spread)? {
+            return match found {
+                Ok((called, given)) => self.call_with(expr, &called, given, args),
+                Err(what) => Ok(self.placeholder(span, ty, what)),
+            };
         }
         if let Some(method) = self.iface_method(callee) {
             return match self.iface_called(span, method, args, *spread)? {
@@ -2630,7 +2669,29 @@ impl<'a> FuncCx<'a, '_> {
         wanted: TypeId,
     ) -> Built<Operand> {
         let mut mode = PlaceMode::default();
-        let base = self.place(x, &mut mode)?;
+        let mut base = self.place(x, &mut mode)?;
+        // A method of a parent may call what the type replaces: the
+        // value has the addresses of its tables before a part of it is
+        // given (TYP-22).
+        if path.iter().any(|step| step & PARENT != 0) {
+            let types = self.shared.types;
+            let based = self
+                .based(x)
+                .map(|local| self.body.locals[local.0 as usize].ty);
+            let mut of = self.body.types.get(&x).map(|typed| typed.ty).or(based);
+            while let Some(
+                CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to),
+            ) = of.map(|of| types.get(types.underlying(of))).as_deref()
+            {
+                of = Some(*to);
+            }
+            if let Some(of) = of.filter(|&of| types.has_table(of)) {
+                base = self.through(base, &mut mode)?;
+                if let Err(what) = self.set_tables(&base, of)? {
+                    self.unsupported(span, what);
+                }
+            }
+        }
         let place = self.steps(base, path, span, &mut mode)?;
         let have = self.b.place_ty(&place);
         if self.pointee(wanted) == have && wanted != have {
@@ -2966,7 +3027,8 @@ impl<'a> FuncCx<'a, '_> {
             return None;
         };
         let parents: Vec<TypeId> = self.b.types().struct_fields(id)?.to_vec();
-        for (at, &parent) in parents.iter().enumerate().take(lead as usize) {
+        let table = usize::from(self.memo.tabled.contains(&ty));
+        for (at, &parent) in parents.iter().enumerate().take(lead as usize).skip(table) {
             self.memo.steps += 1;
             let Type::Struct(of) = self.kind(parent) else {
                 continue;

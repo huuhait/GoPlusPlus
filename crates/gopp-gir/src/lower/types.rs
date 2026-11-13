@@ -243,9 +243,7 @@ impl Memo<'_> {
                     self.open.pop();
                     return lowered;
                 }
-                if checked.has_table(ty) {
-                    return Err("a type with methods that may be replaced");
-                }
+
                 // The symbol of its descriptor: one for the type in
                 // every package, and no other type has it.
                 let name = symbol_of(&mut self.namer, Entity::TypeInfo(ty))
@@ -285,7 +283,13 @@ impl Memo<'_> {
         // The parts of the parents come first, each under the name of
         // its type (TYP-22).
         let parents = shared.types.parents(ty);
-        let mut parts = Vec::with_capacity(parents.len() + fields.len());
+        let mut parts = Vec::with_capacity(parents.len() + fields.len() + 1);
+        // A type with a table starts with the address of the table,
+        // which is that of its first parent if that has one.
+        let own_table = shared.own_table(ty);
+        if own_table {
+            parts.push(("gopp.table", Self::bytes(types)));
+        }
         let named = |parent: &CheckedTypeId| match &*shared.types.get(*parent) {
             CheckedType::Named { id, .. } => shared.types.name_of(*id),
             _ => shared.blank,
@@ -305,8 +309,12 @@ impl Memo<'_> {
         }
         // The fields of a struct that was just made are set once.
         let _ = types.set_fields(id, &parts);
-        if parents.len() > 0 {
-            self.leads.insert(lowered, parents.len() as u32);
+        let lead = parents.len() as u32 + u32::from(own_table);
+        if lead > 0 {
+            self.leads.insert(lowered, lead);
+        }
+        if own_table {
+            self.tabled.insert(lowered);
         }
         Ok(lowered)
     }
