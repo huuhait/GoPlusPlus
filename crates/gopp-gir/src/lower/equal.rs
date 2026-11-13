@@ -27,6 +27,8 @@ enum Compared {
     Fields(Vec<(u32, CheckedTypeId)>),
     /// Each of so many elements of the type.
     Elements(u64, TypeId, CheckedTypeId),
+    /// As interface values: by the runtime, which is their glue.
+    Held,
 }
 
 fn slot(local: crate::LocalId) -> Operand {
@@ -49,6 +51,9 @@ impl FuncCx<'_, '_> {
             }
             _ => {}
         }
+        if self.is_iface(lowered) {
+            return Ok(Compared::Held);
+        }
         if self.equal_by_bytes(ty, lowered) {
             return Ok(Compared::Bytes(self.size_of(lowered)));
         }
@@ -65,7 +70,6 @@ impl FuncCx<'_, '_> {
                 let of = self.memo.lower_type(shared, self.b.types(), *elem)?;
                 Ok(Compared::Elements(*len, of, *elem))
             }
-            CheckedType::Interface { .. } => Err("a comparison of interface values"),
             _ => Err("a comparison of values of this type"),
         }
     }
@@ -87,7 +91,7 @@ impl FuncCx<'_, '_> {
                 }
             }
             Compared::Elements(_, _, part) => parts.push(part),
-            Compared::Bytes(_) | Compared::Scalar | Compared::Text => {}
+            Compared::Bytes(_) | Compared::Scalar | Compared::Text | Compared::Held => {}
         }
         Ok(parts)
     }
@@ -198,6 +202,7 @@ impl FuncCx<'_, '_> {
         let bool = TypeInterner::BOOL;
         let given = |this: &Self, at| Operand::Copy(Place::local(this.b.param(at)));
         let equal = match how {
+            Compared::Held => return Ok(Err("equality glue of an interface type")),
             Compared::Scalar | Compared::Text => {
                 match self.equal_places(ty, a.clone(), b.clone())? {
                     Ok(equal) => equal,
@@ -332,6 +337,7 @@ impl FuncCx<'_, '_> {
         let given = Operand::Copy(Place::local(self.b.param(0)));
         let seed = Operand::Copy(Place::local(self.b.param(1)));
         let hash = match how {
+            Compared::Held => return Ok(Err("hash glue of an interface type")),
             Compared::Scalar | Compared::Text => {
                 match self.hashed_place(ty, value.clone(), seed)? {
                     Ok(hash) => hash,

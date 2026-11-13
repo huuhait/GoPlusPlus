@@ -28,6 +28,16 @@ void _gopp_write_hex(uint64_t value);
 // Go++ functions of the stack, and status 2.
 [[noreturn]] void _gopp_fail(const char *message);
 
+// Ends the program as a runtime error about a type does: the message
+// and the name of the type.
+[[noreturn]] void _gopp_fail_type(const char *message, const gopp_type *type);
+
+// Ends the program as `x.(T)` does for an `x` of the interface type
+// `iface` that holds a value of the type `have`, or nothing for null,
+// and no `wanted`.
+[[noreturn]] void _gopp_fail_assert(gopp_string iface, const gopp_type *have,
+                                    const gopp_type *wanted);
+
 // Room for `size` bytes, which is never null: a program that gets none
 // ends.
 void *_gopp_alloc(uint64_t size);

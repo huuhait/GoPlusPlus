@@ -4,11 +4,10 @@
 //!
 //! The data model holds two rules by itself: a block has its end
 //! (`V020`), and a place has no type but that of its steps (`V031`).
-//! Four rules are about parts that the model does not have yet and are
-//! not checked: the types that cross to C (`V067`), static data
-//! (`V072`), prologues (`V077`) and drop glue (`V081`). For the same
-//! reason `V011`, `V014`, `V071`, `V073` and `V074` say nothing of the
-//! source of a local, its glue, the first value of a global, or where
+//! Three rules are about parts that the model does not have yet and are
+//! not checked: the types that cross to C (`V067`), prologues (`V077`)
+//! and drop glue (`V081`). For the same reason `V011`, `V014`, `V073`
+//! and `V074` say nothing of the source of a local, its glue, or where
 //! an inlined local comes from.
 
 mod initialized;
@@ -22,6 +21,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ir::*;
 use crate::types::{Type, TypeId, TypeInterner};
+
+/// How many leaves the static data of one global may have.
+pub(crate) const MAX_LEAVES: usize = 1 << 20;
 
 /// A rule that a module breaks, and where.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +246,52 @@ impl<'m> Verifier<'m> {
             }
             if global.ty == TypeInterner::UNIT {
                 self.error(71, format!("the global {} has no value", global.name));
+            }
+            if !global.parts.is_empty() {
+                self.static_data(global);
+            }
+        }
+    }
+
+    /// The static data of a global says one constant for each leaf of
+    /// its type, of a kind that the leaf takes.
+    fn static_data(&mut self, global: &Global) {
+        let types = &self.module.types;
+        let leaves = types.leaves(global.ty, MAX_LEAVES).unwrap_or_default();
+        if leaves.len() != global.parts.len() {
+            let message = format!(
+                "the global {} has {} leaves and {} parts",
+                global.name,
+                leaves.len(),
+                global.parts.len()
+            );
+            self.error(72, message);
+            return;
+        }
+        for (at, (&leaf, part)) in leaves.iter().zip(&global.parts).enumerate() {
+            self.steps += 1;
+            self.constant(part);
+            let fits = match (part.kind, types.get(leaf)) {
+                (ConstantKind::Zero, _) => true,
+                (ConstantKind::Int(_), Type::Int { .. }) | (ConstantKind::Bool(_), Type::Bool) => {
+                    part.ty == leaf
+                }
+                (ConstantKind::Str(_), Type::String) => true,
+                // The address of a function or of a global, as the
+                // pointer that the leaf is.
+                (
+                    ConstantKind::Null | ConstantKind::Func(_) | ConstantKind::Global(_),
+                    Type::Ptr(_) | Type::Func(_),
+                ) => true,
+                _ => false,
+            };
+            if !fits {
+                let message = format!(
+                    "part {at} of the global {} is no {}",
+                    global.name,
+                    self.shown(leaf)
+                );
+                self.error(72, message);
             }
         }
     }

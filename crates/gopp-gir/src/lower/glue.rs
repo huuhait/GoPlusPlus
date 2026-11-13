@@ -214,6 +214,13 @@ impl FuncCx<'_, '_> {
             Glue::Hash => Entity::HashGlue(ty),
             Glue::Drop => Entity::DropGlue(ty),
         };
+        // The runtime has the glue of every interface type.
+        let lowered = self.memo.lower_type(self.shared, self.b.types(), ty);
+        if lowered.is_ok_and(|lowered| self.is_iface(lowered)) {
+            let glue = Ok(self.iface_glue(kind)?);
+            self.memo.glue_of.insert((kind, ty), glue);
+            return Ok(glue);
+        }
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             let none = Err("a function for a type without a symbol");
             self.memo.glue_of.insert((kind, ty), none);
@@ -246,6 +253,12 @@ impl FuncCx<'_, '_> {
     /// through a pointer.
     pub fn checked_as(&mut self, expr: ExprId, ty: TypeId) -> Option<CheckedTypeId> {
         let types = self.shared.types;
+        // A value that is put into an interface is of the interface
+        // type there.
+        if let (Some(&(_, to)), true) = (self.body.iface_conversions.get(&expr), self.is_iface(ty))
+        {
+            return Some(to);
+        }
         let mut checked = types.default_type(self.body.types.get(&expr)?.ty);
         loop {
             self.memo.steps += 1;

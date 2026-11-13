@@ -1,0 +1,9 @@
+1
+4
+panic: interface conversion: interface {} is main.pair, not int
+
+goroutine 1 [running]:
+main.number()
+	+0x?
+main.main()
+	+0x?

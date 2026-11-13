@@ -5,6 +5,7 @@
 //! the number of threads that write it.
 
 mod body;
+mod data;
 mod number;
 mod types;
 
@@ -14,7 +15,7 @@ mod tests;
 use std::fmt::Write;
 
 use gopp_gir::{
-    CallConv, FuncType, Function, Linkage, Module, Type, TypeError, TypeId, verify_module,
+    CallConv, FuncType, Function, Global, Linkage, Module, Type, TypeError, TypeId, verify_module,
 };
 use gopp_target::{Layout, TargetLayout};
 use rayon::prelude::*;
@@ -205,8 +206,9 @@ pub(crate) fn emit_counted(
         }
         let _ = writeln!(
             out,
-            "{}{} {} __asm__(\"{}\");",
+            "{}{}{} {} __asm__(\"{}\");",
             linkage(global.link),
+            constness(global),
             cx.spelled(global.ty),
             global_name(at),
             quoted(global.name.as_bytes())
@@ -221,6 +223,12 @@ pub(crate) fn emit_counted(
             continue;
         }
         let _ = writeln!(out, "{};", body::prototype(&cx, at, func, true)?);
+    }
+    // Static data names functions, so it comes after their prototypes.
+    for (at, (_, global)) in module.globals.iter().enumerate() {
+        if !global.parts.is_empty() && !cx.empty(global.ty) {
+            data::global(&cx, at, global, &mut out, &mut steps)?;
+        }
     }
     // Each function is written on its own; the unit has them in their
     // order.
@@ -249,6 +257,15 @@ pub(crate) fn linkage(link: Linkage) -> &'static str {
         Linkage::External => "",
         Linkage::Internal => "static ",
         Linkage::LinkOnceOdr => "__attribute__((weak)) ",
+    }
+}
+
+/// What the declaration of a global that the program never writes has
+/// before its type.
+pub(crate) fn constness(global: &Global) -> &'static str {
+    match global.mutable {
+        true => "",
+        false => "const ",
     }
 }
 

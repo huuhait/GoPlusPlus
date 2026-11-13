@@ -1,0 +1,8 @@
+true false false
+panic: runtime error: comparing uncomparable type []int
+
+goroutine 1 [running]:
+main.same()
+	+0x?
+main.main()
+	+0x?

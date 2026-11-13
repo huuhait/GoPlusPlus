@@ -708,6 +708,9 @@ fn deep<R>(step: impl FnOnce() -> R) -> R {
 struct Spelling<'a> {
     /// One spelling for all identical types.
     canonical: bool,
+    /// As the runtime of Go names a type in its messages: `interface {}`,
+    /// `struct { x int }`.
+    spaced: bool,
     /// The name of the package whose types are written without it.
     within: Option<Spur>,
     /// How many more types are written out before the rest is left out.
@@ -2633,6 +2636,7 @@ impl Types {
         let left = Cell::new(WRITTEN_AT_MOST);
         let spelling = Spelling {
             canonical: false,
+            spaced: false,
             within,
             left: &left,
         };
@@ -2655,8 +2659,22 @@ impl Types {
         // Compared with what Go writes: all of it.
         let spelling = Spelling {
             canonical: true,
+            spaced: false,
             within: None,
             left: &Cell::new(u32::MAX),
+        };
+        self.show(id, names, spelling)
+    }
+
+    /// The type as the runtime of Go names it in a message: one spelling
+    /// for all identical types, `interface {}` for the interface without
+    /// methods, a struct with spaces inside its braces.
+    pub fn runtime_name(&self, id: TypeId, names: &ThreadedRodeo) -> String {
+        let spelling = Spelling {
+            canonical: true,
+            spaced: true,
+            left: &Cell::new(u32::MAX),
+            within: None,
         };
         self.show(id, names, spelling)
     }
@@ -2779,21 +2797,28 @@ impl Types {
                     format!("{name}{}{required}{tag}", show(f.ty))
                 };
                 let fields: Vec<String> = fields.iter().map(field).collect();
-                format!("struct{{{}}}", fields.join("; "))
+                match (spelling.spaced, fields.is_empty()) {
+                    (true, true) => "struct {}".to_owned(),
+                    (true, false) => format!("struct {{ {} }}", fields.join("; ")),
+                    (false, _) => format!("struct{{{}}}", fields.join("; ")),
+                }
             }
             Type::Interface { methods, embedded } => {
                 if methods.is_empty() && embedded.is_empty() {
-                    return match spelling.canonical {
-                        true => "any".to_owned(),
-                        false => "interface{}".to_owned(),
+                    return match (spelling.spaced, spelling.canonical) {
+                        (true, _) => "interface {}".to_owned(),
+                        (false, true) => "any".to_owned(),
+                        (false, false) => "interface{}".to_owned(),
                     };
                 }
                 if spelling.canonical {
                     let (methods, terms) = self.interface_parts(id, names, spelling);
                     let parts: Vec<String> = methods.into_iter().chain(terms).collect();
-                    return match parts.is_empty() {
-                        true => "any".to_owned(),
-                        false => format!("interface{{{}}}", parts.join("; ")),
+                    return match (spelling.spaced, parts.is_empty()) {
+                        (true, true) => "interface {}".to_owned(),
+                        (true, false) => format!("interface {{ {} }}", parts.join("; ")),
+                        (false, true) => "any".to_owned(),
+                        (false, false) => format!("interface{{{}}}", parts.join("; ")),
                     };
                 }
                 let method = |m: &Method| {

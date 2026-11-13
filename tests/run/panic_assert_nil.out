@@ -1,0 +1,8 @@
+x
+panic: interface conversion: interface {} is nil, not string
+
+goroutine 1 [running]:
+main.text()
+	+0x?
+main.main()
+	+0x?

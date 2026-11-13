@@ -1271,6 +1271,125 @@ func main() {}
 }
 
 #[test]
+fn a_value_in_an_interface_is_in_its_word_or_in_a_box_of_its_own() {
+    let text = "package main
+
+type Point struct{ x, y int }
+
+type Named struct {
+	name string
+	list []int
+}
+
+func box(n int, p Point, d Named) (any, any, any) {
+	return n, p, d
+}
+
+func look(v any) int {
+	if n, ok := v.(int); ok {
+		return n
+	}
+	switch x := v.(type) {
+	case Point:
+		return x.x
+	case Named, nil:
+		return 0
+	}
+	return v.(Named).list[0]
+}
+
+func same(a, b any) bool {
+	c := a
+	return c == b && a != nil
+}
+";
+    let module = gir(text);
+    // Each type has one descriptor, with its glue where its bytes do
+    // not say all: `Named` is copied, ended, compared and hashed by
+    // glue, `Point` and `int` by their bytes.
+    let said = |name: &str| module.matches(&format!("global const @{name}:")).count();
+    assert_eq!(
+        [
+            said("_GPTii"),
+            said("_GPTiN4mainE5Point"),
+            said("_GPTiN4mainE5Named")
+        ],
+        [1, 1, 1]
+    );
+    let calls = |name: &str| module.matches(&format!("call const fn @{name}(")).count();
+    // A box for the struct of two words and for the one with a slice;
+    // the integer is in the word itself.
+    assert_eq!(calls("_gopp_iface_box"), 2);
+    // A copy for `c`, and one for the variable of the clause with two
+    // cases.
+    assert_eq!(calls("_gopp_iface_clone"), 2);
+    assert_eq!(calls("_gopp_iface_eq"), 1);
+    assert_eq!(calls("_gopp_panic_assert"), 1);
+    insta::assert_snapshot!(module);
+    // A Go file makes the same module but for the pointers that it
+    // checks.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    assert_eq!(module.matches("call const fn @_gopp_iface_box(").count(), 2);
+}
+
+#[test]
+fn interface_values_that_are_not_supported_yet_say_so() {
+    let text = "package main
+
+type Shape interface{ Area() float64 }
+
+type Square struct{ side float64 }
+
+func (s Square) Area() float64 { return s.side * s.side }
+
+func f(v any, s Shape) int {
+	var a Shape = Square{1}
+	_ = a
+	if _, ok := v.(Shape); ok {
+		return 1
+	}
+	switch v.(type) {
+	case Shape:
+		return 2
+	case complex128:
+		return 3
+	}
+	switch s.(type) {
+	case Square:
+		return 4
+	}
+	var c any = 2i
+	_ = c
+	return len(s.(Square).name())
+}
+
+func (s Square) name() string { return \"square\" }
+";
+    for file in ["a.go", "a.gopp"] {
+        let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
+        let messages: Vec<&str> = messages
+            .iter()
+            .map(|message| message.split_once(": ").map_or("", |(_, what)| what))
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "not supported yet: a value in an interface with methods",
+                "not supported yet: a type assertion to an interface type",
+                "not supported yet: a case of an interface type",
+                "not supported yet: a comparison of values of this type",
+                "not supported yet: a value in an interface with methods",
+                "not supported yet: a comparison of values of this type",
+                "not supported yet: a value in an interface with methods",
+            ],
+            "{file}"
+        );
+    }
+}
+
+#[test]
 fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
     let (_, messages) = lowered_with(
         &[(
@@ -1319,7 +1438,7 @@ fn values_that_cannot_be_compared_yet_say_so() {
 
 type boxed struct {
 	n int
-	v any
+	v complex128
 }
 
 func f(a, b boxed) int {
@@ -1336,9 +1455,9 @@ func f(a, b boxed) int {
     assert_eq!(
         messages,
         [
-            "a.go:9:7: not supported yet: a comparison of interface values",
-            "a.go:9:2: not supported yet: a comparison of interface values",
-            "a.go:10:5: not supported yet: a comparison of interface values",
+            "a.go:9:7: not supported yet: a comparison of values of this type",
+            "a.go:9:2: not supported yet: a comparison of values of this type",
+            "a.go:10:5: not supported yet: a comparison of values of this type",
         ]
     );
 }
@@ -1445,6 +1564,10 @@ func f{at}(n int, p Pair) (int, string) {{
 		total += both.p.a * i
 	}}
 	println(total, \"f{at}\")
+	var held any = l
+	if _, ok := held.(Local); ok {{
+		held = p
+	}}
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}
@@ -1694,6 +1817,23 @@ fn the_steps_grow_with_the_glue_of_types() {
             "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
              func f(t T{}) int {{\n\tu := t\n\treturn len(u.inner)\n}}\n",
             n - 1
+        ))
+    });
+    // Many types in interface values, each with a descriptor, and a
+    // type switch with a case for each.
+    assert_near_linear(&sizes, |n| {
+        let types: String = (0..n)
+            .map(|at| format!("type T{at} struct {{\n\tn int\n\trows []int\n}}\n\n"))
+            .collect();
+        let values: String = (0..n)
+            .map(|at| format!("\tall = append(all, T{at}{{}})\n"))
+            .collect();
+        let cases: String = (0..n)
+            .map(|at| format!("\tcase T{at}:\n\t\treturn x.n + {at}\n"))
+            .collect();
+        steps_of(&format!(
+            "package main\n\n{types}func f(all []any) []any {{\n{values}\treturn all\n}}\n\n\
+             func g(v any) int {{\n\tswitch x := v.(type) {{\n{cases}\t}}\n\treturn 0\n}}\n"
         ))
     });
     // Many types with a `drop` and a `Clone` method that each hold the

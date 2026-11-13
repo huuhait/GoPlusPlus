@@ -35,6 +35,28 @@ static void frame(uintptr_t start, uintptr_t at) {
   die();
 }
 
+[[noreturn]] void _gopp_fail_type(const char *message, const gopp_type *type) {
+  _gopp_write_text("panic: runtime error: ");
+  _gopp_write_text(message);
+  _gopp_write_string(type->name);
+  die();
+}
+
+[[noreturn]] void _gopp_fail_assert(gopp_string iface, const gopp_type *have,
+                                    const gopp_type *wanted) {
+  _gopp_write_text("panic: interface conversion: ");
+  _gopp_write_string(iface);
+  _gopp_write_text(" is ");
+  if (have == 0) {
+    _gopp_write_text("nil");
+  } else {
+    _gopp_write_string(have->name);
+  }
+  _gopp_write_text(", not ");
+  _gopp_write_string(wanted->name);
+  die();
+}
+
 // A failed check of an index or of the bounds of a slice. `%x` in the
 // form is `x`, which is signed if `is_signed` says so, and `%y` is `y`,
 // which is always signed; a negative `x` has the form without `y`.

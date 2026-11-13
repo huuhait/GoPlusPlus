@@ -321,6 +321,36 @@ impl TypeInterner {
         })
     }
 
+    /// The leaves of a value of the type, in the order in which the
+    /// value holds them: what static data says one constant for. A
+    /// scalar, a pointer, a string or a slice is a leaf; a tuple, a
+    /// struct, an array or an option is its parts. `None` for a type
+    /// that is not whole or has more than `at_most` leaves.
+    pub fn leaves(&self, ty: TypeId, at_most: usize) -> Option<Vec<TypeId>> {
+        let mut leaves = Vec::new();
+        let mut rest = vec![ty];
+        while let Some(ty) = rest.pop() {
+            match self.get(ty) {
+                Type::Unit => {}
+                Type::Array(of, count) => {
+                    if *count > at_most as u64 {
+                        return None;
+                    }
+                    rest.extend(std::iter::repeat_n(*of, *count as usize));
+                }
+                Type::Option(of) => rest.extend([Self::BOOL, *of]),
+                Type::Tuple(fields) => rest.extend(fields.iter().rev()),
+                Type::Struct(id) => rest.extend(self.struct_fields(*id)?.iter().rev()),
+                Type::Rec(_) => return None,
+                _ => leaves.push(ty),
+            }
+            if leaves.len() + rest.len() > at_most {
+                return None;
+            }
+        }
+        Some(leaves)
+    }
+
     /// The size and the alignment of a value of the type on a target.
     /// The walk keeps what it has to do in a list: a type may be nested
     /// deeper than a stack takes.

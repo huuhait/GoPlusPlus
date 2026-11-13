@@ -218,6 +218,9 @@ pub(super) struct Source {
     mapped: Vec<TypeId>,
     func_of: Vec<Option<FuncId>>,
     global_of: Vec<Option<GlobalId>>,
+    /// The globals of the run whose static data is still to be said in
+    /// the merged module, each with its place there.
+    unfilled: Vec<(usize, GlobalId)>,
 }
 
 /// The module that is being made.
@@ -228,6 +231,8 @@ struct Merged {
     defined: usize,
     funcs: FxHashMap<String, FuncId>,
     globals: FxHashMap<String, GlobalId>,
+    /// The globals that no run has said static data for yet.
+    unsaid: FxHashSet<GlobalId>,
     steps: u64,
 }
 
@@ -239,6 +244,7 @@ pub(super) fn merge(shared: &Shared<'_>, mut sources: Vec<Source>) -> (Module, u
         defined: 0,
         funcs: FxHashMap::default(),
         globals: FxHashMap::default(),
+        unsaid: FxHashSet::default(),
         steps: 0,
     };
     // The functions with a body have the first numbers.
@@ -363,6 +369,7 @@ impl Source {
             globals,
             type_of: FxHashMap::default(),
             mapped: Vec::new(),
+            unfilled: Vec::new(),
         }
     }
 
@@ -494,22 +501,67 @@ impl Source {
         self.type_of[&ty]
     }
 
+    /// The global of the merged module with the name of the global
+    /// `at` of the run. Its static data goes with it, if the module
+    /// has none for it yet: every run says the same.
     fn global(&mut self, merged: &mut Merged, at: usize) -> GlobalId {
+        let id = self.placed(merged, at);
+        // The data of a global may name a global with data of its own:
+        // a list of what is left, as deep as the data goes.
+        while let Some((at, id)) = self.unfilled.pop() {
+            let parts = std::mem::take(&mut self.globals[at].parts);
+            let mut filled = Vec::with_capacity(parts.len());
+            for mut part in parts {
+                merged.steps += 1;
+                part.ty = self.ty(&mut merged.module.types, &mut merged.steps, part.ty);
+                match &mut part.kind {
+                    ConstantKind::Str(string) => {
+                        let text = self.strings.get_mut(*string as usize).map(std::mem::take);
+                        *string = merged.module.strings.len() as u32;
+                        merged.module.strings.push(text.unwrap_or_default());
+                    }
+                    ConstantKind::Func(func) => {
+                        *func = self.func(merged, func.into_raw().into_u32() as usize);
+                    }
+                    ConstantKind::Global(global) => {
+                        *global = self.placed(merged, global.into_raw().into_u32() as usize);
+                    }
+                    _ => {}
+                }
+                filled.push(part);
+            }
+            merged.module.globals[id].parts = filled;
+        }
+        id
+    }
+
+    /// The place of the global `at` of the run in the merged module.
+    fn placed(&mut self, merged: &mut Merged, at: usize) -> GlobalId {
         if let Some(known) = self.global_of[at] {
             return known;
         }
-        let mut global = self.globals[at].clone();
-        let id = match merged.globals.get(&global.name) {
-            Some(&id) => id,
+        let global = &self.globals[at];
+        let said = !global.parts.is_empty();
+        let (id, new) = match merged.globals.get(&global.name) {
+            Some(&id) => (id, false),
             None => {
+                let mut global = Global {
+                    parts: Vec::new(),
+                    ..global.clone()
+                };
                 global.ty = self.ty(&mut merged.module.types, &mut merged.steps, global.ty);
                 let name = global.name.clone();
                 let id = merged.module.globals.alloc(global);
                 merged.globals.insert(name, id);
-                id
+                (id, true)
             }
         };
         self.global_of[at] = Some(id);
+        if said && (new || merged.unsaid.remove(&id)) {
+            self.unfilled.push((at, id));
+        } else if new && !said {
+            merged.unsaid.insert(id);
+        }
         id
     }
 

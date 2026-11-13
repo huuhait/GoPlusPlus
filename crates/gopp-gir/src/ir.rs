@@ -67,6 +67,10 @@ pub struct Global {
     pub ty: TypeId,
     pub link: Linkage,
     pub mutable: bool,
+    /// What it holds when the program starts: a constant for each leaf
+    /// of its type, in the order of `TypeInterner::leaves`. Empty for
+    /// a global that starts as zeros.
+    pub parts: Vec<Constant>,
 }
 
 /// A function: with blocks a definition, without a declaration. Its body

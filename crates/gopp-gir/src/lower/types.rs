@@ -48,7 +48,11 @@ impl Memo<'_> {
 
     /// A struct of the runtime by its name, which has its parts when it
     /// is first asked for.
-    fn runtime(types: &mut TypeInterner, name: &str, fields: &[(&str, TypeId)]) -> TypeId {
+    pub(super) fn runtime(
+        types: &mut TypeInterner,
+        name: &str,
+        fields: &[(&str, TypeId)],
+    ) -> TypeId {
         let (ty, new) = types.struct_named(name);
         if let (true, Type::Struct(id)) = (new, types.get(ty).clone()) {
             // A struct that was just made has no fields yet.
@@ -193,7 +197,9 @@ impl Memo<'_> {
                 let parts = types.header(header, TypeInterner::UNIT);
                 let names = header.fields.iter().map(|&(name, _)| name);
                 let fields: Vec<(&str, TypeId)> = names.zip(parts).collect();
-                Self::runtime(types, "gopp.iface", &fields)
+                let iface = Self::runtime(types, "gopp.iface", &fields);
+                self.iface = Some(iface);
+                iface
             }
             CheckedType::Named { id, .. } => {
                 let under = checked.underlying(ty);

@@ -11,6 +11,7 @@ mod expr;
 mod facts;
 mod func;
 mod glue;
+mod iface;
 mod map;
 mod merge;
 mod slice;
@@ -242,6 +243,12 @@ pub(crate) struct Memo<'a> {
     pub types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
     /// The type that every map has, once a map type is lowered.
     pub map: Option<TypeId>,
+    /// The type that every interface value has, once an interface type
+    /// is lowered.
+    pub iface: Option<TypeId>,
+    /// The descriptor of each type whose values the run has put into
+    /// an interface value.
+    pub infos: FxHashMap<CheckedTypeId, Result<GlobalId, &'static str>>,
     /// What is known of each map type that the run has used.
     pub maps: FxHashMap<CheckedTypeId, Result<map::MapOf, &'static str>>,
     /// Whether two values of a type are equal exactly when their bytes
@@ -284,6 +291,8 @@ impl<'a> Memo<'a> {
             namer: Namer::new(shared.types, shared.names).with_locals(locals),
             types: FxHashMap::default(),
             map: None,
+            iface: None,
+            infos: FxHashMap::default(),
             maps: FxHashMap::default(),
             by_bytes: FxHashMap::default(),
             flat: FxHashMap::default(),
@@ -523,6 +532,7 @@ impl<'a> Shared<'a> {
                     ty,
                     link: Linkage::External,
                     mutable: true,
+                    parts: Vec::new(),
                 });
             }
         }

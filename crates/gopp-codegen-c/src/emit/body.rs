@@ -224,9 +224,13 @@ impl Writer<'_, '_> {
             }
             (ConstantKind::Global(global), _) => {
                 let at = global.into_raw().into_u32() as usize;
-                match cx.empty_global(at) {
-                    true => format!("(({})&gopp_empty)", cx.spelled(ty)),
-                    false => format!("(&{})", global_name(at)),
+                // A global that is never written is `const` in C, and
+                // may be named as a pointer of another type.
+                let plain = cx.module.globals[global].mutable;
+                match (cx.empty_global(at), plain) {
+                    (true, _) => format!("(({})&gopp_empty)", cx.spelled(ty)),
+                    (false, true) => format!("(&{})", global_name(at)),
+                    (false, false) => format!("(({})&{})", cx.spelled(ty), global_name(at)),
                 }
             }
             (ConstantKind::Null, _) => format!("(({})0)", cx.spelled(ty)),

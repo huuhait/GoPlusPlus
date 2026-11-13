@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 62] = [
+pub const FUNCS: [RuntimeFunc; 68] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -222,6 +222,23 @@ pub const FUNCS: [RuntimeFunc; 62] = [
         "_gopp_panic_slice_convert",
         "uint64_t wanted, uint64_t length, bool is_signed",
     ),
+    gives(
+        "uint8_t *",
+        "_gopp_iface_box",
+        "const void *value, uint64_t size",
+    ),
+    returns("_gopp_iface_clone", "uint8_t *value"),
+    returns("_gopp_iface_drop", "uint8_t *value"),
+    gives("bool", "_gopp_iface_eq", "uint8_t *a, uint8_t *b"),
+    gives(
+        "uint64_t",
+        "_gopp_iface_hash",
+        "uint8_t *value, uint64_t seed",
+    ),
+    ends(
+        "_gopp_panic_assert",
+        "const uint8_t *itab, const void *wanted, gopp_string iface",
+    ),
     ends("_gopp_panic_nil", "void"),
     ends("_gopp_panic_divide", "void"),
     ends("_gopp_panic_shift", "void"),
@@ -250,6 +267,28 @@ typedef struct gopp_func_table {
   uint64_t count;
   struct gopp_func_table *next;
 } gopp_func_table;
+
+// The descriptor of a type whose values an interface value holds: one
+// for a type in a program, so two values are of one type exactly when
+// their descriptors are one. `type` points to the descriptor itself. A
+// function that is null says that the bytes of a value are all there
+// is to copy, end, compare or hash.
+typedef struct gopp_type {
+  const struct gopp_type *type;
+  uint64_t size;
+  uint64_t flags;
+  void (*clone)(uint8_t *value);
+  void (*drop)(uint8_t *value);
+  bool (*eq)(uint8_t *a, uint8_t *b);
+  uint64_t (*hash)(uint8_t *value, uint64_t seed);
+  gopp_string name;
+} gopp_type;
+
+// The value is the second word of an interface value itself, not in a
+// box (TYP-8).
+#define GOPP_TYPE_INLINE 1
+// Two values of the type are compared with `==`.
+#define GOPP_TYPE_COMPARABLE 2
 ";
 
 /// The names of the types that C has for the scalars, without a header
@@ -324,7 +363,7 @@ pub(crate) const INTERNAL: Source = ("internal.h", include_str!("../../../runtim
 
 /// The sources of the runtime for a system: every target has all but
 /// the last.
-pub(crate) fn sources(os: Os) -> [Source; 7] {
+pub(crate) fn sources(os: Os) -> [Source; 8] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",
@@ -339,6 +378,7 @@ pub(crate) fn sources(os: Os) -> [Source; 7] {
         ("string.c", include_str!("../../../runtime/string.c")),
         ("slice.c", include_str!("../../../runtime/slice.c")),
         ("map.c", include_str!("../../../runtime/map.c")),
+        ("iface.c", include_str!("../../../runtime/iface.c")),
         of_system,
     ]
 }

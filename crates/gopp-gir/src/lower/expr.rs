@@ -186,6 +186,15 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The value of the expression, for a place of the type `ty`.
     pub fn rvalue_as(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
+        match self.body.iface_conversions.get(&expr) {
+            Some(&(from, to)) => deeper(|| self.in_iface(expr, ty, from, to)),
+            None => self.rvalue_plain(expr, ty),
+        }
+    }
+
+    /// The value of the expression as it is, without what puts it into
+    /// an interface.
+    pub fn rvalue_plain(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let value = deeper(|| self.rvalue_here(expr, ty))?;
         // A value of another type than its place: the checker did not
         // know the type of one of them. What has no type at all was
@@ -261,6 +270,27 @@ impl<'a> FuncCx<'a, '_> {
         let [call] = exprs else {
             return Ok(Vec::new());
         };
+        // `v, ok := x.(T)`.
+        if let (true, [value, _]) = (self.is_assertion(*call), wanted) {
+            let found = self.asserted_ok(*call)?;
+            let span = self.tree.exprs[*call].span;
+            return Ok(match (found, *value) {
+                (Some([found, ok]), None) => vec![Rvalue::Use(found), Rvalue::Use(ok)],
+                (Some([found, ok]), Some(ty)) if self.b.operand_ty(&found) == ty => {
+                    vec![Rvalue::Use(found), Rvalue::Use(ok)]
+                }
+                (Some([_, ok]), Some(ty)) => {
+                    let value = self.placeholder(span, ty, "a value whose type is not known");
+                    vec![value, Rvalue::Use(ok)]
+                }
+                (None, _) => {
+                    let zero = |ty: &Option<TypeId>| {
+                        Rvalue::Use(self.zero(ty.unwrap_or(TypeInterner::UNIT)))
+                    };
+                    wanted.iter().map(zero).collect()
+                }
+            });
+        }
         // `v, ok := m[k]`.
         if let (Some((map, index)), [_, _]) = (self.map_index(*call), wanted) {
             let span = self.tree.exprs[*call].span;
@@ -315,9 +345,6 @@ impl<'a> FuncCx<'a, '_> {
         self.memo.steps += 1;
         let node = &self.tree.exprs[expr];
         let span = node.span;
-        if self.body.iface_conversions.contains_key(&expr) {
-            return Ok(self.placeholder(span, ty, "a value in an interface"));
-        }
         if self.body.operators.contains_key(&expr) {
             return Ok(self.placeholder(span, ty, "an operator method"));
         }
@@ -389,7 +416,7 @@ impl<'a> FuncCx<'a, '_> {
                     }
                 }
             }
-            ExprKind::Assert { .. } => Ok(self.placeholder(span, ty, "a type assertion")),
+            ExprKind::Assert { .. } => self.asserted(expr, ty),
             ExprKind::MacroCall { .. } => Ok(self.placeholder(span, ty, "a macro call")),
             _ => Ok(self.placeholder(span, ty, "this expression")),
         }
@@ -591,6 +618,7 @@ impl<'a> FuncCx<'a, '_> {
                     ty,
                     link: Linkage::External,
                     mutable: true,
+                    parts: Vec::new(),
                 };
                 let id = self.b.module().globals.alloc(global);
                 self.memo.globals.insert(symbol, id);
@@ -962,6 +990,18 @@ impl<'a> FuncCx<'a, '_> {
             first = self.stable(first)?;
         }
         let second = self.operand_as(y, right)?;
+        // An interface value is nil when its first word is.
+        if let (BinaryOp::Eq | BinaryOp::Ne, true) = (op, self.is_iface(left)) {
+            let nil = |operand: &Operand| {
+                let zero = ConstantKind::Zero;
+                matches!(operand, Operand::Const(constant) if constant.kind == zero)
+            };
+            match (nil(&first), nil(&second)) {
+                (false, true) => return self.nil_iface(op, first),
+                (true, false) => return self.nil_iface(op, second),
+                _ => {}
+            }
+        }
         // Two structs or two arrays are compared part by part.
         if let (BinaryOp::Eq | BinaryOp::Ne, Type::Struct(_) | Type::Array(..)) =
             (op, self.kind(left))
@@ -1804,6 +1844,21 @@ impl<'a> FuncCx<'a, '_> {
     /// `T(value)` for a type of GIR `to`.
     fn convert(&mut self, expr: ExprId, value: ExprId, to: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
+        // `any(x)` puts the value into an interface as an assignment
+        // to a place of the type does.
+        let types = self.shared.types;
+        let written = |this: &Self, expr| this.body.types.get(&expr).map(|typed| typed.ty);
+        if self.is_iface(to) && self.body.iface_conversions.contains_key(&value) {
+            return self.rvalue_as(value, to);
+        }
+        if let (true, Some(have), Some(want)) =
+            (self.is_iface(to), written(self, value), written(self, expr))
+        {
+            let have = types.default_type(have);
+            if !types.is_interface(have) && !types.is_untyped(have) {
+                return self.in_iface(value, to, have, want);
+            }
+        }
         let mut from = self.ty_of(value);
         if from == TypeInterner::UNIT {
             from = to;

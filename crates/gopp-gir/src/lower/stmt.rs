@@ -92,7 +92,14 @@ impl FuncCx<'_, '_> {
                 body,
             } => self.for_stmt(label, node.span, *init, *cond, *post, body)?,
             StmtKind::Switch { init, tag, clauses } => {
-                self.switch_stmt(label, node.span, *init, *tag, clauses)?;
+                let vars = self.body.switch_vars.get(&id).map(Vec::as_slice);
+                self.switch_stmt(
+                    label,
+                    node.span,
+                    *init,
+                    *tag,
+                    (clauses, vars.unwrap_or(&[])),
+                )?;
             }
             StmtKind::Range {
                 lhs,
@@ -415,14 +422,13 @@ impl FuncCx<'_, '_> {
         span: SourceSpan,
         init: Option<StmtId>,
         tag: Option<ExprId>,
-        clauses: &[CaseClause],
+        (clauses, vars): (&[CaseClause], &[gopp_sema::LocalId]),
     ) -> Built {
-        let guard =
-            |tag: &ExprId| matches!(self.tree.exprs[*tag].kind, ExprKind::TypeSwitchGuard { .. });
-        if tag.as_ref().is_some_and(guard) {
-            self.unsupported(span, "a type switch");
-            return Ok(());
-        }
+        // What a type switch looks into.
+        let guard = tag.and_then(|tag| match self.tree.exprs[tag].kind {
+            ExprKind::TypeSwitchGuard { x, .. } => Some(x),
+            _ => None,
+        });
         self.open_scope();
         if let Some(init) = init {
             self.stmt(init)?;
@@ -436,12 +442,17 @@ impl FuncCx<'_, '_> {
             cases.map(move |&case| (case, body))
         });
         let cases: Vec<(ExprId, BlockId)> = cases.collect();
-        match tag {
-            Some(tag) => {
+        let mut looked = None;
+        match (guard, tag) {
+            (Some(x), _) => {
+                self.at(self.tree.exprs[x].span);
+                looked = self.type_switch(x, clauses, &bodies, otherwise)?;
+            }
+            (None, Some(tag)) => {
                 self.at(self.tree.exprs[tag].span);
                 self.switch_on(tag, &cases, otherwise)?;
             }
-            None => {
+            (None, None) => {
                 for &(case, body) in &cases {
                     let next = self.b.new_block();
                     self.cond(case, body, next)?;
@@ -460,6 +471,10 @@ impl FuncCx<'_, '_> {
                 depth: self.depth() - 1,
                 next: bodies.get(at + 1).copied(),
             });
+            if let (Some(looked), Some(&var)) = (&looked, vars.get(at)) {
+                self.at(clause.span);
+                self.switch_var(looked, var, clause)?;
+            }
             self.stmts(&clause.body)?;
             self.targets.pop();
             self.close_scope(clause.span)?;

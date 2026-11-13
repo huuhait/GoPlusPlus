@@ -125,6 +125,7 @@ fn every_kind_of_statement_and_end_has_its_text() {
         ty: int64,
         link: Linkage::Internal,
         mutable: true,
+        parts: Vec::new(),
     });
     let sig = go_sig(&mut module, &[points, int64], float64);
     let mut f = FuncBuilder::new(&mut module, "p.f", sig, Linkage::LinkOnceOdr, HERE).unwrap();

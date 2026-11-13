@@ -175,6 +175,9 @@ pub struct Body {
     /// The values of the cases of an expression switch that are compared
     /// with the tag by an `@Operator` `Eq` method, each with the method.
     pub case_operators: FxHashMap<ExprId, OperatorUse>,
+    /// The cases of the type switches that are types, each with its
+    /// type; the case `nil` has none.
+    pub case_types: FxHashMap<ExprId, TypeId>,
     /// The expressions that name what a C or C++ header declares, each
     /// with what it names: `stdio.puts`, `algorithm.max[int32]`, the
     /// function of a call that finds its template arguments.

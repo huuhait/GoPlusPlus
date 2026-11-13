@@ -226,6 +226,40 @@ fn values_of_several_parts_are_structs_and_what_takes_no_room_is_not_written() {
     insta::assert_snapshot!(unit("a.gopp", VALUES));
 }
 
+const INTERFACES: &str = "package main
+
+type Named struct {
+	name string
+	list []int
+}
+
+func held(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case Named:
+		return len(x.name) + len(x.list)
+	}
+	return 0
+}
+
+func main() {
+	println(held(7) + held(Named{\"n\", []int{1}}) + held(nil))
+}
+";
+
+#[test]
+fn the_descriptor_of_a_type_is_static_data_that_names_its_glue() {
+    let unit = unit("a.gopp", INTERFACES);
+    // A descriptor is declared before the functions, which name it,
+    // and said after their prototypes, which it names.
+    let declared = unit.find("__attribute__((weak)) const T").unwrap();
+    let prototype = unit.find("void gopp_f").unwrap();
+    let said = unit.find(" = {(uint8_t *)&gopp_g").unwrap();
+    assert!(declared < prototype && prototype < said);
+    insta::assert_snapshot!(unit);
+}
+
 #[test]
 fn a_module_that_breaks_a_rule_and_a_cleanup_block_are_refused() {
     use gopp_gir::{CallConv, FuncBuilder, FuncType, Linkage, Place, Span, Type, TypeInterner};
@@ -298,7 +332,14 @@ fn strict<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> Clan
 )]
 fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
     let toolchain = HostToolchain::discover().unwrap();
-    let programs = [ARITHMETIC, CONTROL, VALUES, CHECKS, "package main\n"];
+    let programs = [
+        ARITHMETIC,
+        CONTROL,
+        VALUES,
+        CHECKS,
+        INTERFACES,
+        "package main\n",
+    ];
     let cases: Vec<(&str, &str, OptLevel)> = programs
         .iter()
         .flat_map(|&program| {

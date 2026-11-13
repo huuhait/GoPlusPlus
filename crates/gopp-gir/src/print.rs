@@ -21,6 +21,9 @@ pub fn print_module(module: &Module) -> String {
             global.name,
             link(global.link)
         );
+        for part in &global.parts {
+            let _ = writeln!(out, "    {}", constant(module, part));
+        }
     }
     for (_, func) in module.funcs.iter() {
         out.push('\n');
@@ -53,6 +56,45 @@ fn quoted(bytes: &[u8]) -> String {
     }
     out.push('"');
     out
+}
+
+/// A constant as the text of a module writes it.
+fn constant(module: &Module, constant: &Constant) -> String {
+    let ty = module.types.display(constant.ty);
+    match constant.kind {
+        ConstantKind::Int(bits) => {
+            // A signed integer is written with its sign.
+            let signed = match module.types.get(constant.ty) {
+                Type::Int {
+                    bits: width,
+                    signed: true,
+                } => {
+                    let shift = 64 - u32::from(*width);
+                    Some(((bits << shift) as i64) >> shift)
+                }
+                _ => None,
+            };
+            match signed {
+                Some(value) => format!("const {value}: {ty}"),
+                None => format!("const {bits}: {ty}"),
+            }
+        }
+        ConstantKind::Float(bits) => format!("const 0x{bits:016x}: {ty}"),
+        ConstantKind::Bool(value) => format!("const {value}"),
+        ConstantKind::Str(at) => {
+            let bytes = module.strings.get(at as usize);
+            let text = bytes.map_or(String::new(), |bytes| quoted(bytes));
+            format!("const str#{at} {text}")
+        }
+        ConstantKind::Func(func) => {
+            format!("const fn @{}", module.funcs[func].name)
+        }
+        ConstantKind::Null => format!("const null: {ty}"),
+        ConstantKind::Zero => format!("const zero: {ty}"),
+        ConstantKind::Global(global) => {
+            format!("const global @{}", module.globals[global].name)
+        }
+    }
 }
 
 struct Printer<'p> {
@@ -226,43 +268,7 @@ impl Printer<'_> {
         match operand {
             Operand::Copy(place) => format!("copy {}", self.place(place)),
             Operand::Move(place) => format!("move {}", self.place(place)),
-            Operand::Const(constant) => {
-                let ty = self.ty(constant.ty);
-                match constant.kind {
-                    ConstantKind::Int(bits) => {
-                        // A signed integer is written with its sign.
-                        let signed = match self.module.types.get(constant.ty) {
-                            Type::Int {
-                                bits: width,
-                                signed: true,
-                            } => {
-                                let shift = 64 - u32::from(*width);
-                                Some(((bits << shift) as i64) >> shift)
-                            }
-                            _ => None,
-                        };
-                        match signed {
-                            Some(value) => format!("const {value}: {ty}"),
-                            None => format!("const {bits}: {ty}"),
-                        }
-                    }
-                    ConstantKind::Float(bits) => format!("const 0x{bits:016x}: {ty}"),
-                    ConstantKind::Bool(value) => format!("const {value}"),
-                    ConstantKind::Str(at) => {
-                        let bytes = self.module.strings.get(at as usize);
-                        let text = bytes.map_or(String::new(), |bytes| quoted(bytes));
-                        format!("const str#{at} {text}")
-                    }
-                    ConstantKind::Func(func) => {
-                        format!("const fn @{}", self.module.funcs[func].name)
-                    }
-                    ConstantKind::Null => format!("const null: {ty}"),
-                    ConstantKind::Zero => format!("const zero: {ty}"),
-                    ConstantKind::Global(global) => {
-                        format!("const global @{}", self.module.globals[global].name)
-                    }
-                }
-            }
+            Operand::Const(constant) => self::constant(self.module, constant),
         }
     }
 

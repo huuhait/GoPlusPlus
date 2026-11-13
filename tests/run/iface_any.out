@@ -1,0 +1,46 @@
+nil
+int 42
+string hello 5
+bool true
+float64 +1.500000e+000
+int8 -3
+uint64 9223372036854775808
+celsius +3.660000e+001
+small 1 -2
+point 1 2
+named n 2
+[]int 3
+[3]string x z
+map 1 1
+*point 7 8
+empty
+holder 1
+holder 2
+string inner 5
+other
+int 5
+0 false
+hello true
+14
+8 seven! 1
+true false
+integer 3 integer text nothing unknown
+true true false
+true false hello
+true false false
+false true true
+true false
+true false
+true true
+true false
+8 3 2 3
+332667
+int 1
+[]int 2
+nil
+3
+4 2 1 5 9 0
+true
+int 9
+string changed 7
+true false

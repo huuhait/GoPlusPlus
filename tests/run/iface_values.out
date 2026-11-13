@@ -1,0 +1,20 @@
+1 99
+1 50
+1 1 7
+1 2 3
+r 1 changed 2
+4
+8
+8 8
+clone 1
+boxed 1
+copied
+clone 1
+got 1 2
+release 1 2
+assigned 5
+listed 3
+release 2 0
+release 1 1
+release 1 0
+done

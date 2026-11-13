@@ -12533,6 +12533,69 @@ func f(n *int, m *int, xs *[]int, l *List, o *List, v int, pair func() (int, *in
     assert_eq!(written, expected);
 }
 
+#[test]
+fn the_cases_of_a_type_switch_have_their_types_as_the_runtime_of_go_names_them() {
+    let text = "package p
+
+type point struct{ x, y int }
+
+type shape interface{ Area() float64 }
+
+func f(v any) int {
+	switch x := v.(type) {
+	case nil:
+		return 0
+	case int, point:
+		return 1
+	case []any, map[string]struct{}:
+		return 2
+	case struct {
+		at point
+		n  int `tag`
+	}:
+		return x.n
+	case shape, interface{ B(); A(int) string }:
+		return 3
+	case func(int, ...string) (bool, error), [2]*point, <-chan byte:
+		return 4
+	}
+	return 5
+}
+";
+    for name in ["a.go", "a.gopp"] {
+        let names = ThreadedRodeo::new();
+        let loader = Loader::default();
+        let checked = check_texts("p", &[(name, text)], &loader, &names);
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        let types = loader.types.get().unwrap();
+        let tree = &checked.files[0];
+        let bodies = checked.package.files[0].bodies.iter();
+        let mut found: Vec<(u32, String)> = bodies
+            .flat_map(|body| &body.case_types)
+            .map(|(&case, &ty)| (tree.exprs[case].span.lo, types.runtime_name(ty, &names)))
+            .collect();
+        found.sort();
+        let found: Vec<String> = found.into_iter().map(|(_, name)| name).collect();
+        // The case `nil` is no type.
+        assert_eq!(
+            found,
+            [
+                "int",
+                "p.point",
+                "[]interface {}",
+                "map[string]struct {}",
+                "struct { at p.point; n int \"tag\" }",
+                "p.shape",
+                "interface { A(int) string; B() }",
+                "func(int, ...string) (bool, error)",
+                "[2]*p.point",
+                "<-chan uint8",
+            ],
+            "{name}"
+        );
+    }
+}
+
 /// Where each file puts a value into an interface without a conversion
 /// being written: `line: expression: its type to the interface type`.
 fn iface_conversions(name: &str, text: &str) -> Vec<String> {

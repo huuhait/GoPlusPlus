@@ -73,6 +73,7 @@ fn base() -> Module {
         ty: int64,
         link: Linkage::Internal,
         mutable: true,
+        parts: Vec::new(),
     });
     let ext = declared(&mut module, "p.ext", &[int64], int64)
         .finish()
@@ -422,6 +423,21 @@ fn global(module: &mut Module, name: &str, ty: TypeId) {
         ty,
         link: Linkage::Internal,
         mutable: false,
+        parts: Vec::new(),
+    });
+}
+
+/// A global of a number and a boolean with static data: `parts` makes
+/// it from the two types.
+fn data(module: &mut Module, parts: fn(TypeId, TypeId) -> Vec<Constant>) {
+    let int = int64(module);
+    let ty = module.types.tuple(&[int, TypeInterner::BOOL]);
+    module.globals.alloc(Global {
+        name: "p.data".to_owned(),
+        ty,
+        link: Linkage::Internal,
+        mutable: false,
+        parts: parts(int, TypeInterner::BOOL),
     });
 }
 
@@ -1050,6 +1066,40 @@ const CASES: &[(u16, Change, Change, &str)] = &[
         keep,
         |m| global(m, "p.nothing", TypeInterner::UNIT),
         "V071: the global p.nothing has no value",
+    ),
+    (
+        72,
+        |m| {
+            data(m, |int, bool| {
+                let number = ConstantKind::Int(7);
+                let (kind, zero) = (number, ConstantKind::Zero);
+                vec![
+                    Constant { kind, ty: int },
+                    Constant {
+                        kind: zero,
+                        ty: bool,
+                    },
+                ]
+            });
+        },
+        |m| {
+            data(m, |int, _| {
+                let kind = ConstantKind::Int(7);
+                vec![Constant { kind, ty: int }]
+            });
+        },
+        "V072: the global p.data has 2 leaves and 1 parts",
+    ),
+    (
+        72,
+        keep,
+        |m| {
+            data(m, |int, _| {
+                let kind = ConstantKind::Int(7);
+                vec![Constant { kind, ty: int }, Constant { kind, ty: int }]
+            });
+        },
+        "V072: part 1 of the global p.data is no bool",
     ),
     (
         73,

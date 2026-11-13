@@ -1,0 +1,97 @@
+package main
+
+// A value with a copy method: an interface value that holds one copies
+// it by the method and ends it by `drop`.
+type Handle struct {
+	id    int
+	count int
+}
+
+func (h *Handle) drop() {
+	if h.id != 0 {
+		println("release", h.id, h.count)
+	}
+}
+
+func (h Handle) Clone() Handle {
+	println("clone", h.id)
+	return Handle{id: h.id, count: h.count + 1}
+}
+
+type Record struct {
+	name string
+	list []int
+}
+
+func pass(v any) any { return v }
+
+func first(v any) int {
+	if list, ok := v.([]int); ok {
+		return list[0]
+	}
+	return -1
+}
+
+// The interface value has a copy of its own of what is put into it.
+func copies() {
+	s := []int{1, 2, 3}
+	var c any = s
+	s[0] = 99
+	println(first(c), s[0])
+	x := c.([]int)
+	x[0] = 50
+	println(first(c), x[0])
+	b := c
+	y := b.([]int)
+	y[0] = 7
+	println(first(b), first(c), y[0])
+
+	m := map[string]int{"a": 1}
+	var d any = m
+	m["a"] = 2
+	z := d.(map[string]int)
+	z["a"] = 3
+	println(d.(map[string]int)["a"], m["a"], z["a"])
+
+	r := Record{"r", []int{1}}
+	var e any = r
+	r.list[0] = 2
+	r.name = "changed"
+	got := e.(Record)
+	println(got.name, got.list[0], r.name, r.list[0])
+}
+
+// A variable that is not read again gives its value to the box.
+func moves() {
+	t := []int{4, 5, 6}
+	var e any = t
+	println(first(e))
+	u := []int{8}
+	f := pass(move(u))
+	println(first(f))
+	g := pass(pass(f))
+	println(first(g), first(f))
+}
+
+func handles() {
+	h := Handle{id: 1}
+	var f any = h
+	println("boxed", h.id)
+	g := f
+	println("copied")
+	if got, ok := g.(Handle); ok {
+		println("got", got.id, got.count)
+	}
+	f = 5
+	println("assigned", f.(int))
+	var list []any
+	list = append(list, Handle{id: 2}, 3, "four")
+	println("listed", len(list))
+}
+
+func main() {
+	copies()
+	moves()
+	handles()
+	println("done")
+}
