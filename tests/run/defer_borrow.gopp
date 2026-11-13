@@ -1,0 +1,94 @@
+package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("drop", f.fd)
+	}
+}
+
+func (f *File) Close() { println("close", f.fd) }
+
+func (f *File) Name() int { return f.fd }
+
+func open(fd int) File {
+	println("open", fd)
+	return File{fd: fd}
+}
+
+func sync(f *File) { println("sync", f.fd) }
+
+// Every file of the loop lives until the function returns, as in Go.
+func read(n int) {
+	for i := 1; i <= n; i++ {
+		f := open(i)
+		defer f.Close()
+		println("read", f.Name())
+	}
+	println("end of read")
+}
+
+// A statement that does not run does not keep its variable: the file
+// of such a pass ends with the pass.
+func some(n int) {
+	for i := 1; i <= n; i++ {
+		f := open(10 + i)
+		if i%2 == 0 {
+			defer sync(&f)
+		}
+		println("pass", i)
+	}
+	println("end of some")
+}
+
+// Two statements borrow one variable, and a deferred call sees what
+// was written after its statement. The variables end after all the
+// calls, with those of the function, the one declared last first.
+func order() {
+	a := open(21)
+	{
+		b := open(22)
+		c := open(23)
+		defer b.Close()
+		defer c.Close()
+		defer b.Close()
+		c.fd = 24
+	}
+	d := open(25)
+	println("end of order", a.fd, d.fd)
+}
+
+// A function that is left from inside a block, and one that a jump
+// runs again.
+func early(n int) int {
+	for i := 1; ; i++ {
+		f := open(30 + i)
+		defer f.Close()
+		if i == n {
+			return i
+		}
+	}
+}
+
+func again() {
+	n := 0
+next:
+	{
+		f := open(40 + n)
+		defer f.Close()
+	}
+	n++
+	if n < 2 {
+		goto next
+	}
+	println("end of again")
+}
+
+func main() {
+	read(2)
+	some(3)
+	order()
+	println(early(2))
+	again()
+}

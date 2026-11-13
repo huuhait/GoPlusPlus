@@ -1495,6 +1495,60 @@ again:
 }
 
 #[test]
+fn a_variable_of_a_block_that_a_defer_statement_borrows_lives_as_long_as_the_function() {
+    let text = "package main
+
+type File struct{ fd int }
+
+func (f *File) Close() {}
+
+func (f File) Name() int { return f.fd }
+
+func sync(f *File) {}
+
+func read(n int) {
+	first := File{fd: 0}
+	defer first.Close()
+	for i := 0; i < n; i++ {
+		f := File{fd: i}
+		defer f.Close()
+		g := File{fd: -i}
+		if i > 1 {
+			defer sync(&g)
+		}
+		h := File{fd: 1}
+		defer h.Name()
+	}
+}
+";
+    for file in ["a.gopp", "a.go"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        let start = module.find("\nfn _GPF4mainE4read(").unwrap();
+        let read = without_cleanup(&module[start..][..module[start..].find("\n}\n").unwrap()]);
+        let calls = |name: &str| read.matches(&format!("@{name}(")).count();
+        // `f` and `g` each live in a cell, because a deferred call has
+        // their address; the three statements of the loop make a
+        // record in a cell each. `first` is a variable of the whole
+        // function, and `h` is copied for a method that takes a value:
+        // they are where they were.
+        assert_eq!(calls("_gopp_cell_new"), 5, "{file}: {read}");
+        // Each of the two statements that borrow says so when it runs,
+        // and the function lets what was borrowed go where it is left,
+        // after its deferred calls.
+        assert_eq!(calls("_gopp_extend"), 2, "{file}: {read}");
+        assert_eq!(calls("_gopp_extended_end"), 1, "{file}: {read}");
+        let deferred = read.find("@_GPC0_F4mainE4read(").unwrap();
+        let ended = read.find("@_gopp_extended_end(").unwrap();
+        assert!(deferred < ended, "{file}: {read}");
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
 fn defer_statements_that_are_not_supported_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
@@ -1540,17 +1594,26 @@ func others(n int, m map[int]int) int {
 	return len(m)
 }
 
+func aliases(files []File) {
+	for _, &f := range files {
+		defer f.close()
+	}
+}
+
 func main() {}
 ",
         )],
         usize::MAX,
     );
+    // A variable of a block that a deferred call has the address of
+    // lives as long as the function; another name of an element does
+    // not.
     assert_eq!(
         messages,
         [
             "a.gopp:32:8: not supported yet: a defer statement of this built-in function or of a \
              conversion",
-            "a.gopp:36:9: not supported yet: a deferred call that holds a variable of a block",
+            "a.gopp:44:9: not supported yet: a deferred call that holds a variable of a block",
         ]
     );
 }
@@ -3114,6 +3177,27 @@ fn the_steps_grow_with_the_glue_of_types() {
             .collect();
         steps_of(&format!(
             "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{loops}}}\n"
+        ))
+    });
+    // Variables of blocks that `defer` statements borrow: in many
+    // blocks of the function, and in blocks in blocks.
+    assert_near_linear(&sizes, |n| {
+        let blocks: String = (0..n)
+            .map(|at| format!("\t{{\n\t\ts{at} := make([]int, x)\n\t\tdefer keep(&s{at})\n\t}}\n"))
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc keep(xs *[]int) {{}}\n\nfunc f(x int) {{\n{blocks}}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| {
+                format!("\tif x > {at} {{\n\t\ts{at} := make([]int, x)\n\t\tdefer keep(&s{at})\n")
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc keep(xs *[]int) {{}}\n\nfunc f(x int) {{\n{open}{}}}\n",
+            "\t}\n".repeat(n)
         ))
     });
     // What unwinding ends: many variables that own, each followed by a

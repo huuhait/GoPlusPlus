@@ -254,6 +254,18 @@ pub(super) struct FuncCx<'a, 'm> {
     /// For each list of records of `defer` statements that run more
     /// than once: the slot with the first record, the one made last.
     lists: Vec<LocalId>,
+    /// The variables of blocks that a `defer` statement may borrow and
+    /// that this function declares: the slot with the cell of each,
+    /// the type of the cell with what the list of borrowed variables
+    /// keeps after the variable, and what ends the variable.
+    extendable: FxHashMap<CheckedLocalId, (LocalId, TypeId, Option<FuncId>)>,
+    /// How many such variables were declared, while the program runs:
+    /// each has its number, and the one with the highest ends first.
+    declared: Option<LocalId>,
+    /// The slots with the first borrowed variable of each list, and
+    /// the list of the block of the function that is lowered now.
+    kept_lists: Vec<LocalId>,
+    region: Option<LocalId>,
     /// How often what the scopes and the temporaries own has changed.
     owners: u64,
     /// The first block that unwinding runs for what is owned, as of
@@ -677,6 +689,10 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             frame: None,
             deferred: None,
             lists: Vec::new(),
+            extendable: FxHashMap::default(),
+            declared: None,
+            kept_lists: Vec::new(),
+            region: None,
             owners: 0,
             unwind_head: None,
             temp_heads: Vec::new(),
@@ -871,10 +887,14 @@ impl FuncCx<'_, '_> {
         // on. No panic starts in this block.
         self.quiet = true;
         let bytes = self.bytes_ty();
-        for at in 0..self.lists.len() {
-            let empty = self.zero(bytes);
-            self.b
-                .assign(Place::local(self.lists[at]), Rvalue::Use(empty))?;
+        let empties = self
+            .lists
+            .iter()
+            .chain(&self.kept_lists)
+            .chain(&self.declared);
+        for slot in empties.copied().collect::<Vec<_>>() {
+            let empty = self.zero(self.b.place_ty(&Place::local(slot)));
+            self.b.assign(Place::local(slot), Rvalue::Use(empty))?;
         }
         let mut addresses = Vec::new();
         for at in 0..self.defers.len() {
@@ -1336,6 +1356,19 @@ impl FuncCx<'_, '_> {
     // ---- variables and scopes
 
     pub fn open_scope(&mut self) {
+        // A block of the function itself: the variables in it that
+        // `defer` statements borrow have a list of their own, which
+        // ends where the variables of the function end that were
+        // declared before the block. Every call in the block may be
+        // left by a panic while the list has variables of an earlier
+        // pass, so the list is there before the block.
+        if self.scopes.len() == 1 && self.frame.is_some() && !self.facts.extended.is_empty() {
+            let bytes = self.bytes_ty();
+            let list = self.b.temp(bytes);
+            self.kept_lists.push(list);
+            self.region = Some(list);
+            self.hold(Place::local(list), Ends::Extended);
+        }
         self.scopes.push(Scope::default());
         self.owners += 1;
     }
@@ -1816,27 +1849,107 @@ impl FuncCx<'_, '_> {
     fn declare_cell(&mut self, local: CheckedLocalId, ty: TypeId) -> Built<LocalId> {
         let declared = &self.body.locals[local.0 as usize];
         let (checked, span) = (declared.ty, declared.span);
-        let cell_ty = self.cell_type(ty);
-        let layout = self.b.types().layout(cell_ty, self.shared.layout);
-        let word = self.b.types().int(64, false);
-        let size = self
-            .b
-            .const_int(word, layout.map_or(0, |layout| layout.size))?;
-        let bytes = self.bytes_ty();
-        let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
-        let to = self.b.types().ptr(cell_ty);
-        let cell = self
-            .b
-            .assign_temp(Rvalue::Cast(crate::CastKind::PtrToPtr, made, to))?;
         let drop = match self.flat(ty) {
             true => None,
             false => self.drop_glue(Some(checked), span)?,
         };
+        let cell = self.new_cell(local, ty, drop)?;
         self.hold(Place::local(cell), Ends::Cell(drop));
         if let Some(scope) = self.scopes.last_mut() {
             scope.cells.push(local);
         }
         self.name_cell(local, cell, ty)
+    }
+
+    /// A new cell for a variable of the type `ty`, all zero, in a slot
+    /// of its own. A variable of a block that a `defer` statement may
+    /// borrow has more in its cell, after the variable: what the list
+    /// of the borrowed variables keeps of it, with its number among
+    /// those that were declared.
+    pub fn new_cell(
+        &mut self,
+        local: CheckedLocalId,
+        ty: TypeId,
+        drop: Option<FuncId>,
+    ) -> Built<LocalId> {
+        let plain = self.cell_type(ty);
+        let word = self.b.types().int(64, false);
+        let bytes = self.bytes_ty();
+        let extended = self.facts.extended.contains(&local) && self.frame.is_some();
+        let whole = match extended {
+            true => {
+                let glue = self.glue_sig(Glue::Drop);
+                let types = self.b.types();
+                let kept = types.tuple(&[bytes, word, bytes, glue]);
+                types.tuple(&[word, ty, kept])
+            }
+            false => plain,
+        };
+        let layout = self.b.types().layout(whole, self.shared.layout);
+        let size = self
+            .b
+            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+        let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
+        let to = self.b.types().ptr(plain);
+        let cell = Rvalue::Cast(crate::CastKind::PtrToPtr, made.clone(), to);
+        let cell = self.b.assign_temp(cell)?;
+        if extended {
+            let count = match self.declared {
+                Some(count) => count,
+                None => *self.declared.insert(self.b.temp(word)),
+            };
+            let count = Place::local(count);
+            let one = self.b.const_int(word, 1)?;
+            let next = Rvalue::Binary(crate::BinOp::Add, Operand::Copy(count.clone()), one);
+            self.b.assign(count.clone(), next)?;
+            let to = self.b.types().ptr(whole);
+            let all = Rvalue::Cast(crate::CastKind::PtrToPtr, made, to);
+            let all = Place::local(self.b.assign_temp(all)?);
+            let kept = self.b.deref(&all)?;
+            let kept = self.b.field(&kept, 2)?;
+            let number = self.b.field(&kept, 1)?;
+            self.b.assign(number, Rvalue::Use(Operand::Copy(count)))?;
+            self.extendable.insert(local, (cell, whole, drop));
+        }
+        Ok(cell)
+    }
+
+    /// A `defer` statement that runs borrows the variable: if it is a
+    /// variable of a block that this function declares, it lives until
+    /// the function is left, after the deferred calls (PAN-3, PAN-4).
+    pub fn extend(&mut self, local: CheckedLocalId) -> Built {
+        let Some(&(cell, whole, drop)) = self.extendable.get(&local) else {
+            return Ok(());
+        };
+        let bytes = self.bytes_ty();
+        // A variable of a block is declared in a block of the function,
+        // which has a list.
+        let Some(list) = self.region else {
+            return Ok(());
+        };
+        let list = self.record(Place::local(list))?;
+        let held = Operand::Copy(Place::local(cell));
+        let to = self.b.types().ptr(whole);
+        let all = Rvalue::Cast(crate::CastKind::PtrToPtr, held.clone(), to);
+        let all = Place::local(self.b.assign_temp(all)?);
+        let kept = self.b.deref(&all)?;
+        let kept = self.b.field(&kept, 2)?;
+        let kept = self.record(kept)?;
+        let held = Rvalue::Cast(crate::CastKind::PtrToPtr, held, bytes);
+        let held = Operand::Copy(Place::local(self.b.assign_temp(held)?));
+        let glue = self.glue_sig(Glue::Drop);
+        let drop = match drop {
+            Some(drop) => self.glue_value(Glue::Drop, drop),
+            None => self.zero(glue),
+        };
+        let params = [bytes, bytes, bytes, glue];
+        self.runtime_call("_gopp_extend", &params, vec![list, kept, held, drop])
+    }
+
+    /// Whether the variable lives in a cell here: its own, or one of a
+    /// function around this one.
+    pub fn in_cell(&self, local: CheckedLocalId) -> bool {
+        self.cells.contains_key(&local)
     }
 
     /// The variable of the local as another name of what the cell in
@@ -2032,7 +2145,13 @@ impl FuncCx<'_, '_> {
         let (block, depth, live) = (label.block, label.depth, label.live);
         self.exit_scopes(depth)?;
         if let (Some((live, owned)), Some(scope)) = (live, depth.checked_sub(1)) {
-            self.end_owned(scope, owned)?;
+            // The variables that `defer` statements borrowed stay.
+            for at in (owned..self.scopes[scope].owned.len()).rev() {
+                let (place, ends) = self.scopes[scope].owned[at].clone();
+                if !matches!(ends, Ends::Extended) {
+                    self.end(place, ends)?;
+                }
+            }
             for at in (live..self.scopes[scope].vars.len()).rev() {
                 let var = self.scopes[scope].vars[at];
                 self.b.storage_dead(var)?;

@@ -163,6 +163,35 @@ again:
 	return out
 }
 
+type Counter struct {
+	n     int
+	notes []string
+}
+
+func (c *Counter) add() {
+	step()
+	c.n++
+}
+
+func bump(n *int) {
+	step()
+	*n += 1
+}
+
+func borrowed() (total int) {
+	for i := 0; i < 3; i++ {
+		c := Counter{n: i, notes: list(1)}
+		if i != 1 {
+			defer c.add()
+		}
+		v := i
+		defer bump(&v)
+		step()
+		total += c.n + v + len(c.notes)
+	}
+	return total
+}
+
 func work() int {
 	total := scopes()
 	step()
@@ -170,6 +199,7 @@ func work() int {
 	total += values()
 	total += len(deferred())
 	total += len(passes())
+	total += borrowed()
 	a, b := pair()
 	step()
 	// The panics end here: this one is stopped where it is.

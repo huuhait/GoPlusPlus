@@ -67,6 +67,49 @@ void _gopp_cell_retain(uint8_t *cell) {
   __atomic_fetch_add((uint64_t *)cell, 1, __ATOMIC_RELAXED);
 }
 
+// What the list of the variables that `defer` statements borrowed
+// keeps of one of them, in its cell after the variable (PAN-3): the
+// variable that was declared before it, the number of the variable
+// among those that were declared, and the cell with what ends the
+// variable, once a statement borrowed it.
+typedef struct gopp_extended {
+  struct gopp_extended *next;
+  uint64_t number;
+  uint8_t *cell;
+  void (*drop)(uint8_t *value);
+} gopp_extended;
+
+// A `defer` statement that runs borrows the variable of the cell: the
+// list has the cell too from here on, once, so the variable lives until
+// the list ends. The list has the variable that was declared last
+// first.
+void _gopp_extend(uint8_t *list, uint8_t *kept, uint8_t *cell, void (*drop)(uint8_t *value)) {
+  gopp_extended *extended = (gopp_extended *)kept;
+  if (extended->cell != 0) {
+    return;
+  }
+  extended->cell = cell;
+  extended->drop = drop;
+  _gopp_cell_retain(cell);
+  gopp_extended **at = (gopp_extended **)list;
+  while (*at != 0 && (*at)->number > extended->number) {
+    at = &(*at)->next;
+  }
+  extended->next = *at;
+  *at = extended;
+}
+
+// The function is left, and its deferred calls are made: the list lets
+// every variable go, the one that was declared last first (PAN-4).
+void _gopp_extended_end(uint8_t *list) {
+  gopp_extended **first = (gopp_extended **)list;
+  while (*first != 0) {
+    gopp_extended *extended = *first;
+    *first = extended->next;
+    _gopp_cell_release(extended->cell, extended->drop);
+  }
+}
+
 // One less has the cell: the last ends the variable by `drop`, if its
 // bytes are not all there is to it, and frees the cell. A cell that was
 // never made is null.

@@ -272,18 +272,11 @@ impl FuncCx<'_, '_> {
         let declared = &self.body.locals[local.0 as usize];
         let (checked, span) = (declared.ty, declared.span);
         let of = self.lower(checked, span);
-        let cell_ty = self.cell_type(of);
-        let layout = self.b.types().layout(cell_ty, self.shared.layout);
-        let word = self.b.types().int(64, false);
-        let size = self
-            .b
-            .const_int(word, layout.map_or(0, |layout| layout.size))?;
-        let bytes = self.bytes_ty();
-        let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
-        let to = self.b.types().ptr(cell_ty);
-        let next = self
-            .b
-            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, made, to))?;
+        let drop = match self.flat(of) {
+            true => None,
+            false => self.drop_glue(Some(checked), span)?,
+        };
+        let next = self.new_cell(local, of, drop)?;
         // The copy, by the rule of the type.
         let old = self.var_place(var)?;
         let mut value = Rvalue::Use(Operand::Copy(old));
@@ -296,10 +289,6 @@ impl FuncCx<'_, '_> {
         self.b.assign(inside.clone(), Rvalue::Use(value))?;
         // The function lets the cell of this pass go and has the new
         // one in the same slot, which the scope of the loop ends.
-        let drop = match self.flat(of) {
-            true => None,
-            false => self.drop_glue(Some(checked), span)?,
-        };
         self.end(Place::local(cell), Ends::Cell(drop))?;
         let next = Operand::Copy(Place::local(next));
         self.b.assign(Place::local(cell), Rvalue::Use(next))?;

@@ -1542,7 +1542,8 @@ impl<'a> FuncCx<'a, '_> {
                 slots.push(self.kept(arg, ty, value)?);
             }
             self.empty_moved()?;
-            return self.waits(at, super::func::Waits::Print(line), slots, None, span);
+            let waits = super::func::Waits::Print(line);
+            return self.waits(at, waits, slots, None, (span, Vec::new()));
         }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
@@ -1560,9 +1561,12 @@ impl<'a> FuncCx<'a, '_> {
                         return Ok(());
                     }
                 };
-                if self.holds_block(span, None, args) {
+                let Some(mut borrowed) = self.borrows(span, None, args) else {
                     return Ok(());
-                }
+                };
+                // A literal borrows the variables that it uses.
+                let used = self.body.captures.get(&callee);
+                borrowed.extend(used.into_iter().flatten().map(|capture| capture.local));
                 let Type::Func(sig) = self.kind(code_ty) else {
                     return Ok(());
                 };
@@ -1581,16 +1585,25 @@ impl<'a> FuncCx<'a, '_> {
                 self.empty_moved()?;
                 let result = self.deferred_result(span, expr, sig.ret)?;
                 let waits = super::func::Waits::Value(code_ty);
-                return self.waits(at, waits, slots, result, span);
+                return self.waits(at, waits, slots, result, (span, borrowed));
             }
         };
         if called.views > 0 {
             self.unsupported(span, "a deferred call whose result may be a view");
             return Ok(());
         }
-        if self.holds_block(span, receiver.map(|(x, _)| x), args) {
+        // A method that takes the address of its receiver borrows the
+        // variable that the receiver is in.
+        let held = match (receiver, called.params.first()) {
+            (Some((x, _)), Some(&wanted)) => {
+                let address = matches!(self.kind(wanted), Type::Ptr(_)) && self.ty_of(x) != wanted;
+                address.then_some(x)
+            }
+            _ => None,
+        };
+        let Some(borrowed) = self.borrows(span, held, args) else {
             return Ok(());
-        }
+        };
         let mut slots = Vec::with_capacity(called.params.len());
         if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {
             let value = self.receiver(span, x, path, wanted)?;
@@ -1612,14 +1625,23 @@ impl<'a> FuncCx<'a, '_> {
         }
         self.empty_moved()?;
         let result = self.deferred_result(span, expr, called.ret)?;
-        self.waits(at, super::func::Waits::Call(called), slots, result, span)
+        let waits = super::func::Waits::Call(called);
+        self.waits(at, waits, slots, result, (span, borrowed))
     }
 
-    /// Whether a deferred call holds a variable of a block by its
-    /// address, as its receiver or as `&x` among its arguments: the
-    /// variable would have to live as long as the function, which is
-    /// reported.
-    fn holds_block(&mut self, span: SourceSpan, receiver: Option<ExprId>, args: &[ExprId]) -> bool {
+    /// The variables that a deferred call has the address of: of its
+    /// receiver, and of each `&x` among its arguments. A variable of a
+    /// block that lives in a cell is borrowed, and lives as long as the
+    /// function if the statement runs (PAN-3). One that has no cell is
+    /// another name of an element, which a deferred call cannot keep:
+    /// that is reported, and nothing is given back.
+    fn borrows(
+        &mut self,
+        span: SourceSpan,
+        receiver: Option<ExprId>,
+        args: &[ExprId],
+    ) -> Option<Vec<gopp_sema::LocalId>> {
+        let mut borrowed = Vec::new();
         for place in receiver.into_iter().chain(args.iter().copied()) {
             let inner = Shared::unparen(self.tree, place);
             let by_address = Some(place) == receiver
@@ -1630,16 +1652,16 @@ impl<'a> FuncCx<'a, '_> {
                         ..
                     }
                 );
-            if by_address
-                && self
-                    .root_local(inner)
-                    .is_some_and(|local| self.of_block(local))
-            {
+            let Some(local) = self.root_local(inner).filter(|_| by_address) else {
+                continue;
+            };
+            if self.of_block(local) && !self.in_cell(local) {
                 self.unsupported(span, "a deferred call that holds a variable of a block");
-                return true;
+                return None;
             }
+            borrowed.push(local);
         }
-        false
+        Some(borrowed)
     }
 
     /// How what a deferred call gives ends when the call is made:
@@ -1670,7 +1692,7 @@ impl<'a> FuncCx<'a, '_> {
         what: super::func::Waits,
         slots: Vec<(LocalId, Option<super::glue::Ends>)>,
         result: Option<super::glue::Ends>,
-        span: SourceSpan,
+        (span, borrowed): (SourceSpan, Vec<gopp_sema::LocalId>),
     ) -> Built {
         // The record owns what the slots had.
         for &(slot, _) in &slots {
@@ -1732,6 +1754,9 @@ impl<'a> FuncCx<'a, '_> {
             result,
             span,
         });
+        for local in borrowed {
+            self.extend(local)?;
+        }
         Ok(())
     }
 

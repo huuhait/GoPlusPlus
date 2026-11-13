@@ -52,6 +52,10 @@ pub(super) enum Ends {
     /// shares: the last ends the variable by the drop glue, if it has
     /// one, and frees the cell.
     Cell(Option<FuncId>),
+    /// The place has the first of the variables of blocks that `defer`
+    /// statements borrowed (PAN-3): each is let go, the one declared
+    /// last first.
+    Extended,
 }
 
 /// A function that the compiler makes for a type.
@@ -403,6 +407,11 @@ impl FuncCx<'_, '_> {
                     None => self.zero(sig),
                 };
                 self.runtime_call("_gopp_cell_release", &[bytes, sig], vec![cell, drop])
+            }
+            Ends::Extended => {
+                let bytes = self.bytes_ty();
+                let list = self.record(place)?;
+                self.runtime_call("_gopp_extended_end", &[bytes], vec![list])
             }
         }
     }

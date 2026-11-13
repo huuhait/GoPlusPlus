@@ -53,6 +53,12 @@ pub(crate) struct Facts {
     /// has: each lives in a cell, which the function values that use it
     /// share.
     pub celled: FxHashSet<LocalId>,
+    /// The variables of blocks that a `defer` statement borrows: a
+    /// deferred function literal uses them, or the statement has their
+    /// address as the receiver of its call or as `&x` among its
+    /// arguments. Each lives in a cell, and as long as the function if
+    /// the statement runs (PAN-3).
+    pub extended: FxHashSet<LocalId>,
     /// The function literals whose environment is in the frame.
     pub framed: FxHashSet<ExprId>,
     /// The variables whose address a method value has.
@@ -82,6 +88,7 @@ impl Facts {
     /// framed.
     fn settle(&mut self, body: &Body) {
         self.celled = self.bound.clone();
+        self.celled.extend(self.extended.iter().copied());
         for (literal, captures) in &body.captures {
             if !self.framed.contains(literal) {
                 self.celled
@@ -146,6 +153,8 @@ struct Walk<'a> {
     /// and those that a `defer` statement calls.
     direct: Vec<ExprId>,
     deferred: Vec<ExprId>,
+    /// The variables whose address a `defer` statement has.
+    held: Vec<LocalId>,
     /// The variables that are declared with a function literal as
     /// their value.
     func_vars: FxHashMap<LocalId, ExprId>,
@@ -190,6 +199,7 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         called: FxHashSet::default(),
         direct: Vec::new(),
         deferred: Vec::new(),
+        held: Vec::new(),
         func_vars: FxHashMap::default(),
         named: FxHashMap::default(),
         waiting: FxHashSet::default(),
@@ -329,12 +339,17 @@ impl Walk<'_> {
         }
         let captures = |literal: &ExprId| body.captures.get(literal).map(Vec::as_slice);
         let mut framed: FxHashSet<ExprId> = self.direct.iter().copied().collect();
+        let mut extended: FxHashSet<LocalId> = self.held.iter().copied().collect();
         for literal in &self.deferred {
             let used = captures(literal).unwrap_or_default();
             if used.iter().all(|capture| whole.contains(&capture.local)) {
                 framed.insert(*literal);
             }
+            extended.extend(used.iter().map(|capture| capture.local));
         }
+        // A variable of the whole function lives as long as it anyway.
+        extended.retain(|local| !whole.contains(local));
+        self.facts.extended = extended;
         // A variable that holds a literal and is only called: nothing
         // else names it, and no other literal uses it.
         let captured: FxHashSet<LocalId> = (body.captures.values().flatten())
@@ -462,7 +477,7 @@ impl Walk<'_> {
             }
             return;
         }
-        let ExprKind::Selector { x, sel } = &self.tree.exprs[callee].kind else {
+        let ExprKind::Selector { x, .. } = &self.tree.exprs[callee].kind else {
             return;
         };
         let Some(selection) = self.body.selections.get(&callee) else {
@@ -487,10 +502,23 @@ impl Walk<'_> {
                 return;
             }
         }
-        // A method of this package says how it takes its receiver; of
-        // any other it is not known, and may be by its address.
+        if !self.takes_value(callee) {
+            self.reached(*x);
+        }
+    }
+
+    /// Whether the selector names a method of this package that takes
+    /// its receiver by value. Of any other method it is not known, and
+    /// may be by its address.
+    fn takes_value(&self, callee: ExprId) -> bool {
+        let ExprKind::Selector { sel, .. } = &self.tree.exprs[callee].kind else {
+            return false;
+        };
+        let Some(selection) = self.body.selections.get(&callee) else {
+            return false;
+        };
         let types = self.shared.types;
-        let by_value = match &*types.get(selection.holder) {
+        match &*types.get(selection.holder) {
             CheckedType::Named { id, .. } => {
                 let method = self.shared.methods.get(&(*id, sel.name));
                 method.is_some_and(|method| {
@@ -498,10 +526,20 @@ impl Walk<'_> {
                 })
             }
             _ => false,
-        };
-        if !by_value {
-            self.reached(*x);
         }
+    }
+
+    /// The receiver of a call of the selector, if the call may have
+    /// its address: a method of a value that is no interface value and
+    /// is not taken by value.
+    fn by_address(&self, callee: ExprId) -> Option<ExprId> {
+        let ExprKind::Selector { x, .. } = &self.tree.exprs[callee].kind else {
+            return None;
+        };
+        let selection = self.body.selections.get(&callee)?;
+        let method = selection.kind != SelectionKind::Field;
+        let value = self.shared.types.is_interface(selection.holder) || self.takes_value(callee);
+        (method && !value).then_some(*x)
     }
 
     /// A variable that is declared with the value: one that holds a
@@ -534,6 +572,21 @@ impl Walk<'_> {
                             _ => rest.push(Node::Later(*fun)),
                         }
                         rest.extend(args.iter().map(|&arg| Node::Later(arg)));
+                        // What the statement has the address of.
+                        let receiver = self.by_address(callee);
+                        let taken = args.iter().filter_map(|&arg| {
+                            match self.tree.exprs[self.unparen(arg)].kind {
+                                ExprKind::Unary {
+                                    op: UnaryOp::Addr,
+                                    x,
+                                } => Some(x),
+                                _ => None,
+                            }
+                        });
+                        let roots: Vec<LocalId> = (receiver.into_iter().chain(taken))
+                            .filter_map(|place| self.root(place))
+                            .collect();
+                        self.held.extend(roots);
                     }
                     _ => rest.push(Node::Later(*call)),
                 }

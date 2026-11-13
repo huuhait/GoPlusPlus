@@ -4,6 +4,6 @@ inner block done
 end of blocks
 deferred 2
 sync 1
-close 1
 close 2
+close 1
 done! 2 done

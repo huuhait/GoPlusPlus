@@ -7,9 +7,9 @@ opened 2
 opened 3
 end of files
 sync 3
-close 3
 sync 2
-close 2
 sync 1
+close 3
+close 2
 close 1
 root/b/a

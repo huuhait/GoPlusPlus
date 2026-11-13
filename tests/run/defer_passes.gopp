@@ -27,7 +27,7 @@ func copies() {
 }
 
 // A file of each pass, which the deferred call of the pass uses: it
-// lives until that call is made.
+// lives until the function is left, after all the calls.
 func files(n int) {
 	for i := 1; i <= n; i++ {
 		f := open(i)

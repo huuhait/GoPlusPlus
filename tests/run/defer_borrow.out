@@ -1,0 +1,46 @@
+open 1
+read 1
+open 2
+read 2
+end of read
+close 2
+close 1
+drop 2
+drop 1
+open 11
+pass 1
+drop 11
+open 12
+pass 2
+open 13
+pass 3
+drop 13
+end of some
+sync 12
+drop 12
+open 21
+open 22
+open 23
+open 25
+end of order 21 25
+close 22
+close 24
+close 22
+drop 25
+drop 24
+drop 22
+drop 21
+open 31
+open 32
+close 32
+close 31
+drop 32
+drop 31
+2
+open 40
+open 41
+end of again
+close 41
+close 40
+drop 41
+drop 40

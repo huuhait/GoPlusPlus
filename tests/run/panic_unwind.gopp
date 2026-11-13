@@ -209,6 +209,28 @@ again:
 	return out
 }
 
+func (f *File) sync() { step() }
+
+func check(f *File) { step() }
+
+// Deferred calls that borrow the variables of the passes of a loop:
+// each variable lives until the function is left, or the panic leaves
+// it.
+func borrowed() int {
+	total := 0
+	for i := 0; i < 3; i++ {
+		f := open(30 + i)
+		if i != 1 {
+			defer f.sync()
+		}
+		g := open(40 + i)
+		defer check(&g)
+		step()
+		total += f.fd + g.fd
+	}
+	return total
+}
+
 func work() int {
 	total := scopes()
 	step()
@@ -217,6 +239,7 @@ func work() int {
 	total += len(deferred())
 	total += owners()
 	total += len(passes())
+	total += borrowed()
 	a, b := pair()
 	step()
 	return total + len(a) + len(b)
