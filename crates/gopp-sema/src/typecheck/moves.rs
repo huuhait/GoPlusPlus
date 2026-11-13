@@ -883,9 +883,11 @@ impl<'a> Walk<'a> {
 
     // ---- statements
 
+    /// The statements of a block, on a stack that grows on demand:
+    /// blocks are in blocks as deep as the parser takes them.
     fn stmts(&mut self, stmts: &[StmtId]) {
         for &stmt in stmts {
-            self.stmt(stmt);
+            gopp_syntax::with_stack(|| self.stmt(stmt));
         }
     }
 
