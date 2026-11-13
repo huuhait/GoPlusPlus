@@ -580,6 +580,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func bad(h *Holder) {\n\tx := 1\n\th.p = &x // error\n}\n\nfunc set(h \
              *Holder, p *int) { h.p = p } // ok",
         ),
+        OwnCaptureKept => (
+            "A function literal uses a variable around it that may hold a pointer, and is \
+             kept longer than the statement: it is returned, stored, given to a call that \
+             may keep it, or run with `go`. The literal uses the variable where it is, so \
+             it could run when what the variable points to has ended.",
+            "Give the function what it needs as an argument, or keep a `Shared` in the \
+             variable. A literal that is only called, or given to a call that does not keep \
+             it, may use such a variable.",
+            "func bad(p *T) func() int {\n\treturn func() int { return p.n } // \
+             error\n}\n\nfunc ok(p *T) int {\n\tread := func() int { return p.n }\n\treturn \
+             read()\n}",
+        ),
         OwnRangeMutation => (
             "The slice, the map or the string that a `range` loop goes over is assigned, \
              grown or cleared in the body of the loop. The loop reads it where it is until \

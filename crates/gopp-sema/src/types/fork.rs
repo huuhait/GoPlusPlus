@@ -64,6 +64,7 @@ impl Inner {
             abstracts: self.abstracts.clone(),
             holding: self.holding.clone(),
             leading: self.leading.clone(),
+            lending: self.lending.clone(),
             kept: self.kept.clone(),
             lends: self.lends.clone(),
             open_abstracts: open_abstracts

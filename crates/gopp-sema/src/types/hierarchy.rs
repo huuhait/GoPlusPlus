@@ -28,6 +28,9 @@ pub struct Lends {
     /// Each pair of parameters of which the function may store what
     /// the second reaches behind a pointer that the first reaches.
     pub stores: Vec<(u32, u32)>,
+    /// For each parameter: whether the function may keep a function
+    /// value that it is given there longer than the call (CLO-4).
+    pub keeps: Vec<bool>,
 }
 
 impl Lends {
@@ -337,6 +340,69 @@ impl Types {
         self.write(|inner| inner.kept.insert(param, what));
     }
 
+    /// Whether a value of the type may lend: it may hold a pointer, or
+    /// it holds a function value, which may use the variables of the
+    /// function that made it. A function value counts behind a slice,
+    /// a map, a channel and a handle too: it is kept there.
+    pub fn may_lend(&self, ty: TypeId) -> bool {
+        self.may_hold_pointer(ty) || self.has_func(ty, &mut (FxHashSet::default(), 0))
+    }
+
+    /// Whether a value of the type holds or leads to a function value,
+    /// kept as `holds` keeps what it finds.
+    fn has_func(&self, ty: TypeId, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
+        if let Some(known) = self.read(|inner| inner.lending.get(&ty).copied()) {
+            return known;
+        }
+        // What a type that needs instances without end is made of is
+        // not walked.
+        if self.is_expanding(ty) {
+            return false;
+        }
+        if !seen.0.insert(ty) {
+            seen.1 += 1;
+            return false;
+        }
+        let before = seen.1;
+        self.steps
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut parts: Vec<TypeId> = Vec::new();
+        let found = match &*self.get(self.underlying(ty)) {
+            Type::Func { .. } => true,
+            Type::Struct(fields) => {
+                parts.extend(fields.iter().map(|field| field.ty));
+                parts.extend(self.parents(ty));
+                false
+            }
+            Type::Map { key, value } => {
+                parts.extend([*key, *value]);
+                false
+            }
+            Type::Tuple(all) => {
+                parts.extend(all.iter());
+                false
+            }
+            Type::Array { elem, .. }
+            | Type::Option(elem)
+            | Type::Slice(elem)
+            | Type::Chan { elem, .. }
+            | Type::Unique(elem)
+            | Type::Shared(elem)
+            | Type::Weak(elem) => {
+                parts.push(*elem);
+                false
+            }
+            _ => false,
+        };
+        let found =
+            found || (parts.into_iter()).any(|part| super::deep(|| self.has_func(part, seen)));
+        seen.0.remove(&ty);
+        if found || seen.1 == before {
+            self.write(|inner| inner.lending.insert(ty, found));
+        }
+        found
+    }
+
     /// Whether a value of the type leads to a place that may be given
     /// a pointer: it holds a pointer to what holds one. A type
     /// parameter stands for a type that may.
@@ -401,6 +467,7 @@ impl Types {
             inner.abstracts.clear();
             inner.holding.clear();
             inner.leading.clear();
+            inner.lending.clear();
             inner.open_abstracts.clear();
         });
     }

@@ -51,6 +51,9 @@ pub(super) enum Step {
     Target,
     /// What a `Unique` or a `Shared` holds, which ends with it.
     Held,
+    /// The variable as a function literal uses it: where it is, at
+    /// any time. It may be assigned, and not ended or moved.
+    Captured,
 }
 
 /// What a variable may get loans from.
@@ -92,6 +95,9 @@ pub(super) struct Call {
     pub args: Vec<(u32, u32)>,
     /// The arguments that lead to a place which may be given a pointer.
     pub sinks: Vec<bool>,
+    /// The arguments that hold a function value and no pointer: the
+    /// function may keep them.
+    pub funcs: Vec<bool>,
     /// The arguments, and where the function is named.
     pub exprs: Vec<ExprId>,
     pub at: Span,
@@ -158,6 +164,8 @@ pub(super) struct Escaped {
     pub made: Span,
     pub how: Leaves,
     pub given: bool,
+    /// The loan is the use of a variable by a function literal.
+    pub captured: bool,
     pub carrier: Option<Carrier>,
 }
 
@@ -179,6 +187,12 @@ pub(super) enum Leaves {
     /// It is given to a call that may store it behind another pointer
     /// that it is given.
     Called,
+    /// It is given to a call that may keep it longer than the call.
+    Kept,
+    /// It is put where the function does not follow it: into a
+    /// variable of the package or of a function around, into a channel,
+    /// or it is what a new goroutine runs.
+    Left,
 }
 
 /// What a function does with pointers, as its walk found it: the
@@ -201,6 +215,8 @@ pub(super) struct Problem {
     /// that have names, the receiver first.
     pub owner: Option<Callee>,
     pub params: Vec<Option<LocalId>>,
+    /// The parameters that hold a function value and no pointer.
+    pub funcs: Vec<bool>,
     /// What carries the loans of a `Returned` or a `Stored` event, by
     /// the number of its first source.
     pub carriers: FxHashMap<u32, Carrier>,
@@ -372,8 +388,14 @@ impl<'a> Walk<'a> {
     /// type that may hold one. What is found with such a value alone
     /// is held against the type arguments.
     fn may_point(&self, ty: TypeId) -> bool {
-        self.places
-            .is_some_and(|places| places.types.may_hold_pointer(ty))
+        self.places.is_some_and(|places| places.types.may_lend(ty))
+    }
+
+    /// Whether a value of the type holds a function value and no
+    /// pointer: a function may keep what it is given of such a type.
+    pub(super) fn only_lends(&self, ty: TypeId) -> bool {
+        let types = self.places.map(|places| places.types);
+        types.is_some_and(|all| all.may_lend(ty) && !all.may_hold_pointer(ty))
     }
 
     fn type_of(&self, expr: ExprId) -> Option<TypeId> {
@@ -573,22 +595,105 @@ impl<'a> Walk<'a> {
         if let Some(&call) = self.call_ids.get(&expr) {
             return call;
         }
-        let before = self.given_first(fun);
+        let callee = self.callee(fun);
+        let (before, receiver) = self.given_before(fun, callee);
         let call = self.calls.len() as u32;
         let all = before.iter().chain(args.iter());
         for (position, &arg) in all.enumerate() {
-            given.push((call, position, arg, position == 0 && before.is_some()));
+            given.push((call, position, arg, position == 0 && receiver));
         }
         let count = args.len() + before.iter().count();
         self.calls.push(Call {
-            callee: self.callee(fun),
+            callee,
             args: vec![(0, 0); count],
             sinks: vec![false; count],
+            funcs: vec![false; count],
             exprs: before.iter().chain(args.iter()).copied().collect(),
             at: self.tree.exprs[fun].span,
         });
         self.call_ids.insert(expr, call);
         call
+    }
+
+    /// What a call of `fun` is given before its arguments, and whether
+    /// that is the receiver of a method. A function value that is
+    /// called may give back what it uses of the function that made it:
+    /// it is given first too.
+    fn given_before(&self, fun: ExprId, callee: Callee) -> (Option<ExprId>, bool) {
+        if let Some(first) = self.given_first(fun) {
+            // A function value in a field is called, not a method.
+            let selector = self.unparen(fun);
+            let selections = self.places.map(|places| places.selections);
+            let kind = selections.and_then(|all| all.get(&selector).map(|found| found.kind));
+            let field = matches!(kind, Some(SelectionKind::Field | SelectionKind::BaseField));
+            return (Some(first), !field);
+        }
+        let value = self
+            .type_of(self.unparen(fun))
+            .filter(|_| callee == Callee::Unknown);
+        let value = value.filter(|&ty| self.only_lends(ty) && self.runs_value(fun));
+        (value.map(|_| fun), false)
+    }
+
+    /// Whether the call of `fun` runs a value: no conversion, and no
+    /// built-in function.
+    fn runs_value(&self, fun: ExprId) -> bool {
+        let callee = self.unparen(fun);
+        let memo = self.places.map(|places| places.memo);
+        let typed = memo.and_then(|memo| memo.get(&callee).map(|operand| &operand.mode));
+        let built_in = matches!(self.body.uses.get(&callee), Some(Ref::Universe(_)));
+        !built_in && !matches!(typed, Some(Mode::Type))
+    }
+
+    /// What the sources of the values say is put where the function
+    /// does not follow it.
+    pub(super) fn left(&mut self, values: &[ExprId], at: Span) {
+        if self.places.is_none() {
+            return;
+        }
+        for &value in values {
+            let lends = self
+                .type_of(self.unparen(value))
+                .is_none_or(|ty| self.may_point(ty));
+            if !lends {
+                continue;
+            }
+            let from = self.sources.len() as u32;
+            let mut found = std::mem::take(&mut self.sources);
+            self.sources_of(value, &mut found);
+            self.sources = found;
+            let to = self.sources.len() as u32;
+            if to > from {
+                self.carriers.insert(from, Carrier::Expr(value));
+                self.events.push(Event::Left(from, to, at));
+            }
+        }
+    }
+
+    /// The variable that the place of the expression is in, if it is
+    /// one of a function around the function literal that is walked.
+    fn around(&self, place: ExprId) -> bool {
+        let mut at = self.unparen(place);
+        loop {
+            at = match &self.tree.exprs[at].kind {
+                ExprKind::Name(_) => {
+                    let local = match self.body.uses.get(&at) {
+                        Some(&Ref::Local(local)) => local,
+                        _ => return false,
+                    };
+                    return self.local(at).is_none()
+                        && self.body.locals[local.0 as usize].kind != LocalKind::Type;
+                }
+                ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Slice { x, .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => self.unparen(*x),
+                _ => return false,
+            };
+        }
     }
 
     /// The call has its operands: what it is given may be stored
@@ -608,8 +713,8 @@ impl<'a> Walk<'a> {
             return;
         }
         // Nor does a method that an option or a handle has of its own.
-        let before = self.given_first(*fun);
-        let own = before.is_some_and(|x| {
+        let (before, receiver) = self.given_before(*fun, self.callee(*fun));
+        let own = before.filter(|_| receiver).is_some_and(|x| {
             let mut steps = Vec::new();
             let ty = self.type_of(self.unparen(x));
             let ty = ty.map(|ty| self.through(ty, &mut steps));
@@ -628,21 +733,31 @@ impl<'a> Walk<'a> {
             let ty = self.type_of(self.unparen(*arg));
             ty.is_some_and(|ty| types.leads_to_store(ty))
         };
-        let receives = before.is_some_and(|x| {
+        let receives = before.filter(|_| receiver).is_some_and(|x| {
             let ty = self.type_of(self.unparen(x));
             ty.is_some_and(|ty| types.may_hold_pointer(ty))
         });
+        // A function value among the arguments may be kept.
+        let lends = |arg: &ExprId| {
+            let ty = self.type_of(self.unparen(*arg));
+            ty.is_some_and(|ty| self.only_lends(ty))
+        };
         let mut sinks: Vec<bool> = before.iter().chain(args.iter()).map(leads).collect();
-        if let Some(first) = sinks.first_mut() {
-            *first |= receives;
+        let mut funcs: Vec<bool> = before.iter().chain(args.iter()).map(lends).collect();
+        // The function value that is called is not given away, and
+        // nothing is stored behind it.
+        if before.is_some() {
+            sinks[0] = (sinks[0] && receiver) || receives;
+            funcs[0] &= receiver;
         }
-        if !sinks.contains(&true) {
+        if !sinks.contains(&true) && !funcs.contains(&true) {
             return;
         }
         let mut given = Vec::new();
         let call = self.call_of(expr, *fun, args, &mut given);
         self.given_to_calls(given);
         self.calls[call as usize].sinks = sinks;
+        self.calls[call as usize].funcs = funcs;
         self.events.push(Event::Called(call));
     }
 
@@ -788,6 +903,19 @@ impl<'a> Walk<'a> {
                         }
                     }
                 }
+                // A function literal uses the variables around it
+                // where they are: those that may lend, it lends, with
+                // all that they reach.
+                ExprKind::FuncLit { .. } => {
+                    for capture in self.captured(expr) {
+                        let local = capture.local;
+                        let lends = self.local_type(local).is_some_and(|ty| self.may_point(ty));
+                        if self.own(local) && lends {
+                            found.push(Source::Place(local, vec![Step::Captured], span));
+                            found.push(Source::Holder(local, 0, true));
+                        }
+                    }
+                }
                 ExprKind::CompositeLit { elems, .. } => {
                     rest.extend(elems.iter().map(|&elem| (elem, beyond)));
                 }
@@ -859,7 +987,24 @@ impl<'a> Walk<'a> {
                         let pointers = steps.iter().filter(|step| **step == Step::Target);
                         (root, pointers.count().checked_sub(1))
                     }
-                    None => continue,
+                    // A variable of a function around a function
+                    // literal is not followed from the literal, and a
+                    // variable of the package is checked for pointers
+                    // where it is assigned (OWN-B5): what such a place
+                    // gets leaves the function.
+                    None => {
+                        let ty = self.type_of(inner);
+                        let lends = ty.is_none_or(|ty| self.may_point(ty));
+                        let func = ty.is_some_and(|ty| self.only_lends(ty));
+                        if lends && (self.around(inner) || func) {
+                            let values = match places.len() == values.len() {
+                                true => &values[at..=at],
+                                false => values,
+                            };
+                            self.left(values, self.tree.exprs[inner].span);
+                        }
+                        continue;
+                    }
                 },
             };
             // A part that can hold no pointer gets none.
@@ -1140,6 +1285,7 @@ impl<'a> Walk<'a> {
             args: std::mem::take(&mut self.args),
             owner: self.owner.filter(|_| self.top),
             params: std::mem::take(&mut self.params),
+            funcs: std::mem::take(&mut self.funcs),
             carriers: std::mem::take(&mut self.carriers),
             changes: std::mem::take(&mut self.changes),
             loops: std::mem::take(&mut self.loops),
@@ -1168,6 +1314,7 @@ impl Problem {
             lends: Lends {
                 gives: vec![false; self.params.len()],
                 stores: Vec::new(),
+                keeps: vec![false; self.params.len()],
             },
             steps: 0,
         };
@@ -1359,6 +1506,12 @@ impl Problem {
                             let breaks = match lies(way, held) {
                                 // A pointer that the place holds is
                                 // replaced, not what it points to.
+                                // A function literal uses a variable
+                                // where it is: what is assigned to
+                                // it, the literal sees.
+                                Lies::Above if held[..] == [Step::Captured] => {
+                                    matches!(change.what, What::End | What::Declare | What::Move)
+                                }
                                 Lies::Above => !held[way.len()..].contains(&Step::Target),
                                 // A write through a pointer to the
                                 // place changes what is there, and the
@@ -1408,9 +1561,31 @@ impl Problem {
                         let how = (span, Leaves::Stored(root), carrier);
                         self.leaves(&known, Some(&places), &given, how, true, &mut lent);
                     }
+                    Event::Left(from, to, span) => {
+                        let given = known.given(&sets, set, sources, (from, to));
+                        let how = (span, Leaves::Left, self.carriers.get(&from).copied());
+                        self.leaves(&known, Some(&[]), &given, how, true, &mut lent);
+                    }
                     Event::Called(call) => {
                         let record = &self.calls[call as usize];
                         let sure = sources.says(call).is_some();
+                        // What the function keeps of a function value
+                        // that it is given; one that is not known may
+                        // keep every one (CLO-4).
+                        for (arg, &lends) in record.funcs.iter().enumerate() {
+                            let says = sources.says(call);
+                            let keeps = says.map_or(lends, |lends| {
+                                lends.keeps.get(arg).copied().unwrap_or(false)
+                            });
+                            if !keeps {
+                                continue;
+                            }
+                            let run = run(&self.args, record.args[arg]);
+                            let given = known.given_by(&sets, set, sources, run);
+                            let carrier = Some(Carrier::Expr(record.exprs[arg]));
+                            let how = (record.at, Leaves::Kept, carrier);
+                            self.leaves(&known, Some(&[]), &given, how, true, &mut lent);
+                        }
                         for stored in known.stored_by(&sets, set, sources, call) {
                             for (from, given) in &stored.given {
                                 let carrier = Some(Carrier::Expr(record.exprs[*from]));
@@ -1450,11 +1625,14 @@ impl Problem {
     ) {
         let param = |local: LocalId| self.params.iter().position(|param| *param == Some(local));
         // The parameters that the places are behind, and whether one
-        // is somewhere else outside the function. A pointer of which
-        // nothing is known leads out of the function too.
+        // is somewhere else outside the function. A pointer that is
+        // stored through and of which nothing is known leads out of
+        // the function too; an argument that reaches nothing has
+        // nothing stored behind it.
         let mut behind = Vec::new();
-        let nowhere = places.is_some_and(|places| places.is_empty());
-        let mut unknown = false;
+        let stored = matches!(how, Leaves::Stored(_));
+        let nowhere = stored && places.is_some_and(|places| places.is_empty());
+        let mut unknown = matches!(how, Leaves::Left | Leaves::Kept);
         for &place in places.unwrap_or(&[]) {
             let (of, way, _) = &known.loans[place as usize];
             if !way.contains(&Step::Target) {
@@ -1468,15 +1646,34 @@ impl Problem {
         if places.is_some() && behind.is_empty() && !unknown && !nowhere {
             return;
         }
+        // Where the loans go is followed by those who call the
+        // function: as a result, or behind a parameter.
+        let followed = places.is_none() || !(unknown || nowhere);
+        let captured = |loan: &u32| known.loans[*loan as usize].1[..] == [Step::Captured];
+        let uses = given.iter().any(captured);
         for &loan in given {
             let (of, way, made) = &known.loans[loan as usize];
+            // A variable that a function literal uses is kept as long
+            // as the literal: what it holds is what counts, where the
+            // literal is followed. Where it is not, the literal uses
+            // what it may not, and that is all that is said.
+            let capture = way[..] == [Step::Captured];
+            if uses && capture == followed {
+                continue;
+            }
             let escaped = |given: bool| Escaped {
                 at,
                 of: *of,
                 made: *made,
                 how,
                 given,
-                carrier,
+                captured: capture,
+                // The variable that a literal uses says whether what
+                // is found depends on a type parameter.
+                carrier: match capture {
+                    true => Some(Carrier::Local(*of)),
+                    false => carrier,
+                },
             };
             // What a pointer points to is not the function's, and
             // outlives it.
@@ -1492,8 +1689,12 @@ impl Problem {
                 Some(_) => {
                     let pairs = behind.iter().map(|&into| (into, from as u32));
                     lent.lends.stores.extend(pairs);
-                    if unknown && sure {
-                        lent.escaped.push(escaped(true));
+                    // A function value may be kept, which those who
+                    // call the function are told; a pointer may not.
+                    match self.funcs.get(from) {
+                        Some(true) if unknown => lent.lends.keeps[from] = true,
+                        _ if unknown && sure => lent.escaped.push(escaped(true)),
+                        _ => {}
                     }
                 }
             }

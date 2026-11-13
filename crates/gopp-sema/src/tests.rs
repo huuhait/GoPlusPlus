@@ -6793,6 +6793,160 @@ func bad2() int {
     assert_eq!(said(methods), expected);
 }
 
+// rule: CLO-3a, CLO-4, OWN-B5
+#[test]
+fn a_function_literal_that_uses_a_pointer_is_not_kept_where_nothing_follows_it() {
+    // A function literal uses the variables around it where they are,
+    // so it lends what they hold. Where it is returned or called, it
+    // is followed like a pointer (`bad1`, `bad3`, `bad7`, `bad8`,
+    // `made`, `fine1` to `fine3`). Where nothing follows it, it uses no
+    // variable that may hold a pointer: in a variable of the package
+    // (`bad2`), in a new goroutine (`bad4`), in a call that keeps it
+    // (`bad5`: `register` says so) or is not known (`bad6`). A literal
+    // puts no pointer into a variable around it (`bad9`). What only a
+    // type parameter says is held against the type argument
+    // (`generic`).
+    let text = "package p
+
+type T struct{ n int }
+
+var origin T
+var kept = func() int { return 0 }
+var handlers map[string]func() int
+
+func register(name string, f func() int) { handlers[name] = f }
+
+func each(xs []int, f func(int)) {
+	for _, x := range xs {
+		f(x)
+	}
+}
+
+func pass(f func() int) func() int { return f }
+
+func bad1() func() int {
+	x := T{1}
+	p := &x
+	return func() int { return p.n }
+}
+
+func bad2() {
+	x := T{3}
+	p := &x
+	kept = func() int { return p.n }
+}
+
+func made(p *T) func() int {
+	return func() int { return p.n }
+}
+
+func bad3() int {
+	f := made(&origin)
+	{
+		y := T{3}
+		f = made(&y)
+	}
+	return f()
+}
+
+func bad4(p *T) {
+	go func() { println(p.n) }()
+}
+
+func bad5(p *T) {
+	register(\"p\", func() int { return p.n })
+}
+
+func bad6(p *T, call func(func() int)) {
+	call(func() int { return p.n })
+}
+
+func bad7(p *T) func() int {
+	x := T{7}
+	q := &x
+	f := func() int { return p.n + q.n }
+	return pass(f)
+}
+
+func bad8() int {
+	f := func() int { return 0 }
+	{
+		x := T{8}
+		p := &x
+		f = func() int { return p.n }
+	}
+	return f()
+}
+
+func bad9(p *T, found *T) {
+	walk := func(q *T) { found = q }
+	walk(p)
+}
+
+func fine1() int {
+	x := T{4}
+	p := &x
+	f := func() int { return p.n }
+	return f()
+}
+
+func fine2() func() int {
+	x := T{2}
+	return func() int { return x.n }
+}
+
+func fine3(p *T, xs []int) int {
+	total := 0
+	each(xs, func(x int) { total += x * p.n })
+	p = &origin
+	return total
+}
+
+func fine4(f func() int) {
+	register(\"f\", f)
+	kept = f
+}
+
+func later[X any](first X) {
+	x := move(first)
+	go func() { _ = &x }()
+}
+
+func generic(p *T) {
+	later(1)
+	later(p)
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let uses = |name: &str| {
+        format!(
+            "a function that uses {name}: {name} may hold a pointer, and the function may run \
+             when what it points to has ended"
+        )
+    };
+    let expected = [
+        "a.gopp:22:2: cannot return a pointer into x: x ends when the function returns".to_owned(),
+        format!("a.gopp:28:2: cannot keep {}", uses("p")),
+        "a.gopp:40:2: y ends here, and f points into it and is used later".to_owned(),
+        format!("a.gopp:45:5: cannot keep {}", uses("p")),
+        format!("a.gopp:49:2: cannot give register {}", uses("p")),
+        format!("a.gopp:53:2: cannot give call {}", uses("p")),
+        "a.gopp:60:2: cannot return a pointer into x: x ends when the function returns".to_owned(),
+        "a.gopp:69:2: x ends here, and f points into it and is used later".to_owned(),
+        "a.gopp:74:23: cannot keep what q points to in found: nothing says how long it is kept \
+         there"
+            .to_owned(),
+        format!(
+            "a.gopp:109:2: cannot use *T for X: the function is not for a type with a pointer \
+             in it: cannot keep {}",
+            uses("x")
+        ),
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
@@ -6863,6 +7017,26 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
             "{head}{functions}func use(x, y *T) int {{\n\ttotal := 0\n{calls}\treturn total\n}}\n"
         )
     };
+    // Each function gives the function value that it is given to the
+    // next, which only the last one calls; every one is given a
+    // literal that uses a pointer, and the literal is called too.
+    let literals = |count: usize| {
+        let functions: String = (0..count)
+            .map(|i| match i + 1 == count {
+                true => format!("func c{i}(f func() int) int {{ return f() }}\n"),
+                false => format!("func c{i}(f func() int) int {{ return c{}(f) }}\n", i + 1),
+            })
+            .collect();
+        let calls: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\tf{i} := func() int {{ return x.n + {i} }}\n\ttotal += c{i}(f{i}) + \
+                     f{i}()\n"
+                )
+            })
+            .collect();
+        format!("{head}{functions}func use(x *T) int {{\n\ttotal := 0\n{calls}\treturn total\n}}\n")
+    };
     // Each function stores through the next, and the last one itself;
     // every one is called with a holder and a value of its own.
     let stores = |count: usize, up: bool| {
@@ -6902,6 +7076,7 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(ring(n)));
     linear::assert_near_linear(&sizes, |n| steps(fan(n)));
     linear::assert_near_linear(&sizes, |n| steps(generic(n)));
+    linear::assert_near_linear(&sizes, |n| steps(literals(n)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(unknown(n)));
@@ -7219,8 +7394,9 @@ func (c *Count) Up() int { c.n++; return c.n }
 @Extends(Count)
 type Twice struct{ tag string }
 
-func (t *Twice) Each() func() int {
-	return func() int { return base.Up() }
+func (t *Twice) Each() int {
+	up := func() int { return base.Up() }
+	return up()
 }
 
 func (t Twice) Later() func() int {
@@ -7232,7 +7408,7 @@ func (t Twice) Later() func() int {
     let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     assert_eq!(checked.messages, [] as [&str; 0]);
     // A receiver that is a value may be changed through `base`.
-    let expected = ["11:9: t read", "15:9: t write"];
+    let expected = ["11:8: t read", "16:9: t write"];
     assert_eq!(closures(&checked, &names), expected);
 }
 

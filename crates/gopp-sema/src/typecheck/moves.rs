@@ -51,6 +51,9 @@ pub(super) enum Event {
     /// The call with the number is made: what it is given may be
     /// stored behind the pointers that it is given.
     Called(u32),
+    /// What the sources from the first number to the second say is put
+    /// where the function does not follow it.
+    Left(u32, u32, Span),
 }
 
 /// A variable that is read where it may hold no value.
@@ -294,6 +297,7 @@ pub(super) struct Walk<'a> {
     pub owner: Option<borrows::Callee>,
     pub top: bool,
     pub params: Vec<Option<LocalId>>,
+    pub funcs: Vec<bool>,
     pub changes: Vec<borrows::Change>,
     /// The changes that a loop around them refuses.
     pub broken: Vec<borrows::Broken>,
@@ -358,6 +362,7 @@ pub(super) fn of(
         owner,
         top: true,
         params: Vec::new(),
+        funcs: Vec::new(),
         changes: Vec::new(),
         broken: Vec::new(),
         frames: Vec::new(),
@@ -464,7 +469,7 @@ impl<'a> Checker<'a> {
                 &*self.types.get(self.types.underlying(held.ty)),
                 Type::Unique(_) | Type::Shared(_)
             );
-            handle || self.types.may_hold_pointer(held.ty)
+            handle || self.types.may_lend(held.ty)
         };
         let lends = std::mem::take(&mut self.lends) || self.locals.values().any(handle);
         if self.var_modes.is_empty() && watched.is_empty() && !lends {
@@ -645,7 +650,26 @@ impl<'a> Checker<'a> {
             use borrows::Leaves;
             let owner = named(self, escaped.of);
             let whole = text(escaped.at);
+            // A function literal that uses a variable which may hold a
+            // pointer is not kept (CLO-3a).
+            let uses = format!(
+                "a function that uses {owner}: {owner} may hold a pointer, and the function may \
+                 run when what it points to has ended"
+            );
             let (code, message) = match (escaped.how, escaped.given) {
+                (Leaves::Returned, _) if escaped.captured => {
+                    (Code::OwnCaptureKept, format!("cannot return {uses}"))
+                }
+                (Leaves::Stored(_), _) if escaped.captured => (
+                    Code::OwnCaptureKept,
+                    format!("cannot store in {whole} {uses}"),
+                ),
+                (Leaves::Called | Leaves::Kept, _) if escaped.captured => {
+                    (Code::OwnCaptureKept, format!("cannot give {whole} {uses}"))
+                }
+                (Leaves::Left, _) if escaped.captured => {
+                    (Code::OwnCaptureKept, format!("cannot keep {uses}"))
+                }
                 (Leaves::Returned, _) => (
                     Code::OwnReturnAddrLocal,
                     format!(
@@ -683,13 +707,42 @@ impl<'a> Checker<'a> {
                          where it outlives what {owner} points to"
                     ),
                 ),
+                (Leaves::Kept, false) => (
+                    Code::OwnStoredOutlives,
+                    format!(
+                        "cannot give a pointer into {owner} to {whole}: the call may keep it \
+                         longer than {owner}"
+                    ),
+                ),
+                (Leaves::Kept, true) => (
+                    Code::OwnStoredOutlives,
+                    format!(
+                        "cannot give what {owner} points to to {whole}: the call may keep it \
+                         longer than what {owner} points to"
+                    ),
+                ),
+                (Leaves::Left, false) => (
+                    Code::OwnStoredOutlives,
+                    format!(
+                        "cannot keep a pointer into {owner} in {whole}: it may be used when \
+                         {owner} has ended"
+                    ),
+                ),
+                (Leaves::Left, true) => (
+                    Code::OwnStoredOutlives,
+                    format!(
+                        "cannot keep what {owner} points to in {whole}: nothing says how long \
+                         it is kept there"
+                    ),
+                ),
             };
             if !self.report_once((escaped.at, code)) {
                 continue;
             }
-            let note = match escaped.given {
-                true => format!("{owner} points to what the function is given"),
-                false => format!("the pointer into {owner} is made here"),
+            let note = match (escaped.captured, escaped.given) {
+                (true, _) => format!("the function that uses {owner} is written here"),
+                (_, true) => format!("{owner} points to what the function is given"),
+                (_, false) => format!("the pointer into {owner} is made here"),
             };
             let diagnostic = Diagnostic::new(code, escaped.at, message);
             if !self.against_arguments(escaped.carrier.and_then(carried), &diagnostic) {
@@ -736,7 +789,13 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn own(&self, local: LocalId) -> bool {
+    /// The variables that the function literal uses of the functions
+    /// around it.
+    pub(super) fn captured(&self, literal: ExprId) -> &'a [Capture] {
+        self.captures.get(&literal).map_or(&[], |all| &all[..])
+    }
+
+    pub(super) fn own(&self, local: LocalId) -> bool {
         use LocalKind::*;
         let declared = &self.body.locals[local.0 as usize];
         matches!(declared.kind, Var | Receiver | Param | Result)
@@ -816,6 +875,7 @@ impl<'a> Walk<'a> {
         self.call_ids.clear();
         self.carriers.clear();
         self.params.clear();
+        self.funcs.clear();
         self.frames.clear();
         self.loops.clear();
         self.looping.clear();
@@ -848,6 +908,8 @@ impl<'a> Walk<'a> {
                 if let (Some(local), Some(name)) = (local, name) {
                     self.given_from_outside(local, name.span);
                 }
+                let ty = local.and_then(|local| self.places?.locals.get(&local));
+                self.funcs.push(ty.is_some_and(|x| self.only_lends(x.ty)));
                 self.params.push(local);
             }
             self.given = self.events.len();
@@ -1205,8 +1267,19 @@ impl<'a> Walk<'a> {
                 self.stmt(*stmt);
             }
             StmtKind::Block(block) => self.stmts(&block.stmts),
-            StmtKind::Expr(x) | StmtKind::Go(x) | StmtKind::Defer(x) => self.unit(&[*x]),
-            StmtKind::Send { chan, value } => self.unit(&[*chan, *value]),
+            StmtKind::Expr(x) | StmtKind::Defer(x) => self.unit(&[*x]),
+            // What a new goroutine runs is kept longer than the
+            // statement, and so is what a channel is given.
+            StmtKind::Go(x) => {
+                self.unit(&[*x]);
+                if let ExprKind::Call { fun, .. } = &tree.exprs[self.unparen(*x)].kind {
+                    self.left(&[*fun], tree.exprs[*fun].span);
+                }
+            }
+            StmtKind::Send { chan, value } => {
+                self.unit(&[*chan, *value]);
+                self.left(&[*value], tree.exprs[*value].span);
+            }
             StmtKind::Decl(decls) => {
                 for &decl in decls {
                     let DeclKind::Var { names, values, .. } = &tree.decl_nodes[decl].kind else {
@@ -1523,7 +1596,7 @@ impl<'a> Walk<'a> {
         // What the function is given holds pointers from the start.
         let holds = self.events[self.given..].iter().any(|event| match event {
             Event::Holds(_, from, to, _) => to > from,
-            Event::Returned(..) | Event::Stored(..) | Event::Called(_) => true,
+            Event::Returned(..) | Event::Stored(..) | Event::Called(_) | Event::Left(..) => true,
             _ => false,
         });
         let holds = holds || !self.broken.is_empty();
@@ -1634,7 +1707,8 @@ impl<'a> Walk<'a> {
                     | Event::Changed(_)
                     | Event::Returned(..)
                     | Event::Stored(..)
-                    | Event::Called(_) => continue,
+                    | Event::Called(_)
+                    | Event::Left(..) => continue,
                 };
                 let Some(&member) = members.get(&local) else {
                     continue;
@@ -1675,7 +1749,8 @@ impl<'a> Walk<'a> {
             | Event::Changed(_)
             | Event::Returned(..)
             | Event::Stored(..)
-            | Event::Called(_) => None,
+            | Event::Called(_)
+            | Event::Left(..) => None,
         };
         for at in self.not_read_later(before, after, asked, effect) {
             if let Event::Given(local, expr) = self.events[at]
@@ -1706,7 +1781,8 @@ impl<'a> Walk<'a> {
             | Event::Changed(_)
             | Event::Returned(..)
             | Event::Stored(..)
-            | Event::Called(_) => None,
+            | Event::Called(_)
+            | Event::Left(..) => None,
         };
         // What a function literal uses or a pointer leads to may be read
         // at any time.

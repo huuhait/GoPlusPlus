@@ -369,6 +369,7 @@ codes! {
     511 NoteBorrowedHere "note_borrowed_here",
     512 OwnPointerOnHeap "err_own_pointer_on_heap",
     513 OwnStoredOutlives "err_own_stored_outlives",
+    514 OwnCaptureKept "err_own_capture_kept",
 }
 
 impl Code {
