@@ -1,0 +1,54 @@
+package main
+
+// The key of a deferred `delete` is the one of its statement, and the
+// map is the one that its variable holds when the function is left: a
+// variable of a block lives until then.
+func forget(names []string) (total int) {
+	for _, name := range names {
+		seen := map[string][]string{}
+		seen[name] = []string{name}
+		key := name
+		defer func() { total += len(seen) }()
+		defer delete(seen, key)
+		key += "!"
+		seen[key] = []string{key, key}
+	}
+	return 10
+}
+
+func empty() int {
+	all := map[string]string{"a": "b"}
+	func() {
+		defer clear(all)
+		all["c"] = "d"
+	}()
+	return len(all)
+}
+
+// The value of a deferred panic is the one of its statement.
+func late(name string) (out string) {
+	defer func() {
+		r := recover()
+		text, _ := r.(string)
+		out = text + "?"
+	}()
+	for i := 0; i < 2; i++ {
+		defer panic(name + "!")
+		name += "+"
+	}
+	return name
+}
+
+// `recover` that is the deferred call itself stops nothing.
+func plain() (stopped bool) {
+	defer func() { stopped = recover() != nil }()
+	defer recover()
+	panic("plain")
+}
+
+func main() {
+	println(forget([]string{"a", "bb"}))
+	println(empty())
+	println(late("x"))
+	println(plain())
+}

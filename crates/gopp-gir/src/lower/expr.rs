@@ -1514,16 +1514,24 @@ impl<'a> FuncCx<'a, '_> {
         };
         let callee = Shared::unparen(self.tree, *fun);
         let known = self.body.types.contains_key(&callee);
-        let prints = match self.builtin_of(callee).filter(|_| !known) {
+        let built_in = self.builtin_of(callee).filter(|_| !known);
+        let prints = match built_in {
             Some(Predeclared::Print) => Some(false),
             Some(Predeclared::Println) => Some(true),
             _ => None,
+        };
+        let other = match (built_in, &args[..]) {
+            (Some(Predeclared::Panic), [_]) | (Some(Predeclared::Recover), []) => true,
+            (Some(Predeclared::Delete), [map, _]) | (Some(Predeclared::Clear), [map]) => {
+                self.holds_map(*map)
+            }
+            _ => false,
         };
         let refused = match () {
             // Its deferred calls would have no function to make them.
             () if !self.defers_calls() => Some("a defer statement in a function without a symbol"),
             () if *unwrap => Some("a call with `!`"),
-            () if !known && prints.is_none() => {
+            () if !known && prints.is_none() && !other => {
                 Some("a defer statement of this built-in function or of a conversion")
             }
             () => None,
@@ -1531,6 +1539,9 @@ impl<'a> FuncCx<'a, '_> {
         if let Some(what) = refused {
             self.unsupported(span, what);
             return Ok(());
+        }
+        if let (true, Some(called)) = (other, built_in) {
+            return self.defer_built_in(at, span, called, args);
         }
         // `print` and `println` write what their arguments were here.
         if let Some(line) = prints {
@@ -1627,6 +1638,55 @@ impl<'a> FuncCx<'a, '_> {
         let result = self.deferred_result(span, expr, called.ret)?;
         let waits = super::func::Waits::Call(called);
         self.waits(at, waits, slots, result, (span, borrowed))
+    }
+
+    /// `defer` of `panic`, `recover`, and `delete` or `clear` of a map.
+    /// The value of the panic and the key are those of the statement;
+    /// the map is the one that its place holds when the call is made,
+    /// so the statement keeps the address of that place.
+    fn defer_built_in(
+        &mut self,
+        at: usize,
+        span: SourceSpan,
+        called: Predeclared,
+        args: &[ExprId],
+    ) -> Built {
+        use super::func::Waits;
+        let mut slots = Vec::new();
+        let mut borrowed = Vec::new();
+        let waits = match (called, args) {
+            (Predeclared::Panic, [value]) => {
+                let ty = self.lower(self.shared.types.any(), span);
+                let held = self.rvalue_as(*value, ty)?;
+                let held = self.taken(*value, ty, held)?;
+                slots.push(self.kept(*value, ty, held)?);
+                Waits::Panic
+            }
+            (Predeclared::Delete | Predeclared::Clear, [map, key @ ..]) => {
+                let Some(of) = self.map_of(*map) else {
+                    return Ok(());
+                };
+                let Some(held) = self.borrows(span, Some(*map), &[]) else {
+                    return Ok(());
+                };
+                borrowed = held;
+                let place = self.map_place(*map, &mut PlaceMode::default())?;
+                let address = self.b.assign_temp(Rvalue::AddrOf(place, Mutability::Mut))?;
+                slots.push((address, None));
+                for &key in key {
+                    let value = self.rvalue_as(key, of.key)?;
+                    let value = self.taken(key, of.key, value)?;
+                    slots.push(self.kept(key, of.key, value)?);
+                }
+                match key.is_empty() {
+                    true => Waits::Clear(of),
+                    false => Waits::Delete(of),
+                }
+            }
+            _ => Waits::Nothing,
+        };
+        self.empty_moved()?;
+        self.waits(at, waits, slots, None, (span, borrowed))
     }
 
     /// The variables that a deferred call has the address of: of its

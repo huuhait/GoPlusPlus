@@ -90,6 +90,15 @@ pub(super) enum Waits {
     /// A function value, which is the first of what the statement
     /// keeps: the type of its code.
     Value(TypeId),
+    /// `panic(v)`, with `v` in an interface value.
+    Panic,
+    /// `delete(m, k)` and `clear(m)` for a map: the statement keeps the
+    /// address of the place that holds the map, and the key.
+    Delete(super::map::MapOf),
+    Clear(super::map::MapOf),
+    /// `recover()`, which stops no panic when it is the deferred call
+    /// itself, as in Go.
+    Nothing,
 }
 
 /// A call that waits for its function to be left.
@@ -1219,8 +1228,10 @@ impl FuncCx<'_, '_> {
         // what `print` writes, the value that is called.
         let lent = |at: usize| match &pending.what {
             Waits::Call(called) => called.lent.get(at) == Some(&true),
-            Waits::Print(_) => true,
+            Waits::Print(_) | Waits::Delete(_) | Waits::Clear(_) | Waits::Nothing => true,
             Waits::Value(_) => at == 0,
+            // The runtime has the value of the panic.
+            Waits::Panic => false,
         };
         self.open_scope();
         if let Some(cell) = cell {
@@ -1266,6 +1277,31 @@ impl FuncCx<'_, '_> {
                         self.end(slot, ends)?;
                     }
                 }
+            }
+            Waits::Panic => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
+                if let Some(value) = slots.first() {
+                    self.panic_with(pending.span, value.clone())?;
+                }
+            }
+            Waits::Delete(of) | Waits::Clear(of) => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
+                // The map that its place holds now.
+                if let Some(place) = slots.first() {
+                    let map = self.b.deref(place)?;
+                    let map = Operand::Copy(self.slot_of(Rvalue::Use(Operand::Copy(map)))?);
+                    let key = match slots.get(1) {
+                        Some(key) => Some(self.record(key.clone())?),
+                        None => None,
+                    };
+                    self.map_forget(map, of, key)?;
+                }
+            }
+            Waits::Nothing => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
             }
         }
         self.close_scope(pending.span)?;

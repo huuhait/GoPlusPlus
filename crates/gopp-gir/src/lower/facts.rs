@@ -574,6 +574,14 @@ impl Walk<'_> {
                         rest.extend(args.iter().map(|&arg| Node::Later(arg)));
                         // What the statement has the address of.
                         let receiver = self.by_address(callee);
+                        // `delete` and `clear` work on the map where
+                        // it is held.
+                        let written = match self.body.uses.get(&callee) {
+                            Some(Ref::Universe(Predeclared::Delete | Predeclared::Clear)) => {
+                                args.first().copied()
+                            }
+                            _ => None,
+                        };
                         let taken = args.iter().filter_map(|&arg| {
                             match self.tree.exprs[self.unparen(arg)].kind {
                                 ExprKind::Unary {
@@ -583,7 +591,8 @@ impl Walk<'_> {
                                 _ => None,
                             }
                         });
-                        let roots: Vec<LocalId> = (receiver.into_iter().chain(taken))
+                        let roots: Vec<LocalId> = (receiver.into_iter().chain(written))
+                            .chain(taken)
                             .filter_map(|place| self.root(place))
                             .collect();
                         self.held.extend(roots);

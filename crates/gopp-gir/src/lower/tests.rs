@@ -1270,12 +1270,7 @@ func main() {
 ";
     for file in ["a.gopp", "a.go"] {
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
-        // `recover` itself is no deferred function.
-        let refused = format!(
-            "{file}:28:8: not supported yet: a defer statement of this built-in function or of \
-             a conversion"
-        );
-        assert_eq!(messages, [refused], "{file}");
+        assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
         let body = |symbol: &str| {
             let start = module.find(&format!("\nfn {symbol}(")).unwrap();
@@ -1549,6 +1544,58 @@ func read(n int) {
 }
 
 #[test]
+fn a_deferred_built_in_function_keeps_what_its_statement_had() {
+    // A Go++ function changes the map of its caller through a pointer;
+    // a write to its own copy that nothing reads is refused.
+    for (file, map) in [("a.gopp", "*map[string]int"), ("a.go", "map[string]int")] {
+        let text = format!(
+            "package main
+
+func fail(m {map}, key string, reason string) {{
+	defer recover()
+	defer delete(m, key)
+	for range 2 {{
+		defer clear(m)
+	}}
+	defer panic(reason)
+}}
+"
+        );
+        let (lowered, messages) = lowered_with(&[(file, &text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        let body = |symbol: &str| {
+            let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+            without_cleanup(&module[start..][..module[start..].find("\n}\n").unwrap()])
+        };
+        let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+        // The function of the deferred calls panics, clears and
+        // deletes; `recover` as the deferred call itself asks the
+        // runtime nothing, since it stops no panic.
+        let deferred = body("_GPC0_F4mainE4fail");
+        assert_eq!(calls(&deferred, "_gopp_panic"), 1, "{file}: {deferred}");
+        assert_eq!(calls(&deferred, "_gopp_map_clear"), 1, "{file}: {deferred}");
+        assert_eq!(
+            calls(&deferred, "_gopp_map_delete"),
+            1,
+            "{file}: {deferred}"
+        );
+        assert_eq!(calls(&deferred, "_gopp_recover"), 0, "{file}: {deferred}");
+        // The statements keep the value of the panic in an interface
+        // value, and the address of the place of the map: the function
+        // itself does none of the three.
+        let fail = body("_GPF4mainE4fail");
+        assert_eq!(calls(&fail, "_gopp_iface_box"), 1, "{file}: {fail}");
+        for name in ["_gopp_panic", "_gopp_map_clear", "_gopp_map_delete"] {
+            assert_eq!(calls(&fail, name), 0, "{file}: {fail}");
+        }
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
 fn defer_statements_that_are_not_supported_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
@@ -1583,15 +1630,15 @@ func named() (n int) {
 	return 1
 }
 
-func others(n int, m map[int]int) int {
-	defer delete(m, n)
+func others(n int, xs []int) int {
+	defer copy(&xs, xs)
 	defer func() {}()
 	if n > 0 {
 		f := File{fd: n}
 		defer f.close()
 		defer say(n)
 	}
-	return len(m)
+	return len(xs)
 }
 
 func aliases(files []File) {

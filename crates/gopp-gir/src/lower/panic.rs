@@ -9,7 +9,7 @@ use gopp_syntax::ast::ExprId;
 use lasso::Spur;
 
 use super::func::{Built, FuncCx};
-use crate::{Operand, Rvalue, Type, TypeId};
+use crate::{Operand, Place, Rvalue, Type, TypeId};
 
 impl FuncCx<'_, '_> {
     /// `panic(v)`: the runtime gets `v` in an interface value, which it
@@ -26,6 +26,12 @@ impl FuncCx<'_, '_> {
         let held = self.taken(value, ty, held)?;
         let held = self.slot_of(held)?;
         self.empty_moved()?;
+        self.panic_with(span, held)
+    }
+
+    /// A panic with the interface value in the place, which the
+    /// runtime has from here on.
+    pub fn panic_with(&mut self, span: SourceSpan, held: Place) -> Built {
         let (error, string) = (self.shared.error, self.shared.string);
         let keys = [self.text_key(error), self.text_key(string)];
         let bytes = self.bytes_ty();

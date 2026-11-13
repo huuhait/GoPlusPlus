@@ -420,10 +420,24 @@ impl FuncCx<'_, '_> {
         };
         let map = self.map_now(x)?;
         let key = self.key_at(index, &of)?;
-        let shape = self.shape(&of)?;
+        self.map_forget(map, &of, Some(key))
+    }
+
+    /// The map has the key at the address no more; without a key, it
+    /// has no key any more.
+    pub fn map_forget(&mut self, map: Operand, of: &MapOf, key: Option<Operand>) -> Built {
+        let shape = self.shape(of)?;
         let bytes = self.bytes_ty();
-        let params = [self.b.operand_ty(&map), bytes, bytes];
-        self.runtime_call("_gopp_map_delete", &params, vec![map, shape, key])
+        match key {
+            Some(key) => {
+                let params = [self.b.operand_ty(&map), bytes, bytes];
+                self.runtime_call("_gopp_map_delete", &params, vec![map, shape, key])
+            }
+            None => {
+                let params = [self.b.operand_ty(&map), bytes];
+                self.runtime_call("_gopp_map_clear", &params, vec![map, shape])
+            }
+        }
     }
 
     /// `clear(m)`.
@@ -432,9 +446,7 @@ impl FuncCx<'_, '_> {
             return Ok(());
         };
         let map = self.map_now(x)?;
-        let shape = self.shape(&of)?;
-        let params = [self.b.operand_ty(&map), self.bytes_ty()];
-        self.runtime_call("_gopp_map_clear", &params, vec![map, shape])
+        self.map_forget(map, &of, None)
     }
 
     /// `len(m)` as a number of the type.
