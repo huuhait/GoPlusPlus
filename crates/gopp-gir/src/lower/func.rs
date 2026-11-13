@@ -856,8 +856,7 @@ impl FuncCx<'_, '_> {
                 let pinned = self.pinned_results();
                 let count = self.defers.len() + pinned.len();
                 let types = self.b.types();
-                let marks = types.intern(Type::Array(bytes, 5));
-                let node = types.tuple(&[bytes, run_ty, bytes, marks]);
+                let node = types.tuple(&[bytes, run_ty, bytes, bytes]);
                 let records = types.tuple(&vec![bytes; count]);
                 self.frame = Some(Frame {
                     node: (!self.shared.aborts).then(|| self.b.temp(node)),
@@ -939,12 +938,11 @@ impl FuncCx<'_, '_> {
             kind: ConstantKind::Func(frame.run),
             ty: self.glue_sig(Glue::Drop),
         });
-        let marks = self.b.types().intern(Type::Array(bytes, 5));
         let fields = vec![
             self.zero(bytes),
             run,
             self.record(records)?,
-            self.zero(marks),
+            self.zero(bytes),
         ];
         let node = Place::local(node);
         self.b.assign(
@@ -962,9 +960,9 @@ impl FuncCx<'_, '_> {
         let after = self.b.new_block();
         self.b.switch(stopped, vec![(0, body)], after)?;
         // A deferred call stopped a panic: the function returns to its
-        // caller with what its results have (PAN-1). What its variables
-        // own is not freed: where the panic left the function is not
-        // known here.
+        // caller with what its results have (PAN-1). What it owned
+        // where the panic left it has ended: it ran its cleanup blocks
+        // when it came back here.
         self.b.switch_to(after);
         let named = self.results.clone();
         let given = self.results_now(&named, &parts, &[])?;
@@ -1504,10 +1502,10 @@ impl FuncCx<'_, '_> {
         Ok(block)
     }
 
-    /// For a function with a frame, the last block of every unwinding:
-    /// the runtime is asked whether a deferred call of this function
-    /// stopped the panic, and does not come back if so; if not, the
-    /// results end too.
+    /// For a function with a frame, the last block of what a panic
+    /// that leaves a call runs: the runtime is asked whether a deferred
+    /// call of this function stopped the panic. If not, the results end
+    /// too; if so, the function goes on and gives them to its caller.
     fn frame_base(&mut self) -> Built<Option<BlockId>> {
         let Some(node) = self.frame.and_then(|frame| frame.node) else {
             return Ok(None);
@@ -1517,7 +1515,11 @@ impl FuncCx<'_, '_> {
             let block = self.cleanup_block(None, |this| {
                 let bytes = this.bytes_ty();
                 let node = this.record(Place::local(node))?;
-                this.runtime_call("_gopp_defer_left", &[bytes], vec![node])?;
+                let bool = TypeInterner::BOOL;
+                let goes_on = this.runtime("_gopp_defer_left", &[bytes], bool, vec![node])?;
+                let [ends, done] = [(); 2].map(|()| this.b.new_block());
+                this.b.switch(goes_on, vec![(0, ends)], done)?;
+                this.b.switch_to(ends);
                 for at in results.rev() {
                     let (place, ends) = this.scopes[0].owned[at].clone();
                     this.end(place, ends)?;
@@ -1525,6 +1527,8 @@ impl FuncCx<'_, '_> {
                 for (var, ends) in this.hidden.clone() {
                     this.end(Place::local(var), ends)?;
                 }
+                this.b.goto(done)?;
+                this.b.switch_to(done);
                 Ok(())
             })?;
             self.frame_block = Some(block);

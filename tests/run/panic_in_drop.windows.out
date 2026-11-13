@@ -1,0 +1,13 @@
+made 1
+stopped: true
+fatal error: a panic left the end of a value
+
+goroutine 1 [running]:
+main.Bad.drop()
+	+0x?
+drop glue for main.Bad()
+	+0x?
+main.work()
+	+0x?
+main.main()
+	+0x?

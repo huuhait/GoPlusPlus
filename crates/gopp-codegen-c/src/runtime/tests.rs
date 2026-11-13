@@ -35,10 +35,6 @@ fn names_all(layout: TargetLayout) -> String {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn the_header_compiles_for_both_targets_and_its_checks_bite() {
     let toolchain = HostToolchain::discover().unwrap();
     for target in ["linux/amd64", "windows/amd64"] {
@@ -62,10 +58,6 @@ fn magic(path: &Path) -> Vec<u8> {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn the_objects_are_made_for_both_targets_without_a_c_library() {
     let toolchain = HostToolchain::discover().unwrap();
     let cache = tempfile::tempdir().unwrap();
@@ -100,10 +92,6 @@ fn kept_in(cache: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn the_runtime_is_built_once_for_a_target_and_its_flags() {
     let toolchain = HostToolchain::discover().unwrap();
     let cache = tempfile::tempdir().unwrap();

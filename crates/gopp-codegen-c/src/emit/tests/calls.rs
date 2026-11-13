@@ -40,10 +40,6 @@ fn body_of<'t>(assembly: &'t str, symbol: &str) -> &'t str {
 /// A function with an environment, one of C that it calls, and what a
 /// unit says of both for a target with `swiftcall` and for one without.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn the_convention_and_the_environment_are_written_for_the_target() {
     use gopp_gir::{BinOp, CallConv, FuncBuilder, FuncType, Linkage, Operand, Place, Rvalue};
     use gopp_gir::{Span, Type, UnwindAction};
@@ -146,10 +142,6 @@ fn the_convention_and_the_environment_are_written_for_the_target() {
 /// with texts between `;` that the function has, and after a `!` texts
 /// that it has not.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn the_assembly_of_each_target_is_what_tests_codegen_says() {
     let toolchain = HostToolchain::discover().unwrap();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/codegen");

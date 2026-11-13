@@ -52,6 +52,15 @@ void _gopp_os_frames(gopp_frame_fn each) {
   }
 }
 
-// Nothing unwinds here yet: what the functions that a panic leaves own
-// is not ended on Windows.
-void _gopp_os_unwind(uint8_t *room) { (void)room; }
+// The `longjmp` of the C runtime unwinds the stack to the function
+// that made the mark, which runs what the functions between have for
+// that, and the function goes on.
+[[noreturn]] void longjmp(void *mark, int value);
+
+void _gopp_os_unwind(uint8_t *room, gopp_frame *target) {
+  (void)room;
+  longjmp(target->mark, 1);
+}
+
+// The function went on when the stack was unwound to it.
+void _gopp_os_resume(gopp_frame *target) { (void)target; }

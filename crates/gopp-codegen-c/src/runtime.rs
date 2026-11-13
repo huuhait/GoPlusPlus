@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 86] = [
+pub const FUNCS: [RuntimeFunc; 87] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -263,7 +263,8 @@ pub const FUNCS: [RuntimeFunc; 86] = [
     ),
     returns("_gopp_recover", "uint8_t *value"),
     returns("_gopp_panic_aborts", ""),
-    returns("_gopp_defer_left", "uint8_t *frame"),
+    gives("bool", "_gopp_defer_left", "uint8_t *frame"),
+    returns("_gopp_defer_owns", "uint8_t *owned"),
     ends("_gopp_panic_drop", ""),
     ends(
         "_gopp_panic_assert",
@@ -360,7 +361,7 @@ typedef struct gopp_frame {
   struct gopp_frame *next;
   void (*run)(uint8_t *record);
   uint8_t *record;
-  void *jmp[5];
+  void *mark;
 } gopp_frame;
 
 // A variable that a function captured, in an environment: its cell,
@@ -459,15 +460,39 @@ pub fn header(layout: TargetLayout) -> String {
 /// panic in its own frame, which a function that it calls cannot do
 /// for it.
 const ENTER: &str = "
-// The function is in the list from here on. It is here a second time,
-// with true, when one of its deferred calls stopped a panic. Clang
-// does not know of `__builtin_setjmp` that the function goes on twice
-// from it, and would let what the second time reads share its room on
-// the stack with what the first time writes; it knows it of a function
-// that it calls with this mark.
+// The function is in the list from here on, with `at`, a variable of
+// its own, as its mark. It is here a second time, with true, when one
+// of its deferred calls stopped a panic. Clang must know that the
+// function goes on twice from here, or it lets what the second time
+// reads share its room on the stack with what the first time writes.
+#if defined(_WIN32)
+// The mark of the C runtime, whose `longjmp` unwinds the stack to the
+// function. Clang's own mark does not bring back the frame pointer of
+// a function of Windows. That unwinding runs what the functions
+// between have for it, and nothing of the function of the mark: when
+// the function goes on, it ends what it owned itself.
+typedef struct gopp_mark {
+  _Alignas(16) uint64_t part[32];
+} gopp_mark;
+__attribute__((returns_twice)) int gopp_setjmp(void *mark, void *frame) __asm__(\"_setjmp\");
+#define GOPP_MARK_UNWOUND 0
+#define _gopp_defer_enter(frame, at) \\
+  (_gopp_defer_push(frame), ((gopp_frame *)(frame))->mark = &(at), \\
+   gopp_setjmp(&(at), __builtin_frame_address(0)) != 0)
+#else
+// Clang does not know of `__builtin_setjmp` that the function goes on
+// twice from it; it knows it of a function that it calls with the mark.
+// The unwinder of the system unwinds the function of the mark like
+// those between, and the function goes on from its last cleanup block.
+typedef struct gopp_mark {
+  void *part[5];
+} gopp_mark;
 __attribute__((returns_twice)) void _gopp_defer_push(uint8_t *frame);
-#define _gopp_defer_enter(frame) \\
-  (_gopp_defer_push(frame), __builtin_setjmp(((gopp_frame *)(frame))->jmp) != 0)
+#define GOPP_MARK_UNWOUND 1
+#define _gopp_defer_enter(frame, at) \\
+  (_gopp_defer_push(frame), ((gopp_frame *)(frame))->mark = &(at), \\
+   __builtin_setjmp((at).part) != 0)
+#endif
 ";
 
 pub(crate) const HEADER_NAME: &str = "gopp_rt.h";

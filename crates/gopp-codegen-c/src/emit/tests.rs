@@ -389,10 +389,6 @@ fn strict<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> Clan
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
     let toolchain = HostToolchain::discover().unwrap();
     let programs = [
@@ -766,10 +762,6 @@ fn a_program_computes_what_go_says_at_every_level() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn a_link_for_another_target_says_what_it_lacks() {
     let toolchain = HostToolchain::discover().unwrap();
     let other = match cfg!(target_os = "linux") {

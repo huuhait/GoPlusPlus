@@ -850,10 +850,6 @@ fn build_says_what_stops_it() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn build_makes_an_object_for_each_target_and_links_for_its_own() {
     let dir = TempDir::new().unwrap();
     let file = write_source(&dir, "sums.gopp", SUMS);

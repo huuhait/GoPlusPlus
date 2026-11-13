@@ -56,10 +56,6 @@ fn written(result: &Value) -> String {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "needs Clang 23, which the Windows test machine does not have yet"
-)]
 fn every_program_of_tests_run_does_what_its_files_say() {
     let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/run"));
     let mut programs: Vec<PathBuf> = fs::read_dir(dir)
@@ -114,7 +110,14 @@ fn every_program_of_tests_run_does_what_its_files_say() {
             wrong.push(format!("{}: ended as {ended:?}\n{message}", id(program)));
             continue;
         }
-        let golden = program.with_extension("out");
+        // The trace of a program that ends while the stack is unwound
+        // has other functions on Windows, where the unwinder runs on
+        // top of the stack: such a program has a file for Windows.
+        let other = program.with_extension("windows.out");
+        let golden = match cfg!(windows) && other.exists() {
+            true => other,
+            false => program.with_extension("out"),
+        };
         let written = written(result);
         if update {
             fs::write(&golden, &written).unwrap();

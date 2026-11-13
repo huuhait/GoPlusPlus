@@ -7,15 +7,6 @@
 
 void free(void *room);
 
-// The stack of the functions that a panic leaves behind is no stack of
-// theirs any more, which the address sanitizer is told.
-#if defined(__has_feature) && __has_feature(address_sanitizer)
-void __asan_handle_no_return(void);
-#define LEAVES_FRAMES() __asan_handle_no_return()
-#else
-#define LEAVES_FRAMES()
-#endif
-
 static void frame(uintptr_t start, uintptr_t at) {
   const char *name = _gopp_func_name(start);
   // What is no Go++ function is no part of the trace: the runtime
@@ -95,19 +86,27 @@ void _gopp_panic_reset(void) {
   die();
 }
 
-// The last that unwinding does in a function with a frame, after the
-// function ended what it owns but its results: if one of its deferred
-// calls stopped the panic, the function goes on from where it marked.
-void _gopp_defer_left(uint8_t *frame) {
+// A function with a frame ended what it owns but its results, because
+// a panic left one of its calls: whether it is the function that goes
+// on, which keeps its results for its caller. The unwinding is over
+// then. Where the unwinder of the system ran this for the function,
+// the function goes on from here, and this does not come back.
+bool _gopp_defer_left(uint8_t *frame) {
   gopp_unwinding *unwinding = unwindings;
   if (unwinding == 0 || unwinding->target != (gopp_frame *)frame) {
-    return;
+    return false;
   }
   unwindings = unwinding->outer;
   free(unwinding);
-  LEAVES_FRAMES();
-  __builtin_longjmp(((gopp_frame *)frame)->jmp, 1);
+  _gopp_os_resume((gopp_frame *)frame);
+  return true;
 }
+
+// A function with a frame says where the record of what it owns is.
+// Nothing is done with it: what is known outside the function is in
+// memory at every call, where a panic may leave the function, and the
+// function reads it there when it goes on.
+void _gopp_defer_owns(uint8_t *owned) { (void)owned; }
 
 void _gopp_defer_push(uint8_t *frame) {
   gopp_frame *pushed = (gopp_frame *)frame;
@@ -287,14 +286,12 @@ static bool listed(const gopp_frame *frame) {
     }
     panics = rest;
     // Every function between here and the one that goes on ends what
-    // it owns, and that one comes to `_gopp_defer_left` last.
+    // it owns while the stack is unwound, and so does that one, which
+    // asks `_gopp_defer_left` last and goes on where it marked.
     gopp_unwinding *unwinding = _gopp_alloc(sizeof *unwinding);
     *unwinding = (gopp_unwinding){.outer = unwindings, .target = frame, .limit = frames};
     unwindings = unwinding;
-    _gopp_os_unwind(unwinding->room);
-    // The system has no unwinder for this: nothing is ended on the way.
-    _gopp_defer_left((uint8_t *)frame);
-    __builtin_unreachable();
+    _gopp_os_unwind(unwinding->room, frame);
   }
   write_panics(panic, true);
   die();

@@ -196,6 +196,8 @@ impl Guard {
 pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(String, u64)> {
     let mut steps = 0;
     let guard = Guard::of(func, &mut steps);
+    let name = cx.func_name(at).to_owned();
+    let enters = (func.blocks().iter()).any(|(_, block)| entered(cx, &block.term.kind));
     let mut writer = Writer {
         cx,
         func,
@@ -203,6 +205,7 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         steps,
         guard,
         unwinding: false,
+        name: name.clone(),
     };
     let Type::Func(sig) = cx.kind(func.sig()) else {
         return Err(unsupported(func, "a function without a function type"));
@@ -217,7 +220,6 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
             targeted[target.into_raw().into_u32() as usize] |= !unwinds;
         }
     }
-    let name = cx.func_name(at).to_owned();
     writer.out.push('\n');
     if let Some(guard) = &writer.guard {
         // The record, and the function that the cleanup blocks are.
@@ -271,6 +273,10 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
             }
         }
     }
+    if enters {
+        // Where the function goes on after a stopped panic.
+        writer.out.push_str("  gopp_mark gopp_at;\n");
+    }
     if writer.guard.is_some() {
         // The record is the last variable of the function, so that
         // all others are still there when its function is called.
@@ -279,6 +285,15 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
             "  struct {name}_own gopp_owned __attribute__((cleanup({name}_unwind)));\n  \
              struct {name}_own *const gopp_own = &gopp_owned;\n  gopp_own->state = 0;\n{given}"
         );
+        // Where the unwinder of the system does not run the cleanup
+        // blocks of a function that goes on after a stopped panic, the
+        // function runs them itself and reads the record then. So the
+        // record is in memory at every call: its address is known
+        // outside the function.
+        if enters {
+            let owns = "  if (!GOPP_MARK_UNWOUND) _gopp_defer_owns((uint8_t *)gopp_own);\n";
+            writer.out.push_str(owns);
+        }
     }
     writer.blocks(&targeted)?;
     writer.out.push_str("}\n");
@@ -293,6 +308,23 @@ struct Writer<'c, 'm> {
     guard: Option<Guard>,
     /// The cleanup blocks are written, and not the others.
     unwinding: bool,
+    /// The name of the function in C.
+    name: String,
+}
+
+/// Whether the end of a block is the call by which a function with
+/// `defer` statements tells the runtime of itself.
+fn entered(cx: &Cx<'_>, term: &TerminatorKind) -> bool {
+    let TerminatorKind::Call { callee, .. } = term else {
+        return false;
+    };
+    match callee {
+        Operand::Const(Constant {
+            kind: ConstantKind::Func(func),
+            ..
+        }) => cx.module.funcs[*func].name() == "_gopp_defer_enter",
+        _ => false,
+    }
 }
 
 impl Writer<'_, '_> {
@@ -644,6 +676,31 @@ impl Writer<'_, '_> {
                     if !cx.empty(self.operand_ty(arg)) {
                         given.push(self.operand(arg)?);
                     }
+                }
+                // The function marks where it goes on after a stopped
+                // panic with a variable of its own. When it is there
+                // again and the unwinder did not do so, it ends what
+                // it owned where the panic left it: its cleanup
+                // blocks, from the one of that call.
+                if entered(cx, term) {
+                    let dest = self.place(dest)?;
+                    let frame = given.join(", ");
+                    let _ = writeln!(
+                        self.out,
+                        "  {state}{dest} = _gopp_defer_enter({frame}, gopp_at);"
+                    );
+                    if self.guard.is_some() {
+                        let _ = writeln!(
+                            self.out,
+                            "  if ({dest} && !GOPP_MARK_UNWOUND) {}_unwind(gopp_own);",
+                            self.name
+                        );
+                    }
+                    match target {
+                        Some(target) => self.jump(*target),
+                        None => self.out.push_str("  __builtin_unreachable();\n"),
+                    }
+                    return Ok(());
                 }
                 let call = format!("{called}({})", given.join(", "));
                 match cx.empty(self.place_ty(dest)) {
