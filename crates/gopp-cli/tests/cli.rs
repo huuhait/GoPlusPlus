@@ -1584,6 +1584,41 @@ fn a_package_makes_the_instances_of_the_generic_code_that_it_imports() {
     );
 }
 
+// rule: EXP-17
+#[test]
+fn an_operator_of_a_type_of_another_package_calls_the_method_of_that_package() {
+    let dir = TempDir::new().unwrap();
+    let vec = "package vec\n\ntype Vec struct{ X, Y int }\n\n\
+               @Operator\nfunc (a Vec) Add(b Vec) Vec { return Vec{a.X + b.X, a.Y + b.Y} }\n\n\
+               @Operator\nfunc (a Vec) Mul(b Vec) int { return a.X*b.X + a.Y*b.Y }\n\n\
+               @Operator\n@Right\nfunc (a Vec) Mul(by int) Vec { return Vec{a.X * by, a.Y * by} }\n";
+    let root = library(&dir, &[("vec/vec.gopp", vec)]);
+    let text = "package main\n\nimport \"vec\"\n\nfunc main() {\n\t\
+                a, b := vec.Vec{1, 2}, vec.Vec{3, 4}\n\tc := a + 2*b\n\t\
+                println(c.X, a*b, a.Add(b).Y, a.Mul(3).X)\n}\n";
+    let file = write_source(&dir, "main.gopp", text);
+    let mut build = gopp();
+    build.env("GOPPROOT", &root).args(["build", "-emit=gir"]);
+    let output = run(build.arg(&file));
+    assert_eq!(stderr(&output), "");
+    let module = stdout(&output);
+    // The methods are those of the unit of `vec`: this one only says
+    // them, each by the symbol that its package gave it.
+    for (symbol, calls) in [
+        ("_GPTo6op_AddN3vecE3VecLB", 2),
+        ("_GPTo6op_MulN3vecE3VecLB", 1),
+        ("_GPTo7opr_MulN3vecE3VecLiE", 2),
+    ] {
+        let called = module.matches(&format!("call const fn @{symbol}")).count();
+        assert_eq!(called, calls, "{symbol}\n{module}");
+        assert!(
+            module.contains(&format!("\ndeclare fn {symbol}")),
+            "{symbol}"
+        );
+        assert!(!module.contains(&format!("\nfn {symbol}")), "{symbol}");
+    }
+}
+
 // rule: GEN-5
 #[test]
 #[cfg_attr(

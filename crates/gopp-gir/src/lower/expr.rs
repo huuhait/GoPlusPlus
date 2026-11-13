@@ -441,7 +441,7 @@ impl<'a> FuncCx<'a, '_> {
         let node = &self.tree.exprs[expr];
         let span = node.span;
         if self.body.operators.contains_key(&expr) {
-            return Ok(self.placeholder(span, ty, "an operator method"));
+            return self.operator(expr, ty);
         }
         if let Some(typed) = self.body.types.get(&expr)
             && let Some(known) = self.constant(&typed.value, ty)
@@ -1370,6 +1370,22 @@ impl<'a> FuncCx<'a, '_> {
                 };
             }
         };
+        let holder = self.body.selections.get(&callee).map(|found| found.holder);
+        self.method_call(expr, called, receiver, holder, args)
+    }
+
+    /// The call `expr` of the function `called` with the arguments
+    /// `args`; if it is a method, with the receiver that is reached
+    /// from an expression by a way, of the type `holder`.
+    pub(super) fn method_call(
+        &mut self,
+        expr: ExprId,
+        called: Callee,
+        receiver: Option<Receiver<'a>>,
+        holder: Option<CheckedTypeId>,
+        args: &[ExprId],
+    ) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
         let mut given = Vec::with_capacity(called.params.len());
         if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {
             // A receiver by value is like an argument: lent to a method
@@ -1382,7 +1398,6 @@ impl<'a> FuncCx<'a, '_> {
             }
             // The receiver of a method of an embedded type is a part
             // of the value, of the type that has the method.
-            let holder = self.body.selections.get(&callee).map(|found| found.holder);
             if let (Some(holder), false) = (holder, path.is_empty()) {
                 self.parts.insert(x, holder);
             }
@@ -2502,6 +2517,9 @@ impl<'a> FuncCx<'a, '_> {
                 .method(holder, name)
                 .map(|method| (method.symbol.clone(), Some(method.receiver), method.sig)),
             CalleeKey::Instance(job) => Some(shared.job_called(job)),
+            CalleeKey::Operator(holder, which) => shared
+                .operator(holder, which)
+                .map(|method| (method.symbol.clone(), Some(method.receiver), method.sig)),
         };
         let declared = |receiver: Option<_>, checked| match &*shared.types.get(checked) {
             CheckedType::Func { params, .. } => params.len() + usize::from(receiver.is_some()),

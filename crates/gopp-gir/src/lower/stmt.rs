@@ -532,16 +532,29 @@ impl FuncCx<'_, '_> {
         );
         for &(case, body) in cases {
             let span = self.tree.exprs[case].span;
-            if !(compared || by_parts) || self.body.case_operators.contains_key(&case) {
+            let by_method = self.body.case_operators.get(&case).cloned();
+            if !(compared || by_parts || by_method.is_some()) {
                 self.unsupported(span, "a case that is compared by a function");
                 continue;
             }
             let mark = self.temps.len();
-            let value = self.operand_as(case, ty)?;
             let eq = gopp_syntax::ast::BinaryOp::Eq;
-            let equal = match by_parts {
-                true => self.equal(span, eq, tag, on.clone(), value)?,
-                false => self.arith(span, eq, on.clone(), value, false)?,
+            let equal = match (by_method, by_parts) {
+                (Some(used), _) => match self.operator_case(tag, case, &used)? {
+                    Ok(equal) => equal,
+                    Err(what) => {
+                        self.unsupported(span, what);
+                        continue;
+                    }
+                },
+                (None, true) => {
+                    let value = self.operand_as(case, ty)?;
+                    self.equal(span, eq, tag, on.clone(), value)?
+                }
+                (None, false) => {
+                    let value = self.operand_as(case, ty)?;
+                    self.arith(span, eq, on.clone(), value, false)?
+                }
             };
             let equal = self.b.assign_temp(equal)?;
             self.drop_temps(mark)?;

@@ -731,8 +731,12 @@ pub fn declarations(
         methods_declared,
         steps,
         func_marks,
+        operator_spans,
         ..
     } = checker;
+    package.operators = (operator_spans.into_iter())
+        .map(|(method, span)| (span.lo, method))
+        .collect();
     for (((object, ty), value), marks) in package
         .objects
         .iter_mut()

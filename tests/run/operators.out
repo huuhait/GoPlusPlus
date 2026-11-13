@@ -1,0 +1,13 @@
+4 6 11
+3 6 6 8 -1 -2
+false true true true false
+4 6 4 4
+abc abcde ab c
+abcdefab a f 8
+aBcdefab aBcdefabab false true true
+one part
+  operand left
+  operand right
+  operand first
+  operand second
+3 true

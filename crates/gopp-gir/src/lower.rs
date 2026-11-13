@@ -15,6 +15,7 @@ mod glue;
 mod iface;
 mod map;
 mod merge;
+mod operator;
 mod option;
 mod panic;
 mod slice;
@@ -297,6 +298,9 @@ enum JobName {
     Object(ObjId),
     /// A method of the declared type.
     Method(CheckedTypeId, Spur),
+    /// An `@Operator` method of the declared type: which of them, in
+    /// the order of their declarations. Several may have one name.
+    Operator(CheckedTypeId, u32),
     /// An `init` function, and its number once the files are counted.
     Init(u64),
     /// A generic function with type arguments: the package that
@@ -437,6 +441,11 @@ pub(crate) struct Shared<'a> {
     /// What the instances of the package are refused for.
     refused: Vec<Diagnostic>,
     pub methods: FxHashMap<(NamedId, Spur), Method>,
+    /// The `@Operator` methods of the types of the package and of
+    /// those that it imports, each by its place among those of its
+    /// type; and those of each type as the checker has them.
+    operators: FxHashMap<(NamedId, u32), Method>,
+    operator_decls: FxHashMap<CheckedTypeId, Vec<gopp_sema::types::DeclaredMethod>>,
     /// For each type that a function declares: which job, and which of
     /// the types of its name there, from 0.
     locals: FxHashMap<NamedId, (usize, u64)>,
@@ -469,6 +478,8 @@ pub(crate) enum CalleeKey {
     Method(CheckedTypeId, Spur),
     /// A generic function with type arguments, by its job.
     Instance(usize),
+    /// An `@Operator` method of the type: which of them.
+    Operator(CheckedTypeId, u32),
 }
 
 /// A function that a run calls: where it is in the module of the run,
@@ -794,6 +805,8 @@ impl<'a> Shared<'a> {
             limits,
             refused: Vec::new(),
             methods: FxHashMap::default(),
+            operators: FxHashMap::default(),
+            operator_decls: FxHashMap::default(),
             locals: FxHashMap::default(),
             no_body: Body::default(),
             no_facts: facts::Facts::default(),
@@ -817,6 +830,12 @@ impl<'a> Shared<'a> {
                 if let Some(job) = job {
                     if matches!(job.named, JobName::Init(_)) {
                         inits.push(shared.jobs.len());
+                    }
+                    if let JobName::Operator(named, _) = job.named
+                        && let CheckedType::Named { id, .. } = &*shared.types.get(named)
+                    {
+                        let declared = shared.types.declared_operators(*id);
+                        shared.operator_decls.insert(named, declared);
                     }
                     shared.jobs.push(job);
                 } else if let Some((of, generic)) = shared.generic(file as u32, at, decl) {
@@ -890,6 +909,24 @@ impl<'a> Shared<'a> {
                 };
                 shared.methods.insert((*id, name), method);
             }
+            if let (JobName::Operator(named, which), Some(receiver)) = (job.named, job.receiver)
+                && let CheckedType::Named { id, .. } = &*shared.types.get(named)
+            {
+                let method = |symbol: &str| Method {
+                    symbol: symbol.to_owned(),
+                    receiver,
+                    sig: job.sig,
+                };
+                shared.operators.insert((*id, which), method(&job.symbol));
+                // The one `@Operator` method of its name is called by
+                // the name like any other method.
+                let declared = &shared.operator_decls[&named];
+                let name = declared[which as usize].method.name;
+                let alone = declared.iter().filter(|other| other.method.name == name);
+                if alone.count() == 1 {
+                    shared.methods.insert((*id, name), method(&job.symbol));
+                }
+            }
             let (file, body) = (job.file, job.at);
             let body = &shared.info(file).bodies[body];
             let declared = shared.local_types(body).into_iter();
@@ -927,6 +964,33 @@ impl<'a> Shared<'a> {
                         sig: declared.method.sig,
                     };
                     shared.methods.entry((*id, name)).or_insert(method);
+                }
+                let operators = shared.types.declared_operators(*id);
+                for (which, declared) in operators.iter().enumerate() {
+                    let entity = Entity::Operator {
+                        receiver: object.ty,
+                        method: declared,
+                    };
+                    let Ok(node) = namer.entity(entity) else {
+                        continue;
+                    };
+                    let receiver = match declared.pointer_receiver {
+                        true => shared.types.pointer(object.ty),
+                        false => object.ty,
+                    };
+                    let symbol = namer.symbol(node);
+                    let method = |symbol: &str| Method {
+                        symbol: symbol.to_owned(),
+                        receiver,
+                        sig: declared.method.sig,
+                    };
+                    let key = (*id, which as u32);
+                    shared.operators.entry(key).or_insert(method(&symbol));
+                    let name = declared.method.name;
+                    let alone = operators.iter().filter(|other| other.method.name == name);
+                    if alone.count() == 1 {
+                        shared.methods.entry((*id, name)).or_insert(method(&symbol));
+                    }
                 }
             }
         }
@@ -1027,6 +1091,11 @@ impl<'a> Shared<'a> {
         match named {
             JobName::Object(object) => Entity::Object(self.package, object),
             JobName::Method(receiver, name) => Entity::Method { receiver, name },
+            // The job was made from the methods that are kept here.
+            JobName::Operator(receiver, which) => Entity::Operator {
+                receiver,
+                method: &self.operator_decls[&receiver][which as usize],
+            },
             JobName::Init(number) => Entity::InitFunc(self.package, number),
             JobName::Instance(package, object, at) => {
                 let package = self.packages[package as usize];
@@ -1114,6 +1183,15 @@ impl<'a> Shared<'a> {
             }
         }
         declared
+    }
+
+    /// The `@Operator` method of the declared type `holder` that is
+    /// the one at `which` among them.
+    pub fn operator(&self, holder: CheckedTypeId, which: u32) -> Option<&Method> {
+        match &*self.types.get(holder) {
+            CheckedType::Named { id, args } if args.is_empty() => self.operators.get(&(*id, which)),
+            _ => None,
+        }
     }
 
     /// What the checker recorded for the body of the function of a job.
@@ -1816,7 +1894,10 @@ impl<'a> Shared<'a> {
                 JobName::Method(ty, name) | JobName::OwnMethod(ty, name, _) => {
                     self.used_name(Used::Method(ty, name))
                 }
-                JobName::Object(_) | JobName::Init(_) | JobName::Initializer(_) => break,
+                JobName::Object(_)
+                | JobName::Operator(..)
+                | JobName::Init(_)
+                | JobName::Initializer(_) => break,
             };
             let note = format!("{name} is instantiated here");
             report = report.with_note(Code::NoteRefersTo, Some(at), note);
@@ -1899,13 +1980,18 @@ impl<'a> Shared<'a> {
         if !args.is_empty() || !types.type_params(*id).is_empty() {
             return None;
         }
-        let found = types.lookup(named, name.name, self.path, names, false);
-        let gopp_sema::types::Member::Method { sig, .. } = found.ok()?.member else {
-            return None;
-        };
         let receiver = match pointer {
             true => types.pointer(named),
             false => named,
+        };
+        if let Some(&(_, which)) = package.operators.get(&name.span.lo) {
+            let declared = types.declared_operators(*id);
+            let sig = declared.get(which as usize)?.method.sig;
+            return Some(job(JobName::Operator(named, which), Some(receiver), sig));
+        }
+        let found = types.lookup(named, name.name, self.path, names, false);
+        let gopp_sema::types::Member::Method { sig, .. } = found.ok()?.member else {
+            return None;
         };
         Some(job(JobName::Method(named, name.name), Some(receiver), sig))
     }

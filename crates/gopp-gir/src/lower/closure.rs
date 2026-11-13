@@ -73,7 +73,7 @@ impl FuncCx<'_, '_> {
                 )),
                 _ => None,
             },
-            CalleeKey::Method(..) => None,
+            CalleeKey::Method(..) | CalleeKey::Operator(..) => None,
             CalleeKey::Instance(job) => {
                 let (_, _, sig) = shared.job_called(job);
                 shared.job_value(job).map(|entity| (entity, sig))

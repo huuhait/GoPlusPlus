@@ -1,0 +1,125 @@
+package main
+
+type Vec struct{ X, Y int }
+
+@Operator
+func (a Vec) Add(b Vec) Vec { return Vec{a.X + b.X, a.Y + b.Y} }
+
+@Operator
+func (a Vec) Mul(b Vec) int { return a.X*b.X + a.Y*b.Y }
+
+@Operator
+@Right
+func (a Vec) Mul(s int) Vec { return Vec{a.X * s, a.Y * s} }
+
+@Operator
+func (a Vec) Neg() Vec { return Vec{-a.X, -a.Y} }
+
+@Operator
+func (a Vec) Eq(b Vec) bool { return a.X == b.X && a.Y == b.Y }
+
+@Operator
+func (a Vec) Cmp(b Vec) int { return a.X + a.Y - b.X - b.Y }
+
+@Operator
+func (a *Vec) SubAssign(b Vec) {
+	a.X -= b.X
+	a.Y -= b.Y
+}
+
+func vectors() {
+	a, b := Vec{1, 2}, Vec{3, 4}
+	c := a + b
+	println(c.X, c.Y, a*b)
+	d := a * 3
+	e := 2 * b
+	f := -a
+	println(d.X, d.Y, e.X, e.Y, f.X, f.Y)
+	println(a == b, a != b, a == Vec{1, 2}, a < b, a >= b)
+	c -= a
+	c += a
+	println(c.X, c.Y, a.Add(b).X, a.Mul(2).Y)
+}
+
+type Text struct{ parts []string }
+
+@Operator
+func (a Text) Add(b Text) Text {
+	out := Text{}
+	out.parts = append(out.parts, a.parts...)
+	out.parts = append(out.parts, b.parts...)
+	return out
+}
+
+@Operator
+func (a Text) Add(s string) Text {
+	out := Text{}
+	out.parts = append(out.parts, a.parts...)
+	out.parts = append(out.parts, s)
+	return out
+}
+
+@Operator
+func (a Text) Eq(b Text) bool { return len(a.parts) == len(b.parts) }
+
+@Operator
+func (a *Text) AddAssign(s string) { a.parts = append(a.parts, s) }
+
+@Operator
+func (a Text) Index(i int) string { return a.parts[i] }
+
+@Operator
+func (a *Text) SetIndex(i int, s string) { a.parts[i] = s }
+
+@Convert
+func (a Text) Joined() string {
+	out := ""
+	for _, p := range a.parts {
+		out += p
+	}
+	return out
+}
+
+func show(t Text) string { return string(t) }
+
+func texts() {
+	a := Text{[]string{"a", "b"}}
+	b := Text{[]string{"c"}}
+	c := a + b
+	d := c + "d" + "e"
+	println(show(c), show(d), show(a), show(b))
+	d += "f"
+	d = d + a
+	println(show(d), d[0], d[5], len(d.parts))
+	d[1] = "B"
+	p := &d
+	q := &a
+	sum := p + q
+	println(show(d), show(sum), a == b, c != d, *p == d)
+	switch b {
+	case a:
+		println("as a")
+	case Text{[]string{"z"}}:
+		println("one part")
+	default:
+		println("none")
+	}
+}
+
+func named(name string, v Vec) Vec {
+	println("  operand", name)
+	return v
+}
+
+// The operands are worked out from left to right, and then the method
+// is called.
+func order() {
+	sum := named("left", Vec{1, 1}) + named("right", Vec{2, 2})
+	println(sum.X, named("first", Vec{5, 0}) == named("second", Vec{5, 0}))
+}
+
+func main() {
+	vectors()
+	texts()
+	order()
+}

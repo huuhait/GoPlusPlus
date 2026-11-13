@@ -3652,6 +3652,89 @@ func main() {
     insta::assert_snapshot!(format!("{lent}\n}}\n{dropped}\n}}\n{cloned}\n}}"));
 }
 
+// rule: EXP-16, EXP-17, EXP-19, EXP-20
+#[test]
+fn an_operator_is_a_call_of_the_method_that_stands_for_it() {
+    let text = "package main
+
+type Vec struct{ X, Y int }
+
+@Operator
+func (a Vec) Add(b Vec) Vec { return Vec{a.X + b.X, a.Y + b.Y} }
+
+@Operator
+func (a Vec) Mul(b Vec) int { return a.X*b.X + a.Y*b.Y }
+
+@Operator
+@Right
+func (a Vec) Mul(by int) Vec { return Vec{a.X * by, a.Y * by} }
+
+@Operator
+func (a Vec) Eq(b Vec) bool { return a.X == b.X }
+
+@Operator
+func (a Vec) Cmp(b Vec) int { return a.X - b.X }
+
+@Operator
+func (a *Vec) SubAssign(b Vec) { a.X -= b.X }
+
+func sum(a, b Vec) Vec { return a + b }
+
+func scaled(a Vec) Vec { return 2 * a }
+
+func dot(a, b Vec) int { return a * b }
+
+func differ(a, b Vec) bool { return a != b }
+
+func before(a, b Vec) bool { return a < b }
+
+func less(a *Vec, b Vec) { a -= b }
+
+func grown(a, b Vec) Vec {
+	a += b
+	return a
+}
+
+func main() {
+	a, b := Vec{1, 2}, Vec{3, 4}
+	less(&a, b)
+	println(sum(a, b).X, scaled(a).X, dot(a, b), differ(a, b), before(a, b), grown(a, b).X)
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    // Each method has a symbol of its own: two of one name differ by
+    // what they take, and a `@Right` method is marked.
+    let add = "@_GPTo6op_AddN4mainE3VecLB";
+    let dot = "@_GPTo6op_MulN4mainE3VecLB";
+    let scale = "@_GPTo7opr_MulN4mainE3VecLiE(";
+    assert!(body("3sum").contains(add), "{}", body("3sum"));
+    assert!(body("3dot").contains(dot), "{}", body("3dot"));
+    // The receiver of a `@Right` method is the operand on the right.
+    let scaled = body("6scaled");
+    assert!(
+        scaled.contains(&format!("{scale}copy _1, const 2: i64)")),
+        "{scaled}"
+    );
+    // `!=` is not what `Eq` says, and `<` is what `Cmp` says against 0.
+    let differ = body("6differ");
+    assert!(differ.contains("@_GPTo5op_EqN4mainE3VecLB"), "{differ}");
+    assert!(differ.contains("= not("), "{differ}");
+    let before = body("6before");
+    assert!(before.contains("@_GPTo6op_CmpN4mainE3VecLB"), "{before}");
+    assert!(before.contains("= lt("), "{before}");
+    // `a -= b` calls the method that changes `a` where it is; without
+    // one, `a += b` is `a = a + b`.
+    let less = body("4less");
+    assert!(less.contains("@_GPTo12op_SubAssignN4mainE3VecLB"), "{less}");
+    assert!(body("5grown").contains(add), "{}", body("5grown"));
+}
+
 // rule: OWN-P9
 #[test]
 fn an_option_of_a_value_is_the_value_and_a_flag() {

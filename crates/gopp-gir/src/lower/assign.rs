@@ -4,6 +4,7 @@
 
 use gopp_sema::LocalId as CheckedLocalId;
 use gopp_sema::constant::Value;
+use gopp_sema::types::Type as CheckedType;
 use gopp_syntax::ast::{AssignOp, BinaryOp, ExprId, ExprKind};
 
 use super::Shared;
@@ -33,6 +34,12 @@ impl FuncCx<'_, '_> {
             return self.op_assign(*x, op, Some(*y));
         }
         let unparen = |expr: &ExprId| Shared::unparen(self.tree, *expr);
+        // `x[i] = v` by a `SetIndex` method.
+        if let (AssignOp::Assign, [left], [right]) = (op, lhs, rhs)
+            && let Some(used) = self.body.index_stores.get(&unparen(left)).cloned()
+        {
+            return self.operator_store(unparen(left), &used, *right);
+        }
         if lhs.len() > 1
             && lhs
                 .iter()
@@ -340,8 +347,10 @@ impl FuncCx<'_, '_> {
     fn op_assign(&mut self, x: ExprId, op: BinaryOp, y: Option<ExprId>) -> Built {
         let inner = Shared::unparen(self.tree, x);
         let span = self.tree.exprs[inner].span;
-        if self.body.op_assigns.contains_key(&inner) || self.body.index_stores.contains_key(&inner)
-        {
+        if let Some(used) = self.body.op_assigns.get(&inner).cloned() {
+            return self.operator_assign(x, &used, y);
+        }
+        if self.body.index_stores.contains_key(&inner) {
             self.unsupported(span, "an operator method");
             return Ok(());
         }
@@ -393,6 +402,53 @@ impl FuncCx<'_, '_> {
         let value = self.arith(span, op, first, second, nonzero)?;
         let value = self.stored(value)?;
         self.put_over(place, value)
+    }
+
+    /// `x op= y` by an `@Operator` method (EXP-19): the method that
+    /// changes `x` where it is, called with its address; or `x = x op y`
+    /// by the method of the operator, which gives the new value.
+    fn operator_assign(
+        &mut self,
+        x: ExprId,
+        used: &gopp_sema::OperatorUse,
+        y: Option<ExprId>,
+    ) -> Built {
+        let span = self.tree.exprs[x].span;
+        let Some(y) = y else {
+            self.unsupported(span, "an operator method");
+            return Ok(());
+        };
+        let types = self.shared.types;
+        let in_place = matches!(&*types.get(used.sig),
+            CheckedType::Func { results, .. } if results.is_empty());
+        let (receiver, other) = match used.swapped {
+            true => (y, x),
+            false => (x, y),
+        };
+        if !in_place && self.has_effects(x) {
+            let what = "an operator method for a place that does more than read";
+            self.unsupported(span, what);
+            return Ok(());
+        }
+        let value = match self.operator_call(x, used, receiver, &[other])? {
+            Ok(value) => value,
+            Err(what) => {
+                self.unsupported(span, what);
+                return Ok(());
+            }
+        };
+        if in_place {
+            return Ok(());
+        }
+        let dest = self.dest(x, false, false)?;
+        let value = match &dest {
+            Dest::Place(place, ..) => {
+                let ty = self.b.place_ty(place);
+                self.taken(x, ty, value)?
+            }
+            _ => value,
+        };
+        self.put(dest, value)
     }
 
     /// The value of `x op= y` before it is stored: a string that was

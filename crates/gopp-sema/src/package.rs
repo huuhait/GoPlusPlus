@@ -24,6 +24,10 @@ pub struct Package {
     /// The values of the package-level variables in the order in which the
     /// program computes them at its start.
     pub init_order: Vec<Initializer>,
+    /// For the offset of the name of each `@Operator` method that the
+    /// package declares: its type, and which of the `@Operator` methods
+    /// of the type it is, in the order of their declarations.
+    pub operators: FxHashMap<u32, (crate::types::NamedId, u32)>,
     /// Stands in for a package that could not be loaded. Every name is
     /// taken to exist in it, so that one failed import is one error.
     pub fake: bool,
