@@ -5619,6 +5619,356 @@ fn categories(text: &str) -> Vec<String> {
         .collect()
 }
 
+// rule: OWN-B1, OWN-B2
+#[test]
+fn a_place_is_not_changed_while_a_pointer_into_it_is_used() {
+    // `invalid` changes what a pointer that is used later points into;
+    // `valid` does the same where the pointer is not used again, or to
+    // another part; `scopes` has pointers to what has ended.
+    let text = "package p
+
+type User struct {
+	Name  string
+	Tags  []string
+	Other Option[*User]
+}
+
+func use(p *string) {}
+
+func read(s string) {}
+
+func invalid() {
+	xs := []int{1, 2, 3}
+	p := &xs[0]
+	xs = append(xs, 4)
+	*p = 1
+	v := &xs[1:]
+	clear(xs)
+	_ = v
+	u := User{Name: \"a\"}
+	n := &u.Name
+	u = User{Name: \"b\"}
+	use(n)
+	t := &u.Tags[0]
+	u.Tags = nil
+	use(t)
+	w := User{}
+	q := &w
+	r := q
+	take(move(w))
+	use(&r.Name)
+}
+
+func take(u User) {}
+
+func valid() {
+	xs := []int{1, 2, 3}
+	p := &xs[0]
+	*p = 1
+	xs = append(xs, 4)
+	p = &xs[1]
+	*p = 2
+	xs[2] = 5
+	u := User{Name: \"a\"}
+	n := &u.Name
+	u.Tags = append(u.Tags, \"t\")
+	use(n)
+	u = User{Name: \"b\"}
+	n = &u.Name
+	*n = \"c\"
+	read(u.Name)
+	a, b := &xs[0], &xs[1]
+	xs[2] = *a + *b
+	q := &u
+	q.Name = \"d\"
+	q.Tags = nil
+	use(&q.Name)
+}
+
+func scopes(first bool) {
+	y := 0
+	p := &y
+	if first {
+		x := 1
+		p = &x
+		*p = 2
+	}
+	println(*p)
+	for i := 0; i < 3; i++ {
+		x := i
+		if i == 0 {
+			p = &x
+		}
+		*p = i
+	}
+	q := &y
+	for i := 0; i < 3; i++ {
+		x := i
+		q = &x
+		*q = 1
+	}
+	q = &y
+	println(*q)
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let expected = [
+        "a.gopp:16:2: cannot append to xs: p points into it and is used later",
+        "    a.gopp:15:7: p points into xs[0] from here",
+        "a.gopp:19:8: cannot clear xs: v points into it and is used later",
+        "    a.gopp:18:7: v points into xs[1:] from here",
+        "a.gopp:23:2: cannot assign to u: n points into it and is used later",
+        "    a.gopp:22:7: n points into u.Name from here",
+        "a.gopp:26:2: cannot assign to u.Tags: t points into it and is used later",
+        "    a.gopp:25:7: t points into u.Tags[0] from here",
+        "a.gopp:31:7: cannot move w: r points into it and is used later",
+        "    a.gopp:29:7: r points into w from here",
+        "a.gopp:68:2: x ends here, and p points into it and is used later",
+        "    a.gopp:66:7: p points into x from here",
+        "a.gopp:71:3: x is declared again here, and p points into it and is used later",
+        "    a.gopp:73:8: p points into x from here",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+// rule: OWN-B3, OWN-P6
+#[test]
+fn a_pointer_into_what_ends_with_the_function_is_not_returned() {
+    // The first six functions return a pointer into a variable, a
+    // parameter by value, a receiver by value or what a `Unique` of the
+    // function holds; the others return what outlives them.
+    let text = "package p
+
+type Pair struct{ A, B int }
+
+type Box struct {
+	in   Pair
+	next Option[*Box]
+}
+
+func local() *int {
+	x := 1
+	return &x
+}
+
+func param(p Pair) *int { return &p.A }
+
+func through() *int {
+	x := 1
+	p := &x
+	q := p
+	return q
+}
+
+func (b Box) value() *Pair { return &b.in }
+
+func held() *Pair {
+	u := NewUnique(Pair{1, 2})
+	return u
+}
+
+func inside() Box {
+	last := Box{}
+	return Box{next: &last}
+}
+
+func picked(a, b *Pair, first bool) *Pair {
+	if first {
+		return a
+	}
+	return b
+}
+
+func (b *Box) part() *Pair { return &b.in }
+
+func field(p *Pair) *int {
+	q := &p.A
+	return q
+}
+
+func owned() Unique[Pair] {
+	u := NewUnique(Pair{1, 2})
+	return u
+}
+
+func value() Pair {
+	x := Pair{1, 2}
+	p := &x
+	return *p
+}
+
+func (b *Box) again() *Pair { return b.part() }
+
+func made(b *Box) *Pair {
+	p := b.part()
+	return p
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let expected = [
+        "a.gopp:12:2: cannot return a pointer into x: x ends when the function returns",
+        "    a.gopp:12:9: the pointer into x is made here",
+        "a.gopp:15:27: cannot return a pointer into p: p ends when the function returns",
+        "    a.gopp:15:34: the pointer into p is made here",
+        "a.gopp:21:2: cannot return a pointer into x: x ends when the function returns",
+        "    a.gopp:19:7: the pointer into x is made here",
+        "a.gopp:24:30: cannot return a pointer into b: b ends when the function returns",
+        "    a.gopp:24:37: the pointer into b is made here",
+        "a.gopp:28:2: cannot return a pointer into u: u ends when the function returns",
+        "    a.gopp:28:9: the pointer into u is made here",
+        "a.gopp:33:2: cannot return a pointer into last: last ends when the function returns",
+        "    a.gopp:33:19: the pointer into last is made here",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+// rule: RNG-3, RNG-1a
+#[test]
+fn what_a_loop_ranges_over_is_not_replaced_in_the_loop() {
+    let text = "package p
+
+type Bag struct{ items []int }
+
+func loops(b *Bag) {
+	xs := []int{1, 2}
+	m := map[string]int{\"a\": 1}
+	s := \"text\"
+	for _, x := range xs {
+		xs = append(xs, x)
+	}
+	for i := range xs {
+		xs = xs[:i]
+	}
+	for range m {
+		clear(m)
+	}
+	for _, r := range s {
+		s += string(r)
+	}
+	for _, &x := range xs {
+		xs[0] = x
+		x++
+	}
+	for _, x := range b.items {
+		b.items = append(b.items, x)
+	}
+	println(len(xs), len(m), s)
+}
+
+func fine() {
+	xs := []int{1, 2}
+	ys := []int{}
+	m := map[string]int{\"a\": 1}
+	s := \"text\"
+	for i, x := range xs {
+		xs[i] = x + 1
+		ys = append(ys, x)
+	}
+	for k, v := range m {
+		m[k] = v + 1
+		delete(m, k)
+	}
+	for _, r := range s {
+		_ = r
+	}
+	s += \"!\"
+	xs = append(xs, len(s))
+	for i := range len(xs) {
+		xs = append(xs, i)
+	}
+	more := []int{}
+	for _, x := range xs {
+		more = append(more, x)
+	}
+	xs = append(xs, more...)
+	println(len(xs), len(ys), len(m), s)
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let fix = "    collect the changes and apply them after the loop";
+    let expected = [
+        "a.gopp:10:3: cannot append to xs: the loop ranges over xs",
+        fix,
+        "a.gopp:13:3: cannot assign to xs: the loop ranges over xs",
+        fix,
+        "a.gopp:16:9: cannot clear m: the loop ranges over m",
+        fix,
+        "a.gopp:19:3: cannot assign to s: the loop ranges over s",
+        fix,
+        "a.gopp:22:3: cannot assign to xs[0]: x points into it and is used later",
+        "    a.gopp:21:21: x points into xs from here",
+        "a.gopp:26:3: cannot append to b.items: the loop ranges over b.items",
+        fix,
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+#[test]
+fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // Many pointers one after another: each is made, used, and what it
+    // points into is changed when it is used no more.
+    let siblings = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| format!("\tp{i} := &xs[{i}]\n\t*p{i} = {i}\n\txs = append(xs, {i})\n"))
+            .collect();
+        format!("package p\nfunc f(xs []int) []int {{\n{each}\treturn xs\n}}\n")
+    };
+    // Many pointers that are all used at the end, each into a variable
+    // of its own, and as many changes of other variables between.
+    let wide = |count: usize| {
+        let made: String = (0..count)
+            .map(|i| format!("\tx{i}, y{i} := {i}, {i}\n\tp{i} := &x{i}\n"))
+            .collect();
+        let changed: String = (0..count).map(|i| format!("\ty{i}++\n")).collect();
+        let used: String = (0..count).map(|i| format!("\t*p{i} += y{i}\n")).collect();
+        format!("package p\nfunc f() {{\n{made}{changed}{used}}}\n")
+    };
+    // A pointer that goes from variable to variable, and blocks in
+    // blocks that each declare what the pointer of the block points to.
+    let chain = |count: usize| {
+        let each: String = (1..count)
+            .map(|i| format!("\tp{i} := p{}\n", i - 1))
+            .collect();
+        let last = count - 1;
+        format!("package p\nfunc f() int {{\n\tx := 1\n\tp0 := &x\n{each}\treturn *p{last}\n}}\n")
+    };
+    let nested = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("{{\nx{i} := {i}\np{i} := &x{i}\n*p{i}++\n"))
+            .collect();
+        let close = "}\n".repeat(depth);
+        format!("package p\nfunc f() {{\n{open}{close}}}\n")
+    };
+    // Loops in loops, each over a slice of its own that the innermost
+    // body reads.
+    let loops = |depth: usize| {
+        let made: String = (0..depth)
+            .map(|i| format!("xs{i} := []int{{{i}}}\n"))
+            .collect();
+        let open: String = (0..depth)
+            .map(|i| format!("for _, &v{i} := range xs{i} {{\nv{i}++\n"))
+            .collect();
+        let close = "}\n".repeat(depth);
+        format!("package p\nfunc f() {{\n{made}{open}{close}}}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[100, 200, 400], |n| steps(nested(n)));
+    linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
+}
+
 // rule: TYP-24, OWN-R6
 #[test]
 fn a_type_with_parents_is_copied_with_the_parts_of_its_parents() {
@@ -8139,8 +8489,8 @@ fn the_steps_of_what_is_known_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(exits(n)));
     // The parser takes no deeper nesting.
-    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
-    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(loops(n)));
+    linear::assert_near_linear(&[100, 200, 400], |n| steps(nested(n)));
+    linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
 }
 
 // rule: CON-6a
@@ -8686,6 +9036,8 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
          drop method and no Clone() File",
         "a.gopp:65:7: impossible type switch case: no interface value holds a []File: File has a \
          drop method and no Clone() File",
+        "a.gopp:68:2: cannot return a pointer into pt: pt ends when the function returns",
+        "    a.gopp:68:9: the pointer into pt is made here",
         "a.gopp:68:9: cannot keep &pt (value of type *Point) in a value of type any: an interface \
          value may be given to another goroutine, and a *Point borrows what it points to",
         "    keep it in a Local[any], or hold a Shared",

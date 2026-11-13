@@ -8,6 +8,7 @@
 
 mod assign;
 mod attrs;
+mod borrows;
 mod branches;
 mod builtins;
 mod call;
@@ -378,6 +379,9 @@ struct Checker<'a> {
     foreign_uses: FxHashMap<ExprId, crate::object::ForeignUse>,
     /// While the body of a method is walked: the type of its receiver.
     receiver_of: Option<TypeId>,
+    /// The body that is checked takes an address or has a `range`
+    /// loop: its pointers are followed (`borrows.rs`).
+    lends: bool,
     /// While a part of a literal that is a parent is worked out: a
     /// literal of an abstract type is that part of a child, not a value.
     parent_part: bool,
@@ -643,6 +647,7 @@ pub fn declarations(
         foreign_flags: FxHashMap::default(),
         foreign_uses: FxHashMap::default(),
         receiver_of: None,
+        lends: false,
         parent_part: false,
         iface_args: FxHashSet::default(),
         flow: flow::Flow::default(),
@@ -4105,6 +4110,7 @@ impl<'a> Checker<'a> {
                 x,
                 body,
             } => {
+                self.lends = true;
                 self.range_clause(cx, lhs, *define, *x);
                 self.flow_loop(tree.stmts[id].span);
                 self.stmts(cx, &body.stmts);

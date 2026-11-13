@@ -524,6 +524,47 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Keep one of them.",
             "@Inline\n@NoInline\nfunc f() {} // error",
         ),
+        OwnBorrowedAppend => (
+            "A slice is grown or cleared while a pointer into its elements is still used: \
+             `&xs[i]`, a view `&xs[i:j]`, or a variable of a `range` clause written with \
+             `&`. The slice is the one owner of its elements, and `append` may move them to \
+             a new place, which the pointer would not follow.",
+            "Use the pointer before the slice changes, or take the element by its index \
+             again afterwards.",
+            "p := &xs[0]\nxs = append(xs, 5) // error\nprintln(*p)\n\nxs = append(xs, \
+             5)\np := &xs[0]       // ok\nprintln(*p)",
+        ),
+        OwnBorrowedAssign => (
+            "A place gets a new value, or is moved, while a pointer into it is still used. \
+             What the pointer points to would be replaced under it.",
+            "Use the pointer before the place changes, or make the pointer after it.",
+            "u := User{Name: \"a\"}\np := &u.Name\nu = User{Name: \"b\"} // \
+             error\nprintln(*p)",
+        ),
+        OwnBorrowOutlives => (
+            "A pointer into a variable is still used where the variable has ended: after the \
+             statement that declares it, or when a loop comes around and declares it again.",
+            "Declare the variable where it lives as long as the pointer does.",
+            "p := &first\nif ok {\n\tx := 1\n\tp = &x\n} // error: x ends here\nprintln(*p)",
+        ),
+        OwnReturnAddrLocal => (
+            "A function returns a pointer into one of its own variables or parameters by \
+             value. They end when the function returns, so the pointer would point to \
+             nothing.",
+            "Return the value itself, or a `Unique` or a `Shared` of it. A pointer into what \
+             a pointer parameter points to may be returned.",
+            "func bad() *int {\n\tx := 1\n\treturn &x // error\n}\n\nfunc first(p \
+             *Pair) *int { return &p.A } // ok",
+        ),
+        OwnRangeMutation => (
+            "The slice, the map or the string that a `range` loop goes over is assigned, \
+             grown or cleared in the body of the loop. The loop reads it where it is until \
+             it is left.",
+            "Collect the changes and apply them after the loop, or range over a copy.",
+            "for _, x := range xs {\n\txs = append(xs, x) // error\n}\n\nmore := \
+             []int{}\nfor _, x := range xs {\n\tmore = append(more, x)\n}\nxs = \
+             append(xs, more...) // ok",
+        ),
         OwnBorrowedMove => (
             "A variable is moved while a statement around the `move` still reads it where it \
              is: a `range` loop over it, or a `switch` on it. The statement would go on with \

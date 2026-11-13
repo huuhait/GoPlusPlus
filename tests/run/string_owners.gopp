@@ -46,11 +46,14 @@ func both(text string) (string, string) {
 	return text, text + "."
 }
 
+// The loop keeps the bytes that it walks, whatever the variable gets
+// where the loop cannot see it.
 func count(text string) int {
 	seen := 0
+	replace := func(r rune) { text = "replaced " + string(r) }
 	for i, r := range text {
 		if i == 0 {
-			text = "replaced " + string(r)
+			replace(r)
 		}
 		seen++
 	}

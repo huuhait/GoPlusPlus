@@ -355,6 +355,7 @@ impl<'a> Checker<'a> {
 
     /// The address of the place `expr` is taken.
     pub(super) fn addressed(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        self.lends = true;
         if self.literals.is_empty() {
             return;
         }

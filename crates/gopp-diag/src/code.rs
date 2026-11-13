@@ -223,14 +223,18 @@ codes! {
     258 NoteOwnFixAlias "note_own_fix_alias",
     262 OwnBorrowedAddress "err_own_borrowed_address",
     264 OwnBorrowedMove "err_own_borrowed_move",
+    265 OwnBorrowedAppend "err_own_borrowed_append",
     266 OwnMoveNotPlace "err_own_move_not_place",
     270 DuplicateMethodIface "err_duplicate_method_iface",
     272 OwnDropSignature "err_own_drop_signature",
     273 OwnDropCalled "err_own_drop_called",
+    278 OwnReturnAddrLocal "err_own_return_addr_local",
     279 OwnRefIntoTemp "err_own_ref_into_temp",
     280 OwnRangeVarWrite "err_own_range_var_write",
     281 OwnRangeAliasInvalid "err_own_range_alias_invalid",
     284 OwnRangeAliasFunc "err_own_range_alias_func",
+    285 OwnRangeMutation "err_own_range_mutation",
+    287 NoteOwnRangeCollect "note_own_range_collect",
     293 OwnPinnedCopy "err_own_pinned_copy",
     294 OwnPinnedMove "err_own_pinned_move",
     295 OwnGenericCopy "err_own_generic_copy",
@@ -360,6 +364,9 @@ codes! {
     506 NoteMovedHere "note_moved_here",
     507 NoteOwnFixPointer "note_own_fix_pointer",
     508 NoteCapturedHere "note_captured_here",
+    509 OwnBorrowedAssign "err_own_borrowed_assign",
+    510 OwnBorrowOutlives "err_own_borrow_outlives",
+    511 NoteBorrowedHere "note_borrowed_here",
 }
 
 impl Code {

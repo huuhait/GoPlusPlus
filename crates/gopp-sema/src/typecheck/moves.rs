@@ -22,7 +22,7 @@ use crate::object::{Capture, Transfer};
 
 /// What the function does to one of its variables.
 #[derive(Clone, Copy)]
-enum Event {
+pub(super) enum Event {
     /// It is read, or a part of it is written.
     Read(LocalId, Span),
     /// A copy of the whole variable is given to a new owner.
@@ -35,6 +35,15 @@ enum Event {
     /// by value is written: the variable is used, and nothing of it is
     /// read.
     Wrote(LocalId, Span),
+    /// The variable gets what may hold pointers: what the sources from
+    /// the first number to the second say. With the flag, the whole
+    /// variable is set.
+    Holds(LocalId, u32, u32, bool),
+    /// The change with the number is made to a place.
+    Changed(u32),
+    /// What the sources from the first number to the second say is
+    /// returned.
+    Returned(u32, u32, Span),
 }
 
 /// A variable that is read where it may hold no value.
@@ -56,6 +65,11 @@ pub(super) struct Found {
     /// Each `move` of a variable that a statement around it still
     /// reads where it is.
     pub held: Vec<(LocalId, Span)>,
+    /// The places that are changed while a pointer into them is still
+    /// used, and the pointers to what ends with the function that are
+    /// returned.
+    pub broken: Vec<borrows::Broken>,
+    pub escaped: Vec<borrows::Escaped>,
     pub steps: u64,
 }
 
@@ -70,20 +84,20 @@ enum Node {
 /// Sets of small numbers. Equal sets are one node, so that they are
 /// compared by their numbers, and a set that differs from another in a
 /// few members shares the rest with it.
-struct Sets {
+pub(super) struct Sets {
     nodes: Vec<Node>,
     known: FxHashMap<Node, u32>,
     /// How many levels a set has: its members are below 64 to that
     /// power.
     levels: u32,
-    steps: u64,
+    pub steps: u64,
 }
 
 /// The set without members, at every level.
-const EMPTY: u32 = 0;
+pub(super) const EMPTY: u32 = 0;
 
 impl Sets {
-    fn new(members: usize) -> Self {
+    pub(super) fn new(members: usize) -> Self {
         let mut levels = 1;
         while 64usize.saturating_pow(levels) < members {
             levels += 1;
@@ -132,7 +146,7 @@ impl Sets {
     }
 
     /// The set with the member, or without it.
-    fn put(&mut self, set: u32, member: u32, present: bool) -> u32 {
+    pub(super) fn put(&mut self, set: u32, member: u32, present: bool) -> u32 {
         self.put_at(set, self.levels - 1, member, present)
     }
 
@@ -167,7 +181,7 @@ impl Sets {
         self.node(Node::Inner(which, next.into()))
     }
 
-    fn has(&self, set: u32, member: u32) -> bool {
+    pub(super) fn has(&self, set: u32, member: u32) -> bool {
         let mut node = set;
         for level in (1..self.levels).rev() {
             node = self.child(node, member >> (6 * level) & 63);
@@ -176,7 +190,7 @@ impl Sets {
     }
 
     /// The members of both sets.
-    fn join(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn join(&mut self, a: u32, b: u32) -> u32 {
         self.join_at(a, b, self.levels - 1)
     }
 
@@ -217,18 +231,18 @@ enum Todo {
     Wrote(LocalId, Span),
 }
 
-struct Walk<'a> {
-    tree: &'a File,
-    body: &'a Body,
+pub(super) struct Walk<'a> {
+    pub tree: &'a File,
+    pub body: &'a Body,
     modes: &'a FxHashMap<ExprId, Transfer>,
     captures: &'a FxHashMap<ExprId, Vec<Capture>>,
     /// The parameters and receivers by value that are slices or maps.
     watched: &'a FxHashSet<LocalId>,
     /// The function that is walked: what is declared in it is its own.
     within: Span,
-    events: Vec<Event>,
+    pub events: Vec<Event>,
     /// For each block, where its events start and end.
-    blocks: Vec<(u32, u32)>,
+    pub blocks: Vec<(u32, u32)>,
     edges: Vec<(u32, u32)>,
     current: u32,
     exit: u32,
@@ -256,7 +270,25 @@ struct Walk<'a> {
     reached: FxHashSet<LocalId>,
     /// The function literals that are walked later.
     literals: Vec<ExprId>,
-    found: Found,
+    pub found: Found,
+    /// What says what a place is, for a body that may make loans; and
+    /// what the walk has found of them (`borrows.rs`).
+    pub places: Option<&'a borrows::Places<'a>>,
+    pub pointing: FxHashMap<TypeId, bool>,
+    pub sources: Vec<borrows::Source>,
+    pub changes: Vec<borrows::Change>,
+    /// The variables that the statements around declare, each
+    /// statement with its own.
+    pub frames: Vec<Vec<LocalId>>,
+    /// The loops that range over a place, and for each variable the
+    /// innermost of those that are walked now.
+    pub loops: Vec<borrows::Ranged>,
+    pub looping: FxHashMap<LocalId, u32>,
+    /// How the place of the assignment that is walked is changed.
+    change: borrows::What,
+    /// For each result of the function, whether it is written as a
+    /// pointer or an option of one: a handle is lent to it.
+    pub pointers: Vec<bool>,
 }
 
 /// What `move` and the last uses say of the declaration `decl`, whose
@@ -267,6 +299,7 @@ pub(super) fn of(
     modes: &FxHashMap<ExprId, Transfer>,
     captures: &FxHashMap<ExprId, Vec<Capture>>,
     watched: &FxHashSet<LocalId>,
+    places: Option<&borrows::Places<'_>>,
     decl: &ast::Decl,
 ) -> Found {
     let mut walk = Walk {
@@ -293,6 +326,15 @@ pub(super) fn of(
         reached: FxHashSet::default(),
         literals: Vec::new(),
         found: Found::default(),
+        places,
+        pointing: FxHashMap::default(),
+        sources: Vec::new(),
+        changes: Vec::new(),
+        frames: Vec::new(),
+        loops: Vec::new(),
+        looping: FxHashMap::default(),
+        change: borrows::What::Assign,
+        pointers: Vec::new(),
     };
     match &decl.kind {
         DeclKind::Func {
@@ -357,12 +399,45 @@ impl<'a> Checker<'a> {
         decl: &ast::Decl,
     ) -> FxHashSet<ExprId> {
         let watched = self.own_collections(cx);
-        // Nothing is given, moved or written so in most bodies.
-        if self.var_modes.is_empty() && watched.is_empty() {
+        // Nothing is given, moved, written or lent so in most bodies.
+        // A body lends if it takes an address or has a loop over
+        // something, or a variable of it is a pointer or a handle, which
+        // is lent where a pointer is wanted.
+        let handle = |held: &Operand| {
+            matches!(
+                &*self.types.get(self.types.underlying(held.ty)),
+                Type::Pointer(_) | Type::Unique(_) | Type::Shared(_)
+            )
+        };
+        let lends = std::mem::take(&mut self.lends) || self.locals.values().any(handle);
+        if self.var_modes.is_empty() && watched.is_empty() && !lends {
             return FxHashSet::default();
         }
-        let found = of(cx.tree, cx.body, &self.var_modes, captures, &watched, decl);
+        let found = {
+            let places = self
+                .memo
+                .as_ref()
+                .filter(|_| lends)
+                .map(|memo| borrows::Places {
+                    types: self.types,
+                    memo,
+                    selections: &self.selections,
+                    locals: &self.locals,
+                    base: self.names.get_or_intern_static("base"),
+                });
+            let modes = &self.var_modes;
+            of(
+                cx.tree,
+                cx.body,
+                modes,
+                captures,
+                &watched,
+                places.as_ref(),
+                decl,
+            )
+        };
         self.steps += found.steps;
+        self.lent(cx, &found);
         let named = |this: &Self, local: LocalId| {
             let name = cx.body.locals[local.0 as usize].name;
             this.names.resolve(&name).to_owned()
@@ -422,8 +497,99 @@ impl<'a> Checker<'a> {
     }
 }
 
+impl<'a> Checker<'a> {
+    /// Says what the walk found of the pointers of a body (OWN-B2,
+    /// OWN-B3, RNG-3).
+    fn lent(&mut self, cx: &Cx<'a>, found: &Found) {
+        use borrows::What;
+        let named = |this: &Self, local: LocalId| {
+            let name = cx.body.locals[local.0 as usize].name;
+            this.names.resolve(&name).to_owned()
+        };
+        let text = |at: Span| cx.text[at.lo as usize..at.hi as usize].to_owned();
+        for broken in &found.broken {
+            let owner = named(self, broken.of);
+            let place = match broken.what {
+                What::Move => owner.clone(),
+                _ => text(broken.at),
+            };
+            let made = text(broken.made);
+            let made = made.strip_prefix('&').unwrap_or(&made).to_owned();
+            let (code, does) = match (broken.what, broken.holder) {
+                (What::Grow, None) | (What::Clear, None) | (What::Assign, None) => {
+                    (Code::OwnRangeMutation, None)
+                }
+                (What::Grow, _) => (Code::OwnBorrowedAppend, Some("append to")),
+                (What::Clear, _) => (Code::OwnBorrowedAppend, Some("clear")),
+                (What::Assign, _) => (Code::OwnBorrowedAssign, Some("assign to")),
+                (What::Move, _) => (Code::OwnBorrowedAssign, Some("move")),
+                (What::Declare | What::End, _) => (Code::OwnBorrowOutlives, None),
+            };
+            if !self.report_once((broken.at, code)) {
+                continue;
+            }
+            let diagnostic = match (broken.holder, does) {
+                (None, _) => {
+                    let does = match broken.what {
+                        What::Grow => "append to",
+                        What::Clear => "clear",
+                        What::Move => "move",
+                        _ => "assign to",
+                    };
+                    let message = format!("cannot {does} {place}: the loop ranges over {made}");
+                    let fix = "collect the changes and apply them after the loop".to_owned();
+                    Diagnostic::new(code, broken.at, message).with_note(
+                        Code::NoteOwnRangeCollect,
+                        None,
+                        fix,
+                    )
+                }
+                (Some(holder), Some(does)) => {
+                    let holder = named(self, holder);
+                    let message =
+                        format!("cannot {does} {place}: {holder} points into it and is used later");
+                    let note = format!("{holder} points into {made} from here");
+                    Diagnostic::new(code, broken.at, message).with_note(
+                        Code::NoteBorrowedHere,
+                        Some(broken.made),
+                        note,
+                    )
+                }
+                (Some(holder), None) => {
+                    let holder = named(self, holder);
+                    let ends = match broken.what {
+                        What::Declare => "is declared again here",
+                        _ => "ends here",
+                    };
+                    let message =
+                        format!("{owner} {ends}, and {holder} points into it and is used later");
+                    let note = format!("{holder} points into {made} from here");
+                    Diagnostic::new(code, broken.at, message).with_note(
+                        Code::NoteBorrowedHere,
+                        Some(broken.made),
+                        note,
+                    )
+                }
+            };
+            self.emit(diagnostic);
+        }
+        for escaped in &found.escaped {
+            if !self.report_once((escaped.at, Code::OwnReturnAddrLocal)) {
+                continue;
+            }
+            let owner = named(self, escaped.of);
+            let message = format!(
+                "cannot return a pointer into {owner}: {owner} ends when the function returns"
+            );
+            let note = format!("the pointer into {owner} is made here");
+            let diagnostic = Diagnostic::new(Code::OwnReturnAddrLocal, escaped.at, message);
+            self.emit(diagnostic.with_note(Code::NoteBorrowedHere, Some(escaped.made), note));
+        }
+    }
+}
+
 impl<'a> Walk<'a> {
-    fn unparen(&self, mut expr: ExprId) -> ExprId {
+    pub(super) fn unparen(&self, mut expr: ExprId) -> ExprId {
         while let ExprKind::Paren(inner) = self.tree.exprs[expr].kind {
             expr = inner;
         }
@@ -432,7 +598,7 @@ impl<'a> Walk<'a> {
 
     /// The variable of the function that is walked which the name
     /// denotes.
-    fn local(&self, name: ExprId) -> Option<LocalId> {
+    pub(super) fn local(&self, name: ExprId) -> Option<LocalId> {
         let body = self.body;
         match body.uses.get(&name).or_else(|| body.keys.get(&name)) {
             Some(&Ref::Local(local)) => self.own(local).then_some(local),
@@ -512,6 +678,11 @@ impl<'a> Walk<'a> {
 
     fn enter(&mut self) {
         self.events.clear();
+        self.sources.clear();
+        self.changes.clear();
+        self.frames.clear();
+        self.loops.clear();
+        self.looping.clear();
         self.blocks.clear();
         self.edges.clear();
         self.labels.clear();
@@ -534,6 +705,10 @@ impl<'a> Walk<'a> {
             let named = results.iter().filter_map(|result| result.name);
             let locals = named.filter_map(|name| self.body.defs.get(&name.span.lo));
             self.results = locals.copied().collect();
+            self.pointers = results
+                .iter()
+                .map(|result| self.pointer(result.ty))
+                .collect();
         }
         self.stmts(&block.stmts);
         self.leave();
@@ -682,6 +857,11 @@ impl<'a> Walk<'a> {
                     let root = self.root(first);
                     root.filter(|root| self.watched.contains(root))
                 });
+                let clears =
+                    self.body.uses.get(&callee) == Some(&Ref::Universe(Predeclared::Clear));
+                if let (true, Some(first)) = (clears, operand) {
+                    self.change(first, borrows::What::Clear);
+                }
                 match (written, operand) {
                     (Some(local), Some(first)) => {
                         rest.push(Todo::Wrote(local, span));
@@ -723,6 +903,7 @@ impl<'a> Walk<'a> {
         } else if let Some(local) = self.root(inner) {
             self.wrote(local, span);
         }
+        self.change(inner, self.change);
     }
 
     /// A part of the variable is written. For a parameter that is
@@ -787,6 +968,34 @@ impl<'a> Walk<'a> {
         (appends && same).then_some((local, more))
     }
 
+    /// Whether the type is written as `*T` or as `Option[*T]`.
+    fn pointer(&self, ty: ExprId) -> bool {
+        let mut ty = self.unparen(ty);
+        if let ExprKind::Index { indices, .. } = &self.tree.exprs[ty].kind
+            && let [held] = indices[..]
+        {
+            ty = self.unparen(held);
+        }
+        matches!(
+            self.tree.exprs[ty].kind,
+            ExprKind::Unary {
+                op: UnaryOp::Star,
+                ..
+            }
+        )
+    }
+
+    /// Whether the one value is a call of `append`.
+    fn appends(&self, values: &[ExprId]) -> bool {
+        let [value] = values else {
+            return false;
+        };
+        let ExprKind::Call { fun, .. } = &self.tree.exprs[self.unparen(*value)].kind else {
+            return false;
+        };
+        self.body.uses.get(&self.unparen(*fun)) == Some(&Ref::Universe(Predeclared::Append))
+    }
+
     /// What is evaluated of the places before their values are: all of
     /// a place that is no variable, and a variable that is read for
     /// its new value.
@@ -816,6 +1025,26 @@ impl<'a> Walk<'a> {
     }
 
     fn stmt(&mut self, stmt: StmtId) {
+        // What a statement with a body declares ends with it.
+        let scoped = matches!(
+            self.tree.stmts[stmt].kind,
+            StmtKind::Block(_)
+                | StmtKind::For { .. }
+                | StmtKind::Range { .. }
+                | StmtKind::If { .. }
+                | StmtKind::Switch { .. }
+                | StmtKind::Select { .. }
+        );
+        if scoped && self.places.is_some() {
+            self.frames.push(Vec::new());
+            self.stmt_in(stmt);
+            self.ends(self.tree.stmts[stmt].span);
+            return;
+        }
+        self.stmt_in(stmt);
+    }
+
+    fn stmt_in(&mut self, stmt: StmtId) {
         self.found.steps += 1;
         let tree = self.tree;
         let label = self.label.take();
@@ -837,11 +1066,15 @@ impl<'a> Walk<'a> {
                         continue;
                     };
                     self.unit(values);
+                    let mut locals = Vec::with_capacity(names.len());
                     for name in names {
                         if let Some(&local) = self.body.defs.get(&name.span.lo) {
                             self.events.push(Event::Set(local));
+                            self.declares(local, name.span);
+                            locals.push(local);
                         }
                     }
+                    self.declared(&locals, values);
                 }
             }
             StmtKind::Assign { op, lhs, rhs } => {
@@ -851,14 +1084,20 @@ impl<'a> Walk<'a> {
                 if let Some((local, more)) = self.grown(*op, lhs, rhs) {
                     self.values(more);
                     self.wrote(local, tree.stmts[stmt].span);
+                    self.change(lhs[0], borrows::What::Grow);
                     self.settle(from);
                     return;
                 }
                 self.places(lhs, matches!(op, AssignOp::Op(_)));
                 self.values(rhs);
+                if self.appends(rhs) {
+                    self.change = borrows::What::Grow;
+                }
                 for &place in lhs {
                     self.stored(place);
                 }
+                self.change = borrows::What::Assign;
+                self.assigned(lhs, rhs);
                 self.settle(from);
             }
             StmtKind::IncDec { x, .. } => {
@@ -867,6 +1106,7 @@ impl<'a> Walk<'a> {
             }
             StmtKind::Return(values) => {
                 self.unit(values);
+                self.returned(values, tree.stmts[stmt].span);
                 // The results with names are what is returned: set by
                 // the values, and read as they are without values.
                 for at in 0..self.results.len() {
@@ -938,12 +1178,14 @@ impl<'a> Walk<'a> {
                 for (at, &left) in lhs.iter().enumerate() {
                     let mut left = self.unparen(left);
                     // `&v` is a variable too.
+                    let mut alias = false;
                     if let ExprKind::Unary {
                         op: UnaryOp::Addr,
                         x,
                     } = tree.exprs[left].kind
                     {
                         left = self.unparen(x);
+                        alias = true;
                     }
                     if !define {
                         self.places(&[left], false);
@@ -952,6 +1194,9 @@ impl<'a> Walk<'a> {
                     self.stored(left);
                     // A second variable is each element in its turn.
                     elements |= at == 1 && self.events.len() > before;
+                    if at == 1 {
+                        self.ranged(left, *x, alias);
+                    }
                 }
                 self.jump(after);
                 self.jump(turn);
@@ -965,7 +1210,10 @@ impl<'a> Walk<'a> {
                 }
                 self.breaks.push((label, after));
                 self.continues.push((label, head));
+                // The loop reads what it ranges over until it is left.
+                let looped = self.ranges(*x);
                 self.stmts(&body.stmts);
+                self.ranged_out(looped);
                 self.breaks.pop();
                 self.continues.pop();
                 if let Some(count) = viewed.and_then(|viewed| self.viewed.get_mut(&viewed)) {
@@ -1122,7 +1370,12 @@ impl<'a> Walk<'a> {
             .events
             .iter()
             .any(|event| matches!(event, Event::Wrote(..)));
-        if !given && !moved && !wrote {
+        let holds = self.events.iter().any(|event| match event {
+            Event::Holds(_, from, to, _) => to > from,
+            Event::Returned(..) => true,
+            _ => false,
+        });
+        if !given && !moved && !wrote && !holds {
             return;
         }
         self.blocks[self.current as usize].1 = self.events.len() as u32;
@@ -1160,6 +1413,9 @@ impl<'a> Walk<'a> {
         }
         if wrote {
             self.lost(&before, &after);
+        }
+        if holds {
+            self.borrowed(&before, &after);
         }
     }
 
@@ -1241,6 +1497,7 @@ impl<'a> Walk<'a> {
                         }
                         continue;
                     }
+                    Event::Holds(..) | Event::Changed(_) | Event::Returned(..) => continue,
                 };
                 let Some(&member) = members.get(&local) else {
                     continue;
@@ -1277,6 +1534,7 @@ impl<'a> Walk<'a> {
             | Event::Moved(local, _)
             | Event::Wrote(local, _) => Some((local, true)),
             Event::Set(local) => Some((local, false)),
+            Event::Holds(..) | Event::Changed(_) | Event::Returned(..) => None,
         };
         for at in self.not_read_later(before, after, asked, effect) {
             if let Event::Given(local, expr) = self.events[at]
@@ -1302,7 +1560,7 @@ impl<'a> Walk<'a> {
                 Some((local, true))
             }
             Event::Set(local) => Some((local, false)),
-            Event::Wrote(..) => None,
+            Event::Wrote(..) | Event::Holds(..) | Event::Changed(_) | Event::Returned(..) => None,
         };
         // What a function literal uses or a pointer leads to may be read
         // at any time.
@@ -1384,9 +1642,9 @@ impl<'a> Walk<'a> {
 
 /// For each block where its neighbours start in the list of all, and
 /// that list.
-type Lists = (Vec<u32>, Vec<u32>);
+pub(super) type Lists = (Vec<u32>, Vec<u32>);
 
-fn neighbours(lists: &Lists, block: usize) -> &[u32] {
+pub(super) fn neighbours(lists: &Lists, block: usize) -> &[u32] {
     let (starts, all) = lists;
     &all[starts[block] as usize..starts[block + 1] as usize]
 }
