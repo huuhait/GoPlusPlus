@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 68] = [
+pub const FUNCS: [RuntimeFunc; 70] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -235,9 +235,18 @@ pub const FUNCS: [RuntimeFunc; 68] = [
         "_gopp_iface_hash",
         "uint8_t *value, uint64_t seed",
     ),
+    gives(
+        "uint8_t *",
+        "_gopp_iface_table",
+        "const uint8_t *itab, const void *wanted",
+    ),
     ends(
         "_gopp_panic_assert",
         "const uint8_t *itab, const void *wanted, gopp_string iface",
+    ),
+    ends(
+        "_gopp_panic_assert_iface",
+        "const uint8_t *itab, const void *wanted",
     ),
     ends("_gopp_panic_nil", "void"),
     ends("_gopp_panic_divide", "void"),
@@ -268,11 +277,35 @@ typedef struct gopp_func_table {
   struct gopp_func_table *next;
 } gopp_func_table;
 
+// A method of a type as a table of methods of an interface takes it:
+// what the table holds for it, under a key that is the same for the
+// method of an interface that it is: its name, the package of a name
+// that is not exported, and its type.
+typedef struct gopp_method {
+  gopp_string key;
+  uint8_t *code;
+} gopp_method;
+
+// The methods of a type, in the order of the bytes of their keys.
+typedef struct gopp_methods {
+  uint64_t count;
+  gopp_method all[];
+} gopp_methods;
+
+// An interface type: its name, and the keys of its methods in the
+// order of its tables.
+typedef struct gopp_itype {
+  gopp_string name;
+  uint64_t count;
+  gopp_string keys[];
+} gopp_itype;
+
 // The descriptor of a type whose values an interface value holds: one
 // for a type in a program, so two values are of one type exactly when
 // their descriptors are one. `type` points to the descriptor itself. A
 // function that is null says that the bytes of a value are all there
-// is to copy, end, compare or hash.
+// is to copy, end, compare or hash; `methods` is null for a type
+// without methods.
 typedef struct gopp_type {
   const struct gopp_type *type;
   uint64_t size;
@@ -282,6 +315,7 @@ typedef struct gopp_type {
   bool (*eq)(uint8_t *a, uint8_t *b);
   uint64_t (*hash)(uint8_t *value, uint64_t seed);
   gopp_string name;
+  const gopp_methods *methods;
 } gopp_type;
 
 // The value is the second word of an interface value itself, not in a

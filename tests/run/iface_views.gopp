@@ -1,0 +1,82 @@
+package main
+
+type Counter int
+
+func (c *Counter) Inc()      { c = c + 1 }
+func (c Counter) Value() int { return int(c) }
+
+type Tally struct{ marks []int }
+
+func (t *Tally) Inc()      { t.marks = append(t.marks, len(t.marks)) }
+func (t Tally) Value() int { return len(t.marks) }
+
+type Incer interface{ Inc() }
+
+type Valuer interface{ Value() int }
+
+type Both interface {
+	Inc()
+	Value() int
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f File) Clone() File {
+	println("dup", f.fd)
+	return File{fd: f.fd + 100}
+}
+
+func (f File) Value() int { return f.fd }
+
+func split() (Both, Valuer) {
+	return Tally{}, Counter(7)
+}
+
+// A value in a place of another interface type is a copy of its own
+// there, with the table of that type.
+func changes(start Both) {
+	b := start
+	var v Valuer = b
+	b.Inc()
+	println(b.Value(), v.Value())
+	var a any = b
+	if i, ok := a.(Incer); ok {
+		i.Inc()
+		i.Inc()
+		println(a.(Valuer).Value())
+	}
+	switch x := a.(type) {
+	case Both:
+		x.Inc()
+		println(x.Value(), a.(Both).Value(), b.Value())
+	}
+	var inc Incer = Counter(0)
+	var val Valuer = Counter(0)
+	inc, val = split()
+	inc.Inc()
+	println(inc.(Valuer).Value(), val.Value())
+}
+
+func files() {
+	var v Valuer = File{fd: 1}
+	println("held", v.Value())
+	var a any = v
+	println("in any", a.(Valuer).Value())
+	if w, ok := a.(Valuer); ok {
+		println("copied", w.Value())
+	}
+	println("end of files")
+}
+
+func main() {
+	changes(Counter(1))
+	changes(Tally{marks: []int{0}})
+	files()
+	println("done")
+}

@@ -43,6 +43,11 @@ pub enum Entity<'a> {
     HashGlue(TypeId),
     /// The function that ends a value of the type.
     DropGlue(TypeId),
+    /// The methods of a type that the tables of interfaces are made of
+    /// while a program runs.
+    MethodTable(TypeId),
+    /// The methods of an interface type, for those tables.
+    IfaceDesc(TypeId),
     /// The table of the methods of an interface type for the values of
     /// a type: the type, then the interface type.
     ITab(TypeId, TypeId),
@@ -240,6 +245,8 @@ impl<'a> Namer<'a> {
             Entity::EqGlue(ty) => Node::Wrap(Wrap::EqGlue, self.ty(ty)?),
             Entity::HashGlue(ty) => Node::Wrap(Wrap::HashGlue, self.ty(ty)?),
             Entity::DropGlue(ty) => Node::Wrap(Wrap::DropGlue, self.ty(ty)?),
+            Entity::MethodTable(ty) => Node::Wrap(Wrap::MethodTable, self.ty(ty)?),
+            Entity::IfaceDesc(ty) => Node::Wrap(Wrap::IfaceDesc, self.ty(ty)?),
             Entity::ITab(ty, iface) => Node::Pair(Pair::ITab, self.ty(ty)?, self.ty(iface)?),
             Entity::IfaceThunk {
                 receiver,

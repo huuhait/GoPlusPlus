@@ -290,6 +290,14 @@ fn a_table_of_methods_and_what_it_holds_have_their_names() {
         "_GPTaPN1pE4Vec2N1pE6Shaper: itab for *p.Vec2 as p.Shaper"
     );
     assert_eq!(
+        shown(named(Entity::MethodTable(vec))),
+        "_GPTmN1pE4Vec2: method table for p.Vec2"
+    );
+    assert_eq!(
+        shown(named(Entity::IfaceDesc(shaper))),
+        "_GPTnN1pE6Shaper: interface descriptor for p.Shaper"
+    );
+    assert_eq!(
         shown(named(thunk(false))),
         "_GPTIM3LenN1pE4Vec2: interface thunk for p.Vec2.Len"
     );

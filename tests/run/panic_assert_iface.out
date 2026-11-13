@@ -1,0 +1,8 @@
+n
+panic: interface conversion: main.Square is not main.Shape: missing method Name
+
+goroutine 1 [running]:
+main.shape()
+	+0x?
+main.main()
+	+0x?

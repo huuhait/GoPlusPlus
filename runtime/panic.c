@@ -57,6 +57,22 @@ static void frame(uintptr_t start, uintptr_t at) {
   die();
 }
 
+[[noreturn]] void _gopp_fail_convert(gopp_string iface, const gopp_type *have,
+                                     gopp_string missing) {
+  _gopp_write_text("panic: interface conversion: ");
+  if (have == 0) {
+    _gopp_write_text("interface is nil, not ");
+    _gopp_write_string(iface);
+    die();
+  }
+  _gopp_write_string(have->name);
+  _gopp_write_text(" is not ");
+  _gopp_write_string(iface);
+  _gopp_write_text(": missing method ");
+  _gopp_write_string(missing);
+  die();
+}
+
 // A failed check of an index or of the bounds of a slice. `%x` in the
 // form is `x`, which is signed if `is_signed` says so, and `%y` is `y`,
 // which is always signed; a negative `x` has the form without `y`.

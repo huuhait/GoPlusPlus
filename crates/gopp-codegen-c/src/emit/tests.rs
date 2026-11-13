@@ -257,9 +257,22 @@ func grown(s Sized) int {
 	return s.Size()
 }
 
+func sized(v any) int {
+	if s, ok := v.(Sized); ok {
+		return s.Size()
+	}
+	switch x := v.(type) {
+	case interface{ Size() int }:
+		return x.Size()
+	case interface{}:
+		return 1
+	}
+	return 0
+}
+
 func main() {
 	n := Named{\"n\", []int{1}}
-	println(held(7) + held(n) + held(nil) + grown(&n))
+	println(held(7) + held(n) + held(nil) + grown(&n) + sized(&n) + sized(n) + sized(nil))
 }
 ";
 

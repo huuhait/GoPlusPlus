@@ -1,0 +1,18 @@
+2 1
+2
+3 2 2
+1 7
+2 1
+2
+3 2 2
+1 7
+held 1
+dup 1
+in any 101
+dup 101
+copied 201
+close 201
+end of files
+close 101
+close 1
+done

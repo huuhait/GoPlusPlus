@@ -355,7 +355,22 @@ impl<'a> FuncCx<'a, '_> {
         let mut values = Vec::with_capacity(wanted.len());
         for (at, wanted) in wanted.iter().enumerate() {
             values.push(match &parts {
-                Some(place) => Rvalue::Use(Operand::Copy(self.b.field(place, at as u32)?)),
+                Some(place) => {
+                    let part = Rvalue::Use(Operand::Copy(self.b.field(place, at as u32)?));
+                    // A result that its place takes as an interface
+                    // value, or as one of another interface type.
+                    let converts = self.body.part_conversions.get(&(*call, at as u32));
+                    match (converts, *wanted) {
+                        (Some(&(from, to)), Some(ty)) => {
+                            let span = self.tree.exprs[*call].span;
+                            match self.shared.types.is_interface(from) {
+                                true => self.changed(span, ty, to, part)?,
+                                false => self.boxed(span, ty, (from, to), part)?,
+                            }
+                        }
+                        _ => part,
+                    }
+                }
                 None => {
                     let span = self.tree.exprs[*call].span;
                     let ty = wanted.unwrap_or(TypeInterner::UNIT);

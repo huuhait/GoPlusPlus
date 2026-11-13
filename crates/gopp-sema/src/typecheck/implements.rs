@@ -229,6 +229,41 @@ impl<'a> Checker<'a> {
         false
     }
 
+    /// Notes that the value `x`, the one with the number `at` of the
+    /// several that `expr` gives, is put into an interface in a place of
+    /// the type `to`, or changes its interface type there.
+    pub(super) fn note_part_interface(
+        &mut self,
+        cx: &Cx<'a>,
+        (expr, at): (ExprId, usize),
+        x: &Operand,
+        to: TypeId,
+    ) {
+        if self.memo.is_none() || !x.is_value() || self.is_untyped(x.ty) {
+            return;
+        }
+        // An option of an interface holds the interface.
+        let held = |mut ty: TypeId| {
+            while let Type::Option(elem) = &*self.types.get(self.types.underlying(ty)) {
+                ty = *elem;
+            }
+            ty
+        };
+        let (from, into) = (held(x.ty), held(to));
+        if !self.types.is_interface(into) || self.open(from) {
+            return;
+        }
+        let methods = |ty| self.types.interface_methods(ty, self.names);
+        if self.types.is_interface(from) && methods(from) == methods(into) {
+            return;
+        }
+        self.part_conversions
+            .insert((expr, at as u32), (from, into));
+        if !self.types.is_interface(from) && self.own_rules(cx) {
+            self.boxed(cx, (expr, x), (from, into), to, None);
+        }
+    }
+
     /// The value `x` of `expr`, read as the type `from`, is put into a
     /// value of the interface type `iface`, in a place of the type
     /// `place`. The interface holds a copy, so the type is one that is

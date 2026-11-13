@@ -25,9 +25,9 @@ func (r *Rect) Scale(by int) { r.w *= by; r.h *= by }
 
 type Circle struct{ r int }
 
-func (c *Circle) Area() int     { return 3 * c.r * c.r }
-func (c *Circle) Name() string  { return "circle" }
-func (c *Circle) Scale(by int)  { c.r *= by }
+func (c *Circle) Area() int      { return 3 * c.r * c.r }
+func (c *Circle) Name() string   { return "circle" }
+func (c *Circle) Scale(by int)   { c.r *= by }
 func (c *Circle) String() string { return "circle!" }
 
 // A type of one word that is no struct.

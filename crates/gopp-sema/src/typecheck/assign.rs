@@ -356,8 +356,12 @@ impl<'a> Checker<'a> {
         let values = self.multi_value(cx, rhs[0], asked);
         if values.len() == lhs.len() {
             let mut types = Vec::new();
-            for (&to, value) in lhs.iter().zip(values) {
-                types.push(self.init_var(cx, rhs[0], Some(value), to, context).ty);
+            for (at, (&to, value)) in lhs.iter().zip(values).enumerate() {
+                let given = self.init_var(cx, rhs[0], Some(value.clone()), to, context);
+                if let (Some(to), false) = (to, given.mode == Mode::Unknown) {
+                    self.note_part_interface(cx, (rhs[0], at), &value, to);
+                }
+                types.push(given.ty);
             }
             return types;
         }
@@ -575,9 +579,15 @@ impl<'a> Checker<'a> {
             .map(|&place| self.flow_local(cx, place))
             .collect();
         let mut types = Vec::new();
-        for (&place, value) in lhs.iter().zip(values) {
+        for (at, (&place, value)) in lhs.iter().zip(values).enumerate() {
             types.push(value.ty);
             let to = self.lhs_var(cx, place);
+            if let Some(to) = to
+                && value.mode != Mode::Unknown
+                && !self.unfit(cx, &value, to, true)
+            {
+                self.note_part_interface(cx, (rhs[0], at), &value, to);
+            }
             if let Some(to) = to {
                 self.note_write(cx, place, to, Some(&value));
                 let text = self.expr_string(cx, place);

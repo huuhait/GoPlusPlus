@@ -1421,6 +1421,93 @@ func main() {
 }
 
 #[test]
+fn a_value_is_asked_for_the_methods_of_an_interface_while_the_program_runs() {
+    let text = "package main
+
+type Shape interface{ Area() int }
+
+type Named interface{ Name() string }
+
+type NamedShape interface {
+	Area() int
+	Name() string
+}
+
+type Square struct{ side int }
+
+func (s Square) Area() int { return s.side }
+
+func (s Square) Name() string { return \"square\" }
+
+func (s *Square) grow() { s.side++ }
+
+func ask(v any, s Shape, both NamedShape) (Named, Shape, int) {
+	n := v.(Named)
+	if shape, ok := v.(Shape); ok {
+		return n, shape, 1
+	}
+	switch x := s.(type) {
+	case NamedShape:
+		return x, x, 2
+	case Named, nil:
+		return n, s, 3
+	}
+	return both, both, 4
+}
+
+func two() (NamedShape, Square) { return Square{1}, Square{2} }
+
+func main() {
+	var n Named = Square{0}
+	var s Shape = Square{0}
+	n, s = two()
+	_, _, k := ask(Square{3}, s, Square{4})
+	println(n.Name(), k)
+}
+";
+    let module = gir(text);
+    // The methods of the type, by their keys in the order of the keys;
+    // the one with a pointer receiver is a method of a value in a Go++
+    // file.
+    let said = |symbol: &str| {
+        let start = module.find(&format!("global const @{symbol}:")).unwrap();
+        let lines = module[start..].lines().skip(1);
+        let data: Vec<&str> = lines.take_while(|line| line.starts_with("    ")).collect();
+        data.join("|").replace("    const ", "")
+    };
+    let keys = |symbol: &str| {
+        let data = said(symbol);
+        let keys: Vec<&str> = data
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|key| key.split('|').next().unwrap_or(""))
+            .collect();
+        keys.join(" ")
+    };
+    assert_eq!(keys("_GPTmN4mainE6Square"), "Area Name grow");
+    assert_eq!(
+        keys("_GPTnN4mainE10NamedShape"),
+        "main.NamedShape Area Name"
+    );
+    assert_eq!(keys("_GPTnN4mainE5Named"), "main.Named Name");
+    assert!(said("_GPTiN4mainE6Square").ends_with("global @_GPTmN4mainE6Square"));
+    // Asked of the runtime: `v.(Named)`, `v.(Shape)`, two cases, four
+    // results and one of the two values of `two`; the other is put
+    // into a box.
+    let calls = |name: &str| module.matches(&format!("call const fn @{name}(")).count();
+    assert_eq!(calls("_gopp_iface_table"), 9);
+    assert_eq!(calls("_gopp_panic_assert_iface"), 1);
+    insta::assert_snapshot!(module);
+    // In a Go file a value has no method that takes its address.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    assert!(module.contains("@_GPTIM4AreaN4mainE6Square"));
+    assert!(!module.contains("@_GPTIM4growN4mainE6Square"));
+}
+
+#[test]
 fn interface_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
@@ -1452,6 +1539,7 @@ func f(v any, s Shape, n Named, l Lister) int {
 	var c any = 2i
 	_ = c
 	s = n
+	c = Square{}
 	return l.List()
 }
 ";
@@ -1464,12 +1552,10 @@ func f(v any, s Shape, n Named, l Lister) int {
         assert_eq!(
             messages,
             [
-                "not supported yet: a type assertion to an interface type",
-                "not supported yet: a case of an interface type",
                 "not supported yet: a comparison of values of this type",
-                "not supported yet: a comparison of values of this type",
-                "not supported yet: an interface value in a place of an interface type with \
-                 other methods",
+                "not supported yet: a complex number",
+                "not supported yet: a value in an interface whose type has a method that is \
+                 not supported yet",
                 "not supported yet: a call of a function with `...`",
             ],
             "{file}"
@@ -1512,7 +1598,8 @@ func main() {
         messages,
         [
             "a.go:21:16: not supported yet: a method of an embedded type in an interface",
-            "a.go:22:17: not supported yet: a call of a function with `...`",
+            "a.go:22:17: not supported yet: a value in an interface whose type has a method that \
+             is not supported yet",
         ]
     );
 }
@@ -1992,6 +2079,29 @@ fn the_steps_grow_with_the_glue_of_types() {
             "package main\n\ntype Wide interface {{\n{methods}}}\n\n{types}\
              func f(all []Wide) int {{\n{values}\tsum := 0\n\tfor _, v := range all {{\n{calls}\t}}\n\
              \treturn sum\n}}\n"
+        ))
+    });
+    // Many interface types that each value is asked for, in a type
+    // switch and one by one.
+    assert_near_linear(&sizes, |n| {
+        let n = n / 4;
+        let ifaces: String = (0..n)
+            .map(|at| format!("type I{at} interface{{ M{at}() int }}\n\n"))
+            .collect();
+        let methods: String = (0..n)
+            .map(|at| format!("func (t T) M{at}() int {{ return {at} }}\n"))
+            .collect();
+        let cases: String = (0..n)
+            .map(|at| format!("\tcase I{at}:\n\t\treturn x.M{at}()\n"))
+            .collect();
+        let asked: String = (0..n)
+            .map(|at| format!("\tif i, ok := v.(I{at}); ok {{\n\t\tsum += i.M{at}()\n\t}}\n"))
+            .collect();
+        steps_of(&format!(
+            "package main\n\n{ifaces}type T struct{{ n int }}\n\n{methods}\n\
+             func f(v any) int {{\n\tswitch x := v.(type) {{\n{cases}\t}}\n\treturn 0\n}}\n\n\
+             func g(v any) int {{\n\tsum := 0\n{asked}\treturn sum\n}}\n\n\
+             func h() int {{ return f(T{{}}) + g(T{{}}) }}\n"
         ))
     });
     // Many types with a `drop` and a `Clone` method that each hold the

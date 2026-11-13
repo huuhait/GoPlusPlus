@@ -13,6 +13,7 @@ void _gopp_rt_init(int argc, char **argv) {
   // A process may run one program after another: the tables of the one
   // before are gone with its code.
   tables = 0;
+  _gopp_iface_reset();
   _gopp_os_init();
 }
 

@@ -180,6 +180,11 @@ pub struct Body {
     /// and the type of the place. The value says its type another way
     /// there.
     pub iface_changes: FxHashMap<ExprId, (TypeId, TypeId)>,
+    /// For an expression that gives several values at once, the values
+    /// that are put into an interface or given to a place of an interface
+    /// type with other methods, each by its number: the type of the value
+    /// and the type of the place.
+    pub part_conversions: FxHashMap<(ExprId, u32), (TypeId, TypeId)>,
     /// The cases of the type switches that are types, each with its
     /// type; the case `nil` has none.
     pub case_types: FxHashMap<ExprId, TypeId>,

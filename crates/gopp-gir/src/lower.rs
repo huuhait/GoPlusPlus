@@ -162,6 +162,9 @@ pub(crate) struct Method {
     pub receiver: CheckedTypeId,
     /// The type of the method without its receiver.
     pub sig: CheckedTypeId,
+    /// It is declared in a Go++ file, where a value has the methods
+    /// that take its address too (TYP-5).
+    pub gopp: bool,
 }
 
 /// What every run reads and none writes.
@@ -260,6 +263,9 @@ pub(crate) struct Memo<'a> {
     /// The descriptor of each type whose values the run has put into
     /// an interface value.
     pub infos: FxHashMap<CheckedTypeId, Result<GlobalId, &'static str>>,
+    /// The methods of each interface type that the run has asked a
+    /// value for while the program runs.
+    pub itypes: FxHashMap<CheckedTypeId, Result<GlobalId, &'static str>>,
     /// The table of the methods of an interface type for the values of
     /// a type, for each pair that the run has used: the type, then the
     /// interface type.
@@ -308,6 +314,7 @@ impl<'a> Memo<'a> {
             map: None,
             iface: None,
             infos: FxHashMap::default(),
+            itypes: FxHashMap::default(),
             itabs: FxHashMap::default(),
             maps: FxHashMap::default(),
             by_bytes: FxHashMap::default(),
@@ -384,10 +391,12 @@ impl<'a> Shared<'a> {
             if let (JobName::Method(named, name), Some(receiver)) = (job.named, job.receiver)
                 && let CheckedType::Named { id, .. } = &*shared.types.get(named)
             {
+                let dialect = shared.files[job.file as usize].1.dialect();
                 let method = Method {
                     symbol: job.symbol.clone(),
                     receiver,
                     sig: job.sig,
+                    gopp: dialect == gopp_span::Dialect::Gopp,
                 };
                 shared.methods.insert((*id, name), method);
             }

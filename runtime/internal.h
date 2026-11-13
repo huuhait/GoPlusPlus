@@ -38,6 +38,15 @@ void _gopp_write_hex(uint64_t value);
 [[noreturn]] void _gopp_fail_assert(gopp_string iface, const gopp_type *have,
                                     const gopp_type *wanted);
 
+// Ends the program as `x.(I)` does for an interface type named `iface`
+// and an `x` that holds a value of the type `have` without the method
+// `missing`, or nothing for null.
+[[noreturn]] void _gopp_fail_convert(gopp_string iface, const gopp_type *have,
+                                     gopp_string missing);
+
+// The tables of methods that the program before made are gone with it.
+void _gopp_iface_reset(void);
+
 // Room for `size` bytes, which is never null: a program that gets none
 // ends.
 void *_gopp_alloc(uint64_t size);

@@ -471,9 +471,10 @@ impl FuncCx<'_, '_> {
                 depth: self.depth() - 1,
                 next: bodies.get(at + 1).copied(),
             });
-            if let (Some(looked), Some(&var)) = (&looked, vars.get(at)) {
+            if let (Some((looked, tables)), Some(&var)) = (&looked, vars.get(at)) {
                 self.at(clause.span);
-                self.switch_var(looked, var, clause)?;
+                let table = tables.get(at).cloned().flatten();
+                self.switch_var(looked, table, var, clause)?;
             }
             self.stmts(&clause.body)?;
             self.targets.pop();

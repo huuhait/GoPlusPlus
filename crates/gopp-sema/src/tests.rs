@@ -12596,6 +12596,116 @@ func f(v any) int {
     }
 }
 
+#[test]
+fn an_interface_value_in_a_place_of_another_interface_type_is_noted() {
+    let text = "package p
+
+type Shape interface{ Area() int }
+
+type Named interface{ Name() string }
+
+type Both interface {
+	Area() int
+	Name() string
+}
+
+type Same interface{ Area() int }
+
+type Square struct{ side int }
+
+func (s Square) Area() int { return s.side }
+
+func (s Square) Name() string { return \"square\" }
+
+type holder struct {
+	shape Shape
+	any   any
+}
+
+func take(s Shape, rest []any) {}
+
+func two() (Both, Square, Shape) { return Square{}, Square{}, Square{} }
+
+func f(b Both, s Shape, shapes []Shape, byName map[string]any) (Shape, any, Same) {
+	var named Named = b
+	var same Same = s
+	s = b
+	shapes = append(shapes, b, s)
+	shapes[0] = b
+	byName[\"b\"] = b
+	h := holder{b, s}
+	h.any = named
+	take(b, []any{b, s, 1})
+	var held any
+	named, s, held = two()
+	s, held, same = two()
+	_, _, _, _, _, _ = named, same, h, held, shapes, len(byName)
+	if s == b {
+		return two()
+	}
+	return b, b, s
+}
+";
+    for name in ["a.go", "a.gopp"] {
+        let names = ThreadedRodeo::new();
+        let loader = Loader::default();
+        let checked = check_texts("p", &[(name, text)], &loader, &names);
+        assert_eq!(checked.messages, [] as [&str; 0], "{name}");
+        let types = loader.types.get().unwrap();
+        let tree = &checked.files[0];
+        let show = |ty| types.display_in(ty, &names, names.get_or_intern("p"));
+        let at = |expr: gopp_syntax::ast::ExprId| {
+            let span = tree.exprs[expr].span;
+            let line = text[..span.lo as usize].matches('\n').count() + 1;
+            (span.lo, line, &text[span.lo as usize..span.hi as usize])
+        };
+        let mut found: Vec<(u32, u32, String)> = Vec::new();
+        for body in &checked.package.files[0].bodies {
+            for (&expr, &(from, to)) in &body.iface_changes {
+                let (lo, line, written) = at(expr);
+                let shown = format!("{line}: {written}: {} to {}", show(from), show(to));
+                found.push((lo, 0, shown));
+            }
+            for (&(expr, part), &(from, to)) in &body.part_conversions {
+                let (lo, line, written) = at(expr);
+                let shown = format!("{line}: {written} #{part}: {} to {}", show(from), show(to));
+                found.push((lo, part + 1, shown));
+            }
+        }
+        found.sort();
+        let found: Vec<String> = found.into_iter().map(|(_, _, shown)| shown).collect();
+        // An interface type with the same methods takes the value as
+        // it is: `Same` and `Shape`. Two values that are compared stay
+        // what they are: each says its type by itself.
+        assert_eq!(
+            found,
+            [
+                "30: b: Both to Named",
+                "32: b: Both to Shape",
+                "33: b: Both to Shape",
+                "34: b: Both to Shape",
+                "35: b: Both to any",
+                "36: b: Both to Shape",
+                "36: s: Shape to any",
+                "37: named: Named to any",
+                "38: b: Both to Shape",
+                "38: b: Both to any",
+                "38: s: Shape to any",
+                "40: two() #0: Both to Named",
+                "40: two() #1: Square to Shape",
+                "40: two() #2: Shape to any",
+                "41: two() #0: Both to Shape",
+                "41: two() #1: Square to any",
+                "44: two() #0: Both to Shape",
+                "44: two() #1: Square to any",
+                "46: b: Both to Shape",
+                "46: b: Both to any",
+            ],
+            "{name}"
+        );
+    }
+}
+
 /// Where each file puts a value into an interface without a conversion
 /// being written: `line: expression: its type to the interface type`.
 fn iface_conversions(name: &str, text: &str) -> Vec<String> {

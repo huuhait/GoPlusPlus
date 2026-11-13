@@ -212,6 +212,9 @@ impl BodyTypes {
         for (from, into) in self.iface_changes.values_mut() {
             (*from, *into) = (to(*from), to(*into));
         }
+        for (from, into) in self.part_conversions.values_mut() {
+            (*from, *into) = (to(*from), to(*into));
+        }
         for instance in self.instances.values_mut() {
             instance.ty = to(instance.ty);
             for arg in &mut instance.args {
@@ -407,6 +410,10 @@ struct Checker<'a> {
     /// While a body is walked: the interface values that are given to a
     /// place of an interface type with other methods.
     iface_changes: FxHashMap<ExprId, (TypeId, TypeId)>,
+    /// While a body is walked: the values among several of one
+    /// expression that an interface takes or that change their interface
+    /// type.
+    part_conversions: FxHashMap<(ExprId, u32), (TypeId, TypeId)>,
     /// The methods and the embedded types of each interface type that was
     /// written, with where they are written: the names of its methods are
     /// checked once every type is known.
@@ -518,6 +525,7 @@ struct BodyTypes {
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     case_types: FxHashMap<ExprId, TypeId>,
     iface_changes: FxHashMap<ExprId, (TypeId, TypeId)>,
+    part_conversions: FxHashMap<(ExprId, u32), (TypeId, TypeId)>,
     instances: FxHashMap<ExprId, crate::object::Instance>,
     bangs: FxHashMap<ExprId, Bang>,
     var_modes: FxHashMap<ExprId, crate::object::Transfer>,
@@ -633,6 +641,7 @@ pub fn declarations(
         iface_conversions: FxHashMap::default(),
         case_types: FxHashMap::default(),
         iface_changes: FxHashMap::default(),
+        part_conversions: FxHashMap::default(),
         interfaces: Vec::new(),
         embedded_fields: Vec::new(),
         var_types: Vec::new(),
@@ -733,6 +742,7 @@ pub fn declarations(
             body.iface_conversions = found.iface_conversions;
             body.case_types = found.case_types;
             body.iface_changes = found.iface_changes;
+            body.part_conversions = found.part_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
             for (LocalId(local), ty) in found.locals {
@@ -3649,6 +3659,7 @@ impl<'a> Checker<'a> {
             iface_conversions: std::mem::take(&mut self.iface_conversions),
             case_types: std::mem::take(&mut self.case_types),
             iface_changes: std::mem::take(&mut self.iface_changes),
+            part_conversions: std::mem::take(&mut self.part_conversions),
             instances: std::mem::take(&mut self.instantiated),
             bangs: std::mem::take(&mut self.bangs),
         }
