@@ -1270,7 +1270,6 @@ func main() {}
             "a.gopp:19:8: not supported yet: a defer statement in a function with a label",
             "a.gopp:32:8: not supported yet: a defer statement of this built-in function or of a \
              conversion",
-            "a.gopp:33:8: not supported yet: a function literal",
             "a.gopp:36:9: not supported yet: a deferred call that holds a variable of a block",
         ]
     );
@@ -1648,6 +1647,39 @@ func main() {
 }
 
 #[test]
+fn a_deferred_function_value_is_kept_and_called_with_its_environment() {
+    let text = "package main
+
+func work(n int) (out int) {
+	defer func() { out += n }()
+	step := func(by int) { out *= by }
+	defer step(2)
+	return n
+}
+
+func main() {
+	println(work(3))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        let start = module.find("\nfn _GPF4mainE4work(").unwrap();
+        let work = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        let calls = |name: &str| work.matches(&format!("@{name}(")).count();
+        // Each statement keeps its value: the literal as it is made,
+        // and one more that shares the environment of `step`. Each is
+        // called by its code where the function is left and ends then.
+        assert_eq!(work.matches(" = call copy _").count(), 2, "{file}: {work}");
+        assert_eq!(calls("_gopp_func_clone"), 1, "{file}: {work}");
+        assert_eq!(calls("_gopp_func_drop"), 3, "{file}: {work}");
+        // `out` and `n` live in cells, because the literals use them.
+        assert_eq!(calls("_gopp_cell_new"), 2, "{file}: {work}");
+    }
+}
+
+#[test]
 fn function_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
@@ -1685,7 +1717,6 @@ func main() {
             "not supported yet: a method of an interface or of an embedded type as a function",
             "not supported yet: a call of a function with `...`",
             "not supported yet: a go statement",
-            "not supported yet: a function literal",
             "not supported yet: a call of a function with `...`",
         ]
     );

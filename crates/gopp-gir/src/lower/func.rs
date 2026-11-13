@@ -70,6 +70,9 @@ pub(super) enum Waits {
     Call(Callee),
     /// `print`, or `println` if the flag is set.
     Print(bool),
+    /// A function value, which is the first of what the statement
+    /// keeps: the type of its code.
+    Value(TypeId),
 }
 
 /// A call that waits for its function to be left.
@@ -857,6 +860,23 @@ impl FuncCx<'_, '_> {
                     let values = given.into_iter().map(|value| (value, pending.span));
                     self.print_values(*line, values.collect())?;
                     vec![true; pending.slots.len()]
+                }
+                Waits::Value(code_ty) => {
+                    self.b.goto(after)?;
+                    self.b.switch_to(after);
+                    let Some(&(value, _)) = pending.slots.first() else {
+                        continue;
+                    };
+                    let (ret, result) = self.call_value(pending.span, value, *code_ty, given)?;
+                    if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT) {
+                        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
+                        self.end(slot, ends)?;
+                    }
+                    // The call gave every argument away; the value
+                    // that was called ends here.
+                    let mut ends = vec![false; pending.slots.len()];
+                    ends[0] = true;
+                    ends
                 }
             };
             for (&(slot, ends), lent) in pending.slots.iter().zip(lent) {

@@ -1527,9 +1527,6 @@ impl<'a> FuncCx<'a, '_> {
             () if self.defers[at].in_loop => Some("a defer statement in a loop"),
             () if self.jumps => Some("a defer statement in a function with a label"),
             () if *unwrap => Some("a call with `!`"),
-            () if matches!(self.tree.exprs[callee].kind, ExprKind::FuncLit { .. }) => {
-                Some("a function literal")
-            }
             () if !known && prints.is_none() => {
                 Some("a defer statement of this built-in function or of a conversion")
             }
@@ -1553,39 +1550,50 @@ impl<'a> FuncCx<'a, '_> {
         }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
+            // A function value: it is kept with its arguments, and its
+            // code is called with its environment.
             Err(what) => {
-                self.unsupported(span, what);
-                return Ok(());
+                let found = self.defer_value(callee, args, *spread)?;
+                let kept: Vec<ExprId> = std::iter::once(callee)
+                    .chain(args.iter().copied())
+                    .collect();
+                let code_ty = match found.unwrap_or(Err(what)) {
+                    Ok(found) => found,
+                    Err(what) => {
+                        self.unsupported(span, what);
+                        return Ok(());
+                    }
+                };
+                if self.holds_block(span, None, args) {
+                    return Ok(());
+                }
+                let Type::Func(sig) = self.kind(code_ty) else {
+                    return Ok(());
+                };
+                let mut slots = Vec::with_capacity(kept.len());
+                for (at, &part) in kept.iter().enumerate() {
+                    // The value itself, then each argument for its
+                    // parameter after the environment.
+                    let ty = match at {
+                        0 => self.ty_of(part),
+                        at => sig.params[at],
+                    };
+                    let value = self.rvalue_as(part, ty)?;
+                    let value = self.taken(part, ty, value)?;
+                    slots.push(self.kept(part, ty, value)?);
+                }
+                self.empty_moved()?;
+                let result = self.deferred_result(span, expr, sig.ret)?;
+                let waits = super::func::Waits::Value(code_ty);
+                return self.waits(at, waits, slots, result, span);
             }
         };
         if called.views > 0 {
             self.unsupported(span, "a deferred call whose result may be a view");
             return Ok(());
         }
-        // A variable of a block that the call holds by its address
-        // would have to live as long as the function.
-        let held = receiver
-            .map(|(x, _)| x)
-            .into_iter()
-            .chain(args.iter().copied());
-        for place in held {
-            let inner = Shared::unparen(self.tree, place);
-            let by_address = Some(place) == receiver.map(|(x, _)| x)
-                || matches!(
-                    self.tree.exprs[inner].kind,
-                    ExprKind::Unary {
-                        op: UnaryOp::Addr,
-                        ..
-                    }
-                );
-            if by_address
-                && self
-                    .root_local(inner)
-                    .is_some_and(|local| self.of_block(local))
-            {
-                self.unsupported(span, "a deferred call that holds a variable of a block");
-                return Ok(());
-            }
+        if self.holds_block(span, receiver.map(|(x, _)| x), args) {
+            return Ok(());
         }
         let mut slots = Vec::with_capacity(called.params.len());
         if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {
@@ -1607,19 +1615,56 @@ impl<'a> FuncCx<'a, '_> {
             }
         }
         self.empty_moved()?;
-        // What the call gives ends when it is made.
+        let result = self.deferred_result(span, expr, called.ret)?;
+        self.waits(at, super::func::Waits::Call(called), slots, result, span)
+    }
+
+    /// Whether a deferred call holds a variable of a block by its
+    /// address, as its receiver or as `&x` among its arguments: the
+    /// variable would have to live as long as the function, which is
+    /// reported.
+    fn holds_block(&mut self, span: SourceSpan, receiver: Option<ExprId>, args: &[ExprId]) -> bool {
+        for place in receiver.into_iter().chain(args.iter().copied()) {
+            let inner = Shared::unparen(self.tree, place);
+            let by_address = Some(place) == receiver
+                || matches!(
+                    self.tree.exprs[inner].kind,
+                    ExprKind::Unary {
+                        op: UnaryOp::Addr,
+                        ..
+                    }
+                );
+            if by_address
+                && self
+                    .root_local(inner)
+                    .is_some_and(|local| self.of_block(local))
+            {
+                self.unsupported(span, "a deferred call that holds a variable of a block");
+                return true;
+            }
+        }
+        false
+    }
+
+    /// How what a deferred call gives ends when the call is made:
+    /// nothing takes it.
+    fn deferred_result(
+        &mut self,
+        span: SourceSpan,
+        expr: ExprId,
+        ret: TypeId,
+    ) -> Built<Option<super::glue::Ends>> {
         let checked = self.body.types.get(&expr).map(|typed| typed.ty);
-        let result = match self.flat(called.ret) {
+        Ok(match self.flat(ret) {
             true => None,
-            false => match self.kind(called.ret) {
+            false => match self.kind(ret) {
                 Type::Tuple(_) => {
                     self.unsupported(span, "a deferred call with several results that are freed");
                     None
                 }
                 _ => self.ends_of(checked, span)?,
             },
-        };
-        self.waits(at, super::func::Waits::Call(called), slots, result, span)
+        })
     }
 
     /// The `defer` statement ran: its call waits with what it keeps.

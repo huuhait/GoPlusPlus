@@ -776,4 +776,76 @@ impl FuncCx<'_, '_> {
         self.b.ret()?;
         Ok(Ok(()))
     }
+
+    /// A call of the function value in the slot, whose code has the
+    /// type `code_ty`, with the arguments that follow the value in
+    /// `given`: what the call gives, and its place.
+    pub fn call_value(
+        &mut self,
+        span: SourceSpan,
+        value: crate::LocalId,
+        code_ty: TypeId,
+        mut given: Vec<Operand>,
+    ) -> Built<(TypeId, Place)> {
+        let value = Place::local(value);
+        let code = Operand::Copy(self.b.field(&value, 0)?);
+        let code = Operand::Copy(self.slot_of(Rvalue::Use(code))?);
+        if self.source.dialect() == Dialect::Go {
+            self.checked(Check::Nil(code.clone(), span))?;
+        }
+        let ret = match self.kind(code_ty) {
+            Type::Func(sig) => sig.ret,
+            _ => TypeInterner::UNIT,
+        };
+        // The environment in the place of the value.
+        if let Some(first) = given.first_mut() {
+            *first = Operand::Copy(self.b.field(&value, 1)?);
+        }
+        let result = Place::local(self.b.temp(ret));
+        let next = self.b.new_block();
+        let unwind = UnwindAction::Continue;
+        self.b
+            .call(code, given, result.clone(), Some(next), unwind)?;
+        self.b.switch_to(next);
+        Ok((ret, result))
+    }
+
+    /// `defer f(args)` for a function value `f`, a function literal
+    /// too (CLO-3b, CLO-7): the value and the arguments are worked out
+    /// now and kept, each for the statement, until the function is
+    /// left. The type of the code of the value; none for what is no
+    /// function value.
+    pub fn defer_value(
+        &mut self,
+        callee: ExprId,
+        args: &[ExprId],
+        spread: bool,
+    ) -> Built<Option<Result<TypeId, &'static str>>> {
+        let types = self.shared.types;
+        let Some(typed) = self.body.types.get(&callee) else {
+            return Ok(None);
+        };
+        let checked = types.get(types.underlying(typed.ty));
+        let declared = match &*checked {
+            CheckedType::Func { variadic: true, .. } => {
+                return Ok(Some(Err("a call of a function with `...`")));
+            }
+            CheckedType::Func { params, .. } => params.len(),
+            _ => return Ok(None),
+        };
+        let ty = self.ty_of(callee);
+        let Some(code_ty) = self.code_type(ty) else {
+            return Ok(None);
+        };
+        let Type::Func(sig) = self.kind(code_ty) else {
+            return Ok(None);
+        };
+        if spread || args.len() != declared {
+            return Ok(Some(Err("a call with `...`")));
+        }
+        if sig.params.len() != declared + 1 {
+            return Ok(Some(Err("a deferred call whose result may be a view")));
+        }
+        Ok(Some(Ok(code_ty)))
+    }
 }

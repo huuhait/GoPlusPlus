@@ -1,0 +1,9 @@
+pass 0
+pass 1
+inner block done
+end of blocks
+deferred 2
+sync 1
+close 1
+close 2
+done! 2 done

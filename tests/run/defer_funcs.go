@@ -1,0 +1,82 @@
+package main
+
+type Stack struct{ items []string }
+
+func (s *Stack) Push(v string) { s.items = append(s.items, v) }
+
+var log Stack
+
+func note(v string) { log.Push(v) }
+
+// A deferred literal sees what the variables are when it runs, and may
+// change a result that has a name.
+func double(n int) (out int) {
+	defer func() { out *= 2 }()
+	out = n
+	return out + 1
+}
+
+func order() {
+	for_later := "first"
+	defer func() { note("literal " + for_later) }()
+	defer note("argument " + for_later)
+	for_later = "second"
+	f := func(s string) { note("value " + s) }
+	defer f(for_later)
+	f = func(s string) { note("other " + s) }
+	defer f("x")
+}
+
+func block(flag bool) (text string) {
+	if flag {
+		inner := "in"
+		defer func() { text += inner + "|" }()
+		inner += "side"
+	}
+	text = "start|"
+	defer func() {
+		text += "end"
+	}()
+	return text + "returned|"
+}
+
+func counted() int {
+	calls := 0
+	bump := func() int {
+		calls++
+		return calls
+	}
+	defer bump()
+	defer func(by int) { calls += by }(10)
+	bump()
+	return calls
+}
+
+func early(stop bool) string {
+	defer note("early left")
+	if stop {
+		return "stopped"
+	}
+	defer func() { note("early ran") }()
+	return "went on"
+}
+
+func method() {
+	s := Stack{}
+	defer func() { note("items " + s.items[0] + s.items[1]) }()
+	push := s.Push
+	defer push("b")
+	s.Push("a")
+}
+
+func main() {
+	println(double(1), double(5))
+	order()
+	println(block(true), block(false))
+	println(counted())
+	println(early(true), early(false))
+	method()
+	for _, line := range log.items {
+		println(line)
+	}
+}

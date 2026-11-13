@@ -1,0 +1,44 @@
+package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f *File) Sync() { println("sync", f.fd) }
+
+func open(fd int) File { return File{fd: fd} }
+
+// A variable of a block that a deferred literal uses lives until the
+// function is left, after the call.
+func blocks(n int) {
+	for i := range n {
+		println("pass", i)
+	}
+	{
+		f := open(1)
+		defer func() { f.Sync() }()
+		println("inner block done")
+	}
+	g := open(2)
+	defer func(note string) { println(note, g.fd) }("deferred")
+	println("end of blocks")
+}
+
+func results() (text string, list []string) {
+	defer func() {
+		list = append(list, text)
+		text += "!"
+	}()
+	list = []string{"a"}
+	return "done", list
+}
+
+func main() {
+	blocks(2)
+	text, list := results()
+	println(text, len(list), list[1])
+}
