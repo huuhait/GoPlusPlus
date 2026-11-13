@@ -18,6 +18,31 @@ pub enum Held {
     Params(Arc<[TypeId]>),
 }
 
+/// What a function does with the pointers that it is given, for those
+/// who call it (OWN-B3).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Lends {
+    /// For each parameter, the receiver first: whether a result may
+    /// point into what the parameter reaches.
+    pub gives: Vec<bool>,
+}
+
+impl Lends {
+    /// Whether the function may give back what the argument at
+    /// `position` of `count` reaches. The last parameter takes the
+    /// arguments that are left over, and one call that gives several
+    /// values is given to all of them.
+    pub fn gives_back(&self, position: usize, count: usize) -> bool {
+        match count < self.gives.len() {
+            true => self.gives.contains(&true),
+            false => {
+                let last = self.gives.len().saturating_sub(1);
+                self.gives.get(position.min(last)).copied().unwrap_or(false)
+            }
+        }
+    }
+}
+
 impl Default for Held {
     fn default() -> Held {
         Held::Params([].into())
@@ -300,6 +325,16 @@ impl Types {
     /// a pointer (OWN-B5).
     pub fn set_kept(&self, param: TypeId, what: Arc<str>) {
         self.write(|inner| inner.kept.insert(param, what));
+    }
+
+    /// Says what the method `name` of the declared type does with the
+    /// pointers that it is given.
+    pub fn set_lends(&self, named: NamedId, name: lasso::Spur, lends: Arc<Lends>) {
+        self.write(|inner| inner.lends.insert((named, name), lends));
+    }
+
+    pub fn lends(&self, named: NamedId, name: lasso::Spur) -> Option<Arc<Lends>> {
+        self.read(|inner| inner.lends.get(&(named, name)).cloned())
     }
 
     /// Into what a declaration puts a value of the type parameter on

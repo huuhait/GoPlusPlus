@@ -32,6 +32,8 @@ mod own;
 mod place;
 mod stmt;
 
+use std::sync::Arc;
+
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::Span;
 use gopp_syntax::ast::{self, *};
@@ -48,7 +50,8 @@ use crate::object::{
 use crate::package::Package;
 use crate::resolve::Unit;
 use crate::types::{
-    ChanDir, DeclaredMethod, Field, Held, Imported, Member, Method, Term, Type, TypeId, Types,
+    ChanDir, DeclaredMethod, Field, Held, Imported, Lends, Member, Method, Term, Type, TypeId,
+    Types,
 };
 use crate::universe::{Predeclared, PredeclaredKind};
 use assign::Init;
@@ -366,6 +369,9 @@ struct Checker<'a> {
     /// as.
     mono: mono::Mono,
     kept: kept::Kept,
+    /// What each function of the package does with the pointers that
+    /// it is given.
+    lending: FxHashMap<ObjId, Arc<Lends>>,
     /// The type parameters of the function whose body is being checked,
     /// those that its receiver names too.
     around: Vec<TypeId>,
@@ -565,6 +571,11 @@ struct BodyTypes {
     swaps: FxHashSet<ExprId>,
     self_moves: FxHashSet<ExprId>,
     last_uses: FxHashSet<ExprId>,
+    /// What the function and its function literals do with pointers,
+    /// each with the number of the declaration; and the function as
+    /// those who call it name it.
+    lent: Vec<(usize, borrows::Problem)>,
+    lender: Option<borrows::Callee>,
     captures: FxHashMap<ExprId, Vec<crate::object::Capture>>,
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     narrowed: FxHashSet<ExprId>,
@@ -651,6 +662,7 @@ pub fn declarations(
         case_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
         kept: kept::Kept::default(),
+        lending: FxHashMap::default(),
         around: Vec::new(),
         aside: None,
         foreign_members: FxHashMap::default(),
@@ -739,7 +751,8 @@ pub fn declarations(
     // A type that needs instances without end is known before a body
     // follows its instances.
     checker.monomorph();
-    let types_of_files = checker.bodies_aside(units);
+    let mut types_of_files = checker.bodies_aside(units);
+    checker.lent_all(units, &mut types_of_files);
     checker.mono_report();
     checker.kept_report();
     let Checker {
@@ -750,8 +763,10 @@ pub fn declarations(
         steps,
         func_marks,
         operator_spans,
+        lending,
         ..
     } = checker;
+    package.lends = lending;
     package.operators = (operator_spans.into_iter())
         .map(|(method, span)| (span.lo, method))
         .collect();
@@ -928,6 +943,120 @@ impl<'a> Checker<'a> {
         done.into_par_iter().for_each(drop);
         self.incomplete = false;
         all
+    }
+
+    /// Goes over what the functions do with pointers and says what is
+    /// found. A function says what it does with the pointers that it is
+    /// given, so each is looked at after those that it calls: functions
+    /// that call each other together, until what they say stays the
+    /// same, and all that wait for nothing side by side.
+    fn lent_all(&mut self, units: &[Unit<'a>], bodies: &mut [Vec<BodyTypes>]) {
+        use borrows::Callee;
+        let mut problems = Vec::new();
+        let mut lenders = Vec::new();
+        for (file, of_file) in bodies.iter_mut().enumerate() {
+            for body in of_file {
+                let lent = std::mem::take(&mut body.lent);
+                problems.extend(
+                    lent.into_iter()
+                        .map(|(decl, problem)| (file, decl, problem)),
+                );
+                lenders.extend(body.lender);
+            }
+        }
+        let count = problems.len();
+        let mut owned: FxHashMap<Callee, usize> = FxHashMap::default();
+        for (at, (_, _, problem)) in problems.iter().enumerate() {
+            owned.extend(problem.owner.map(|owner| (owner, at)));
+        }
+        // What is known before any problem is looked at: of a function
+        // of another package, and of one of this package that does
+        // nothing with pointers.
+        let nothing = Arc::new(Lends::default());
+        let mut done: FxHashMap<Callee, Arc<Lends>> = FxHashMap::default();
+        for &lender in &lenders {
+            if !owned.contains_key(&lender) {
+                done.insert(lender, nothing.clone());
+            }
+        }
+        let mut calls: Vec<Vec<usize>> = Vec::with_capacity(count);
+        for (_, _, problem) in &problems {
+            let mut called = Vec::new();
+            for call in &problem.calls {
+                self.steps += 1;
+                if let Some(&at) = owned.get(&call.callee) {
+                    called.push(at);
+                    continue;
+                }
+                let known = match call.callee {
+                    Callee::Imported(import, member) => {
+                        match &self.package.objects[import.0 as usize].kind {
+                            ObjKind::Import { package, .. } => package.lends.get(&member).cloned(),
+                            _ => None,
+                        }
+                    }
+                    Callee::Method(named, name) => self.types.lends(named, name),
+                    _ => None,
+                };
+                if let Some(known) = known {
+                    done.entry(call.callee).or_insert(known);
+                }
+            }
+            calls.push(called);
+        }
+        let groups = borrows::groups(&calls, &mut self.steps);
+        // The groups that wait for no other, then those that wait for
+        // these only, and so on.
+        let mut group_of = vec![0; count];
+        for (at, group) in groups.iter().enumerate() {
+            for &member in group {
+                group_of[member] = at;
+            }
+        }
+        let mut level = vec![0usize; groups.len()];
+        let mut levels: Vec<Vec<usize>> = Vec::new();
+        for (at, group) in groups.iter().enumerate() {
+            let called = group.iter().flat_map(|&member| &calls[member]);
+            let below = called.filter(|&&to| group_of[to] != at);
+            level[at] = below.map(|&to| level[group_of[to]] + 1).max().unwrap_or(0);
+            if levels.len() <= level[at] {
+                levels.resize(level[at] + 1, Vec::new());
+            }
+            levels[level[at]].push(at);
+        }
+        let mut solved: Vec<Option<borrows::Lent>> = (0..count).map(|_| None).collect();
+        for same in &levels {
+            let found: Vec<Vec<(usize, borrows::Lent)>> = same
+                .par_iter()
+                .map(|&group| borrows::solve_together(&groups[group], &problems, &calls, &done))
+                .collect();
+            for (member, lent) in found.into_iter().flatten() {
+                if let Some(owner) = problems[member].2.owner {
+                    done.insert(owner, Arc::new(lent.lends.clone()));
+                }
+                solved[member] = Some(lent);
+            }
+        }
+        for ((file, decl, problem), found) in problems.iter().zip(&solved) {
+            let Some(found) = found else {
+                continue;
+            };
+            self.steps += found.steps;
+            let body = &self.package.files[*file].bodies[*decl];
+            let text = units[*file].source.text();
+            self.lent(body, text, &problem.broken, found);
+        }
+        // For those who call the functions of this package.
+        for lender in lenders {
+            let Some(lends) = done.get(&lender).cloned() else {
+                continue;
+            };
+            match lender {
+                Callee::Func(object) => drop(self.lending.insert(object, lends)),
+                Callee::Method(named, name) => self.types.set_lends(named, name, lends),
+                _ => {}
+            }
+        }
     }
 
     /// Checks one declaration aside: what it reports and adds to what
@@ -3701,7 +3830,8 @@ impl<'a> Checker<'a> {
         };
         self.addresses_of_required(&cx);
         let captures = self.captured_by_literal();
-        let last_uses = self.moves(&cx, &captures, &tree.decl_nodes[decl]);
+        let lender = self.lender(&cx, &tree.decl_nodes[decl]);
+        let (last_uses, lent) = self.moves(&cx, &captures, (&tree.decl_nodes[decl], lender));
         let memo = self.memo.take().unwrap_or_default();
         let exprs = memo.into_iter().filter_map(typed).collect();
         self.validate();
@@ -3719,6 +3849,8 @@ impl<'a> Checker<'a> {
             swaps: std::mem::take(&mut self.swaps),
             self_moves: std::mem::take(&mut self.self_moves),
             last_uses,
+            lent: lent.into_iter().map(|problem| (index, problem)).collect(),
+            lender,
             captures,
             method_values: std::mem::take(&mut self.method_values),
             narrowed: std::mem::take(&mut self.narrowed),

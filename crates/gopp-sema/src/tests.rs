@@ -6279,6 +6279,246 @@ func inside() int {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-B3
+#[test]
+fn a_function_says_which_of_its_parameters_its_results_point_into() {
+    let names = ThreadedRodeo::new();
+    let lib = "package lib
+
+type Cell struct{ N int }
+
+func First(a, b *int) *int { return a }
+
+func (c *Cell) At() *int { return &c.N }
+";
+    let loader = with_packages(&names, &[("lib", lib)]);
+    // What a call gives back points into the arguments that the
+    // function may give back, and into no other: `pick` its first,
+    // `fresh` none, `rec` both by calling itself, `Get` and `first`
+    // what the holder holds, `named` by a result with a name.
+    let text = "package p
+
+import \"lib\"
+
+type T struct{ n int }
+
+type Holder struct{ p *T }
+
+var origin T
+
+func pick(a, b *T) *T { return a }
+
+func first(h *Holder) *T { return h.p }
+
+func fresh(a *T) *T { return &origin }
+
+func rec(a, b *T, n int) *T {
+	if n == 0 {
+		return a
+	}
+	return rec(b, a, n-1)
+}
+
+func (h *Holder) Get() *T { return h.p }
+
+func (h *Holder) Other(t *T) *T { return t }
+
+func named(a, b *T) (r Option[*T]) {
+	r = b
+	return
+}
+
+func fine1() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		r = pick(&x, &y)
+	}
+	return r.n
+}
+
+func fine2() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		r = fresh(&y)
+	}
+	return r.n
+}
+
+func fine3() int {
+	x := T{1}
+	h := Holder{&x}
+	r := &x
+	{
+		y := T{2}
+		r = h.Other(&x)
+		_ = h.Other(&y)
+	}
+	return r.n
+}
+
+func bad1() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		r = pick(&y, &x)
+	}
+	return r.n
+}
+
+func bad2() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		r = rec(&x, &y, 3)
+	}
+	return r.n
+}
+
+func bad3() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		h := Holder{&y}
+		r = first(&h)
+	}
+	return r.n
+}
+
+func bad4() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		h := Holder{&y}
+		r = h.Get()
+	}
+	return r.n
+}
+
+func bad5() int {
+	x := T{1}
+	r := &x
+	{
+		y := T{2}
+		if got, ok := named(&x, &y).Get(); ok {
+			r = got
+		}
+	}
+	return r.n
+}
+
+func fine4() int {
+	x := T{1}
+	r := &x.n
+	{
+		y := 2
+		r = lib.First(&x.n, &y)
+	}
+	return *r
+}
+
+func bad6() int {
+	x := T{1}
+	r := &x.n
+	{
+		y := 2
+		r = lib.First(&y, &x.n)
+	}
+	return *r
+}
+
+func bad7() int {
+	x := T{1}
+	r := &x.n
+	{
+		c := lib.Cell{N: 2}
+		r = c.At()
+	}
+	return *r
+}
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let said: Vec<&str> = (checked.messages.iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| message.as_str())
+        .collect();
+    let expected = [
+        "a.gopp:71:2: y ends here, and r points into it and is used later",
+        "a.gopp:81:2: y ends here, and r points into it and is used later",
+        "a.gopp:92:2: y ends here, and r points into it and is used later",
+        "a.gopp:103:2: y ends here, and r points into it and is used later",
+        "a.gopp:115:2: y ends here, and r points into it and is used later",
+        "a.gopp:135:2: y ends here, and r points into it and is used later",
+        "a.gopp:145:2: c ends here, and r points into it and is used later",
+    ];
+    assert_eq!(said, expected);
+}
+
+// rule: OWN-B3
+#[test]
+fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    let head = "package p\ntype T struct{ n int }\n";
+    // Each function gives back what the next gives back, and the last
+    // one a parameter; with `up`, that one is declared first.
+    let chain = |count: usize, up: bool| {
+        let mut functions: Vec<String> = (0..count)
+            .map(|i| match i + 1 == count {
+                true => format!("func f{i}(a, b *T) *T {{ return a }}\n"),
+                false => format!("func f{i}(a, b *T) *T {{ return f{}(b, a) }}\n", i + 1),
+            })
+            .collect();
+        if up {
+            functions.reverse();
+        }
+        format!(
+            "{head}{}func use(x, y *T) int {{ return f0(x, y).n }}\n",
+            functions.concat()
+        )
+    };
+    // The functions call each other in a ring, and one of them gives
+    // back a parameter: what each says is known when it has come
+    // around.
+    let ring = |count: usize| {
+        let functions: String = (1..count)
+            .map(|i| {
+                format!(
+                    "func f{i}(a, b *T) *T {{ return f{}(b, a) }}\n",
+                    (i + 1) % count
+                )
+            })
+            .collect();
+        format!(
+            "{head}func f0(a, b *T) *T {{\n\tif a.n == 0 {{\n\t\treturn a\n\t}}\n\treturn f1(b, \
+             a)\n}}\n{functions}func use(x, y *T) int {{ return f0(x, y).n }}\n"
+        )
+    };
+    // Many functions call one.
+    let fan = |count: usize| {
+        let functions: String = (0..count)
+            .map(|i| format!("func u{i}(x, y *T) *T {{ return pick(y, x) }}\n"))
+            .collect();
+        format!("{head}func pick(a, b *T) *T {{ return a }}\n{functions}")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
+    linear::assert_near_linear(&sizes, |n| steps(ring(n)));
+    linear::assert_near_linear(&sizes, |n| steps(fan(n)));
+}
+
 // rule: OWN-B5
 #[test]
 fn generic_code_keeps_a_pointer_where_plain_code_does() {

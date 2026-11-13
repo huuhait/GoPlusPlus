@@ -28,6 +28,9 @@ pub struct Package {
     /// package declares: its type, and which of the `@Operator` methods
     /// of the type it is, in the order of their declarations.
     pub operators: FxHashMap<u32, (crate::types::NamedId, u32)>,
+    /// What each function of the package with a body does with the
+    /// pointers that it is given, for those who call it.
+    pub lends: FxHashMap<ObjId, Arc<crate::types::Lends>>,
     /// Stands in for a package that could not be loaded. Every name is
     /// taken to exist in it, so that one failed import is one error.
     pub fake: bool,

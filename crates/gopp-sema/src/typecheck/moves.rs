@@ -69,11 +69,9 @@ pub(super) struct Found {
     /// Each `move` of a variable that a statement around it still
     /// reads where it is.
     pub held: Vec<(LocalId, Span)>,
-    /// The places that are changed while a pointer into them is still
-    /// used, and the pointers to what ends with the function that are
-    /// returned.
-    pub broken: Vec<borrows::Broken>,
-    pub escaped: Vec<borrows::Escaped>,
+    /// What the function and each of its function literals do with
+    /// pointers, for the passes that run when every body is walked.
+    pub lent: Vec<borrows::Problem>,
     pub steps: u64,
 }
 
@@ -247,11 +245,11 @@ pub(super) struct Walk<'a> {
     pub events: Vec<Event>,
     /// For each block, where its events start and end.
     pub blocks: Vec<(u32, u32)>,
-    edges: Vec<(u32, u32)>,
+    pub(super) edges: Vec<(u32, u32)>,
     current: u32,
     exit: u32,
     /// The results of the function that have names.
-    results: Vec<LocalId>,
+    pub(super) results: Vec<LocalId>,
     /// Where `break` and `continue` go, the innermost last, each with
     /// the label of its statement.
     breaks: Vec<(Option<Spur>, u32)>,
@@ -279,7 +277,19 @@ pub(super) struct Walk<'a> {
     /// what the walk has found of them (`borrows.rs`).
     pub places: Option<&'a borrows::Places<'a>>,
     pub sources: Vec<borrows::Source>,
+    /// The calls that give back what may hold pointers, and the sources
+    /// of their arguments.
+    pub calls: Vec<borrows::Call>,
+    pub args: Vec<borrows::Source>,
+    /// The function of the declaration, if others call it by its name;
+    /// whether it is the one that is walked; and its parameters, the
+    /// receiver first.
+    pub owner: Option<borrows::Callee>,
+    pub top: bool,
+    pub params: Vec<Option<LocalId>>,
     pub changes: Vec<borrows::Change>,
+    /// The changes that a loop around them refuses.
+    pub broken: Vec<borrows::Broken>,
     /// The variables that the statements around declare, each
     /// statement with its own.
     pub frames: Vec<Vec<LocalId>>,
@@ -306,7 +316,7 @@ pub(super) fn of(
     captures: &FxHashMap<ExprId, Vec<Capture>>,
     watched: &FxHashSet<LocalId>,
     places: Option<&borrows::Places<'_>>,
-    decl: &ast::Decl,
+    (decl, owner): (&ast::Decl, Option<borrows::Callee>),
 ) -> Found {
     let mut walk = Walk {
         tree,
@@ -334,7 +344,13 @@ pub(super) fn of(
         found: Found::default(),
         places,
         sources: Vec::new(),
+        calls: Vec::new(),
+        args: Vec::new(),
+        owner,
+        top: true,
+        params: Vec::new(),
         changes: Vec::new(),
+        broken: Vec::new(),
         frames: Vec::new(),
         loops: Vec::new(),
         looping: FxHashMap::default(),
@@ -359,6 +375,7 @@ pub(super) fn of(
     while let Some(literal) = walk.literals.pop() {
         if let ExprKind::FuncLit { ty, body } = &tree.exprs[literal].kind {
             walk.within = tree.exprs[literal].span;
+            walk.top = false;
             walk.function(None, *ty, body);
         }
     }
@@ -371,6 +388,39 @@ pub(super) fn of(
 }
 
 impl<'a> Checker<'a> {
+    /// The function of the declaration as those who call it name it:
+    /// none for a generic one, which is checked once for every type.
+    pub(super) fn lender(&self, cx: &Cx<'a>, decl: &ast::Decl) -> Option<borrows::Callee> {
+        let DeclKind::Func {
+            receiver,
+            name,
+            type_params,
+            ..
+        } = &decl.kind
+        else {
+            return None;
+        };
+        if !type_params.is_empty() {
+            return None;
+        }
+        if receiver.is_none() {
+            let object = self.by_span.get(&name.span)?;
+            return Some(borrows::Callee::Func(ObjId(*object as u32)));
+        }
+        let receives = |local: &crate::Local| local.kind == LocalKind::Receiver;
+        let local = LocalId(cx.body.locals.iter().position(receives)? as u32);
+        let mut ty = self.locals.get(&local)?.ty;
+        if let Type::Pointer(to) = &*self.types.get(self.types.underlying(ty)) {
+            ty = *to;
+        }
+        match &*self.types.get(ty) {
+            Type::Named { id, args } if args.is_empty() => {
+                Some(borrows::Callee::Method(*id, name.name))
+            }
+            _ => None,
+        }
+    }
+
     /// The parameters and receivers by value of the body that are
     /// slices or maps: what a function writes to the elements of one is
     /// written to its own copy (PAR-1).
@@ -403,8 +453,8 @@ impl<'a> Checker<'a> {
         &mut self,
         cx: &Cx<'a>,
         captures: &FxHashMap<ExprId, Vec<Capture>>,
-        decl: &ast::Decl,
-    ) -> FxHashSet<ExprId> {
+        (decl, lender): (&ast::Decl, Option<borrows::Callee>),
+    ) -> (FxHashSet<ExprId>, Vec<borrows::Problem>) {
         let watched = self.own_collections(cx);
         // Nothing is given, moved, written or lent so in most bodies.
         // A body lends if it takes an address or has a loop over
@@ -418,7 +468,7 @@ impl<'a> Checker<'a> {
         };
         let lends = std::mem::take(&mut self.lends) || self.locals.values().any(handle);
         if self.var_modes.is_empty() && watched.is_empty() && !lends {
-            return FxHashSet::default();
+            return Default::default();
         }
         let found = {
             let places = self
@@ -430,6 +480,7 @@ impl<'a> Checker<'a> {
                     memo,
                     selections: &self.selections,
                     locals: &self.locals,
+                    instances: &self.instantiated,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -440,11 +491,10 @@ impl<'a> Checker<'a> {
                 captures,
                 &watched,
                 places.as_ref(),
-                decl,
+                (decl, lender),
             )
         };
         self.steps += found.steps;
-        self.lent(cx, &found);
         let named = |this: &Self, local: LocalId| {
             let name = cx.body.locals[local.0 as usize].name;
             this.names.resolve(&name).to_owned()
@@ -500,21 +550,28 @@ impl<'a> Checker<'a> {
             let note = format!("{name} is moved here");
             self.emit(diagnostic.with_note(Code::NoteMovedHere, Some(reused.moved), note));
         }
-        found.last
+        (found.last, found.lent)
     }
 }
 
 impl<'a> Checker<'a> {
-    /// Says what the walk found of the pointers of a body (OWN-B2,
-    /// OWN-B3, RNG-3).
-    fn lent(&mut self, cx: &Cx<'a>, found: &Found) {
+    /// Says what was found of the pointers of a function of the body,
+    /// whose source is `text`: by its walk, and by the passes (OWN-B2,
+    /// OWN-B3, OWN-B5, RNG-3).
+    pub(super) fn lent(
+        &mut self,
+        body: &Body,
+        text: &str,
+        walked: &[borrows::Broken],
+        found: &borrows::Lent,
+    ) {
         use borrows::What;
         let named = |this: &Self, local: LocalId| {
-            let name = cx.body.locals[local.0 as usize].name;
+            let name = body.locals[local.0 as usize].name;
             this.names.resolve(&name).to_owned()
         };
-        let text = |at: Span| cx.text[at.lo as usize..at.hi as usize].to_owned();
-        for broken in &found.broken {
+        let text = |at: Span| text[at.lo as usize..at.hi as usize].to_owned();
+        for broken in walked.iter().chain(&found.broken) {
             let owner = named(self, broken.of);
             let place = match broken.what {
                 What::Move => owner.clone(),
@@ -702,6 +759,10 @@ impl<'a> Walk<'a> {
         self.events.clear();
         self.sources.clear();
         self.changes.clear();
+        self.broken.clear();
+        self.calls.clear();
+        self.args.clear();
+        self.params.clear();
         self.frames.clear();
         self.loops.clear();
         self.looping.clear();
@@ -728,11 +789,13 @@ impl<'a> Walk<'a> {
             params, results, ..
         } = &self.tree.exprs[ty].kind
         {
-            let names = receiver.into_iter().chain(params.iter());
-            for name in names.filter_map(|param| param.name) {
-                if let Some(&local) = self.body.defs.get(&name.span.lo) {
+            for param in receiver.into_iter().chain(params.iter()) {
+                let name = param.name;
+                let local = name.and_then(|name| self.body.defs.get(&name.span.lo).copied());
+                if let (Some(local), Some(name)) = (local, name) {
                     self.given_from_outside(local, name.span);
                 }
+                self.params.push(local);
             }
             self.given = self.events.len();
             let named = results.iter().filter_map(|result| result.name);
@@ -1408,35 +1471,14 @@ impl<'a> Walk<'a> {
             Event::Returned(..) | Event::Stored(..) => true,
             _ => false,
         });
+        let holds = holds || !self.broken.is_empty();
         if !given && !moved && !wrote && !holds {
             return;
         }
         self.blocks[self.current as usize].1 = self.events.len() as u32;
         let count = self.blocks.len();
-        // For each block, the blocks after it and those before it.
-        let lists = |back: bool| {
-            let ends = |&(from, to): &(u32, u32)| match back {
-                true => (to, from),
-                false => (from, to),
-            };
-            let mut starts = vec![0u32; count + 1];
-            for edge in &self.edges {
-                starts[ends(edge).0 as usize + 1] += 1;
-            }
-            for at in 0..count {
-                starts[at + 1] += starts[at];
-            }
-            let mut filled = starts.clone();
-            let mut all = vec![0u32; self.edges.len()];
-            for edge in &self.edges {
-                let (from, to) = ends(edge);
-                all[filled[from as usize] as usize] = to;
-                filled[from as usize] += 1;
-            }
-            (starts, all)
-        };
-        let after = lists(false);
-        let before = lists(true);
+        let after = lists(count, &self.edges, false);
+        let before = lists(count, &self.edges, true);
         self.found.steps += (count + self.edges.len() + self.events.len()) as u64;
         if moved {
             self.moved(&before, &after);
@@ -1447,8 +1489,11 @@ impl<'a> Walk<'a> {
         if wrote {
             self.lost(&before, &after);
         }
+        // What it does with pointers is looked at when every body is
+        // walked.
         if holds {
-            self.borrowed(&before, &after);
+            let problem = self.problem();
+            self.found.lent.push(problem);
         }
     }
 
@@ -1683,6 +1728,29 @@ impl<'a> Walk<'a> {
 /// For each block where its neighbours start in the list of all, and
 /// that list.
 pub(super) type Lists = (Vec<u32>, Vec<u32>);
+
+/// For each block, the blocks after it, or with `back` those before it.
+pub(super) fn lists(count: usize, edges: &[(u32, u32)], back: bool) -> Lists {
+    let ends = |&(from, to): &(u32, u32)| match back {
+        true => (to, from),
+        false => (from, to),
+    };
+    let mut starts = vec![0u32; count + 1];
+    for edge in edges {
+        starts[ends(edge).0 as usize + 1] += 1;
+    }
+    for at in 0..count {
+        starts[at + 1] += starts[at];
+    }
+    let mut filled = starts.clone();
+    let mut all = vec![0u32; edges.len()];
+    for edge in edges {
+        let (from, to) = ends(edge);
+        all[filled[from as usize] as usize] = to;
+        filled[from as usize] += 1;
+    }
+    (starts, all)
+}
 
 pub(super) fn neighbours(lists: &Lists, block: usize) -> &[u32] {
     let (starts, all) = lists;

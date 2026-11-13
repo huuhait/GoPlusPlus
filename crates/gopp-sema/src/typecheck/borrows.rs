@@ -22,8 +22,11 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use super::moves::{EMPTY, Event, Lists, Sets, Walk, neighbours};
+use std::sync::Arc;
+
+use super::moves::{EMPTY, Event, Sets, Walk, lists, neighbours};
 use super::*;
+use crate::types::Lends;
 
 /// What the walk needs of the checker to say what a place is.
 pub(super) struct Places<'a> {
@@ -31,6 +34,9 @@ pub(super) struct Places<'a> {
     pub memo: &'a FxHashMap<ExprId, Operand>,
     pub selections: &'a FxHashMap<ExprId, Selection>,
     pub locals: &'a FxHashMap<LocalId, Operand>,
+    /// The generic functions and types that the body names with type
+    /// arguments.
+    pub instances: &'a FxHashMap<ExprId, crate::object::Instance>,
     pub base: Spur,
 }
 
@@ -53,15 +59,37 @@ pub(super) enum Source {
     /// `&place`: the variable at its root, the way, and where.
     Place(LocalId, Vec<Step>, Span),
     /// What another variable holds, read through as many pointers as
-    /// the number says: through every one with `ALL`.
-    Holder(LocalId, u8),
+    /// the number says; with the flag, also all that is reached from
+    /// there through more pointers.
+    Holder(LocalId, u8, bool),
     /// A pointer that the function does not make: into what outlives
     /// it.
     Outside,
+    /// What the call with the number gives back.
+    Call(u32),
 }
 
-/// Through every pointer, however many.
-const ALL: u8 = u8::MAX;
+/// The function that a call runs, if the checker knows it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum Callee {
+    /// A function of the package.
+    Func(ObjId),
+    /// A function of a package that is imported: the import, and the
+    /// object there.
+    Imported(ObjId, ObjId),
+    /// A method of a declared type, by its name.
+    Method(crate::types::NamedId, Spur),
+    /// A function value, a method of an interface or one that a child
+    /// may replace, a generic function, a conversion.
+    Unknown,
+}
+
+/// A call that gives back what may hold pointers: for each parameter,
+/// the receiver first, the sources that its argument gives.
+pub(super) struct Call {
+    pub callee: Callee,
+    pub args: Vec<(u32, u32)>,
+}
 
 /// The variable that stands for what is outside the function.
 const OUTSIDE: LocalId = LocalId(u32::MAX);
@@ -122,6 +150,164 @@ pub(super) struct Escaped {
     pub of: LocalId,
     pub made: Span,
     pub behind: Option<LocalId>,
+}
+
+/// What a function does with pointers, as its walk found it: the
+/// passes go over it when every body is walked.
+pub(super) struct Problem {
+    pub events: Vec<Event>,
+    /// For each block, where its events start and end; and the jumps
+    /// from block to block.
+    pub blocks: Vec<(u32, u32)>,
+    pub edges: Vec<(u32, u32)>,
+    pub sources: Vec<Source>,
+    /// The calls, and the sources of their arguments.
+    pub calls: Vec<Call>,
+    pub args: Vec<Source>,
+    pub changes: Vec<Change>,
+    pub loops: Vec<Ranged>,
+    /// What the walk itself found broken.
+    pub broken: Vec<Broken>,
+    /// The function, if others call it by its name; and its parameters
+    /// that have names, the receiver first.
+    pub owner: Option<Callee>,
+    pub params: Vec<Option<LocalId>>,
+    /// How many variables the body has, and where the function is.
+    pub locals: u32,
+    pub within: Span,
+}
+
+/// What the passes found in a problem.
+pub(super) struct Lent {
+    pub broken: Vec<Broken>,
+    pub escaped: Vec<Escaped>,
+    /// What the function does with the pointers that it is given.
+    pub lends: Lends,
+    pub steps: u64,
+}
+
+/// Whether the change of the place breaks what the loop reads: it
+/// replaces the place or what the place is in. `through` says that the
+/// change is made through a pointer.
+fn unranges(loop_: &Ranged, way: &[Step], through: bool) -> bool {
+    match lies(way, &loop_.steps) {
+        Lies::Above => !loop_.steps[way.len()..].contains(&Step::Target),
+        Lies::Same => !through || !loop_.text,
+        Lies::Apart => false,
+    }
+}
+
+/// The problems in groups, each with those that it calls: the members
+/// of a group call each other, and a group comes after every group that
+/// one of its members calls (Tarjan).
+pub(super) fn groups(calls: &[Vec<usize>], steps: &mut u64) -> Vec<Vec<usize>> {
+    const UNSEEN: usize = usize::MAX;
+    let count = calls.len();
+    let mut order = vec![UNSEEN; count];
+    let mut low = vec![0; count];
+    let mut grouped = vec![false; count];
+    let mut open = Vec::new();
+    let mut groups = Vec::new();
+    let mut next = 0;
+    for root in 0..count {
+        if order[root] != UNSEEN {
+            continue;
+        }
+        let mut work = vec![(root, 0)];
+        while let Some(top) = work.last_mut() {
+            *steps += 1;
+            let (v, at) = *top;
+            if order[v] == UNSEEN {
+                order[v] = next;
+                low[v] = next;
+                next += 1;
+                open.push(v);
+            }
+            if let Some(&to) = calls[v].get(at) {
+                top.1 += 1;
+                if order[to] == UNSEEN {
+                    work.push((to, 0));
+                } else if !grouped[to] {
+                    low[v] = low[v].min(order[to]);
+                }
+                continue;
+            }
+            work.pop();
+            if let Some(&(from, _)) = work.last() {
+                low[from] = low[from].min(low[v]);
+            }
+            if low[v] == order[v] {
+                let mut group = Vec::new();
+                while let Some(member) = open.pop() {
+                    grouped[member] = true;
+                    group.push(member);
+                    if member == v {
+                        break;
+                    }
+                }
+                group.sort_unstable();
+                groups.push(group);
+            }
+        }
+    }
+    groups
+}
+
+/// Solves the problems of a group, each with those that it calls.
+/// `done` says what the functions do that were looked at before. The
+/// members of a group call each other: each starts as a function that
+/// does nothing with what it is given, and one is solved again when
+/// what a function that it calls says has grown, until nothing grows.
+pub(super) fn solve_together(
+    group: &[usize],
+    problems: &[(usize, usize, Problem)],
+    calls: &[Vec<usize>],
+    done: &FxHashMap<Callee, Arc<Lends>>,
+) -> Vec<(usize, Lent)> {
+    let place: FxHashMap<usize, usize> = (group.iter().enumerate())
+        .map(|(at, &member)| (member, at))
+        .collect();
+    let mut called_by: Vec<Vec<usize>> = vec![Vec::new(); group.len()];
+    let mut own: FxHashMap<Callee, Arc<Lends>> = FxHashMap::default();
+    for (at, &member) in group.iter().enumerate() {
+        let owner = problems[member].2.owner;
+        own.extend(owner.map(|owner| (owner, Arc::new(Lends::default()))));
+        for to in calls[member].iter().filter_map(|to| place.get(to)) {
+            called_by[*to].push(at);
+        }
+    }
+    let mut solved: Vec<Option<Lent>> = group.iter().map(|_| None).collect();
+    let mut waits = vec![true; group.len()];
+    let mut rest: std::collections::VecDeque<usize> = (0..group.len()).collect();
+    let mut steps = 0;
+    while let Some(at) = rest.pop_front() {
+        waits[at] = false;
+        let problem = &problems[group[at]].2;
+        let known = |call: &Call| own.get(&call.callee).or_else(|| done.get(&call.callee));
+        let lends: Vec<Option<Arc<Lends>>> = (problem.calls.iter())
+            .map(|call| known(call).cloned())
+            .collect();
+        let mut lent = problem.solve(&lends);
+        steps += std::mem::take(&mut lent.steps);
+        if let Some(owner) = problem.owner
+            && *own[&owner] != lent.lends
+        {
+            own.insert(owner, Arc::new(lent.lends.clone()));
+            for &caller in &called_by[at] {
+                if !std::mem::replace(&mut waits[caller], true) {
+                    rest.push_back(caller);
+                }
+            }
+        }
+        solved[at] = Some(lent);
+    }
+    let mut all: Vec<(usize, Lent)> = (group.iter().copied())
+        .zip(solved.into_iter().flatten())
+        .collect();
+    if let Some((_, first)) = all.first_mut() {
+        first.steps = steps;
+    }
+    all
 }
 
 /// How the way of a change lies to the way of a loan.
@@ -290,14 +476,88 @@ impl<'a> Walk<'a> {
     /// receiver of a method that it calls, and what is outside the
     /// function for what the function does not make.
     fn sources_of(&mut self, expr: ExprId, found: &mut Vec<Source>) {
+        // The arguments of the calls in it, each with its call and its
+        // place there: their sources are kept apart, one after another.
+        let mut given = Vec::new();
+        self.sources_in(expr, false, found, &mut given);
+        while let Some((call, position, arg, receiver)) = given.pop() {
+            let mut args = std::mem::take(&mut self.args);
+            let from = args.len() as u32;
+            // A method may give back a pointer into its receiver: into
+            // what a pointer or a handle leads to, if the receiver is
+            // one.
+            if let Some((root, mut steps)) = self.place(arg).filter(|_| receiver) {
+                if let Some(ty) = self.type_of(self.unparen(arg)) {
+                    self.through(ty, &mut steps);
+                }
+                args.push(Source::Place(root, steps, self.tree.exprs[arg].span));
+            }
+            // A call may give back what it reads through its arguments.
+            self.sources_in(arg, true, &mut args, &mut given);
+            self.calls[call as usize].args[position] = (from, args.len() as u32);
+            self.args = args;
+        }
+    }
+
+    /// The function that the call of `fun` runs.
+    fn callee(&self, fun: ExprId) -> Callee {
+        let Some(places) = self.places else {
+            return Callee::Unknown;
+        };
+        let fun = self.unparen(fun);
+        if places.instances.contains_key(&fun) {
+            return Callee::Unknown;
+        }
+        match self.body.uses.get(&fun) {
+            Some(&Ref::Object(object)) => return Callee::Func(object),
+            Some(&Ref::Member { import, member }) => return Callee::Imported(import, member),
+            Some(_) => return Callee::Unknown,
+            None => {}
+        }
+        let ExprKind::Selector { sel, .. } = &self.tree.exprs[fun].kind else {
+            return Callee::Unknown;
+        };
+        let Some(selection) = places.selections.get(&fun) else {
+            return Callee::Unknown;
+        };
+        let types = places.types;
+        let named = match &*types.get(selection.holder) {
+            Type::Named { id, args } if args.is_empty() => *id,
+            _ => return Callee::Unknown,
+        };
+        let interface = matches!(
+            &*types.get(types.underlying(selection.holder)),
+            Type::Interface { .. }
+        );
+        match selection.kind {
+            SelectionKind::BaseMethod => Callee::Method(named, sel.name),
+            // A child may replace the method of a type with a table.
+            SelectionKind::Method | SelectionKind::MethodExpr
+                if !interface && !types.has_table(selection.holder) =>
+            {
+                Callee::Method(named, sel.name)
+            }
+            _ => Callee::Unknown,
+        }
+    }
+
+    /// `sources_of`, without the arguments of the calls, which `given`
+    /// gets. With `beyond`, also what is reached from the value through
+    /// pointers.
+    fn sources_in(
+        &mut self,
+        expr: ExprId,
+        beyond: bool,
+        found: &mut Vec<Source>,
+        given: &mut Vec<(u32, usize, ExprId, bool)>,
+    ) {
         let tree = self.tree;
-        // Each with how many pointers its value is read through.
-        let mut rest = vec![(expr, 0u8)];
-        while let Some((expr, hops)) = rest.pop() {
+        let mut rest = vec![(expr, beyond)];
+        while let Some((expr, beyond)) = rest.pop() {
             self.found.steps += 1;
             let span = tree.exprs[expr].span;
             match &tree.exprs[expr].kind {
-                ExprKind::Paren(x) | ExprKind::Assert { x, .. } => rest.push((*x, hops)),
+                ExprKind::Paren(x) | ExprKind::Assert { x, .. } => rest.push((*x, beyond)),
                 ExprKind::Name(_) => {
                     let Some(local) = self.local(expr) else {
                         // A variable of the package, or of a function
@@ -311,7 +571,7 @@ impl<'a> Walk<'a> {
                         continue;
                     };
                     if self.may_point(ty) {
-                        found.push(Source::Holder(local, hops));
+                        found.push(Source::Holder(local, 0, beyond));
                     }
                     // A handle where a pointer is wanted is lent
                     // (OWN-P6).
@@ -327,12 +587,12 @@ impl<'a> Walk<'a> {
                 } => match self.place(*x) {
                     Some((root, steps)) => {
                         found.push(Source::Place(root, steps, span));
-                        // A call may give back what it reads there.
-                        if hops == ALL {
-                            rest.push((*x, ALL));
+                        // And what is read there.
+                        if beyond {
+                            rest.push((*x, true));
                         }
                     }
-                    None => rest.push((*x, hops)),
+                    None => rest.push((*x, beyond)),
                 },
                 // A variable of another package.
                 ExprKind::Selector { .. }
@@ -347,26 +607,40 @@ impl<'a> Walk<'a> {
                 | ExprKind::Slice { x, .. } => {
                     // A place in a variable is read through the
                     // pointers on the way to it.
-                    let through = match hops {
-                        ALL => None,
-                        _ => self.place(expr),
-                    };
-                    match through {
+                    match self.place(expr) {
                         Some((root, steps)) => {
-                            let more = steps.iter().filter(|step| **step == Step::Target).count();
-                            let hops = (hops as usize + more).min(ALL as usize) as u8;
+                            let hops = steps.iter().filter(|step| **step == Step::Target).count();
+                            let hops = hops.min(u8::MAX as usize) as u8;
                             let holds = self.local_type(root).is_some_and(|ty| self.may_point(ty));
                             if holds {
-                                found.push(Source::Holder(root, hops));
+                                found.push(Source::Holder(root, hops, beyond));
                             }
                         }
-                        None => rest.push((*x, ALL)),
+                        // What it is a part of is no variable: all
+                        // that is reached from that counts.
+                        None => {
+                            let mut of = *x;
+                            loop {
+                                of = self.unparen(of);
+                                of = match &tree.exprs[of].kind {
+                                    ExprKind::Selector { x, .. }
+                                    | ExprKind::Index { x, .. }
+                                    | ExprKind::Slice { x, .. }
+                                    | ExprKind::Unary {
+                                        op: UnaryOp::Star,
+                                        x,
+                                    } => *x,
+                                    _ => break,
+                                };
+                            }
+                            rest.push((of, true));
+                        }
                     }
                 }
                 ExprKind::CompositeLit { elems, .. } => {
-                    rest.extend(elems.iter().map(|&elem| (elem, hops)));
+                    rest.extend(elems.iter().map(|&elem| (elem, beyond)));
                 }
-                ExprKind::KeyValue { value, .. } => rest.push((*value, hops)),
+                ExprKind::KeyValue { value, .. } => rest.push((*value, beyond)),
                 ExprKind::Call { fun, args, .. } => {
                     // What a call gives holds nothing of its operands
                     // if it can hold no pointer.
@@ -374,23 +648,34 @@ impl<'a> Walk<'a> {
                     if !points {
                         continue;
                     }
-                    // It may give back what it reads through them, and
-                    // what is outside the function.
-                    found.push(Source::Outside);
-                    rest.extend(args.iter().map(|&arg| (arg, ALL)));
-                    let callee = self.unparen(*fun);
-                    if let ExprKind::Selector { x, .. } = tree.exprs[callee].kind {
-                        // A method may give back a pointer into its
-                        // receiver: into what a pointer or a handle
-                        // leads to, if the receiver is one.
-                        if let Some((root, mut steps)) = self.place(x) {
-                            if let Some(ty) = self.type_of(self.unparen(x)) {
-                                self.through(ty, &mut steps);
-                            }
-                            found.push(Source::Place(root, steps, span));
+                    // What it gives back of its arguments, the
+                    // function says; the receiver of a method is the
+                    // first of them, and so is what a function value is
+                    // a part of.
+                    let callee = self.callee(*fun);
+                    let selector = self.unparen(*fun);
+                    let before = match tree.exprs[selector].kind {
+                        ExprKind::Selector { x, .. } => {
+                            let selection = self.places.and_then(|places| {
+                                places.selections.get(&selector).map(|found| found.kind)
+                            });
+                            let named = self.body.uses.contains_key(&selector);
+                            let typed = selection == Some(SelectionKind::MethodExpr);
+                            Some(x).filter(|_| !named && !typed)
                         }
-                        rest.push((x, ALL));
+                        _ => None,
+                    };
+                    let call = self.calls.len() as u32;
+                    let all = before.iter().chain(args.iter());
+                    for (position, &arg) in all.enumerate() {
+                        given.push((call, position, arg, position == 0 && before.is_some()));
                     }
+                    let count = args.len() + before.iter().count();
+                    self.calls.push(Call {
+                        callee,
+                        args: vec![(0, 0); count],
+                    });
+                    found.push(Source::Call(call));
                 }
                 _ => {}
             }
@@ -469,7 +754,7 @@ impl<'a> Walk<'a> {
                     }
                     self.sources = found;
                     let to = self.sources.len() as u32;
-                    let behind = behind.min(ALL as usize - 1) as u8;
+                    let behind = behind.min(u8::MAX as usize) as u8;
                     let at = self.tree.exprs[inner].span;
                     self.events.push(Event::Stored(root, from, to, behind, at));
                 }
@@ -491,17 +776,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// Whether the change of the place breaks what the loop reads: it
-    /// replaces the place or what the place is in. `through` says that
-    /// the change is made through a pointer.
-    fn unranges(loop_: &Ranged, way: &[Step], through: bool) -> bool {
-        match lies(way, &loop_.steps) {
-            Lies::Above => !loop_.steps[way.len()..].contains(&Step::Target),
-            Lies::Same => !through || !loop_.text,
-            Lies::Apart => false,
-        }
-    }
-
     /// The loops around here that range over a place of the variable,
     /// the innermost first: a change that the loop can see is refused
     /// where it is written.
@@ -514,8 +788,8 @@ impl<'a> Walk<'a> {
         while let Some(at) = next {
             self.found.steps += 1;
             let loop_ = &self.loops[at as usize];
-            if Self::unranges(loop_, &change.steps, false) {
-                self.found.broken.push(Broken {
+            if unranges(loop_, &change.steps, false) {
+                self.broken.push(Broken {
                     at: change.at,
                     what: change.what,
                     of: change.root,
@@ -677,8 +951,8 @@ impl<'a> Walk<'a> {
                     return;
                 }
                 let pointers = steps.iter().filter(|step| **step == Step::Target).count();
-                let hops = pointers.min(ALL as usize) as u8;
-                self.sources.push(Source::Holder(root, hops));
+                let hops = pointers.min(u8::MAX as usize) as u8;
+                self.sources.push(Source::Holder(root, hops, false));
             }
             _ => return,
         }
@@ -688,10 +962,19 @@ impl<'a> Walk<'a> {
 
     /// The values are returned.
     pub(super) fn returned(&mut self, values: &[ExprId], at: Span) {
-        if self.places.is_none() || values.is_empty() {
+        if self.places.is_none() {
             return;
         }
         let from = self.sources.len() as u32;
+        // Without values, the results that have names are returned.
+        if values.is_empty() {
+            for at in 0..self.results.len() {
+                let result = self.results[at];
+                if self.local_type(result).is_some_and(|ty| self.may_point(ty)) {
+                    self.sources.push(Source::Holder(result, 0, false));
+                }
+            }
+        }
         let mut found = std::mem::take(&mut self.sources);
         let each = values.len() == self.pointers.len();
         for (at, &value) in values.iter().enumerate() {
@@ -713,14 +996,46 @@ impl<'a> Walk<'a> {
         }
     }
 
-    // ---- the passes
+    /// What the walk found, for the passes.
+    pub(super) fn problem(&mut self) -> Problem {
+        Problem {
+            events: std::mem::take(&mut self.events),
+            blocks: std::mem::take(&mut self.blocks),
+            edges: std::mem::take(&mut self.edges),
+            sources: std::mem::take(&mut self.sources),
+            calls: std::mem::take(&mut self.calls),
+            args: std::mem::take(&mut self.args),
+            owner: self.owner.filter(|_| self.top),
+            params: std::mem::take(&mut self.params),
+            changes: std::mem::take(&mut self.changes),
+            loops: std::mem::take(&mut self.loops),
+            broken: std::mem::take(&mut self.broken),
+            locals: self.body.locals.len() as u32,
+            within: self.within,
+        }
+    }
+}
 
+impl Problem {
     /// Which loans each variable may hold, which variables are read
     /// later, and with both: the places that are changed under a loan
     /// that is still used, and the loans that leave the function.
-    pub(super) fn borrowed(&mut self, before: &Lists, after: &Lists) {
-        let sources = std::mem::take(&mut self.sources);
-        let changes = std::mem::take(&mut self.changes);
+    /// `lends` says for each call what the function that it runs does
+    /// with what it is given, where that is known.
+    pub(super) fn solve(&self, lends: &[Option<Arc<Lends>>]) -> Lent {
+        let changes = &self.changes;
+        let sources = &Sources {
+            problem: self,
+            lends,
+        };
+        let mut lent = Lent {
+            broken: Vec::new(),
+            escaped: Vec::new(),
+            lends: Lends {
+                gives: vec![false; self.params.len()],
+            },
+            steps: 0,
+        };
         // The loops over the places of each variable, for what is
         // changed through a pointer.
         let mut loops_of: FxHashMap<LocalId, Vec<u32>> = FxHashMap::default();
@@ -728,6 +1043,10 @@ impl<'a> Walk<'a> {
             loops_of.entry(loop_.root).or_default().push(at as u32);
         }
         let count = self.blocks.len();
+        let (before, after) = (
+            &lists(count, &self.edges, true),
+            &lists(count, &self.edges, false),
+        );
         let mut known = Known::new(self.within);
         let mut sets = Sets::new(ROOM);
 
@@ -744,7 +1063,7 @@ impl<'a> Walk<'a> {
             }
             let (first, last) = self.blocks[block];
             for at in first as usize..last as usize {
-                set = known.apply(&mut sets, set, &sources, self.events[at]);
+                set = known.apply(&mut sets, set, sources, self.events[at]);
             }
             if set != out[block] {
                 out[block] = set;
@@ -800,7 +1119,7 @@ impl<'a> Walk<'a> {
         }
 
         // Both together, event by event.
-        let locals = self.body.locals.len() as u32;
+        let locals = self.locals;
         let mut later: Vec<u32> = Vec::new();
         for block in 0..count {
             let (first, last) = (self.blocks[block].0 as usize, self.blocks[block].1 as usize);
@@ -870,8 +1189,8 @@ impl<'a> Walk<'a> {
                             let loop_ = &self.loops[looped as usize];
                             let inside =
                                 loop_.events.0 <= at as u32 && (at as u32) < loop_.events.1;
-                            if inside && Self::unranges(loop_, way, true) {
-                                self.found.broken.push(Broken {
+                            if inside && unranges(loop_, way, true) {
+                                lent.broken.push(Broken {
                                     at: change.at,
                                     what: change.what,
                                     of: *of,
@@ -891,6 +1210,9 @@ impl<'a> Walk<'a> {
                         member.is_some_and(|&member| reads.has(later[at - first], member))
                     };
                     let pointed = change.steps.contains(&Step::Target);
+                    // A holder that is read later itself is named
+                    // before one that is read through another.
+                    let mut through_other = None;
                     'written: for (root, way, through) in &written {
                         for at in 0..known.under(*root, way).len() {
                             known.steps += 1;
@@ -911,21 +1233,30 @@ impl<'a> Walk<'a> {
                                 Lies::Same => !(*through || pointed && holder == change.root),
                                 Lies::Apart => false,
                             };
-                            let made = *made;
-                            if breaks && known.used(&sets, set, holder, &read_later, &mut unused) {
-                                self.found.broken.push(Broken {
-                                    at: change.at,
-                                    what: change.what,
-                                    of: *root,
-                                    holder: Some(holder),
-                                    made,
-                                });
-                                // One report says that the change is
-                                // refused.
+                            if !breaks {
+                                continue;
+                            }
+                            let broken = Broken {
+                                at: change.at,
+                                what: change.what,
+                                of: *root,
+                                holder: Some(holder),
+                                made: *made,
+                            };
+                            // One report says that the change is
+                            // refused.
+                            if read_later(holder) {
+                                through_other = Some(broken);
                                 break 'written;
+                            }
+                            if through_other.is_none()
+                                && known.used(&sets, set, holder, &read_later, &mut unused)
+                            {
+                                through_other = Some(broken);
                             }
                         }
                     }
+                    lent.broken.extend(through_other);
                 }
                 // What ends with the function does not leave it: not as
                 // a result, and not behind a pointer that leads out of
@@ -933,7 +1264,7 @@ impl<'a> Walk<'a> {
                 let leaves = match event {
                     Event::Returned(from, to, span) => Some((from, to, span, None)),
                     Event::Stored(root, from, to, behind, span) => {
-                        let places = known.read(&sets, set, root, behind);
+                        let places = known.read(&sets, set, root, behind, false);
                         let outside =
                             |&place: &u32| known.loans[place as usize].1.contains(&Step::Target);
                         let out = places.is_empty() || places.iter().any(outside);
@@ -942,13 +1273,20 @@ impl<'a> Walk<'a> {
                     _ => None,
                 };
                 if let Some((from, to, span, behind)) = leaves {
-                    let given = known.given(&sets, set, &sources[from as usize..to as usize]);
+                    let given = known.given(&sets, set, sources, (from, to));
                     for loan in given {
                         let (of, way, made) = &known.loans[loan as usize];
+                        // A result may point into what a parameter
+                        // points to: those who call the function are
+                        // told.
+                        let param = self.params.iter().position(|param| *param == Some(*of));
+                        if let (None, Some(param)) = (behind, param) {
+                            lent.lends.gives[param] = true;
+                        }
                         // What a pointer points to is not the
                         // function's, and outlives it.
                         if of.0 < locals && !way.contains(&Step::Target) {
-                            self.found.escaped.push(Escaped {
+                            lent.escaped.push(Escaped {
                                 at: span,
                                 of: *of,
                                 made: *made,
@@ -957,12 +1295,11 @@ impl<'a> Walk<'a> {
                         }
                     }
                 }
-                set = known.apply(&mut sets, set, &sources, event);
+                set = known.apply(&mut sets, set, sources, event);
             }
         }
-        self.found.steps += known.steps + sets.steps + reads.steps;
-        self.sources = sources;
-        self.changes = changes;
+        lent.steps = known.steps + sets.steps + reads.steps;
+        lent
     }
 }
 
@@ -972,6 +1309,18 @@ fn any_index(step: Step) -> Step {
         Step::At(_) => Step::At(None),
         other => other,
     }
+}
+
+/// The sources of a problem, with what is known of the functions that
+/// its calls run.
+struct Sources<'p> {
+    problem: &'p Problem,
+    lends: &'p [Option<Arc<Lends>>],
+}
+
+/// The sources from the first number to the second.
+fn run(all: &[Source], (from, to): (u32, u32)) -> &[Source] {
+    &all[from as usize..to as usize]
 }
 
 /// The most facts that the sets have room for.
@@ -1073,94 +1422,113 @@ impl Known {
 
     /// The loans in a value that is read from the variable through as
     /// many pointers as `hops` says: what the variables hold that its
-    /// loans are places of. What is read through a pointer from outside
-    /// the function is from outside too.
-    fn read(&mut self, sets: &Sets, set: u32, holder: LocalId, hops: u8) -> Vec<u32> {
+    /// loans are places of. With `beyond`, also those in all that is
+    /// reached from the value through more pointers. What is read
+    /// through a pointer from outside the function is from outside too.
+    fn read(&mut self, sets: &Sets, set: u32, holder: LocalId, hops: u8, beyond: bool) -> Vec<u32> {
         let mut now = Vec::new();
         self.held(sets, set, holder, &mut now);
         let mut all = Vec::new();
         let mut seen: FxHashSet<LocalId> = FxHashSet::default();
         let mut left = hops;
-        while left > 0 && !now.is_empty() {
-            if hops == ALL {
+        while !now.is_empty() {
+            if left == 0 {
+                if !beyond {
+                    return now;
+                }
                 all.extend(&now);
-            } else {
-                left -= 1;
             }
             let mut next = Vec::new();
-            let mut outside = false;
             for loan in now {
-                let (of, way, _) = &self.loans[loan as usize];
-                let of = *of;
+                let (of, way, made) = &self.loans[loan as usize];
+                let (of, made) = (*of, *made);
+                // What is read through a pointer from outside is
+                // behind that pointer: of the same parameter, if it is
+                // one.
                 if way.contains(&Step::Target) {
-                    outside = true;
-                } else if seen.insert(of) || hops != ALL {
+                    let deep = way.ends_with(&[Step::Target, Step::Target]);
+                    if !deep {
+                        let mut behind = way.clone();
+                        behind.push(Step::Target);
+                        next.push(self.loan(of, behind, made));
+                    }
+                } else if left > 0 || seen.insert(of) {
                     self.held(sets, set, of, &mut next);
                 }
             }
-            if outside {
-                next.push(self.outside);
-            }
             next.sort_unstable();
             next.dedup();
-            // Outside leads to outside and nowhere else.
-            if hops == ALL && next.len() == 1 && outside && !seen.insert(OUTSIDE) {
-                next.clear();
-            }
             now = next;
+            left = left.saturating_sub(1);
         }
-        if hops == ALL {
-            all.extend(&now);
-            all.sort_unstable();
-            all.dedup();
-            return all;
-        }
-        now
+        all.sort_unstable();
+        all.dedup();
+        all
     }
 
-    /// The loans that the sources give, where the variables hold what
-    /// the set says. A place behind a pointer of a variable is a place
-    /// in what the variable points into.
-    fn given(&mut self, sets: &Sets, set: u32, sources: &[Source]) -> Vec<u32> {
+    /// The loans that the sources from the first number to the second
+    /// give, where the variables hold what the set says. A place behind
+    /// a pointer of a variable is a place in what the variable points
+    /// into; a call gives what the arguments give that the function may
+    /// give back, and what is outside.
+    fn given(&mut self, sets: &Sets, set: u32, of: &Sources, range: (u32, u32)) -> Vec<u32> {
         let mut given: Vec<u32> = Vec::new();
-        for source in sources {
-            self.steps += 1;
-            match source {
-                Source::Outside => given.push(self.outside),
-                Source::Holder(holder, hops) => given.extend(self.read(sets, set, *holder, *hops)),
-                Source::Place(root, way, made) => {
-                    // Each pointer on the way leads into what the
-                    // variable before it holds.
-                    let mut parts = way.split(|step| *step == Step::Target);
-                    let first = parts.next().unwrap_or(&[]);
-                    let mut places = vec![(*root, first.to_vec())];
-                    for part in parts {
-                        let mut next = Vec::new();
-                        for (of, mut way) in places {
-                            let mut held = Vec::new();
-                            if !way.contains(&Step::Target) {
-                                self.held(sets, set, of, &mut held);
-                            }
-                            // A pointer that is not known, or comes
-                            // from outside, leads behind its variable.
-                            let outside = held.contains(&self.outside);
-                            held.retain(|&loan| loan != self.outside);
-                            for &loan in &held {
-                                let (of, held, _) = &self.loans[loan as usize];
-                                let mut whole = held.clone();
-                                whole.extend(part);
-                                next.push((*of, whole));
-                            }
-                            if held.is_empty() || outside {
-                                way.push(Step::Target);
-                                way.extend(part);
-                                next.push((of, way));
+        let mut rest = vec![run(&of.problem.sources, range)];
+        while let Some(sources) = rest.pop() {
+            for source in sources {
+                self.steps += 1;
+                match source {
+                    Source::Outside => given.push(self.outside),
+                    Source::Holder(holder, hops, beyond) => {
+                        given.extend(self.read(sets, set, *holder, *hops, *beyond));
+                    }
+                    Source::Call(call) => {
+                        given.push(self.outside);
+                        let args = &of.problem.calls[*call as usize].args;
+                        let known = of.lends[*call as usize].as_deref();
+                        for (position, &arg) in args.iter().enumerate() {
+                            let counts =
+                                known.is_none_or(|lends| lends.gives_back(position, args.len()));
+                            if counts {
+                                rest.push(run(&of.problem.args, arg));
                             }
                         }
-                        places = next;
                     }
-                    for (of, way) in places {
-                        given.push(self.loan(of, way, *made));
+                    Source::Place(root, way, made) => {
+                        // Each pointer on the way leads into what the
+                        // variable before it holds.
+                        let mut parts = way.split(|step| *step == Step::Target);
+                        let first = parts.next().unwrap_or(&[]);
+                        let mut places = vec![(*root, first.to_vec())];
+                        for part in parts {
+                            let mut next = Vec::new();
+                            for (of, mut way) in places {
+                                let mut held = Vec::new();
+                                if !way.contains(&Step::Target) {
+                                    self.held(sets, set, of, &mut held);
+                                }
+                                // A pointer that is not known, or comes
+                                // from outside, leads behind its
+                                // variable.
+                                let outside = held.contains(&self.outside);
+                                held.retain(|&loan| loan != self.outside);
+                                for &loan in &held {
+                                    let (of, held, _) = &self.loans[loan as usize];
+                                    let mut whole = held.clone();
+                                    whole.extend(part);
+                                    next.push((*of, whole));
+                                }
+                                if held.is_empty() || outside {
+                                    way.push(Step::Target);
+                                    way.extend(part);
+                                    next.push((of, way));
+                                }
+                            }
+                            places = next;
+                        }
+                        for (of, way) in places {
+                            given.push(self.loan(of, way, *made));
+                        }
                     }
                 }
             }
@@ -1169,10 +1537,10 @@ impl Known {
     }
 
     /// The set after the event: what a variable holds from then on.
-    fn apply(&mut self, sets: &mut Sets, mut set: u32, sources: &[Source], event: Event) -> u32 {
+    fn apply(&mut self, sets: &mut Sets, mut set: u32, sources: &Sources, event: Event) -> u32 {
         match event {
             Event::Holds(holder, from, to, only) => {
-                let given = self.given(sets, set, &sources[from as usize..to as usize]);
+                let given = self.given(sets, set, sources, (from, to));
                 if only {
                     for at in 0..self.of_holder.get(&holder).map_or(0, Vec::len) {
                         set = sets.put(set, self.of_holder[&holder][at], false);
@@ -1185,8 +1553,8 @@ impl Known {
             // The variables that the pointer leads into hold what is
             // stored there.
             Event::Stored(root, from, to, behind, _) => {
-                let given = self.given(sets, set, &sources[from as usize..to as usize]);
-                for place in self.read(sets, set, root, behind) {
+                let given = self.given(sets, set, sources, (from, to));
+                for place in self.read(sets, set, root, behind, false) {
                     let (of, way, _) = &self.loans[place as usize];
                     let of = *of;
                     if way.contains(&Step::Target) {
