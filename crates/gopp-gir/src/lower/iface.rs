@@ -8,7 +8,7 @@
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::SelectionKind;
-use gopp_sema::types::{Member, Type as CheckedType, TypeId as CheckedTypeId};
+use gopp_sema::types::{Found, Member, Type as CheckedType, TypeId as CheckedTypeId};
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind};
 use lasso::Spur;
@@ -45,30 +45,47 @@ pub(super) struct Looked {
 /// name.
 pub(super) type IfaceMethod<'a> = (ExprId, &'a [u32], CheckedTypeId, Spur);
 
+/// The method `name` that a value of the declared type `ty` has, or a
+/// pointer to one if `pointer` is set: where it is found, which is in
+/// the type itself or in a type that it embeds.
+fn method_found(
+    shared: &Shared<'_>,
+    ty: CheckedTypeId,
+    name: Spur,
+    pointer: bool,
+) -> Option<Found> {
+    let types = shared.types;
+    let from = match pointer {
+        true => types.pointer(ty),
+        false => ty,
+    };
+    let found = types.lookup(from, name, shared.path, shared.names, false);
+    found
+        .ok()
+        .filter(|found| matches!(found.member, Member::Method { .. }))
+}
+
 /// The type of what a table of methods holds for the method `name` of
-/// the declared type `ty`: the method with the address of the second
-/// word of an interface value in the place of its receiver.
+/// the declared type `ty`, or of the pointers to it: the method with
+/// the address of the second word of an interface value in the place
+/// of its receiver.
 pub(super) fn thunk_sig(
     shared: &Shared<'_>,
     memo: &mut Memo<'_>,
     types: &mut TypeInterner,
-    ty: CheckedTypeId,
-    name: Spur,
+    (ty, name, pointer): (CheckedTypeId, Spur, bool),
 ) -> Result<TypeId, &'static str> {
-    let method = match &*shared.types.get(ty) {
-        CheckedType::Named { id, .. } => shared.methods.get(&(*id, name)),
-        _ => None,
+    let found = method_found(shared, ty, name, pointer);
+    let Some(Member::Method { sig, .. }) = found.map(|found| found.member) else {
+        return Err("a method that its type does not have");
     };
-    let Some(method) = method else {
-        return Err("a method of another package in an interface");
-    };
-    let sig = memo.signature(shared, types, Some(method.receiver), method.sig)?;
+    let sig = memo.signature(shared, types, None, sig)?;
     let Type::Func(sig) = types.get(sig).clone() else {
         return Err("a function type");
     };
     let byte = types.int(8, false);
     let mut params = vec![types.ptr(byte)];
-    params.extend(sig.params.iter().skip(1));
+    params.extend(sig.params.iter());
     Ok(types.intern(Type::Func(FuncType {
         params: params.into(),
         ret: sig.ret,
@@ -789,12 +806,18 @@ impl<'a> FuncCx<'a, '_> {
         if let Some(&known) = self.memo.funcs.get(&symbol) {
             return Ok(Ok(known));
         }
-        // What cannot be called cannot be asked for.
-        if let Err(what) = self.callee(CalleeKey::Method(ty, name))? {
+        // What cannot be called cannot be asked for: the method of
+        // the type itself, or of a type that it embeds.
+        let shared = self.shared;
+        let Some(found) = method_found(shared, ty, name, pointer) else {
+            return Ok(Err("a method that its type does not have"));
+        };
+        if !shared.types.is_interface(found.holder)
+            && let Err(what) = self.callee(CalleeKey::Method(found.holder, name))?
+        {
             return Ok(Err(what));
         }
-        let shared = self.shared;
-        let sig = match thunk_sig(shared, self.memo, self.b.types(), ty, name) {
+        let sig = match thunk_sig(shared, self.memo, self.b.types(), (ty, name, pointer)) {
             Ok(sig) => sig,
             Err(what) => return Ok(Err(what)),
         };
@@ -842,7 +865,10 @@ impl<'a> FuncCx<'a, '_> {
         let Some(methods) = types.interface_methods(iface, shared.names) else {
             return Ok(Err("a value in an interface of this kind"));
         };
-        let pointer = matches!(&*types.get(types.underlying(from)), CheckedType::Pointer(_));
+        let (holder, pointer) = match &*types.get(from) {
+            CheckedType::Pointer(to) => (*to, true),
+            _ => (from, false),
+        };
         let bytes = self.bytes_ty();
         let record = self.b.module().globals[info].ty;
         let mut parts = vec![Constant {
@@ -850,15 +876,6 @@ impl<'a> FuncCx<'a, '_> {
             ty: self.b.types().ptr(record),
         }];
         for method in &methods {
-            let package = method.package.unwrap_or(shared.path);
-            let found = types.lookup(from, method.name, package, shared.names, false);
-            let holder = match found {
-                Ok(found) if !found.path.is_empty() => {
-                    return Ok(Err("a method of an embedded type in an interface"));
-                }
-                Ok(found) if matches!(found.member, Member::Method { .. }) => found.holder,
-                _ => return Ok(Err("a value without the methods of its interface")),
-            };
             let thunk = match self.thunk(holder, method.name, pointer)? {
                 Ok(thunk) => thunk,
                 Err(what) => return Ok(Err(what)),
@@ -894,34 +911,48 @@ impl<'a> FuncCx<'a, '_> {
         Ok(format!("{name}|{}|{sig}", package.unwrap_or_default()).into_bytes())
     }
 
-    /// Whether a value of the struct type has methods of a type that
-    /// it embeds.
-    fn embeds_methods(&mut self, ty: CheckedTypeId) -> bool {
-        let types = self.shared.types;
+    /// The names of the methods that a value of the type may have:
+    /// those that the type declares, and those of the types and of the
+    /// interfaces that it embeds, as deep as it embeds them. Which of
+    /// them it has, the checker says for each name.
+    fn method_names(&mut self, ty: CheckedTypeId) -> Vec<(Spur, Option<Spur>)> {
+        let shared = self.shared;
+        let types = shared.types;
+        let mut names = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut walked = rustc_hash::FxHashSet::default();
         let mut rest = vec![ty];
         while let Some(ty) = rest.pop() {
             self.memo.steps += 1;
-            let under = types.get(types.underlying(ty));
-            let fields = match &*under {
-                CheckedType::Struct(fields) => fields,
-                CheckedType::Pointer(to) => {
-                    rest.push(*to);
-                    continue;
+            if !walked.insert(ty) {
+                continue;
+            }
+            let mut add = |name: Spur, package: Option<Spur>| {
+                if seen.insert((name, package)) {
+                    names.push((name, package));
                 }
-                _ => continue,
             };
-            for field in fields.iter().filter(|field| field.embedded) {
-                let mut held = field.ty;
-                if let CheckedType::Pointer(to) = &*types.get(held) {
-                    held = *to;
+            if let Some(methods) = types.interface_methods(ty, shared.names) {
+                for method in methods {
+                    add(method.name, method.package);
                 }
-                if types.declares_methods(held) || types.is_interface(held) {
-                    return true;
+                continue;
+            }
+            if let CheckedType::Named { id, .. } = &*types.get(ty) {
+                for method in types.declared_methods(*id) {
+                    add(method.method.name, method.method.package);
                 }
-                rest.push(held);
+            }
+            if let CheckedType::Struct(fields) = &*types.get(types.underlying(ty)) {
+                for field in fields.iter().filter(|field| field.embedded) {
+                    rest.push(match &*types.get(field.ty) {
+                        CheckedType::Pointer(to) => *to,
+                        _ => field.ty,
+                    });
+                }
             }
         }
-        false
+        names
     }
 
     /// The methods of the type that the tables of interfaces are made
@@ -931,29 +962,45 @@ impl<'a> FuncCx<'a, '_> {
     fn method_table(&mut self, ty: CheckedTypeId) -> Built<Result<Option<GlobalId>, &'static str>> {
         let shared = self.shared;
         let types = shared.types;
-        if self.embeds_methods(ty) {
-            return Ok(Err("a method of an embedded type in an interface"));
-        }
         let (holder, pointer) = match &*types.get(ty) {
             CheckedType::Pointer(to) => (*to, true),
             _ => (ty, false),
         };
-        let CheckedType::Named { id, .. } = &*types.get(holder) else {
-            return Ok(Ok(None));
-        };
         let mut methods = Vec::new();
-        for method in types.declared_methods(*id) {
+        for (name, package) in self.method_names(holder) {
+            let package = package.unwrap_or(shared.path);
+            let Ok(found) = types.lookup(ty, name, package, shared.names, false) else {
+                continue;
+            };
+            let Member::Method {
+                sig,
+                pointer_receiver,
+            } = found.member
+            else {
+                continue;
+            };
             // A value of a type of a Go file has the methods that take
             // a value only.
-            let gopp = (shared.methods.get(&(*id, method.method.name))).is_some_and(|m| m.gopp);
-            if method.pointer_receiver && !pointer && !gopp {
+            let gopp = match &*types.get(found.holder) {
+                CheckedType::Named { id, .. } => {
+                    (shared.methods.get(&(*id, name))).is_some_and(|method| method.gopp)
+                }
+                _ => false,
+            };
+            if pointer_receiver && !pointer && !gopp {
                 continue;
             }
-            let key = match self.method_key(&method.method) {
+            let method = gopp_sema::types::Method {
+                name,
+                package: (!shared.names.resolve(&name).starts_with(char::is_uppercase))
+                    .then_some(package),
+                sig,
+            };
+            let key = match self.method_key(&method) {
                 Ok(key) => key,
                 Err(what) => return Ok(Err(what)),
             };
-            match self.thunk(holder, method.method.name, pointer)? {
+            match self.thunk(holder, name, pointer)? {
                 Ok(thunk) => methods.push((key, thunk)),
                 Err(_) => {
                     return Ok(Err(
@@ -1075,15 +1122,59 @@ impl<'a> FuncCx<'a, '_> {
         Ok(self.glue(Glue::Drop, ty)?.map(Ends::Glue))
     }
 
+    /// Goes on only if the pointer in the place is not nil: a pointer
+    /// that an interface value holds or a struct embeds may be nil in
+    /// a Go file.
+    fn not_nil(&mut self, pointer: &Place) -> Built {
+        let null = self.zero(self.b.place_ty(pointer));
+        let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(pointer.clone()), null);
+        let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
+        let next = self.b.new_block();
+        let nothing = (AssertKind::Nil, Vec::new());
+        self.b
+            .assert(set, true, nothing, next, UnwindAction::Continue)?;
+        self.b.switch_to(next);
+        Ok(())
+    }
+
+    /// The value in the place as a method takes it by value: where it
+    /// is if the method only reads it, a copy otherwise.
+    fn by_value(
+        &mut self,
+        value: Place,
+        checked: CheckedTypeId,
+        read: bool,
+    ) -> Built<Result<Operand, &'static str>> {
+        let ty = self.b.place_ty(&value);
+        if read || self.flat(ty) {
+            return Ok(Ok(Operand::Copy(value)));
+        }
+        let copy = self.slot_of(Rvalue::Use(Operand::Copy(value)))?;
+        match self.kind(ty) {
+            Type::String => self.counted(copy.clone(), true)?,
+            _ => match self.glue(Glue::Clone, checked)? {
+                Ok(glue) => {
+                    let at = self.record(copy.clone())?;
+                    self.call_glue(glue, at)?;
+                }
+                Err(what) => return Ok(Err(what)),
+            },
+        }
+        Ok(Ok(Operand::Copy(copy)))
+    }
+
     /// The body of what a table of methods holds for the method `name`
     /// of the declared type `ty`. It is given the address of the second
     /// word of the interface value: that is where the value is if the
     /// table is that of the type and the value is in the word itself,
     /// and what the word points to otherwise, in a box or where a
-    /// pointer that is held points. A method that takes its receiver by
-    /// value gets the value there, or a copy if it does more than read
-    /// it. Every other argument is the callee's own (PAR-10), so what
-    /// the method only reads ends here.
+    /// pointer that is held points. The method is that of the value or
+    /// of a part that the type embeds, which is reached by its fields.
+    /// A method that takes its receiver by value gets the value there,
+    /// or a copy if it does more than read it. Every other argument is
+    /// the callee's own (PAR-10), so what the method only reads ends
+    /// here. A method of an interface that the type embeds is called
+    /// through the table of the value in that field.
     pub fn thunk_body(
         &mut self,
         ty: CheckedTypeId,
@@ -1093,9 +1184,11 @@ impl<'a> FuncCx<'a, '_> {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         let shared = self.shared;
-        let called = match self.callee(CalleeKey::Method(ty, name))? {
-            Ok(called) => called,
-            Err(_) => return Ok(Err("a method of another package in an interface")),
+        let Some(found) = method_found(shared, ty, name, pointer) else {
+            return Ok(Err("a method that its type does not have"));
+        };
+        let Member::Method { sig: checked, .. } = found.member else {
+            return Ok(Err("a method that its type does not have"));
         };
         let lowered = match self.memo.lower_type(shared, self.b.types(), ty) {
             Ok(lowered) => lowered,
@@ -1114,65 +1207,106 @@ impl<'a> FuncCx<'a, '_> {
                 self.slot_of(Rvalue::Use(Operand::Copy(held)))?
             }
         };
-        let Some(&wanted) = called.params.first() else {
-            return Ok(Err("a method without a receiver"));
+        let dynamic = shared.types.is_interface(found.holder);
+        let called = match dynamic {
+            true => None,
+            false => match self.callee(CalleeKey::Method(found.holder, name))? {
+                Ok(called) => Some(called),
+                Err(_) => return Ok(Err("a method of another package in an interface")),
+            },
         };
-        let receiver = if wanted == to {
+        let wanted = called.as_ref().and_then(|called| called.params.first());
+        // The receiver, or for a method of an embedded interface the
+        // place of the interface value.
+        let mut part = None;
+        let receiver = if found.path.is_empty() && wanted == Some(&to) {
             Operand::Copy(at)
-        } else if wanted == lowered {
-            // A pointer that is held may be nil in a Go file.
+        } else {
             if pointer {
-                let null = self.zero(to);
-                let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(at.clone()), null);
-                let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
-                let next = self.b.new_block();
-                let nothing = (AssertKind::Nil, Vec::new());
-                self.b
-                    .assert(set, true, nothing, next, UnwindAction::Continue)?;
-                self.b.switch_to(next);
+                self.not_nil(&at)?;
             }
-            let value = Operand::Copy(self.b.deref(&at)?);
-            let own = !self.flat(lowered) && called.lent.first() != Some(&true);
-            match own {
-                false => value,
-                true => {
-                    let copy = self.slot_of(Rvalue::Use(value))?;
-                    match self.kind(lowered) {
-                        Type::String => self.counted(copy.clone(), true)?,
-                        _ => match self.glue(Glue::Clone, ty)? {
-                            Ok(glue) => {
-                                let at = self.record(copy.clone())?;
-                                self.call_glue(glue, at)?;
-                            }
-                            Err(what) => return Ok(Err(what)),
-                        },
+            let mut value = self.b.deref(&at)?;
+            for &step in &found.path {
+                if let Type::Ptr(_) = self.kind(self.b.place_ty(&value)) {
+                    self.not_nil(&value)?;
+                    value = self.b.deref(&value)?;
+                }
+                value = self.b.field(&value, step)?;
+            }
+            let have = self.b.place_ty(&value);
+            let read = called
+                .as_ref()
+                .is_some_and(|called| called.lent.first() == Some(&true));
+            match wanted {
+                None => {
+                    part = Some(value.clone());
+                    let word = self.b.field(&value, 1)?;
+                    self.record(word)?
+                }
+                Some(&wanted) if wanted == have => {
+                    match self.by_value(value, found.holder, read)? {
+                        Ok(receiver) => receiver,
+                        Err(what) => return Ok(Err(what)),
                     }
-                    Operand::Copy(copy)
+                }
+                Some(&wanted) if self.pointee(wanted) == have => {
+                    let address = Rvalue::AddrOf(value, Mutability::Mut);
+                    Operand::Copy(Place::local(self.b.assign_temp(address)?))
+                }
+                Some(&wanted) if self.pointee(have) == wanted => {
+                    self.not_nil(&value)?;
+                    let value = self.b.deref(&value)?;
+                    match self.by_value(value, found.holder, read)? {
+                        Ok(receiver) => receiver,
+                        Err(what) => return Ok(Err(what)),
+                    }
+                }
+                Some(_) => {
+                    return Ok(Err("a method with a receiver of this kind in an interface"));
                 }
             }
-        } else {
-            return Ok(Err("a method with a receiver of this kind in an interface"));
+        };
+        let own = thunk_sig(shared, self.memo, self.b.types(), (ty, name, pointer));
+        let (callee, params, ret) = match (&called, part, own.map(|own| self.kind(own))) {
+            (Some(called), _, _) => {
+                let callee = Operand::Const(Constant {
+                    kind: ConstantKind::Func(called.func),
+                    ty: called.sig,
+                });
+                (callee, called.params.len(), called.ret)
+            }
+            (None, Some(part), Ok(Type::Func(own))) => {
+                let methods = shared.types.interface_methods(found.holder, shared.names);
+                let slot = methods
+                    .and_then(|methods| methods.iter().position(|method| method.name == name));
+                let Some(slot) = slot else {
+                    return Ok(Err("a method that its interface does not have"));
+                };
+                // A method of an interface value that is nil.
+                let first = self.b.field(&part, 0)?;
+                let first = self.slot_of(Rvalue::Use(Operand::Copy(first)))?;
+                self.not_nil(&first)?;
+                let code = self.b.types().intern(Type::Func(own.clone()));
+                let callee = self.table_slot(&part, slot as u32, code, None)?;
+                (callee, own.params.len(), own.ret)
+            }
+            _ => return Ok(Err("a method of an interface of this kind")),
         };
         let mut args = vec![receiver];
-        for at in 1..called.params.len() {
+        for at in 1..params {
             args.push(Operand::Copy(Place::local(self.b.param(at as u32))));
         }
-        let callee = Operand::Const(Constant {
-            kind: ConstantKind::Func(called.func),
-            ty: called.sig,
-        });
-        let result = Place::local(self.b.temp(called.ret));
+        let result = Place::local(self.b.temp(ret));
         let next = self.b.new_block();
         let unwind = UnwindAction::Continue;
         self.b
             .call(callee, args, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);
-        let method = match &*shared.types.get(ty) {
-            CheckedType::Named { id, .. } => shared.methods.get(&(*id, name)),
-            _ => None,
-        };
-        let params = method.map(|method| shared.types.get(method.sig));
-        if let Some(CheckedType::Func { params, .. }) = params.as_deref() {
+        // A method that is called through a table again was given
+        // every argument.
+        if let (Some(called), CheckedType::Func { params, .. }) =
+            (&called, &*shared.types.get(checked))
+        {
             for (at, &param) in params.iter().enumerate() {
                 let at = at + 1;
                 let read = called.lent.get(at) == Some(&true);
@@ -1188,7 +1322,7 @@ impl<'a> FuncCx<'a, '_> {
                 }
             }
         }
-        if called.ret != TypeInterner::UNIT {
+        if ret != TypeInterner::UNIT {
             let whole = Place::local(self.b.result());
             self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;
         }
@@ -1284,19 +1418,18 @@ impl<'a> FuncCx<'a, '_> {
     }
 
     /// The code of a method of the interface value in the place, read
-    /// from its table of methods; the program ends as in Go if the
-    /// value may be nil and is.
+    /// from its table of methods; with `nil_at`, the program ends as in
+    /// Go if the value is nil, and names that place.
     pub fn table_slot(
         &mut self,
-        span: SourceSpan,
         value: &Place,
         slot: u32,
         code: TypeId,
-        nilable: bool,
+        nil_at: Option<SourceSpan>,
     ) -> Built<Operand> {
         let first = Operand::Copy(self.b.field(value, 0)?);
         let first = Operand::Copy(self.slot_of(Rvalue::Use(first))?);
-        if nilable {
+        if let Some(span) = nil_at {
             self.checked(Check::Nil(first.clone(), span))?;
         }
         // The table is as long as the interface has methods; it is read

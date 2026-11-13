@@ -1254,12 +1254,19 @@ impl<'a> FuncCx<'a, '_> {
             if direct {
                 self.lent.insert(inner);
             }
+            // The receiver of a method of an embedded type is a part
+            // of the value, of the type that has the method.
+            let holder = self.body.selections.get(&callee).map(|found| found.holder);
+            if let (Some(holder), false) = (holder, path.is_empty()) {
+                self.parts.insert(x, holder);
+            }
             let value = self.receiver(span, x, path, wanted)?;
             let value = self.given(x, wanted, Rvalue::Use(value))?;
             let value = match lent {
                 true => self.lent_value(x, wanted, value)?,
                 false => self.taken(x, wanted, value)?,
             };
+            self.parts.remove(&x);
             self.lent.remove(&inner);
             let mut value = self.operand_of(value)?;
             if args.iter().any(|&arg| self.has_effects(arg)) {
@@ -1376,7 +1383,7 @@ impl<'a> FuncCx<'a, '_> {
         let callee = match &called.code {
             Code::Known(code) => code.clone(),
             Code::Slot(value, slot, code, nilable) => {
-                self.table_slot(span, value, *slot, *code, *nilable)?
+                self.table_slot(value, *slot, *code, nilable.then_some(span))?
             }
         };
         let result = self.b.temp(called.ret);

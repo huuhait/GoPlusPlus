@@ -253,6 +253,13 @@ impl FuncCx<'_, '_> {
     /// through a pointer.
     pub fn checked_as(&mut self, expr: ExprId, ty: TypeId) -> Option<CheckedTypeId> {
         let types = self.shared.types;
+        // A part of the value that is the receiver of a method.
+        if let Some(&part) = self.parts.get(&expr) {
+            let lowered = self.memo.lower_type(self.shared, self.b.types(), part);
+            if lowered == Ok(ty) {
+                return Some(part);
+            }
+        }
         // A value that is put into an interface is of the interface
         // type there.
         if let (Some(&(_, to)), true) = (self.body.iface_conversions.get(&expr), self.is_iface(ty))

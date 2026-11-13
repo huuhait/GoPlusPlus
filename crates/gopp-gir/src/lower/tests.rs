@@ -1603,6 +1603,79 @@ func main() {
 }
 
 #[test]
+fn a_method_of_an_embedded_type_is_reached_by_the_fields_on_the_way() {
+    let text = "package main
+
+type Shape interface {
+	Area() int
+	Grow(by int)
+}
+
+type Base struct {
+	w, h int
+	tag  string
+}
+
+func (b Base) Area() int { return b.w * b.h }
+
+func (b *Base) Grow(by int) { b.w += by }
+
+type Box struct {
+	*Base
+	depth int
+}
+
+type Crate struct {
+	Box
+	label string
+}
+
+type Wrapped struct {
+	Shape
+	extra int
+}
+
+func main() {
+	base := Base{1, 2, \"t\"}
+	crate := Crate{Box{&base, 1}, \"c\"}
+	var s Shape = crate
+	s.Grow(2)
+	var w Shape = Wrapped{s, 1}
+	w.Grow(3)
+	println(s.Area(), w.Area(), base.w, crate.Area(), crate.Box.Area())
+}
+";
+    // The direct calls at the end read the part of `crate` that has
+    // the method where it is.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    // What the table of `Crate` holds for `Grow`: the box, the two
+    // fields on the way, and the method of `Base` with the pointer
+    // that `Box` embeds, which may be nil as for any call of it.
+    let grow = body("_GPTIM4GrowN4mainE5Crate");
+    assert!(
+        grow.contains("@_GPM4GrowN4mainE4Base(copy (*_4).0.0, "),
+        "{grow}"
+    );
+    assert_eq!(grow.matches("assert(").count(), 0, "{grow}");
+    // For `Area` the value of `Base` is read through that pointer,
+    // which is checked first.
+    let area = body("_GPTIM4AreaN4mainE5Crate");
+    assert!(area.contains("call const fn @_GPM4AreaN4mainE4Base("));
+    assert_eq!(area.matches("assert(").count(), 1, "{area}");
+    // What the table of `Wrapped` holds calls through the table of the
+    // interface value in its field.
+    let wrapped = body("_GPTIM4GrowN4mainE7Wrapped");
+    assert_eq!(wrapped.matches(" = call copy _").count(), 1, "{wrapped}");
+    insta::assert_snapshot!(format!("{area}\n}}\n{wrapped}\n}}"));
+}
+
+#[test]
 fn interface_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
@@ -1656,8 +1729,8 @@ func f(v any, s Shape, n Named, l Lister) int {
             "{file}"
         );
     }
-    // A method that a struct has from a type that it embeds, and one
-    // that takes any number of arguments.
+    // A struct without a name that has a method from a type that it
+    // embeds, and a method that takes any number of arguments.
     let (_, messages) = lowered_with(
         &[(
             "a.go",
@@ -1681,7 +1754,7 @@ type Names struct{}
 func (n Names) List(more ...string) int { return len(more) }
 
 func main() {
-	var s Shape = Wide{}
+	var s Shape = struct{ Base }{}
 	var l Lister = Names{}
 	_, _ = s, l
 }
@@ -1692,7 +1765,8 @@ func main() {
     assert_eq!(
         messages,
         [
-            "a.go:21:16: not supported yet: a method of an embedded type in an interface",
+            "a.go:21:16: not supported yet: a value in an interface whose type has a method that \
+             is not supported yet",
             "a.go:22:17: not supported yet: a value in an interface whose type has a method that \
              is not supported yet",
         ]
@@ -1955,7 +2029,12 @@ fn every_sample_of_the_specification_is_lowered_or_says_what_is_not() {
 }
 
 fn steps_of(text: &str) -> u64 {
-    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    steps_of_file("a.gopp", text)
+}
+
+/// The steps that lowering the one file of a package takes.
+fn steps_of_file(name: &str, text: &str) -> u64 {
+    let (lowered, messages) = lowered_with(&[(name, text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
     lowered.steps
 }
@@ -2198,6 +2277,28 @@ fn the_steps_grow_with_the_glue_of_types() {
              func g(v any) int {{\n\tsum := 0\n{asked}\treturn sum\n}}\n\n\
              func h() int {{ return f(T{{}}) + g(T{{}}) }}\n"
         ))
+    });
+    // Many types that embed one type, which embeds another with the
+    // methods, in one interface. What a table holds for a method walks
+    // one field for each level, so a chain of types that each embed
+    // the one before would grow with the square of its length.
+    assert_near_linear(&sizes, |n| {
+        let n = n / 4;
+        let types: String = (2..n)
+            .map(|at| format!("type T{at} struct {{\n\tT1\n\tn{at} int\n}}\n\n"))
+            .collect();
+        let types = format!("type T1 struct {{\n\tT0\n\tn1 int\n}}\n\n{types}");
+        let values: String = (0..n)
+            .map(|at| format!("\tall = append(all, T{at}{{}})\n"))
+            .collect();
+        let text = format!(
+            "package main\n\ntype Shape interface {{\n\tArea() int\n\tName() string\n}}\n\n\
+             type T0 struct{{ n int }}\n\nfunc (t T0) Area() int {{ return t.n }}\n\n\
+             func (t T0) Name() string {{ return \"t\" }}\n\n{types}\
+             func f(all []Shape) []Shape {{\n{values}\treturn all\n}}\n"
+        );
+        // Only a Go file embeds a struct.
+        steps_of_file("a.go", &text)
     });
     // Many types with a `drop` and a `Clone` method that each hold the
     // one before.

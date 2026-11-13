@@ -131,6 +131,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// parameter is lent without a box, each with whether the function
     /// calls methods through the parameter.
     pub unboxed: FxHashMap<ExprId, bool>,
+    /// The receivers of the calls that are lowered which are a part of
+    /// the value of their expression, each with the type of the part.
+    pub parts: FxHashMap<ExprId, CheckedTypeId>,
     vars: FxHashMap<CheckedLocalId, LocalId>,
     scopes: Vec<Scope>,
     pub labels: FxHashMap<Spur, Label>,
@@ -288,7 +291,7 @@ pub(super) fn lower_thunk<'a>(
     symbol: &str,
     (ty, name, pointer): (CheckedTypeId, Spur, bool),
 ) {
-    let sig = match super::iface::thunk_sig(shared, memo, &mut module.types, ty, name) {
+    let sig = match super::iface::thunk_sig(shared, memo, &mut module.types, (ty, name, pointer)) {
         Ok(sig) => sig,
         Err(what) => return not_made(shared, memo, symbol, Ok(Err(what))),
     };
@@ -370,6 +373,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             lent_params: FxHashSet::default(),
             worked_params: FxHashSet::default(),
             unboxed: FxHashMap::default(),
+            parts: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
             labels: FxHashMap::default(),

@@ -1,0 +1,21 @@
+box b 6
+box b 6
+base r 2
+base r 2
+box b 6
+box b 16
+base r 5
+false true true true false true
+4 4 4 32
+shape box b
+shape box b
+shape base r
+shape box b
+shape box b
+shape box b
+named box b
+shape base r
+none
+box b
+base r x
+false false
