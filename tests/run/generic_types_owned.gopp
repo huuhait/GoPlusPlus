@@ -1,0 +1,108 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func (f File) Clone() File {
+	opened++
+	return File{fd: f.fd + 100}
+}
+
+func open(fd int) File {
+	opened++
+	return File{fd: fd}
+}
+
+type Stack[T any] struct{ items []T }
+
+// Takes its value: nothing is copied.
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, move(x)) }
+
+func (s Stack[T]) Len() int { return len(s.items) }
+
+type Shelf[T Clone] struct {
+	items []T
+	spare T
+}
+
+func (s *Shelf[T]) Put(x T) { s.items = append(s.items, x) }
+
+// A copy of what is on the shelf.
+func (s Shelf[T]) At(i int) T {
+	if i >= len(s.items) {
+		panic("no such place")
+	}
+	return s.items[i]
+}
+
+var ended int
+
+type Guard[T any] struct {
+	held  T
+	armed bool
+}
+
+func (g *Guard[T]) drop() {
+	if g.armed {
+		ended++
+	}
+}
+
+func guard[T any](x T) Guard[T] { return Guard[T]{held: move(x), armed: true} }
+
+func counts(note string) { println(note, opened, closed, ended) }
+
+func caught(run func()) (what string) {
+	defer func() {
+		if r := recover(); r != nil {
+			what = r.(string)
+		}
+	}()
+	run()
+	return "nothing"
+}
+
+func stacks() {
+	var files Stack[File]
+	files.Push(open(1))
+	files.Push(open(2))
+	var words Stack[string]
+	words.Push("a" + "b")
+	println(files.Len(), words.Len(), files.items[1].fd, words.items[0])
+	counts("in stacks")
+}
+
+func shelves() {
+	var shelf Shelf[File]
+	shelf.Put(open(3))
+	one := shelf.At(0)
+	println(one.fd, len(shelf.items), caught(func() {
+		var other Shelf[File]
+		other.Put(open(4))
+		other.At(7)
+	}))
+	counts("in shelves")
+}
+
+func guards() {
+	g := guard(open(5))
+	h := guard("text")
+	println(g.held.fd, h.held, g.armed)
+	counts("in guards")
+}
+
+func main() {
+	stacks()
+	counts("after stacks")
+	shelves()
+	counts("after shelves")
+	guards()
+	counts("after guards")
+}

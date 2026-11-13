@@ -2905,12 +2905,82 @@ func main() {
 }
 
 #[test]
-fn generic_code_that_is_not_supported_yet_says_so() {
+fn the_methods_of_an_instance_of_a_generic_type_are_made_once() {
     let text = "package main
 
-type Stack[T any] struct{ items []T }
+type Alias = int
 
-func (s *Stack[T]) Len() int { return len(s.items) }
+type Box[T any] struct {
+	v []T
+	n int
+}
+
+func (b *Box[T]) Set(n int) { b.n = n }
+
+func (b Box[T]) Has() bool { return len(b.v) < b.n }
+
+type Unused[T any] struct{ v T }
+
+func (u Unused[T]) Has() bool { return false }
+
+func a() bool {
+	var b Box[int]
+	b.Set(1)
+	return b.Has()
+}
+
+func b() int {
+	var one Box[Alias]
+	var named []Box[string]
+	one.Set(2)
+	return one.n + len(named)
+}
+
+func main() {
+	println(a(), b())
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        // After the functions of the source: every method of every
+        // instance of a generic type that a type names, the types in
+        // the order of their symbols and the methods as they are
+        // declared. A value of the type may be asked for any of them
+        // where it is in an interface, so a method that nothing calls
+        // is made too; a type that nothing names has none.
+        let functions: Vec<&str> = (module.lines())
+            .filter(|line| line.starts_with("fn _GPF") || line.starts_with("fn _GPM"))
+            .map(|line| &line["fn ".len()..line.find('(').unwrap()])
+            .collect();
+        assert_eq!(
+            functions,
+            [
+                "_GPF4mainE1a",
+                "_GPF4mainE1b",
+                "_GPF4mainE4main",
+                "_GPM3SetIN4mainE3BoxiE",
+                "_GPM3HasIN4mainE3BoxiE",
+                "_GPM3SetIN4mainE3BoxrE",
+                "_GPM3HasIN4mainE3BoxrE",
+            ],
+            "{file}"
+        );
+        let odr = module.lines().filter(|line| line.starts_with("fn _GPM"));
+        assert!(
+            odr.clone()
+                .all(|line| line.ends_with("[go, linkonce_odr] {"))
+        );
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
+fn generic_code_that_is_not_supported_yet_says_so() {
+    let text = "package main
 
 func local[T any](n int) int {
 	type pair struct{ a, b []T }
@@ -2919,8 +2989,7 @@ func local[T any](n int) int {
 }
 
 func main() {
-	var s Stack[string]
-	println(s.Len(), local[int](1))
+	println(local[int](1))
 }
 ";
     for file in ["a.go", "a.gopp"] {
@@ -2932,7 +3001,6 @@ func main() {
         assert_eq!(
             messages,
             [
-                "not supported yet: a method of a generic type",
                 "not supported yet: a type that has no symbol",
                 "not supported yet: the built-in function len",
             ],
@@ -2942,13 +3010,18 @@ func main() {
 }
 
 /// The body of the function whose symbol starts with `symbol`, with
-/// the symbol out of the names in it.
-fn body_without_its_name(module: &str, symbol: &str) -> String {
+/// the symbol out of the names in it; and for a method whose symbol
+/// starts with `method`, the type of its receiver too.
+fn body_without_its_name(module: &str, symbol: &str, method: Option<&str>) -> String {
     let start = module.find(&format!("\nfn {symbol}")).unwrap();
     let whole = &module[start + 4..][..module[start + 4..].find("\n}\n").unwrap()];
     let (header, body) = whole.split_once('\n').unwrap();
     let name = &header[..header.find('(').unwrap()];
-    body.replace(&name["_GP".len()..], "SELF")
+    let body = body.replace(&name["_GP".len()..], "SELF");
+    match method {
+        Some(method) => body.replace(&name[method.len()..], "HOLDER"),
+        None => body,
+    }
 }
 
 /// What a type argument decides in a generic body is decided as in a
@@ -3055,6 +3128,16 @@ func size(v any) int { return 1 }
             2,
         ),
         ("\tdefer x.String()\n\treturn x, len(xs)\n", 2),
+        (
+            "\th.item = x\n\th.items = append(h.items, xs[0], h.item)\n\treturn h.item, \
+             len(h.items)\n",
+            3,
+        ),
+        (
+            "\tfor _, v := range h.items {\n\t\tsink(v)\n\t}\n\told := h.item\n\th.item = \
+             xs[0]\n\treturn old, 0\n",
+            3,
+        ),
     ];
     let cases: Vec<_> = (["a.go", "a.gopp"].iter())
         .flat_map(|file| types.iter().map(move |ty| (*file, *ty)))
@@ -3069,9 +3152,10 @@ func size(v any) int { return 1 }
                 }
         })
         .collect();
-    assert_eq!(cases.len(), (15 + 13) * 9 + (9 + 7) * 2 + (5 + 3) * 3);
-    let mut differ = Vec::new();
-    for (file, (ty, ..), (body, asks)) in cases {
+    assert_eq!(cases.len(), (15 + 13) * 11 + (9 + 7) * 2 + (5 + 3) * 3);
+    // Side by side: each case is checked and lowered four times.
+    let of_case = |&(file, (ty, ..), (body, asks)): &(&str, (&str, bool, i32), (&str, i32))| {
+        let mut differ = Vec::new();
         let declared = match file {
             "a.go" => format!("{declared}\n{embeds}"),
             _ => declared.to_owned(),
@@ -3086,32 +3170,67 @@ func size(v any) int { return 1 }
             (_, 2) => "interface{ Stringer; Clone; Send }",
             _ => "interface{ Clone; Send }",
         };
-        let rest = format!(
-            "{body}}}\n\nfunc use(x {ty}, xs []{ty}) {{\n\ttarget(x, xs)\n}}\n\nfunc main() {{}}\n"
-        );
-        let plain = format!(
-            "package main\n\n{declared}\ntype T = {ty}\n\nfunc target(x T, xs []T) (T, int) {{\n{rest}"
-        );
-        let generic = format!(
-            "package main\n\n{declared}\n// The same lines.\n\nfunc target[T {constraint}](x T, xs []T) \
-             (T, int) {{\n{rest}"
-        );
-        let lowered = |text: &str, symbol: &str| {
+        let lowered = |text: &str, symbol: &str, method: Option<&str>| {
             let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
             match messages.is_empty() {
-                true => Ok(body_without_its_name(
-                    &print_module(&lowered.module),
-                    symbol,
-                )),
+                true => {
+                    let module = print_module(&lowered.module);
+                    Ok(body_without_its_name(&module, symbol, method))
+                }
                 false => Err(messages),
             }
         };
-        let plain = lowered(&plain, "_GPF4mainE6target(");
-        let generic = lowered(&generic, "_GPIF4mainE6target");
-        if plain != generic || plain.is_err() {
-            differ.push(format!("{file}: {ty}:\n{body}{plain:?}\n{generic:?}"));
+        // As a function, and as a method of a generic type.
+        if asks != 3 {
+            let rest = format!(
+                "{body}}}\n\nfunc use(x {ty}, xs []{ty}) {{\n\ttarget(x, xs)\n}}\n\nfunc main() {{}}\n"
+            );
+            let plain = format!(
+                "package main\n\n{declared}\ntype T = {ty}\n\nfunc target(x T, xs []T) (T, int) \
+                 {{\n{rest}"
+            );
+            let generic = format!(
+                "package main\n\n{declared}\n// The same lines.\n\nfunc target[T {constraint}](x T, xs \
+                 []T) (T, int) {{\n{rest}"
+            );
+            let plain = lowered(&plain, "_GPF4mainE6target(", None);
+            let generic = lowered(&generic, "_GPIF4mainE6target", None);
+            if plain != generic || plain.is_err() {
+                differ.push(format!("{file}: {ty}:\n{body}{plain:?}\n{generic:?}"));
+            }
         }
-    }
+        // The name of the method is in the same column in both.
+        let holder = "struct {\n\titem  T\n\titems []T\n}\n";
+        let rest = |holder: &str| {
+            format!(
+                "{body}}}\n\nfunc use(h *{holder}, x {ty}, xs []{ty}) {{\n\th.target(x, xs)\n}}\n\n\
+                 func main() {{}}\n"
+            )
+        };
+        let plain = format!(
+            "package main\n\n{declared}\ntype T = {ty}\n\ntype Holder {holder}\nfunc (h *Holder   ) \
+             target(x T, xs []T) (T, int) {{\n{}",
+            rest("Holder")
+        );
+        let generic = format!(
+            "package main\n\n{declared}\n// The same lines.\n\ntype Holder[T {constraint}] \
+             {holder}\nfunc (h *Holder[T]) target(x T, xs []T) (T, int) {{\n{}",
+            rest(&format!("Holder[{ty}]"))
+        );
+        let method = Some("_GPM6target");
+        let plain = lowered(&plain, "_GPM6targetN4mainE6Holder(", method);
+        let generic = lowered(&generic, "_GPM6targetIN4mainE6Holder", method);
+        if plain != generic || plain.is_err() {
+            differ.push(format!(
+                "{file}: method: {ty}:\n{body}{plain:?}\n{generic:?}"
+            ));
+        }
+        differ
+    };
+    let differ: Vec<String> = {
+        use rayon::prelude::*;
+        cases.par_iter().flat_map_iter(of_case).collect()
+    };
     let shown = differ.iter().take(3).map(|case| &**case);
     let shown: Vec<&str> = shown.collect();
     assert!(
@@ -3414,7 +3533,9 @@ fn many_functions(count: usize) -> String {
                     func (p Pair) Size() int { return p.a + p.b }\n\n\
                     func first[T Clone](xs []T, or T) T {\n\tif len(xs) > 0 {\n\t\treturn xs[0]\n\t}\n\t\
                     return or\n}\n\n\
-                    func twice[T Clone](x T) []T { return []T{first([]T{x}, x), x} }\n"
+                    func twice[T Clone](x T) []T { return []T{first([]T{x}, x), x} }\n\n\
+                    type Cell[T Clone] struct{ v T }\n\n\
+                    func (c Cell[T]) get() T { return c.v }\n"
         .to_owned();
     for at in 0..count {
         let next = (at + 7) % count;
@@ -3447,6 +3568,7 @@ func f{at}(n int, p Pair) (int, string) {{
 	next := func(n int) int {{ return func(m int) int {{ return m + int(l.v) + {at} }}(n) }}
 	total += next(n)
 	total += len(twice(l)) + first([]int{{n}}, {at}) + len(twice(p))
+	total += int(Cell[Local]{{v: l}}.get().v) + Cell[Pair]{{v: p}}.get().a
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}
@@ -3720,6 +3842,26 @@ fn the_steps_grow_with_the_instances_of_generic_functions() {
         steps_of(&format!(
             "{}\n{chain}func g{n}[T Clone](x T) []T {{ return []T{{x}} }}\n",
             function("\tx += len(g0(x))\n")
+        ))
+    });
+    // Generic types: many instances of one type with methods, and an
+    // instance in an instance in an instance.
+    let boxed = "type Box[T any] struct{ v []T }\n\nfunc (b *Box[T]) Len() int { return len(b.v) }\n\n\
+                 func (b *Box[T]) Cap() int { return cap(b.v) }\n";
+    assert_near_linear(&sizes, |n| {
+        let types: String = (0..n)
+            .map(|at| format!("type S{at} struct{{ a{at} int }}\n\n"))
+            .collect();
+        let uses: String = (0..n)
+            .map(|at| format!("\tvar b{at} Box[S{at}]\n\tx += b{at}.Len()\n"))
+            .collect();
+        steps_of(&format!("{}\n{types}{boxed}", function(&uses)))
+    });
+    assert_near_linear(&[25, 50, 100, 200], |n| {
+        let deep = format!("{}int{}", "Box[".repeat(n), "]".repeat(n));
+        steps_of(&format!(
+            "{}\n{boxed}",
+            function(&format!("\tvar b {deep}\n\tx += b.Len()\n"))
         ))
     });
     assert_near_linear(&[40, 80, 160, 320], |n| {

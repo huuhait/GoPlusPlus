@@ -910,7 +910,16 @@ impl<'a> Checker<'a> {
         let is_base = matches!(tree.exprs[of].kind, ExprKind::Name(name) if self.names.resolve(&name) == "base")
             && !cx.body.uses.contains_key(&of);
         let receiver = self.receiver_of.filter(|_| is_base && self.own_rules(cx))?;
-        let parents = self.types.parents(receiver);
+        let mut parents = self.types.parents(receiver);
+        // In the body the type parameters of the type have other names.
+        if let Type::Named { id, .. } = &*self.types.get(receiver) {
+            let declared = self.types.type_params(*id);
+            if let Some(named) = self.body_params.get(..declared.len()) {
+                for parent in &mut parents {
+                    *parent = self.types.substitute(*parent, &declared, named);
+                }
+            }
+        }
         let span = tree.exprs[x].span;
         let name = self.names.resolve(&sel.name);
         if parents.is_empty() {

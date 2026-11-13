@@ -9318,7 +9318,7 @@ func generic(c *Card) {
 	_, _ = a, b
 }
 
-type Entity[T any] struct{ ID T }
+type Entity[T Clone] struct{ ID T }
 
 @Virtual
 func (e *Entity[T]) Key() T { return e.ID }
@@ -9327,7 +9327,7 @@ type Log[T any] struct{ lines []T }
 
 @Extends(Entity[T])
 @Extends(Log[T])
-type Store[T any] struct{ Name string }
+type Store[T Clone] struct{ Name string }
 
 @Override
 func (s *Store[T]) Key() T { return base.Key() }
@@ -9784,7 +9784,7 @@ func (x G[T]) Next() *G[*T] { return nil }
 type G[T any] struct{ v T }
 func (x G[T]) Same() Option[*G[T]] { return nil }
 func (x G[T]) Other() G[int] { return G[int]{} }
-type Two[A, B any] struct{ a A; b B }
+type Two[A, B Clone] struct{ a A; b B }
 func (x Two[A, B]) Swap() Two[B, A] { return Two[B, A]{a: x.b, b: x.a} }
 type Pair[A, B any] struct{ a A; b B }
 type List[T any] struct{ items []T }
@@ -9792,7 +9792,7 @@ func (l List[T]) Zip[U any](o List[U]) List[Pair[T, U]] { return List[Pair[T, U]
 ";
     assert_eq!(messages("a.gopp", fine), [] as [&str; 0]);
     let deep = "package p
-type List[T any] struct{ items []T }
+type List[T Clone] struct{ items []T }
 func (l List[T]) Deep[U any]() { l.Deep[*U]() }
 ";
     let expected = [
@@ -11583,7 +11583,7 @@ type V struct{ x int }
 @Operator
 func (a V) Add(b V) V { return V{a.x + b.x} }
 
-type Box[T any] struct{ v T }
+type Box[T Clone] struct{ v T }
 
 func (b Box[T]) Get() T { return b.v }
 
@@ -13748,4 +13748,68 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
     explained.sort_unstable();
     missing.sort_unstable();
     assert_eq!(missing, explained);
+}
+
+#[test]
+fn a_method_of_a_generic_type_is_checked_with_the_constraints_of_the_type() {
+    let text = "package p
+
+type Stringer interface{ String() string }
+
+type Number interface{ ~int | ~float64 }
+
+type Holder[T HELD, N Number] struct {
+	item  T
+	count N
+}
+
+func (h *Holder[S, C]) name() string {
+	var held any = h.item
+	_ = held
+	h.count += 1
+	return h.item.String()
+}
+
+func (h *Holder[S, C]) wrong() string {
+	return h.item.Missing() + h.count.String()
+}
+";
+    // A Go++ file keeps a value in an interface only if its type says
+    // that it is copied and may be given to another goroutine.
+    let held = [
+        ("a.go", "Stringer"),
+        ("a.gopp", "interface{ Stringer; Clone; Send }"),
+    ];
+    for (name, held) in held {
+        let text = &text.replace("HELD", held);
+        // The type parameters of the receiver have other names in the
+        // body, and the constraints that the type gives them.
+        assert_eq!(
+            messages(name, text),
+            [
+                format!(
+                    "{name}:20:16: h.item.Missing undefined (type S has no field or method Missing)"
+                ),
+                format!(
+                    "{name}:20:36: h.count.String undefined (type C has no field or method String)"
+                ),
+            ],
+            "{name}"
+        );
+        let names = ThreadedRodeo::new();
+        let loader = Loader::default();
+        let checked = check_texts("p", &[(name, text)], &loader, &names);
+        let source = checked.map.file(checked.files[0].id);
+        let files = [(&checked.files[0], &*source)];
+        let types = loader.types.get().unwrap();
+        let info = crate::info_text(&checked.package, &files, types, &names);
+        assert!(
+            info.contains("13:17 h.item: boxed S to any"),
+            "{name}: {info}"
+        );
+        assert!(
+            info.contains("16:9 h.item.String: selection Method of S in S by []"),
+            "{name}: {info}"
+        );
+    }
 }

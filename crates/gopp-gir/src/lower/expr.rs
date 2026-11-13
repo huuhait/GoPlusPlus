@@ -2352,13 +2352,9 @@ impl<'a> FuncCx<'a, '_> {
                 ObjKind::Import { package, .. } => function(package, member),
                 _ => None,
             },
-            CalleeKey::Method(holder, name) => match &*shared.types.get(holder) {
-                CheckedType::Named { id, .. } => shared
-                    .methods
-                    .get(&(*id, name))
-                    .map(|method| (method.symbol.clone(), Some(method.receiver), method.sig)),
-                _ => None,
-            },
+            CalleeKey::Method(holder, name) => shared
+                .method(holder, name)
+                .map(|method| (method.symbol.clone(), Some(method.receiver), method.sig)),
             CalleeKey::Instance(job) => Some(shared.job_called(job)),
         };
         let declared = |receiver: Option<_>, checked| match &*shared.types.get(checked) {

@@ -1021,12 +1021,7 @@ impl<'a> FuncCx<'a, '_> {
             };
             // A value of a type of a Go file has the methods that take
             // a value only.
-            let gopp = match &*types.get(found.holder) {
-                CheckedType::Named { id, .. } => {
-                    (shared.methods.get(&(*id, name))).is_some_and(|method| method.gopp)
-                }
-                _ => false,
-            };
+            let gopp = (shared.method(found.holder, name)).is_some_and(|method| method.gopp);
             if pointer_receiver && !pointer && !gopp {
                 continue;
             }

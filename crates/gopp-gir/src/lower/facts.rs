@@ -526,8 +526,8 @@ impl Walk<'_> {
         };
         let types = self.shared.types;
         match &*types.get(selection.holder) {
-            CheckedType::Named { id, .. } => {
-                let method = self.shared.methods.get(&(*id, sel.name));
+            CheckedType::Named { .. } => {
+                let method = self.shared.method(selection.holder, sel.name);
                 method.is_some_and(|method| {
                     !matches!(&*types.get(method.receiver), CheckedType::Pointer(_))
                 })

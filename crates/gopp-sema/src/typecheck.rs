@@ -3537,8 +3537,22 @@ impl<'a> Checker<'a> {
                     let named = self.receiver_params(&mut cx, receiver.ty);
                     self.body_params.splice(0..0, named.iter().copied());
                     self.around.extend(&named);
-                    self.params(&cx, std::slice::from_ref(receiver));
                     self.receiver_of = self.receiver_named(unit, receiver.ty);
+                    if let Some(Type::Named { id, .. }) =
+                        self.receiver_of.map(|ty| self.types.get(ty)).as_deref()
+                    {
+                        // In the body the type parameters of the type
+                        // have other names, and the same constraints.
+                        let declared = self.types.type_params(*id);
+                        for (&param, &of) in named.iter().zip(&declared) {
+                            if let Some(constraint) = self.types.constraint(of) {
+                                let constraint =
+                                    self.types.substitute(constraint, &declared, &named);
+                                self.types.set_constraint(param, constraint);
+                            }
+                        }
+                    }
+                    self.params(&cx, std::slice::from_ref(receiver));
                     if let Some(Type::Named { id, .. }) =
                         self.receiver_of.map(|ty| self.types.get(ty)).as_deref()
                     {

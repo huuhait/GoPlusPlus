@@ -1,0 +1,334 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: module
+---
+module "main"
+file 0 "a.gopp"
+
+fn _GPF4mainE1a() -> bool [go, external] {
+  let _0: bool
+  let _1: _GPTiIN4mainE3BoxiE "b"
+  let _2: *_GPTiIN4mainE3BoxiE
+  let _3: ()
+  let _4: *_GPTiIN4mainE3BoxiE
+  let _5: *u8
+  let _6: ()
+  let _7: _GPTiIN4mainE3BoxiE
+  let _8: *_GPTiIN4mainE3BoxiE
+  let _9: *u8
+  let _10: ()
+  let _11: bool
+  let _12: _GPTiIN4mainE3BoxiE
+  let _13: *_GPTiIN4mainE3BoxiE
+  let _14: *u8
+  let _15: ()
+  let _16: _GPTiIN4mainE3BoxiE
+  let _17: *_GPTiIN4mainE3BoxiE
+  let _18: *u8
+  let _19: ()
+  let _20: *_GPTiIN4mainE3BoxiE
+  let _21: *u8
+  let _22: ()
+  bb0:
+    storage_live(_1)  ; a.gopp:19:2
+    _1 = const zero: _GPTiIN4mainE3BoxiE  ; a.gopp:19:2
+    _2 = &mut _1  ; a.gopp:20:2
+    _3 = call const fn @_GPM3SetIN4mainE3BoxiE(copy _2, const 1: i64) -> [return: bb3, unwind: cleanup bb1]  ; a.gopp:20:2
+  bb1: [cleanup]
+    _4 = &mut _1  ; a.gopp:20:2
+    _5 = ptr_to_ptr(copy _4) as *u8  ; a.gopp:20:2
+    _6 = call const fn @_GPTdIN4mainE3BoxiE(copy _5) -> [return: bb2, unwind: terminate]  ; a.gopp:20:2
+  bb2: [cleanup]
+    resume  ; a.gopp:20:2
+  bb3:
+    _7 = copy _1  ; a.gopp:21:2
+    _8 = &mut _7  ; a.gopp:21:2
+    _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:21:2
+    _10 = call const fn @_GPTcIN4mainE3BoxiE(copy _9) -> [return: bb4, unwind: cleanup bb1]  ; a.gopp:21:2
+  bb4:
+    _11 = call const fn @_GPM3HasIN4mainE3BoxiE(copy _7) -> [return: bb7, unwind: cleanup bb5]  ; a.gopp:21:9
+  bb5: [cleanup]
+    _12 = copy _7  ; a.gopp:21:9
+    _13 = &mut _12  ; a.gopp:21:9
+    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:21:9
+    _15 = call const fn @_GPTdIN4mainE3BoxiE(copy _14) -> [return: bb6, unwind: terminate]  ; a.gopp:21:9
+  bb6: [cleanup]
+    goto bb1  ; a.gopp:21:9
+  bb7:
+    _0 = copy _11  ; a.gopp:21:2
+    _16 = copy _7  ; a.gopp:21:2
+    _17 = &mut _16  ; a.gopp:21:2
+    _18 = ptr_to_ptr(copy _17) as *u8  ; a.gopp:21:2
+    _19 = call const fn @_GPTdIN4mainE3BoxiE(copy _18) -> [return: bb8, unwind: terminate]  ; a.gopp:21:2
+  bb8:
+    _20 = &mut _1  ; a.gopp:21:2
+    _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:21:2
+    _22 = call const fn @_GPTdIN4mainE3BoxiE(copy _21) -> [return: bb9, unwind: terminate]  ; a.gopp:21:2
+  bb9:
+    storage_dead(_1)  ; a.gopp:21:2
+    return  ; a.gopp:21:2
+}
+
+fn _GPF4mainE1b() -> i64 [go, external] {
+  let _0: i64
+  let _1: _GPTiIN4mainE3BoxiE "one"
+  let _2: []_GPTiIN4mainE3BoxrE "named"
+  let _3: *_GPTiIN4mainE3BoxiE
+  let _4: ()
+  let _5: *_GPTiIN4mainE3BoxiE
+  let _6: *u8
+  let _7: ()
+  let _8: *[]_GPTiIN4mainE3BoxrE
+  let _9: *u8
+  let _10: ()
+  let _11: u64
+  let _12: i64
+  let _13: *[]_GPTiIN4mainE3BoxrE
+  let _14: *u8
+  let _15: ()
+  let _16: *_GPTiIN4mainE3BoxiE
+  let _17: *u8
+  let _18: ()
+  bb0:
+    storage_live(_1)  ; a.gopp:25:2
+    _1 = const zero: _GPTiIN4mainE3BoxiE  ; a.gopp:25:2
+    storage_live(_2)  ; a.gopp:26:2
+    _2 = const zero: []_GPTiIN4mainE3BoxrE  ; a.gopp:26:2
+    _3 = &mut _1  ; a.gopp:27:2
+    _4 = call const fn @_GPM3SetIN4mainE3BoxiE(copy _3, const 2: i64) -> [return: bb5, unwind: cleanup bb3]  ; a.gopp:27:2
+  bb1: [cleanup]
+    _5 = &mut _1  ; a.gopp:27:2
+    _6 = ptr_to_ptr(copy _5) as *u8  ; a.gopp:27:2
+    _7 = call const fn @_GPTdIN4mainE3BoxiE(copy _6) -> [return: bb2, unwind: terminate]  ; a.gopp:27:2
+  bb2: [cleanup]
+    resume  ; a.gopp:27:2
+  bb3: [cleanup]
+    _8 = &mut _2  ; a.gopp:27:2
+    _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:27:2
+    _10 = call const fn @_GPTdSIN4mainE3BoxrE(copy _9) -> [return: bb4, unwind: terminate]  ; a.gopp:27:2
+  bb4: [cleanup]
+    goto bb1  ; a.gopp:27:2
+  bb5:
+    _11 = len(_2)  ; a.gopp:28:2
+    _12 = int_to_int(copy _11) as i64  ; a.gopp:28:2
+    _0 = add(copy _1.1, copy _12)  ; a.gopp:28:2
+    _13 = &mut _2  ; a.gopp:28:2
+    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:28:2
+    _15 = call const fn @_GPTdSIN4mainE3BoxrE(copy _14) -> [return: bb6, unwind: terminate]  ; a.gopp:28:2
+  bb6:
+    _16 = &mut _1  ; a.gopp:28:2
+    _17 = ptr_to_ptr(copy _16) as *u8  ; a.gopp:28:2
+    _18 = call const fn @_GPTdIN4mainE3BoxiE(copy _17) -> [return: bb7, unwind: terminate]  ; a.gopp:28:2
+  bb7:
+    storage_dead(_2)  ; a.gopp:28:2
+    storage_dead(_1)  ; a.gopp:28:2
+    return  ; a.gopp:28:2
+}
+
+fn _GPF4mainE4main() -> () [go, external] {
+  let _0: ()
+  let _1: bool
+  let _2: i64
+  let _3: ()
+  let _4: ()
+  let _5: ()
+  let _6: ()
+  bb0:
+    _1 = call const fn @_GPF4mainE1a() -> [return: bb1, unwind: continue]  ; a.gopp:32:10
+  bb1:
+    _2 = call const fn @_GPF4mainE1b() -> [return: bb2, unwind: continue]  ; a.gopp:32:15
+  bb2:
+    _3 = call const fn @_gopp_print_bool(copy _1) -> [return: bb3, unwind: continue]  ; a.gopp:32:2
+  bb3:
+    _4 = call const fn @_gopp_print_space() -> [return: bb4, unwind: continue]  ; a.gopp:32:2
+  bb4:
+    _5 = call const fn @_gopp_print_int(copy _2) -> [return: bb5, unwind: continue]  ; a.gopp:32:2
+  bb5:
+    _6 = call const fn @_gopp_print_newline() -> [return: bb6, unwind: continue]  ; a.gopp:32:2
+  bb6:
+    return  ; a.gopp:33:1
+}
+
+fn _GPM3SetIN4mainE3BoxiE(_1: *_GPTiIN4mainE3BoxiE, _2: i64) -> () [go, linkonce_odr] {
+  let _0: ()
+  let _1: *_GPTiIN4mainE3BoxiE "b"
+  let _2: i64 "n"
+  bb0:
+    (*_1).1 = copy _2  ; a.gopp:10:31
+    return  ; a.gopp:10:39
+}
+
+fn _GPM3HasIN4mainE3BoxiE(_1: _GPTiIN4mainE3BoxiE) -> bool [go, linkonce_odr] {
+  let _0: bool
+  let _1: _GPTiIN4mainE3BoxiE "b"
+  let _2: u64
+  let _3: i64
+  bb0:
+    _2 = len(_1.0)  ; a.gopp:12:30
+    _3 = int_to_int(copy _2) as i64  ; a.gopp:12:30
+    _0 = lt(copy _3, copy _1.1)  ; a.gopp:12:30
+    return  ; a.gopp:12:30
+}
+
+fn _GPM3SetIN4mainE3BoxrE(_1: *_GPTiIN4mainE3BoxrE, _2: i64) -> () [go, linkonce_odr] {
+  let _0: ()
+  let _1: *_GPTiIN4mainE3BoxrE "b"
+  let _2: i64 "n"
+  bb0:
+    (*_1).1 = copy _2  ; a.gopp:10:31
+    return  ; a.gopp:10:39
+}
+
+fn _GPM3HasIN4mainE3BoxrE(_1: _GPTiIN4mainE3BoxrE) -> bool [go, linkonce_odr] {
+  let _0: bool
+  let _1: _GPTiIN4mainE3BoxrE "b"
+  let _2: u64
+  let _3: i64
+  bb0:
+    _2 = len(_1.0)  ; a.gopp:12:30
+    _3 = int_to_int(copy _2) as i64  ; a.gopp:12:30
+    _0 = lt(copy _3, copy _1.1)  ; a.gopp:12:30
+    return  ; a.gopp:12:30
+}
+
+fn _GPTcIN4mainE3BoxiE(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *_GPTiIN4mainE3BoxiE
+  let _3: *[]i64
+  let _4: *u8
+  let _5: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *_GPTiIN4mainE3BoxiE
+    _3 = &mut (*_2).0
+    _4 = ptr_to_ptr(copy _3) as *u8
+    _5 = call const fn @_GPTcSi(copy _4) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTcSi(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]i64
+  let _3: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]i64
+    _3 = call const fn @_gopp_slice_copy(copy _1, const 8: u64) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdIN4mainE3BoxiE(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *_GPTiIN4mainE3BoxiE
+  let _3: *[]i64
+  let _4: *u8
+  let _5: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *_GPTiIN4mainE3BoxiE
+    _3 = &mut (*_2).0
+    _4 = ptr_to_ptr(copy _3) as *u8
+    _5 = call const fn @_GPTdSi(copy _4) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdIN4mainE3BoxrE(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *_GPTiIN4mainE3BoxrE
+  let _3: *[]string
+  let _4: *u8
+  let _5: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *_GPTiIN4mainE3BoxrE
+    _3 = &mut (*_2).0
+    _4 = ptr_to_ptr(copy _3) as *u8
+    _5 = call const fn @_GPTdSr(copy _4) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdSIN4mainE3BoxrE(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]_GPTiIN4mainE3BoxrE
+  let _3: u64
+  let _4: u64
+  let _5: *_GPTiIN4mainE3BoxrE
+  let _6: *u8
+  let _7: ()
+  let _8: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]_GPTiIN4mainE3BoxrE
+    _3 = const zero: u64
+    _4 = len((*_2))
+    _5 = &mut (*_2)[_3]
+    _6 = ptr_to_ptr(copy _5) as *u8
+    _7 = call const fn @_gopp_each(copy _6, copy _4, const 40: u64, const fn @_GPTdIN4mainE3BoxrE) -> [return: bb1, unwind: continue]
+  bb1:
+    _8 = call const fn @_gopp_slice_free(copy _1) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
+fn _GPTdSi(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]i64
+  let _3: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]i64
+    _3 = call const fn @_gopp_slice_free(copy _1) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdSr(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]string
+  let _3: u64
+  let _4: u64
+  let _5: *string
+  let _6: *u8
+  let _7: ()
+  let _8: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]string
+    _3 = const zero: u64
+    _4 = len((*_2))
+    _5 = &mut (*_2)[_3]
+    _6 = ptr_to_ptr(copy _5) as *u8
+    _7 = call const fn @_gopp_each(copy _6, copy _4, const 24: u64, const fn @_GPTdr) -> [return: bb1, unwind: continue]
+  bb1:
+    _8 = call const fn @_gopp_slice_free(copy _1) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
+fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *string
+  let _3: bool
+  let _4: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *string
+    _3 = ne(copy (*_2).2, const zero: *u8)
+    switch copy _3 [0: bb2, otherwise: bb1]
+  bb1:
+    _4 = call const fn @_gopp_string_release(copy (*_2)) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
+declare fn _gopp_print_bool(_1: bool) -> () [c, external]
+
+declare fn _gopp_print_space() -> () [c, external]
+
+declare fn _gopp_print_int(_1: i64) -> () [c, external]
+
+declare fn _gopp_print_newline() -> () [c, external]
+
+declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
+
+declare fn _gopp_each(_1: *u8, _2: u64, _3: u64, _4: fn "C"(*u8) -> ()) -> () [c, external]
+
+declare fn _gopp_slice_free(_1: *u8) -> () [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]

@@ -128,7 +128,7 @@ func (a Vec2) Div(k float64) Vec2 { return a }
 @Operator
 func (a Vec2) Neg() Vec2 { return a }
 
-type W[T any] struct{ v T }
+type W[T Clone] struct{ v T }
 
 @Operator
 func (a W[T]) Add(b T) W[T] { return a }

@@ -446,13 +446,8 @@ impl FuncCx<'_, '_> {
             let method = methods.iter().find(|method| method.name == name)?;
             return Some((method.sig, true));
         }
-        match &*types.get(ty) {
-            CheckedType::Named { id, .. } => {
-                let method = shared.methods.get(&(*id, name))?;
-                Some((method.sig, false))
-            }
-            _ => None,
-        }
+        let method = shared.method(ty, name)?;
+        Some((method.sig, false))
     }
 
     /// The method value `x.m`, for a place of the type `ty` (CLO-5):
@@ -629,11 +624,9 @@ impl FuncCx<'_, '_> {
             return Ok(self.placeholder(span, ty, "a method as a value"));
         };
         let holder = selection.holder;
-        let method = match &*types.get(holder) {
-            CheckedType::Named { id, .. } if selection.path.is_empty() => {
-                shared.methods.get(&(*id, sel.name))
-            }
-            _ => None,
+        let method = match selection.path.is_empty() {
+            true => shared.method(holder, sel.name),
+            false => None,
         };
         let Some(method) = method else {
             let what = "a method of an interface or of an embedded type as a function";
@@ -688,10 +681,7 @@ impl FuncCx<'_, '_> {
         let byte = types.int(8, false);
         let mut params = vec![types.ptr(byte)];
         if let Some(pointer) = first {
-            let receiver = match &*shared.types.get(ty) {
-                CheckedType::Named { id, .. } => shared.methods.get(&(*id, name)),
-                _ => None,
-            };
+            let receiver = shared.method(ty, name);
             let Some(receiver) = receiver.map(|method| method.receiver) else {
                 return Err("a method that its type does not have");
             };
