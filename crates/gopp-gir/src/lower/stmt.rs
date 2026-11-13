@@ -295,11 +295,7 @@ impl FuncCx<'_, '_> {
             }
             // The elements of the slice as it is when the loop starts:
             // the body may write them, and may not grow the slice.
-            Type::Slice(of) => {
-                if named && alias.is_none() && !self.flat(of) {
-                    self.unsupported(span, "a copy of elements that hold a slice");
-                    return self.close_scope(span);
-                }
+            Type::Slice(_) => {
                 let mut mode = PlaceMode::default();
                 let place = self.place(x, &mut mode)?;
                 let place = self.through(place, span, &mut mode)?;

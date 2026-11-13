@@ -17,9 +17,9 @@ func made() ([]int, map[string]int) {
 }
 
 // A slice and a map are values with one owner, also in a Go file: an
-// assignment and a call give a copy, and a write to a nil map makes the
-// map. Go prints "100 2 2", "7 4" and then ends with "assignment to
-// entry in nil map".
+// assignment, a call and a range variable give a copy, and a write to a
+// nil map makes the map. Go prints "100 2 2", "7 4", "-1 -1 9" and then
+// ends with "assignment to entry in nil map".
 func main() {
 	rows, names := made()
 	fill(rows, names)
@@ -31,6 +31,16 @@ func main() {
 	count["two"] = 2
 	count["three"] = 3
 	println(rows[0], len(names))
+
+	grid := [][]int{{1, 2}, {3}}
+	for _, row := range grid {
+		row[0] = -1
+	}
+	lists := map[string][]int{"a": {5}}
+	for _, list := range lists {
+		list[0] = 9
+	}
+	println(grid[0][0], grid[1][0], lists["a"][0])
 
 	var none map[string]int
 	none["made"] = 1

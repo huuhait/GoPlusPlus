@@ -208,6 +208,11 @@ impl FuncCx<'_, '_> {
                 let part = read.as_ref().map(|read| read[at].clone());
                 values.push(match (part, wanted) {
                     (Some(part), None) => Rvalue::Use(part),
+                    // The value is the new owner's: a copy, if the
+                    // checker says so.
+                    (Some(part), Some(ty)) if self.b.operand_ty(&part) == ty && at == 0 => {
+                        self.given(*call, ty, Rvalue::Use(part))?
+                    }
                     (Some(part), Some(ty)) if self.b.operand_ty(&part) == ty => Rvalue::Use(part),
                     (Some(_), Some(ty)) => {
                         self.placeholder(span, ty, "a value whose type is not known")

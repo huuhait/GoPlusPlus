@@ -138,10 +138,20 @@ impl FuncCx<'_, '_> {
             (self.kind(have), self.kind(wanted)),
             (Type::Int { .. }, Type::Int { .. })
         );
-        let value = match have != wanted && integers {
+        let mut value = match have != wanted && integers {
             true => Rvalue::Cast(CastKind::IntToInt, value, wanted),
             false => Rvalue::Use(value),
         };
+        // An element whose copy is more than its bytes. In a Go++ file
+        // the variable is only read, so it needs no copy of its own
+        // (RNG-1); a Go file may write it.
+        if !self.flat(wanted) && self.source.dialect() == gopp_span::Dialect::Go {
+            let checked = match &dest {
+                Dest::New(local, _) => Some(self.body.locals[local.0 as usize].ty),
+                _ => self.checked_as(left, wanted),
+            };
+            value = self.cloned_value(self.tree.exprs[left].span, checked, value)?;
+        }
         self.put(dest, value)
     }
 

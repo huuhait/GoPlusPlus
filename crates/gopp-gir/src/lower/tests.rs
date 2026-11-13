@@ -656,32 +656,32 @@ func walk(names []string) int {
 }
 
 #[test]
-fn a_value_that_holds_a_slice_in_another_value_is_not_copied_yet() {
-    let (_, messages) = lowered_with(
-        &[(
-            "a.gopp",
-            "package main
+fn a_value_that_holds_slices_is_copied_by_the_glue_of_its_type() {
+    insta::assert_snapshot!(gir("package main
 
-type Table struct{ rows []int }
+type Table struct {
+	name string
+	rows []int
+	seen map[string][]int
+}
 
-func copies(t Table, grid [][]int) int {
+type Tree struct {
+	kids []Tree
+	last Option[[2][]int]
+}
+
+func copies(t Table, grid [][]int, tree Tree) int {
 	u := t
 	inner := grid
 	part := grid[1:]
-	return len(u.rows) + len(inner) + len(part)
+	grown := append(inner, part...)
+	twig := tree
+	for _, row := range grid {
+		grown = append(grown, row)
+	}
+	return len(u.rows) + len(grown) + len(twig.kids) + copy(&inner, grown)
 }
-",
-        )],
-        usize::MAX,
-    );
-    assert_eq!(
-        messages,
-        [
-            "a.gopp:6:7: not supported yet: a copy of a value that holds a slice or a map in another value",
-            "a.gopp:7:11: not supported yet: a copy of a value that holds a slice or a map in another value",
-            "a.gopp:8:10: not supported yet: a copy of elements that hold a slice",
-        ]
-    );
+"));
 }
 
 #[test]
@@ -799,7 +799,7 @@ func all(xs *[]int) (*[]int, int, *[]int) {
 }
 
 #[test]
-fn a_map_whose_keys_or_values_need_a_function_is_not_supported_yet() {
+fn a_map_whose_keys_need_a_function_is_not_supported_yet() {
     let (_, messages) = lowered_with(
         &[(
             "a.gopp",
@@ -836,15 +836,12 @@ func maps() int {
         usize::MAX,
     );
     let keys = "not supported yet: a map whose keys are compared by a function";
-    let values = "not supported yet: a map whose values hold a slice or a map";
     assert_eq!(
         messages,
         [
             format!("a.gopp:21:7: {keys}"),
             format!("a.gopp:22:7: {keys}"),
             format!("a.gopp:23:7: {keys}"),
-            format!("a.gopp:24:7: {values}"),
-            format!("a.gopp:25:7: {values}"),
         ]
     );
 }
@@ -934,8 +931,11 @@ fn many_functions(count: usize) -> String {
         text += &format!(
             "
 func f{at}(n int, p Pair) (int, string) {{
-	type Local struct{{ v int{bits} }}
-	l := Local{{{at} % 100}}
+	type Local struct {{
+		v    int{bits}
+		rows []int
+	}}
+	l := Local{{v: {at} % 100}}
 	both := struct {{
 		l Local
 		p *Pair
@@ -1104,6 +1104,37 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
                 .replace("ys", &format!("y{at}")))
             .collect();
         steps_of(&function(&format!("\tvar xs []int\n{grown}")))
+    });
+    // Values in values: slices of slices, a struct of many slices, and
+    // many types that each hold the one before, all copied by glue.
+    assert_near_linear(&sizes, |n| {
+        let deep = format!("{}int", "[]".repeat(n));
+        steps_of(&format!(
+            "package main\n\nfunc f(xs {deep}) int {{\n\tys := xs\n\treturn len(ys)\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let fields: String = (0..n).map(|at| format!("\tf{at} []int\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype Wide struct {{\n{fields}}}\n\n\
+             func f(w Wide) int {{\n\tv := w\n\treturn len(v.f0)\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (1..n)
+            .map(|at| {
+                format!(
+                    "type T{at} struct {{\n\tinner []T{}\n\tm map[int]T{}\n}}\n\n",
+                    at - 1,
+                    at - 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
+             func f(t T{}) int {{\n\tu := t\n\treturn len(u.inner)\n}}\n",
+            n - 1
+        ))
     });
     // Functions that pass the place of a view on to the next, and make
     // views in it.

@@ -30,8 +30,8 @@ Go++ calling Go++ uses an internal register-rich convention decided in `crates/g
 
 | Callee | Convention |
 |---|---|
-| Go++ function, method, itab thunk (`_GPTI...`), type-descriptor / map `eq` and `hash` glue, or pointer of a Go++ `Func` type | `CallConv::Go` (`__attribute__((swiftcall))` on `amd64`/`arm64`; C fallback on `riscv64`/`wasm32`) |
-| `@Extern("C")` function, libc helper, `@Export("C")` thunk, `_GPTC...` callback wrapper, or program entry `main` | `CallConv::C` (standard C23 prototype, [c-abi.md](c-abi.md)) |
+| Go++ function, method, itab thunk (`_GPTI...`), or pointer of a Go++ `Func` type | `CallConv::Go` (`__attribute__((swiftcall))` on `amd64`/`arm64`; C fallback on `riscv64`/`wasm32`) |
+| `@Extern("C")` function, libc helper, `@Export("C")` thunk, `_GPTC...` callback wrapper, program entry `main`, or the glue of a type (`_GPTc...`: the runtime calls it) | `CallConv::C` (standard C23 prototype, [c-abi.md](c-abi.md)) |
 | Indirect C `Func` pointer (`fn "C"`, including [ADR-0029](../adr/0029-slice-and-map-allocator-word.md) allocator table entries) | `CallConv::C` (`V076`: scalars only until `P07.08`) |
 
 After GIR lowering, `check_calls` verifies that every direct call matches its callee's `CallConv` and that every function stored in static data (itabs, method tables, descriptors) carries `CallConv::Go`.

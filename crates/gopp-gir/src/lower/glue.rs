@@ -1,0 +1,314 @@
+//! The functions that the compiler makes for a type (gir.md §7). The
+//! clone glue of a type makes the value at an address a copy of its
+//! own: a slice gets a buffer of its own, a map a table of its own, and
+//! what holds such values has each of them copied. A function asks for
+//! the glue of a type by its symbol; the glue of a package is made
+//! once, after its functions are lowered, so that the module does not
+//! depend on which function asked first.
+
+use gopp_mangle::{Entity, symbol_of};
+use gopp_sema::types::{CopyRule, Type as CheckedType, TypeId as CheckedTypeId};
+use gopp_span::Span as SourceSpan;
+use gopp_syntax::ast::ExprId;
+
+use super::func::{Built, FuncCx, deeper};
+use crate::{
+    CallConv, CastKind, Constant, ConstantKind, FuncId, FuncType, Operand, Place, Rvalue, Type,
+    TypeId, TypeInterner, UnwindAction,
+};
+
+/// How the value of a type is made a copy of its own.
+enum Cloned {
+    /// A buffer of its own for elements of the type; then each element
+    /// by its own glue, if its copy is more than its bytes.
+    Slice(TypeId, Option<CheckedTypeId>),
+    /// A table of its own.
+    Map,
+    /// Each of these fields by its own glue.
+    Fields(Vec<(u32, CheckedTypeId)>),
+    /// Each of so many elements of the type by its glue.
+    Elements(u64, TypeId, CheckedTypeId),
+    /// What an option holds, if it is set.
+    Held(CheckedTypeId),
+}
+
+/// The type of every clone glue: it takes the address of the value and
+/// is called as a function of C, also by the runtime.
+pub(super) fn sig(types: &mut TypeInterner) -> TypeId {
+    let byte = types.int(8, false);
+    let bytes = types.ptr(byte);
+    types.intern(Type::Func(FuncType {
+        params: [bytes].into(),
+        ret: TypeInterner::UNIT,
+        has_env: false,
+        cc: CallConv::C,
+    }))
+}
+
+impl FuncCx<'_, '_> {
+    pub fn glue_sig(&mut self) -> TypeId {
+        sig(self.b.types())
+    }
+
+    fn cloned(&mut self, ty: CheckedTypeId) -> Result<Cloned, &'static str> {
+        let shared = self.shared;
+        let types = shared.types;
+        match types.copy_rule(ty) {
+            Some(CopyRule::Elements | CopyRule::Parts) => {}
+            Some(CopyRule::Method) => return Err("a copy that a `Clone` method makes"),
+            _ => return Err("a copy of a value of this type"),
+        }
+        let lower = |this: &mut Self, part| this.memo.lower_type(shared, this.b.types(), part);
+        let kind = types.get(types.underlying(ty));
+        Ok(match &*kind {
+            CheckedType::Slice(elem) => {
+                let of = lower(self, *elem)?;
+                Cloned::Slice(of, (!self.flat(of)).then_some(*elem))
+            }
+            CheckedType::Map { .. } => Cloned::Map,
+            CheckedType::Struct(fields) => {
+                let mut parts = Vec::new();
+                for (at, field) in fields.iter().enumerate() {
+                    let of = lower(self, field.ty)?;
+                    if !self.flat(of) {
+                        parts.push((at as u32, field.ty));
+                    }
+                }
+                Cloned::Fields(parts)
+            }
+            CheckedType::Array { len, elem } => Cloned::Elements(*len, lower(self, *elem)?, *elem),
+            CheckedType::Option(held) => Cloned::Held(*held),
+            _ => return Err("a copy of a value of this type"),
+        })
+    }
+
+    /// The clone glue of the type, declared in the module of the run
+    /// and asked of the package; or why the type has none yet. Only a
+    /// type whose copy is more than its bytes has one.
+    pub fn clone_glue(&mut self, ty: CheckedTypeId) -> Built<Result<FuncId, &'static str>> {
+        if let Some(&known) = self.memo.clone_of.get(&ty) {
+            return Ok(known);
+        }
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, Entity::CloneGlue(ty)) else {
+            let none = Err("a copy of a value of a type without a symbol");
+            self.memo.clone_of.insert(ty, none);
+            return Ok(none);
+        };
+        let sig = self.glue_sig();
+        let glue = self.function_named(&symbol, sig)?;
+        // Known before its parts are: a type may hold itself in a slice.
+        self.memo.clone_of.insert(ty, Ok(glue));
+        // The parts that have glue of their own, which this one calls.
+        let parts = match self.cloned(ty) {
+            Ok(Cloned::Slice(_, each)) => Ok(each.into_iter().collect()),
+            Ok(Cloned::Map) => self.map_of_type(ty).map(|_| Vec::new()),
+            Ok(Cloned::Fields(fields)) => Ok(fields.iter().map(|&(_, part)| part).collect()),
+            Ok(Cloned::Elements(_, _, part) | Cloned::Held(part)) => Ok(vec![part]),
+            Err(what) => Err(what),
+        };
+        let mut made = parts.as_ref().map(|_| glue).map_err(|&what| what);
+        for part in parts.unwrap_or_default() {
+            if let Err(what) = deeper(|| self.clone_glue(part))? {
+                made = Err(what);
+            }
+        }
+        match made {
+            Ok(_) => self.memo.clones.push((symbol, ty)),
+            Err(_) => drop(self.memo.clone_of.insert(ty, made)),
+        }
+        Ok(made)
+    }
+
+    /// The type of the checker that the expression has where its value
+    /// is of the type `ty`: its own, or what it points to if it is read
+    /// through a pointer.
+    pub fn checked_as(&mut self, expr: ExprId, ty: TypeId) -> Option<CheckedTypeId> {
+        let types = self.shared.types;
+        let mut checked = types.default_type(self.body.types.get(&expr)?.ty);
+        loop {
+            self.memo.steps += 1;
+            let lowered = self.memo.lower_type(self.shared, self.b.types(), checked);
+            if lowered == Ok(ty) {
+                return Some(checked);
+            }
+            checked = match &*types.get(types.underlying(checked)) {
+                CheckedType::Pointer(to) => *to,
+                _ => return None,
+            };
+        }
+    }
+
+    /// The type of the elements of a slice or an array type.
+    pub fn element_of(&self, ty: CheckedTypeId) -> Option<CheckedTypeId> {
+        let types = self.shared.types;
+        match &*types.get(types.underlying(ty)) {
+            CheckedType::Slice(elem) | CheckedType::Array { elem, .. } => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// The value as a copy that its new owner has for itself, made by
+    /// the glue of its type `checked`.
+    pub fn cloned_value(
+        &mut self,
+        span: SourceSpan,
+        checked: Option<CheckedTypeId>,
+        value: Rvalue,
+    ) -> Built<Rvalue> {
+        let copy = self.slot_of(value)?;
+        let glue = match checked {
+            Some(checked) => self.clone_glue(checked)?,
+            None => Err("a copy of a value whose type is not known"),
+        };
+        match glue {
+            Ok(glue) => {
+                let at = self.record(copy.clone())?;
+                self.call_glue(glue, at)?;
+            }
+            Err(what) => self.unsupported(span, what),
+        }
+        Ok(Rvalue::Use(Operand::Copy(copy)))
+    }
+
+    /// Makes each of `count` elements from `first` on a copy of its
+    /// own, by the glue of the type `checked` of an element.
+    pub fn clone_each(
+        &mut self,
+        span: SourceSpan,
+        first: Place,
+        count: Operand,
+        of: TypeId,
+        checked: Option<CheckedTypeId>,
+    ) -> Built {
+        let glue = match checked {
+            Some(checked) => self.clone_glue(checked)?,
+            None => Err("a copy of a value whose type is not known"),
+        };
+        match glue {
+            Ok(glue) => self.each(first, count, of, glue),
+            Err(what) => {
+                self.unsupported(span, what);
+                Ok(())
+            }
+        }
+    }
+
+    fn call_glue(&mut self, glue: FuncId, at: Operand) -> Built {
+        let ty = self.glue_sig();
+        let kind = ConstantKind::Func(glue);
+        let callee = Operand::Const(Constant { kind, ty });
+        let nothing = Place::local(self.b.temp(TypeInterner::UNIT));
+        let next = self.b.new_block();
+        let unwind = UnwindAction::Continue;
+        self.b.call(callee, vec![at], nothing, Some(next), unwind)?;
+        self.b.switch_to(next);
+        Ok(())
+    }
+
+    /// The runtime calls the glue for each of `count` elements of the
+    /// type `of` from `first` on.
+    fn each(&mut self, first: Place, count: Operand, of: TypeId, glue: FuncId) -> Built {
+        let word = self.b.types().int(64, false);
+        let layout = self.b.types().layout(of, self.shared.layout);
+        let size = self
+            .b
+            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+        let sig = self.glue_sig();
+        let kind = ConstantKind::Func(glue);
+        let glue = Operand::Const(Constant { kind, ty: sig });
+        let params = [self.bytes_ty(), word, word, sig];
+        let args = vec![self.record(first)?, count, size, glue];
+        self.runtime_call("_gopp_each", &params, args)
+    }
+
+    /// The body of the clone glue of the type: the value at the address
+    /// that the function is given becomes a copy of its own.
+    pub fn clone_body(&mut self, ty: CheckedTypeId) -> Built<Result<(), &'static str>> {
+        let entry = self.b.new_block();
+        self.b.switch_to(entry);
+        let shared = self.shared;
+        let lowered = match self.memo.lower_type(shared, self.b.types(), ty) {
+            Ok(lowered) => lowered,
+            Err(what) => return Ok(Err(what)),
+        };
+        let how = match self.cloned(ty) {
+            Ok(how) => how,
+            Err(what) => return Ok(Err(what)),
+        };
+        let given = Operand::Copy(Place::local(self.b.param(0)));
+        let to = self.b.types().ptr(lowered);
+        let typed = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given.clone(), to))?;
+        let value = self.b.deref(&Place::local(typed))?;
+        let word = self.b.types().int(64, false);
+        match how {
+            Cloned::Slice(of, each) => {
+                let layout = self.b.types().layout(of, shared.layout);
+                let size = self
+                    .b
+                    .const_int(word, layout.map_or(0, |layout| layout.size))?;
+                let params = [self.bytes_ty(), word];
+                self.runtime_call("_gopp_slice_copy", &params, vec![given, size])?;
+                if let Some(part) = each {
+                    let glue = match self.clone_glue(part)? {
+                        Ok(glue) => glue,
+                        Err(what) => return Ok(Err(what)),
+                    };
+                    let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                    let first = self.b.index(&value, none)?;
+                    let count = self.b.assign_temp(Rvalue::Len(value))?;
+                    let count = Operand::Copy(Place::local(count));
+                    self.each(first, count, of, glue)?;
+                }
+            }
+            Cloned::Map => {
+                let of = match self.map_of_type(ty) {
+                    Ok(of) => of,
+                    Err(what) => return Ok(Err(what)),
+                };
+                let copy = self.map_copied(lowered, &of, Operand::Copy(value.clone()))?;
+                self.b.assign(value, Rvalue::Use(copy))?;
+            }
+            Cloned::Fields(fields) => {
+                for (at, part) in fields {
+                    let glue = match self.clone_glue(part)? {
+                        Ok(glue) => glue,
+                        Err(what) => return Ok(Err(what)),
+                    };
+                    let field = self.b.field(&value, at)?;
+                    let at = self.record(field)?;
+                    self.call_glue(glue, at)?;
+                }
+            }
+            Cloned::Elements(count, of, part) => {
+                let glue = match self.clone_glue(part)? {
+                    Ok(glue) => glue,
+                    Err(what) => return Ok(Err(what)),
+                };
+                if count > 0 {
+                    let first = self.b.const_index(&value, 0)?;
+                    let count = self.b.const_int(word, count)?;
+                    self.each(first, count, of, glue)?;
+                }
+            }
+            Cloned::Held(part) => {
+                let glue = match self.clone_glue(part)? {
+                    Ok(glue) => glue,
+                    Err(what) => return Ok(Err(what)),
+                };
+                let [held, done] = [(); 2].map(|()| self.b.new_block());
+                let set = Operand::Copy(self.b.field(&value, 1)?);
+                self.b.switch(set, vec![(0, done)], held)?;
+                self.b.switch_to(held);
+                let inside = self.b.field(&value, 0)?;
+                let at = self.record(inside)?;
+                self.call_glue(glue, at)?;
+                self.b.goto(done)?;
+                self.b.switch_to(done);
+            }
+        }
+        self.b.ret()?;
+        Ok(Ok(()))
+    }
+}

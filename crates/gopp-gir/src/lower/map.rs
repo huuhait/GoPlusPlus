@@ -12,7 +12,8 @@ use super::Shared;
 use super::expr::PlaceMode;
 use super::func::{Built, FuncCx, Target};
 use crate::{
-    AggKind, BinOp, CastKind, Mutability, Operand, Place, Rvalue, Type, TypeId, TypeInterner,
+    AggKind, BinOp, CastKind, Constant, ConstantKind, Mutability, Operand, Place, Rvalue, Type,
+    TypeId, TypeInterner,
 };
 
 /// The keys and the values of a map type, and what the runtime is told
@@ -23,6 +24,8 @@ pub(crate) struct MapOf {
     pub key: TypeId,
     pub value: TypeId,
     shape: [u64; 5],
+    /// The clone glue of a value whose copy is more than its bytes.
+    copy: Option<crate::FuncId>,
 }
 
 /// How the runtime hashes and compares keys: by their bytes, as
@@ -71,25 +74,33 @@ impl FuncCx<'_, '_> {
         if let CheckedType::Pointer(to) = &*types.get(ty) {
             ty = types.underlying(*to);
         }
-        let known = match self.memo.maps.get(&ty) {
-            Some(&known) => known,
-            None => {
-                let kind = types.get(ty);
-                let CheckedType::Map { key, value } = &*kind else {
-                    return None;
-                };
-                let known = self.map_shape(*key, *value);
-                self.memo.maps.insert(ty, known);
-                known
-            }
-        };
-        match known {
+        if !matches!(&*types.get(ty), CheckedType::Map { .. }) {
+            return None;
+        }
+        match self.map_of_type(ty) {
             Ok(of) => Some(of),
             Err(what) => {
                 self.unsupported(self.tree.exprs[map].span, what);
                 None
             }
         }
+    }
+
+    /// What a map type has for keys and values, or why it is not
+    /// supported yet.
+    pub fn map_of_type(&mut self, ty: CheckedTypeId) -> Result<MapOf, &'static str> {
+        let types = self.shared.types;
+        let ty = types.underlying(ty);
+        if let Some(&known) = self.memo.maps.get(&ty) {
+            return known;
+        }
+        let kind = types.get(ty);
+        let CheckedType::Map { key, value } = &*kind else {
+            return Err("a map of this type");
+        };
+        let known = self.map_shape(*key, *value);
+        self.memo.maps.insert(ty, known);
+        known
     }
 
     fn map_shape(
@@ -107,9 +118,16 @@ impl FuncCx<'_, '_> {
             _ if self.equal_by_bytes(key, key_ty) => KEY_BYTES,
             _ => return Err("a map whose keys are compared by a function"),
         };
-        if !self.flat(value_ty) {
-            return Err("a map whose values hold a slice or a map");
-        }
+        // A value whose copy is more than its bytes is copied by its
+        // glue when the map is.
+        let copy = match self.flat(value_ty) {
+            true => None,
+            false => match self.clone_glue(value) {
+                Ok(Ok(glue)) => Some(glue),
+                Ok(Err(what)) => return Err(what),
+                Err(_) => return Err("a map whose values cannot be copied"),
+            },
+        };
         let mut layout = |ty: TypeId| {
             let layout = self.b.types().layout(ty, shared.layout);
             layout.map_or((0, 1), |layout| (layout.size, layout.align))
@@ -124,6 +142,7 @@ impl FuncCx<'_, '_> {
             key: key_ty,
             value: value_ty,
             shape: [key_size, value_size, value_offset, slot, kind],
+            copy,
         })
     }
 
@@ -167,6 +186,12 @@ impl FuncCx<'_, '_> {
         for number in of.shape {
             parts.push(self.b.const_int(wide, number)?);
         }
+        let ty = self.glue_sig();
+        let kind = match of.copy {
+            Some(glue) => ConstantKind::Func(glue),
+            None => ConstantKind::Null,
+        };
+        parts.push(Operand::Const(Constant { kind, ty }));
         let record = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;
         self.record(record)
     }
@@ -323,10 +348,15 @@ impl FuncCx<'_, '_> {
             return Ok(value);
         };
         let map = self.operand_of(value)?;
-        let shape = self.shape(&of)?;
+        Ok(Rvalue::Use(self.map_copied(ty, &of, map)?))
+    }
+
+    /// A map of its own with the entries of `map`, which is of the
+    /// type `ty`.
+    pub fn map_copied(&mut self, ty: TypeId, of: &MapOf, map: Operand) -> Built<Operand> {
+        let shape = self.shape(of)?;
         let params = [ty, self.bytes_ty()];
-        let copy = self.runtime("_gopp_map_copy", &params, ty, vec![map, shape])?;
-        Ok(Rvalue::Use(copy))
+        self.runtime("_gopp_map_copy", &params, ty, vec![map, shape])
     }
 
     /// `for key, value := range m`. The runtime walks the map from a

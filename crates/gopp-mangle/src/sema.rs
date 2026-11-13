@@ -35,6 +35,8 @@ pub enum Entity<'a> {
     InitFunc(&'a Package, u64),
     /// The type descriptor.
     TypeInfo(TypeId),
+    /// The function that makes a value of the type a copy of its own.
+    CloneGlue(TypeId),
 }
 
 /// For a type that is declared in a function: the function, and which
@@ -217,6 +219,7 @@ impl<'a> Namer<'a> {
                 ordinal,
             },
             Entity::TypeInfo(ty) => Node::Wrap(Wrap::TypeInfo, self.ty(ty)?),
+            Entity::CloneGlue(ty) => Node::Wrap(Wrap::CloneGlue, self.ty(ty)?),
         };
         self.add(node)
     }

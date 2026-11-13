@@ -142,7 +142,8 @@ impl FuncCx<'_, '_> {
     /// The value of the expression for its new owner. A place whose
     /// value the checker says is copied gets the copy of its type:
     /// nothing for a string, a new buffer for a slice, a new table for a
-    /// map.
+    /// map, and what the glue of its type does for a value that holds
+    /// such values.
     pub fn given(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
         let inner = Shared::unparen(self.tree, expr);
         let copied = self.body.var_modes.get(&inner) == Some(&Transfer::Copy);
@@ -161,11 +162,8 @@ impl FuncCx<'_, '_> {
             }
             Type::Ptr(_) if self.is_map(ty) => self.map_copy(expr, ty, value),
             _ => {
-                self.unsupported(
-                    span,
-                    "a copy of a value that holds a slice or a map in another value",
-                );
-                Ok(value)
+                let checked = self.checked_as(expr, ty);
+                self.cloned_value(span, checked, value)
             }
         }
     }
@@ -259,9 +257,24 @@ impl FuncCx<'_, '_> {
                 return Ok(Rvalue::Use(Operand::Copy(own)));
             };
             let from = self.header(*from, span)?;
+            // Where the elements that come start, and how many come: for
+            // elements whose copy is more than their bytes.
+            let lens = match self.flat(of) {
+                true => None,
+                false => {
+                    let before = self.b.assign_temp(Rvalue::Len(own.clone()))?;
+                    Some((before, self.b.assign_temp(Rvalue::Len(from.clone()))?))
+                }
+            };
             let args = vec![self.record(own.clone())?, self.record(from)?, size, plain];
             let params = [bytes, bytes, word, bool];
             self.runtime_call("_gopp_slice_append", &params, args)?;
+            if let Some((before, added)) = lens {
+                let new = self.b.index(&own, before)?;
+                let checked = self.checked_as(first, ty);
+                let checked = checked.and_then(|slice| self.element_of(slice));
+                self.clone_each(span, new, slot(added), of, checked)?;
+            }
             return Ok(Rvalue::Use(Operand::Copy(own)));
         }
         let wanted = vec![Some(of); more.len()];
@@ -289,10 +302,11 @@ impl FuncCx<'_, '_> {
     /// `copy(&to, from)`, and `copy(to, from)` of a Go file: as many
     /// elements as both have are written to those of `to` itself.
     pub fn copy_into(&mut self, span: SourceSpan, ty: TypeId, args: &[ExprId]) -> Built<Rvalue> {
-        let [to, from] = args else {
+        let [args_to, from] = args else {
             return Ok(Rvalue::Use(self.zero(ty)));
         };
-        let to = self.header(*to, span)?;
+        let args_to = *args_to;
+        let to = self.header(args_to, span)?;
         let Type::Slice(of) = self.kind(self.b.place_ty(&to)) else {
             return Ok(Rvalue::Use(self.zero(ty)));
         };
@@ -300,8 +314,16 @@ impl FuncCx<'_, '_> {
         let [size, _] = self.element_facts(of)?;
         let bytes = self.bytes_ty();
         let word = self.b.operand_ty(&size);
-        let args = vec![self.record(to)?, self.record(from)?, size];
+        let args = vec![self.record(to.clone())?, self.record(from)?, size];
         let copied = self.runtime("_gopp_slice_copy_into", &[bytes, bytes, word], word, args)?;
+        if !self.flat(of) {
+            let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+            let first = self.b.index(&to, none)?;
+            let slice = self.b.place_ty(&to);
+            let checked = self.checked_as(args_to, slice);
+            let checked = checked.and_then(|slice| self.element_of(slice));
+            self.clone_each(span, first, copied.clone(), of, checked)?;
+        }
         Ok(match self.kind(ty) {
             Type::Int { .. } if ty != word => Rvalue::Cast(CastKind::IntToInt, copied, ty),
             _ => Rvalue::Use(copied),
@@ -406,10 +428,6 @@ impl FuncCx<'_, '_> {
             Type::Ptr(to) => to,
             _ => ty,
         };
-        if part == Part::Value && !self.flat(of) {
-            let what = "a copy of elements that hold a slice";
-            return Ok(self.placeholder(span, ty, what));
-        }
         let [lo, hi, max] = bounds;
         let lo = match lo {
             Some(lo) => self.index_slots(lo, span)?,
@@ -466,6 +484,10 @@ impl FuncCx<'_, '_> {
         match part {
             Part::InPlace => Ok(Rvalue::Use(Operand::Copy(record))),
             Part::View => Ok(Rvalue::AddrOf(record, Mutability::Mut)),
+            Part::Value if !self.flat(of) => {
+                let checked = self.checked_as(expr, ty);
+                self.cloned_value(span, checked, Rvalue::Use(Operand::Copy(record)))
+            }
             Part::Value => {
                 let [size, _] = self.element_facts(of)?;
                 let params = [self.bytes_ty(), self.b.operand_ty(&size)];

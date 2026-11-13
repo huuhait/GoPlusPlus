@@ -218,3 +218,12 @@ void _gopp_runes_from_string(void *slice, gopp_string text) {
   }
   *(gopp_slice *)slice = runes;
 }
+
+// Calls `each` with the address of every one of `count` values of
+// `size` bytes from `first` on: the elements of a slice or an array,
+// each of which is made a copy of its own.
+void _gopp_each(void *first, uint64_t count, uint64_t size, void (*each)(uint8_t *value)) {
+  for (uint8_t *at = first; count > 0; count--, at += size) {
+    each(at);
+  }
+}

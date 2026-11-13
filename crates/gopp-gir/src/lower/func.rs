@@ -141,14 +141,72 @@ pub(super) fn lower_function<'a>(
         col: at.column,
     };
     let built = FuncBuilder::new(module, &job.symbol, sig, Linkage::External, loc).and_then(|b| {
-        let mut cx = FuncCx {
+        let body = &shared.package.files[job.file as usize].bodies[job.at];
+        let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, body);
+        cx.function(receiver.as_ref(), *ty, block)?;
+        cx.b.drop_unreached();
+        cx.b.finish()
+    });
+    if let Err(error) = built {
+        let message = format!("{} could not be lowered: {error}", job.symbol);
+        let diagnostic = Diagnostic::new(Code::GirVerify, name.span, message);
+        memo.diagnostics.push(diagnostic);
+    }
+}
+
+/// Adds the clone glue of the type to the module, under its symbol: one
+/// for all the packages that need it.
+pub(super) fn lower_glue<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    symbol: &str,
+    ty: CheckedTypeId,
+) {
+    let sig = super::glue::sig(&mut module.types);
+    let link = Linkage::LinkOnceOdr;
+    let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(shared, &mut *memo, b, 0, &shared.no_body);
+        let made = cx.clone_body(ty)?;
+        cx.b.drop_unreached();
+        cx.b.finish()?;
+        Ok(made)
+    });
+    // What asked for the glue saw that the type has one: a glue that
+    // is not made is a fault of the lowering.
+    let failed = match built {
+        Ok(Ok(())) => return,
+        Ok(Err(what)) => what.to_owned(),
+        Err(error) => error.to_string(),
+    };
+    let (tree, _) = shared.files[0];
+    let span = tree.decl_nodes.iter().next().map(|(_, decl)| decl.span);
+    if let Some(span) = tree.package.map(|name| name.span).or(span) {
+        let message = format!("{symbol} could not be lowered: {failed}");
+        memo.diagnostics
+            .push(Diagnostic::new(Code::GirVerify, span, message));
+    }
+}
+
+impl<'a, 'm> FuncCx<'a, 'm> {
+    /// What lowers one function of the file with the number `file`
+    /// from what the checker found in it.
+    fn new(
+        shared: &'a Shared<'a>,
+        memo: &'m mut Memo<'a>,
+        b: FuncBuilder<'m>,
+        file: u32,
+        body: &'a Body,
+    ) -> Self {
+        let (tree, source) = shared.files[file as usize];
+        Self {
             shared,
-            memo: &mut *memo,
+            memo,
             b,
             tree,
             source,
-            file: job.file,
-            body: &shared.package.files[job.file as usize].bodies[job.at],
+            file,
+            body,
             vars: FxHashMap::default(),
             scopes: Vec::new(),
             labels: FxHashMap::default(),
@@ -161,15 +219,7 @@ pub(super) fn lower_function<'a>(
             aliases: FxHashSet::default(),
             views: Vec::new(),
             outer: FxHashMap::default(),
-        };
-        cx.function(receiver.as_ref(), *ty, block)?;
-        cx.b.drop_unreached();
-        cx.b.finish()
-    });
-    if let Err(error) = built {
-        let message = format!("{} could not be lowered: {error}", job.symbol);
-        let diagnostic = Diagnostic::new(Code::GirVerify, name.span, message);
-        memo.diagnostics.push(diagnostic);
+        }
     }
 }
 

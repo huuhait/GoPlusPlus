@@ -43,8 +43,8 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
   let _30: *u8
   let _31: ()
   let _32: string
-  let _33: (u64, u64, u64, u64, u64)
-  let _34: *(u64, u64, u64, u64, u64)
+  let _33: (u64, u64, u64, u64, u64, fn "C"(*u8) -> ())
+  let _34: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> ())
   let _35: *u8
   let _36: *string
   let _37: *u8
@@ -125,7 +125,7 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
     _30 = ptr_to_ptr(copy _29) as *u8  ; a.gopp:13:25
     _31 = call const fn @_gopp_map_iter_start(copy _30, copy _27) -> [return: bb14, unwind: continue]  ; a.gopp:13:25
   bb14:
-    _33 = tuple {const 24: u64, const 8: u64, const 24: u64, const 32: u64, const 1: u64}  ; a.gopp:13:25
+    _33 = tuple {const 24: u64, const 8: u64, const 24: u64, const 32: u64, const 1: u64, const null: fn "C"(*u8) -> ()}  ; a.gopp:13:25
     _34 = &mut _33  ; a.gopp:13:25
     _35 = ptr_to_ptr(copy _34) as *u8  ; a.gopp:13:25
     _36 = &mut _32  ; a.gopp:13:25

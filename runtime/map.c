@@ -20,6 +20,9 @@ typedef struct gopp_mapinfo {
   // How a key is hashed and compared: by its bytes, as a string, or as
   // a float of 32 or 64 bits.
   uint64_t key_kind;
+  // Makes the value at the address a copy of its own; null for a value
+  // that is copied by its bytes.
+  void (*copy_value)(uint8_t *value);
 } gopp_mapinfo;
 
 enum { KEY_BYTES = 0, KEY_STRING = 1, KEY_FLOAT32 = 2, KEY_FLOAT64 = 3 };
@@ -361,6 +364,13 @@ void *_gopp_map_copy(const void *map, const void *shape) {
   copy->count = of->count;
   copy->deleted = of->deleted;
   copy->growth_left = of->growth_left;
+  if (info->copy_value) {
+    for (uint64_t group = 0; group < copy->groups; group++) {
+      for (uint64_t full = ~copy->control[group] & HIGH_BITS; full; full &= full - 1) {
+        info->copy_value(slot_of(copy, info, group, first_of(full)) + info->value_offset);
+      }
+    }
+  }
   return copy;
 }
 

@@ -8,6 +8,7 @@
 mod assign;
 mod expr;
 mod func;
+mod glue;
 mod map;
 mod merge;
 mod slice;
@@ -85,6 +86,14 @@ pub(crate) fn lower_counted(
     }
     let mut parts = vec![shared.globals()];
     parts.par_extend(cut.par_iter().map(|run| shared.run(run)));
+    // The glue that the functions ask for is made last, each once.
+    let asked: Vec<_> = parts
+        .iter_mut()
+        .flat_map(|part| part.clones.drain(..))
+        .collect();
+    if !asked.is_empty() {
+        parts.push(shared.glue(asked));
+    }
     let mut diagnostics = Vec::new();
     let mut steps = 0;
     for part in &mut parts {
@@ -165,6 +174,9 @@ pub(crate) struct Shared<'a> {
     /// For each type that a function declares: which job, and which of
     /// the types of its name there, from 0.
     locals: FxHashMap<NamedId, (usize, u64)>,
+    /// What the checker found in no function: for the glue, which is
+    /// lowered from no source.
+    no_body: Body,
 }
 
 /// A function that is called or a variable that is used, as the source
@@ -198,6 +210,8 @@ pub(crate) struct Part {
     source: merge::Source,
     diagnostics: Vec<Diagnostic>,
     steps: u64,
+    /// The clone glue that its functions ask for.
+    clones: Vec<(String, CheckedTypeId)>,
 }
 
 /// What a run keeps beside its module: what it has lowered and declared
@@ -210,6 +224,12 @@ pub(crate) struct Memo<'a> {
     pub map: Option<TypeId>,
     /// What is known of each map type that the run has used.
     pub maps: FxHashMap<CheckedTypeId, Result<map::MapOf, &'static str>>,
+    /// The clone glue of each type that the run has asked for, as it is
+    /// declared in the module of the run.
+    pub clone_of: FxHashMap<CheckedTypeId, Result<crate::FuncId, &'static str>>,
+    /// The clone glue that the package is to make: the symbol and the
+    /// type.
+    pub clones: Vec<(String, CheckedTypeId)>,
     /// The types that are being lowered: one that is met again holds
     /// itself.
     pub open: Vec<CheckedTypeId>,
@@ -237,6 +257,8 @@ impl<'a> Memo<'a> {
             types: FxHashMap::default(),
             map: None,
             maps: FxHashMap::default(),
+            clone_of: FxHashMap::default(),
+            clones: Vec::new(),
             open: Vec::new(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
@@ -271,6 +293,7 @@ impl<'a> Shared<'a> {
             jobs: Vec::new(),
             methods: FxHashMap::default(),
             locals: FxHashMap::default(),
+            no_body: Body::default(),
         };
         // The `init` functions count in the order of the names of their
         // files, then of the source.
@@ -460,6 +483,7 @@ impl<'a> Shared<'a> {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,
             steps: memo.steps,
+            clones: Vec::new(),
         }
     }
 
@@ -488,6 +512,33 @@ impl<'a> Shared<'a> {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,
             steps: memo.steps,
+            clones: memo.clones,
+        }
+    }
+
+    /// The glue that the functions of the package asked for, and what
+    /// that glue asks for itself, in a module of its own: each once, in
+    /// the order of the symbols.
+    fn glue(&self, mut asked: Vec<(String, CheckedTypeId)>) -> Part {
+        let mut module = self.module();
+        let locals = |named: NamedId| self.local(named);
+        let mut memo = Memo::new(self, &locals);
+        asked.sort();
+        let mut made = rustc_hash::FxHashSet::default();
+        let mut at = 0;
+        while at < asked.len() {
+            let (symbol, ty) = asked[at].clone();
+            at += 1;
+            if made.insert(symbol.clone()) {
+                func::lower_glue(self, &mut module, &mut memo, &symbol, ty);
+                asked.append(&mut memo.clones);
+            }
+        }
+        Part {
+            source: merge::Source::new(module),
+            diagnostics: memo.diagnostics,
+            steps: memo.steps,
+            clones: Vec::new(),
         }
     }
 

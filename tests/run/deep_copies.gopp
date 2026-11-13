@@ -1,0 +1,89 @@
+package main
+
+type table struct {
+	name  string
+	rows  []int
+	index map[string]int
+	notes [2][]string
+}
+
+type tree struct {
+	value int
+	kids  []tree
+}
+
+func grow(t table) int {
+	t.rows = append(t.rows, 99)
+	t.index["grown"] = 1
+	return len(t.rows) + len(t.index)
+}
+
+func sum(t *tree) int {
+	total := t.value
+	for _, &kid := range t.kids {
+		total += sum(&kid)
+	}
+	return total
+}
+
+// A copy of a value copies what the value holds, however deep: nothing
+// that is done to the copy is seen through the original.
+func main() {
+	first := table{"first", []int{1, 2}, map[string]int{"a": 1}, [2][]string{{"x"}, {"y", "z"}}}
+	second := first
+	second.rows[0] = 10
+	second.index["b"] = 2
+	second.notes[1][0] = "changed"
+	println(first.rows[0], len(first.index), first.notes[1][0])
+	println(second.rows[0], len(second.index), second.notes[1][0], second.name)
+	println(grow(first), len(first.rows), len(first.index))
+
+	grid := [][]int{{1, 2}, {3}}
+	other := grid
+	other[0][0] = 100
+	other = append(other, []int{7, 8, 9})
+	part := grid[1:]
+	part[0][0] = 300
+	println(grid[0][0], grid[1][0], len(grid), other[0][0], len(other), part[0][0])
+	total := 0
+	for _, row := range grid {
+		kept := row
+		kept[0] = -1
+		total += len(row) + kept[0]
+	}
+	println(total, grid[0][0], grid[1][0])
+	more := append(grid, other...)
+	more[2][0] = 5
+	println(len(more), other[0][0], more[2][0])
+	room := make([][]int, 2)
+	println(copy(&room, other), room[0][0], len(room[1]))
+	room[0][0] = 6
+	println(other[0][0], room[0][0])
+
+	lists := map[string][]int{"even": {2, 4}, "odd": {1}}
+	evens := lists["even"]
+	evens[0] = 20
+	twin := lists
+	twin["odd"] = append(twin["odd"], 3, 5)
+	println(lists["even"][0], evens[0], len(lists["odd"]), len(twin["odd"]))
+	seen := 0
+	for _, list := range lists {
+		kept := list
+		kept[0] = 0
+		seen += len(list) + kept[0]
+	}
+	println(seen, lists["even"][0], lists["odd"][0])
+	if got, ok := lists["odd"]; ok {
+		got[0] = 77
+		println(got[0], lists["odd"][0])
+	}
+
+	root := tree{1, []tree{{2, nil}, {3, []tree{{4, nil}}}}}
+	copied := root
+	copied.kids[1].kids[0].value = 40
+	println(sum(&root), sum(&copied))
+	nested := map[int]map[string][]tree{1: {"k": {root}}}
+	clone := nested
+	clone[1]["k"][0].kids[0].value = 20
+	println(sum(&nested[1]["k"][0]), sum(&clone[1]["k"][0]))
+}
