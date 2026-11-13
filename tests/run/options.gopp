@@ -1,0 +1,139 @@
+package main
+
+var ended int
+
+type Res struct {
+	id   int
+	text string
+}
+
+func (r *Res) drop() { ended++ }
+
+func (r Res) Clone() Res { return Res{r.id + 100, r.text} }
+
+type Config struct {
+	name  Option[string]
+	port  Option[int]
+	res   Option[Res]
+	point Option[[2]int]
+}
+
+func named(n string) Option[string] {
+	if n == "" {
+		return nil
+	}
+	return n + "!"
+}
+
+func port(c Config) int {
+	p := c.port
+	if p == nil {
+		return 80
+	}
+	return p + 1
+}
+
+func describe(name Option[string]) string {
+	if name != nil {
+		return "name " + name
+	}
+	return "no name"
+}
+
+func first(xs []Option[int]) int {
+	for i := range xs {
+		if v, ok := xs[i].Get(); ok {
+			return v
+		}
+	}
+	return -1
+}
+
+func resources() {
+	var r Option[Res]
+	println(r.IsNil())
+	r = Res{1, "a" + "b"}
+	s := r
+	if v, ok := s.Get(); ok {
+		println(v.id, v.text)
+	}
+	r = nil
+	println(r == nil, s != nil)
+	c := Config{res: Res{2, "c"}}
+	d := c
+	d.res = nil
+	if v, ok := c.res.Get(); ok {
+		println(v.id, d.res.IsNil())
+	}
+}
+
+type P struct{ x int }
+
+func find(xs []int, want int) Option[int] {
+	for i, x := range xs {
+		if x == want {
+			return i
+		}
+	}
+	return nil
+}
+
+func found() {
+	a := find([]int{4, 5}, 5)
+	b := find([]int{4, 5}, 9)
+	if a != nil {
+		println("found", a)
+	}
+	println(a == nil, b == nil)
+	println(a.IsNil(), b.IsNil())
+	if at, ok := a.Get(); ok {
+		println(at)
+	}
+	_, ok := b.Get()
+	println(ok)
+	var s Option[string] = "x" + "y"
+	if v, ok := s.Get(); ok {
+		println(v, !s.IsNil())
+	}
+	var p Option[*P]
+	println(p.IsNil())
+	q := P{3}
+	p = &q
+	if r, ok := p.Get(); ok {
+		println(r.x)
+	}
+}
+
+func main() {
+	a, b := named("x"), named("")
+	println(describe(a), describe(b), describe("lit"), describe(nil))
+	c := Config{name: a, port: 8080}
+	println(port(c), port(Config{}))
+	if n, ok := c.name.Get(); ok {
+		println(n, c.port != nil, c.point == nil)
+	}
+	c.point = [2]int{3, 4}
+	if p, ok := c.point.Get(); ok {
+		println(p[0] + p[1])
+	}
+	println(first([]Option[int]{nil, nil, 7, 8}), first(nil))
+	byKey := map[string]Option[int]{"a": 1, "b": nil}
+	for _, k := range []string{"a", "b", "c"} {
+		v, ok := byKey[k]
+		println(k, ok, v == nil)
+	}
+	var total Option[int]
+	for i := 0; i < 3; i++ {
+		if total == nil {
+			total = i
+			continue
+		}
+		total = total + i
+	}
+	if total != nil {
+		println(total)
+	}
+	resources()
+	println(ended)
+	found()
+}

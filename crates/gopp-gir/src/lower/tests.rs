@@ -3652,6 +3652,54 @@ func main() {
     insta::assert_snapshot!(format!("{lent}\n}}\n{dropped}\n}}\n{cloned}\n}}"));
 }
 
+// rule: OWN-P9
+#[test]
+fn an_option_of_a_value_is_the_value_and_a_flag() {
+    let text = "package main
+
+type P struct{ x int }
+
+func some(n int) Option[int] { return n }
+
+func none() Option[int] { return nil }
+
+func unset(o Option[int]) bool { return o == nil }
+
+func asked(o Option[string]) (string, bool) { return o.Get() }
+
+func address(p Option[*P]) bool { return p.IsNil() }
+
+func main() {
+	s, ok := asked(\"a\")
+	println(unset(some(1)), unset(none()), address(nil), s, ok)
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    // A value where an option is wanted is the option that is set; nil
+    // is the option that is all zero.
+    let some = body("4some");
+    assert!(some.contains(") -> ?i64 "), "{some}");
+    assert!(some.contains("?i64 {copy _1, const true}"), "{some}");
+    let none = body("4none");
+    assert!(none.contains("const zero: ?i64"), "{none}");
+    // `o == nil` reads the flag, and `Get` gives a copy of its own of
+    // what the option holds.
+    let unset = body("5unset");
+    assert!(unset.contains("not(copy _1.1)"), "{unset}");
+    let asked = body("5asked");
+    assert_eq!(asked.matches("@_GPTcr(").count(), 1, "{asked}");
+    // An option of a pointer is the pointer: it has no flag.
+    let address = body("7address");
+    assert!(address.contains("(_1: *_GPTiN4mainE1P)"), "{address}");
+    assert!(address.contains("ne(copy _1, const zero"), "{address}");
+}
+
 // rule: OWN-P8
 #[test]
 fn a_shared_value_ends_with_its_last_handle() {

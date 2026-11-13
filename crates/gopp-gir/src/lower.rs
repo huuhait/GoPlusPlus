@@ -15,6 +15,7 @@ mod glue;
 mod iface;
 mod map;
 mod merge;
+mod option;
 mod panic;
 mod slice;
 mod stmt;

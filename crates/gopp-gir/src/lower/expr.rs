@@ -246,6 +246,9 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The value of the expression, for a place of the type `ty`.
     pub fn rvalue_as(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
+        if let Some(of) = self.held_by(expr, ty) {
+            return deeper(|| self.set_option(expr, ty, of));
+        }
         if let Some(&(from, to)) = self.body.iface_conversions.get(&expr) {
             return match self.unboxed.get(&expr).copied() {
                 Some(worked) => deeper(|| self.lent_iface(expr, ty, (from, to), worked)),
@@ -1149,6 +1152,18 @@ impl<'a> FuncCx<'a, '_> {
                 _ => {}
             }
         }
+        // An option with a flag is nil when it is not set.
+        if let (BinaryOp::Eq | BinaryOp::Ne, Type::Option(_)) = (op, self.kind(left)) {
+            let nil = |operand: &Operand| {
+                let zero = ConstantKind::Zero;
+                matches!(operand, Operand::Const(constant) if constant.kind == zero)
+            };
+            match (nil(&first), nil(&second)) {
+                (false, true) => return self.nil_option(op, first),
+                (true, false) => return self.nil_option(op, second),
+                _ => {}
+            }
+        }
         // Two structs or two arrays are compared part by part.
         if let (BinaryOp::Eq | BinaryOp::Ne, Type::Struct(_) | Type::Array(..)) =
             (op, self.kind(left))
@@ -1333,6 +1348,9 @@ impl<'a> FuncCx<'a, '_> {
         if let Some(weak) = self.weak_locked(callee) {
             let made = self.weak_lock(ty, weak)?;
             return self.fresh(expr, ty, made);
+        }
+        if let Some(asked) = self.option_asked(callee) {
+            return self.option_call(expr, asked);
         }
         if let Some(method) = self.iface_method(callee) {
             return match self.iface_called(span, method, args, *spread)? {
