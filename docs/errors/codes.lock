@@ -515,3 +515,4 @@ E0509 err_own_borrowed_assign
 E0510 err_own_borrow_outlives
 E0511 note_borrowed_here
 E0512 err_own_pointer_on_heap
+E0513 err_own_stored_outlives

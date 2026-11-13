@@ -5964,10 +5964,60 @@ fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
         let close = "}\n".repeat(depth);
         format!("package p\nfunc f() {{\n{made}{open}{close}}}\n")
     };
+    // Many pointers that are stored through a pointer to what holds
+    // them and read through it, and as many stores behind a parameter.
+    let stored = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\tx{i} := T{{{i}}}\n\th{i} := H{{&x{i}}}\n\tq{i} := &h{i}\n\tq{i}.p = \
+                     &x{i}\n\tout.p = t\n\ttotal += q{i}.p.n\n"
+                )
+            })
+            .collect();
+        format!(
+            "package p\ntype T struct{{ n int }}\ntype H struct{{ p *T }}\nfunc f(out *H, t *T) \
+             int {{\n\ttotal := 0\n{each}\treturn total\n}}\n"
+        )
+    };
+    // Variables that each point to the one before, which all end
+    // together while a pointer from outside is still used; one call
+    // may give back any of them.
+    let linked = |count: usize| {
+        let each: String = (1..count)
+            .map(|i| format!("\t\tn{i} := N{{next: &n{}, v: {i}}}\n", i - 1))
+            .collect();
+        format!(
+            "package p\ntype N struct {{\n\tnext Option[*N]\n\tv int\n}}\nfunc last(n *N) *N \
+             {{ return n }}\nfunc f(keep *N) int {{\n\ttotal := 0\n\t{{\n\t\tn0 := N{{v: \
+             0}}\n{each}\t\tm := last(&n{})\n\t\ttotal = m.v\n\t}}\n\treturn total + \
+             keep.v\n}}\n",
+            count - 1
+        )
+    };
+    // Types that each point to the one before, and stores two pointers
+    // away from each variable.
+    let through = |count: usize| {
+        let types: String = (1..count)
+            .map(|i| format!("type L{i} struct {{\n\tp *L{}\n\tw *T\n}}\n", i - 1))
+            .collect();
+        let made: String = (1..count)
+            .map(|i| format!("\tl{i} := L{i}{{&l{}, &x}}\n", i - 1))
+            .collect();
+        let stores: String = (2..count).map(|i| format!("\tl{i}.p.p.w = &x\n")).collect();
+        format!(
+            "package p\ntype T struct{{ n int }}\ntype L0 struct{{ w *T }}\n{types}func f() int \
+             {{\n\tx := T{{1}}\n\tl0 := L0{{&x}}\n{made}{stores}\treturn l{}.p.w.n\n}}\n",
+            count - 1
+        )
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(wide(n)));
     linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    linear::assert_near_linear(&sizes, |n| steps(stored(n)));
+    linear::assert_near_linear(&sizes, |n| steps(linked(n)));
+    linear::assert_near_linear(&sizes, |n| steps(through(n)));
     // The parser takes no deeper nesting.
     linear::assert_near_linear(&[100, 200, 400], |n| steps(nested(n)));
     linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
@@ -6078,6 +6128,153 @@ func pair(p *Point) (*Point, bool) { return p, true }
         "a.gopp:49:7: cannot keep a *Point in a slice",
         "a.gopp:51:7: cannot keep a Local[any] in a slice",
         "a.gopp:52:17: cannot keep a Local[any] in NewShared",
+    ];
+    assert_eq!(said, expected);
+}
+
+// rule: OWN-B1, OWN-B2, OWN-B3, OWN-B5
+#[test]
+fn a_pointer_is_followed_through_the_pointers_that_it_is_read_and_stored_through() {
+    // First what is refused: a pointer to a variable of the function
+    // that is stored behind a pointer which leads out of the function
+    // (in a parameter, a copy of one, the address of a part of what it
+    // points to, a pointer that is read through it, a variable of the
+    // package, the result of a call), and one that is stored in or read
+    // from a variable of the function through a pointer. From `set` on,
+    // what is fine.
+    let text = "package p
+
+type T struct{ n int }
+
+type Holder struct{ p *T }
+
+type Wrap struct{ h *Holder }
+
+var origin T
+var holder = Holder{&origin}
+
+func find() *Holder { return &holder }
+
+func fill(h *Holder) {
+	local := T{2}
+	h.p = &local
+}
+
+func leak(out **T) {
+	local := T{3}
+	*out = &local
+}
+
+func keep(h *Holder, t T) { h.p = &t }
+
+func viaCopy(h *Holder) {
+	local := T{4}
+	q := h
+	q.p = &local
+}
+
+func viaField(h *Holder) {
+	local := T{5}
+	q := &h.p
+	*q = &local
+}
+
+func deep(w *Wrap) {
+	local := T{6}
+	w.h.p = &local
+}
+
+func viaPackage() {
+	local := T{7}
+	gp := &holder
+	gp.p = &local
+}
+
+func viaCall() {
+	local := T{8}
+	q := find()
+	q.p = &local
+}
+
+func between() int {
+	p := &origin
+	q := &p
+	{
+		z := T{9}
+		*q = &z
+	}
+	return p.n
+}
+
+func readThrough() int {
+	h := Holder{&origin}
+	q := &h
+	{
+		y := T{10}
+		h.p = &y
+	}
+	return q.p.n
+}
+
+func returned() *T {
+	x := T{11}
+	h := Holder{&x}
+	q := &h
+	return q.p
+}
+
+func twoHops() int {
+	h := Holder{&origin}
+	w := Wrap{&h}
+	{
+		y := T{12}
+		w.h.p = &y
+	}
+	return h.p.n
+}
+
+func set(h *Holder, p *T) { h.p = p }
+
+func swap(a, b **T) { *a, *b = *b, *a }
+
+func same() int {
+	x := T{13}
+	h := Holder{&origin}
+	q := &h
+	q.p = &x
+	return h.p.n
+}
+
+func toPackage(h *Holder) { h.p = &origin }
+
+func inside() int {
+	p := &origin
+	q := &p
+	n := 0
+	{
+		z := T{14}
+		*q = &z
+		n = (*q).n
+	}
+	return n
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:16:2: cannot store a pointer into local in h.p: what h points to outlives local",
+        "a.gopp:21:2: cannot store a pointer into local in *out: what out points to outlives local",
+        "a.gopp:24:29: cannot store a pointer into t in h.p: what h points to outlives t",
+        "a.gopp:29:2: cannot store a pointer into local in q.p: what q points to outlives local",
+        "a.gopp:35:2: cannot store a pointer into local in *q: what q points to outlives local",
+        "a.gopp:40:2: cannot store a pointer into local in w.h.p: what w points to outlives local",
+        "a.gopp:46:2: cannot store a pointer into local in gp.p: what gp points to outlives local",
+        "a.gopp:52:2: cannot store a pointer into local in q.p: what q points to outlives local",
+        "a.gopp:61:2: z ends here, and p points into it and is used later",
+        "a.gopp:71:2: y ends here, and h points into it and is used later",
+        "a.gopp:79:2: cannot return a pointer into x: x ends when the function returns",
+        "a.gopp:88:2: y ends here, and h points into it and is used later",
     ];
     assert_eq!(said, expected);
 }

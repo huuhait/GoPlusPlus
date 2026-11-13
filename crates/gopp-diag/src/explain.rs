@@ -568,6 +568,15 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func bad() *int {\n\tx := 1\n\treturn &x // error\n}\n\nfunc first(p \
              *Pair) *int { return &p.A } // ok",
         ),
+        OwnStoredOutlives => (
+            "A pointer into a variable of the function is stored behind a pointer that leads \
+             out of the function: one in a parameter, from a call or from a variable of the \
+             package. What is there outlives the function, and the variable ends with it.",
+            "Store a `Unique` or a `Shared`, or let the caller own the value and give a \
+             pointer to it.",
+            "func bad(h *Holder) {\n\tx := 1\n\th.p = &x // error\n}\n\nfunc set(h \
+             *Holder, p *int) { h.p = p } // ok",
+        ),
         OwnRangeMutation => (
             "The slice, the map or the string that a `range` loop goes over is assigned, \
              grown or cleared in the body of the loop. The loop reads it where it is until \

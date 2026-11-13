@@ -44,6 +44,10 @@ pub(super) enum Event {
     /// What the sources from the first number to the second say is
     /// returned.
     Returned(u32, u32, Span),
+    /// A place behind a pointer of the variable gets what the sources
+    /// from the first number to the second say: as many pointers behind
+    /// the first one as the third number says.
+    Stored(LocalId, u32, u32, u8, Span),
 }
 
 /// A variable that is read where it may hold no value.
@@ -239,7 +243,7 @@ pub(super) struct Walk<'a> {
     /// The parameters and receivers by value that are slices or maps.
     watched: &'a FxHashSet<LocalId>,
     /// The function that is walked: what is declared in it is its own.
-    within: Span,
+    pub(super) within: Span,
     pub events: Vec<Event>,
     /// For each block, where its events start and end.
     pub blocks: Vec<(u32, u32)>,
@@ -288,6 +292,9 @@ pub(super) struct Walk<'a> {
     /// For each result of the function, whether it is written as a
     /// pointer or an option of one: a handle is lent to it.
     pub pointers: Vec<bool>,
+    /// How many events say what the function is given, before those of
+    /// its statements.
+    pub given: usize,
 }
 
 /// What `move` and the last uses say of the declaration `decl`, whose
@@ -333,13 +340,15 @@ pub(super) fn of(
         looping: FxHashMap::default(),
         change: borrows::What::Assign,
         pointers: Vec::new(),
+        given: 0,
     };
     match &decl.kind {
         DeclKind::Func {
+            receiver,
             ty,
             body: Some(block),
             ..
-        } => walk.function(*ty, block),
+        } => walk.function(receiver.as_ref(), *ty, block),
         DeclKind::Var { values, .. } | DeclKind::Const { values, .. } => {
             walk.enter();
             walk.unit(values);
@@ -350,7 +359,7 @@ pub(super) fn of(
     while let Some(literal) = walk.literals.pop() {
         if let ExprKind::FuncLit { ty, body } = &tree.exprs[literal].kind {
             walk.within = tree.exprs[literal].span;
-            walk.function(*ty, body);
+            walk.function(None, *ty, body);
         }
     }
     walk.found.errors.sort_by_key(|reused| reused.at.lo);
@@ -572,15 +581,30 @@ impl<'a> Checker<'a> {
             self.emit(diagnostic);
         }
         for escaped in &found.escaped {
-            if !self.report_once((escaped.at, Code::OwnReturnAddrLocal)) {
+            let owner = named(self, escaped.of);
+            let (code, message) = match escaped.behind {
+                None => (
+                    Code::OwnReturnAddrLocal,
+                    format!(
+                        "cannot return a pointer into {owner}: {owner} ends when the function \
+                         returns"
+                    ),
+                ),
+                Some(behind) => (
+                    Code::OwnStoredOutlives,
+                    format!(
+                        "cannot store a pointer into {owner} in {}: what {} points to outlives \
+                         {owner}",
+                        text(escaped.at),
+                        named(self, behind)
+                    ),
+                ),
+            };
+            if !self.report_once((escaped.at, code)) {
                 continue;
             }
-            let owner = named(self, escaped.of);
-            let message = format!(
-                "cannot return a pointer into {owner}: {owner} ends when the function returns"
-            );
             let note = format!("the pointer into {owner} is made here");
-            let diagnostic = Diagnostic::new(Code::OwnReturnAddrLocal, escaped.at, message);
+            let diagnostic = Diagnostic::new(code, escaped.at, message);
             self.emit(diagnostic.with_note(Code::NoteBorrowedHere, Some(escaped.made), note));
         }
     }
@@ -687,6 +711,7 @@ impl<'a> Walk<'a> {
         self.held.clear();
         self.viewed.clear();
         self.results.clear();
+        self.given = 0;
         self.current = self.block();
         self.exit = self.block();
     }
@@ -697,9 +722,19 @@ impl<'a> Walk<'a> {
         self.solve();
     }
 
-    fn function(&mut self, ty: ExprId, block: &'a Block) {
+    fn function(&mut self, receiver: Option<&Param>, ty: ExprId, block: &'a Block) {
         self.enter();
-        if let ExprKind::FuncType { results, .. } = &self.tree.exprs[ty].kind {
+        if let ExprKind::FuncType {
+            params, results, ..
+        } = &self.tree.exprs[ty].kind
+        {
+            let names = receiver.into_iter().chain(params.iter());
+            for name in names.filter_map(|param| param.name) {
+                if let Some(&local) = self.body.defs.get(&name.span.lo) {
+                    self.given_from_outside(local, name.span);
+                }
+            }
+            self.given = self.events.len();
             let named = results.iter().filter_map(|result| result.name);
             let locals = named.filter_map(|name| self.body.defs.get(&name.span.lo));
             self.results = locals.copied().collect();
@@ -1367,9 +1402,10 @@ impl<'a> Walk<'a> {
             .events
             .iter()
             .any(|event| matches!(event, Event::Wrote(..)));
-        let holds = self.events.iter().any(|event| match event {
+        // What the function is given holds pointers from the start.
+        let holds = self.events[self.given..].iter().any(|event| match event {
             Event::Holds(_, from, to, _) => to > from,
-            Event::Returned(..) => true,
+            Event::Returned(..) | Event::Stored(..) => true,
             _ => false,
         });
         if !given && !moved && !wrote && !holds {
@@ -1494,7 +1530,10 @@ impl<'a> Walk<'a> {
                         }
                         continue;
                     }
-                    Event::Holds(..) | Event::Changed(_) | Event::Returned(..) => continue,
+                    Event::Holds(..)
+                    | Event::Changed(_)
+                    | Event::Returned(..)
+                    | Event::Stored(..) => continue,
                 };
                 let Some(&member) = members.get(&local) else {
                     continue;
@@ -1531,7 +1570,7 @@ impl<'a> Walk<'a> {
             | Event::Moved(local, _)
             | Event::Wrote(local, _) => Some((local, true)),
             Event::Set(local) => Some((local, false)),
-            Event::Holds(..) | Event::Changed(_) | Event::Returned(..) => None,
+            Event::Holds(..) | Event::Changed(_) | Event::Returned(..) | Event::Stored(..) => None,
         };
         for at in self.not_read_later(before, after, asked, effect) {
             if let Event::Given(local, expr) = self.events[at]
@@ -1557,7 +1596,11 @@ impl<'a> Walk<'a> {
                 Some((local, true))
             }
             Event::Set(local) => Some((local, false)),
-            Event::Wrote(..) | Event::Holds(..) | Event::Changed(_) | Event::Returned(..) => None,
+            Event::Wrote(..)
+            | Event::Holds(..)
+            | Event::Changed(_)
+            | Event::Returned(..)
+            | Event::Stored(..) => None,
         };
         // What a function literal uses or a pointer leads to may be read
         // at any time.
