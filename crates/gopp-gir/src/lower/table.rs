@@ -761,6 +761,14 @@ impl FuncCx<'_, '_> {
             )));
         };
         let held = self.slot_of(Rvalue::Use(pointer))?;
+        let made = self.slot_of(Rvalue::Use(self.zero(to)))?;
+        // An option of a pointer that is unset has no part.
+        let none = self.zero(from);
+        let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(held.clone()), none);
+        let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
+        let [some, done] = [(); 2].map(|()| self.b.new_block());
+        self.b.switch(set, vec![(0, done)], some)?;
+        self.b.switch_to(some);
         let value = self.b.deref(&held)?;
         if let Err(what) = self.set_tables(&value, checked)? {
             return Ok(Some(Err(what)));
@@ -769,7 +777,11 @@ impl FuncCx<'_, '_> {
         for &step in &way {
             part = self.b.field(&part, step)?;
         }
-        Ok(Some(Ok(Rvalue::AddrOf(part, Mutability::Mut))))
+        self.b
+            .assign(made.clone(), Rvalue::AddrOf(part, Mutability::Mut))?;
+        self.b.goto(done)?;
+        self.b.switch_to(done);
+        Ok(Some(Ok(Rvalue::Use(Operand::Copy(made)))))
     }
 
     /// A `Unique`, a `Shared` or a `Weak` of a child where the same

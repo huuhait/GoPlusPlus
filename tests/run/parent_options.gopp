@@ -1,0 +1,32 @@
+package main
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape" }
+
+@Extends(Shape)
+type Square struct{ side int }
+
+@Override
+func (s *Square) Kind() string { return "square" }
+
+func kind(s Option[*Shape]) string {
+	if s == nil {
+		return "nothing"
+	}
+	return s.Kind()
+}
+
+func pick(sq *Square, want bool) Option[*Square] {
+	if want {
+		return sq
+	}
+	return nil
+}
+
+func main() {
+	sq := Square{name: "sq", side: 3}
+	var none Option[*Square]
+	println(kind(&sq), kind(none), kind(pick(&sq, true)), kind(pick(&sq, false)), kind(nil))
+}

@@ -300,6 +300,11 @@ impl<'a> FuncCx<'a, '_> {
         if let (Type::Ptr(_), Type::Ptr(_)) = (self.kind(own), self.kind(ty)) {
             let types = self.shared.types;
             let pointer = self.checked_as(expr, own);
+            // An option of a pointer is the pointer, nil when it is unset.
+            let pointer = pointer.map(|pointer| match &*types.get(types.underlying(pointer)) {
+                CheckedType::Option(held) => *held,
+                _ => pointer,
+            });
             let of = pointer.and_then(|pointer| match &*types.get(types.underlying(pointer)) {
                 CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
                     Some(*to)
