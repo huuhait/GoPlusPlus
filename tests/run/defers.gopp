@@ -56,8 +56,27 @@ func kept(n int) {
 	println("kept", n, len(lines))
 }
 
+func double(p *int) {
+	p = *p * 2
+}
+
+// The results that have names are returned as the deferred calls
+// leave them.
+func named(n int) (total int, f File) {
+	defer double(&total)
+	defer println("deferred", n)
+	if n == 0 {
+		return
+	}
+	return n, open(20+n, "named")
+}
+
 func main() {
 	order()
 	kept(0)
 	kept(1)
+	t, f := named(0)
+	println(t, f.fd)
+	t, f = named(2)
+	println(t, f.fd)
 }

@@ -584,21 +584,16 @@ impl FuncCx<'_, '_> {
             _ => vec![ty],
         };
         let named: Vec<_> = self.results.clone();
+        // A deferred call may read and write the results that have
+        // names: they get the values of the `return` first, and what is
+        // returned is read from them after the calls (PAN-4).
+        let late = self.defers_calls() && named.iter().any(Option::is_some);
+        // The values of the results that have no variable: `_`.
+        let mut unnamed: Vec<Option<Operand>> = vec![None; parts.len()];
         let mut given: Vec<Rvalue> = Vec::with_capacity(parts.len());
         if values.is_empty() {
-            for (var, &part) in named.iter().zip(&parts) {
-                let Some(var) = var else {
-                    given.push(Rvalue::Use(self.zero(part)));
-                    continue;
-                };
-                let var = Place::local(*var);
-                let mut value = Rvalue::Use(Operand::Copy(var.clone()));
-                // A result that holds what is freed leaves its variable.
-                if !self.flat(part) {
-                    value = Rvalue::Use(Operand::Copy(self.slot_of(value)?));
-                    self.b.assign(var, Rvalue::Use(self.zero(part)))?;
-                }
-                given.push(value);
+            if !late {
+                given = self.results_now(&named, &parts, &unnamed)?;
             }
         } else {
             let wanted: Vec<_> = parts.iter().map(|&part| Some(part)).collect();
@@ -635,10 +630,32 @@ impl FuncCx<'_, '_> {
             given = self.owned_values(values, &wanted)?;
             self.handed.clear();
             self.outer.clear();
-            // The variables of the results have the values too: what
-            // runs after the `return` reads them. A value that holds
-            // what is freed has one owner, which is the caller.
-            if named.iter().any(Option::is_some) {
+            if late {
+                // Every value is read before any result is written.
+                let mut held = Vec::with_capacity(given.len());
+                for value in std::mem::take(&mut given) {
+                    let value = self.operand_of(value)?;
+                    held.push(self.stable(value)?);
+                }
+                for (at, (var, value)) in named.iter().zip(held).enumerate() {
+                    let Some(var) = var else {
+                        if let Operand::Copy(place) = &value {
+                            self.read_late(place.local);
+                        }
+                        unnamed[at] = Some(value);
+                        continue;
+                    };
+                    // What the result had ends.
+                    let place = Place::local(*var);
+                    if let Some(ends) = self.var_ends(*var) {
+                        self.end(place.clone(), ends)?;
+                    }
+                    self.b.assign(place, Rvalue::Use(value))?;
+                }
+            } else if named.iter().any(Option::is_some) {
+                // The variables of the results have the values too: what
+                // runs after the `return` reads them. A value that holds
+                // what is freed has one owner, which is the caller.
                 // A result that is returned as it is stays where it is.
                 let itself = |var: &Option<crate::LocalId>, value: &Rvalue| {
                     let own = var.map(|var| Rvalue::Use(Operand::Copy(Place::local(var))));
@@ -666,6 +683,11 @@ impl FuncCx<'_, '_> {
             }
         }
         self.at(span);
+        if late {
+            self.drop_temps(0)?;
+            self.run_defers()?;
+            given = self.results_now(&named, &parts, &unnamed)?;
+        }
         match given.len() {
             0 => {}
             1 => {
@@ -681,12 +703,41 @@ impl FuncCx<'_, '_> {
                 self.b.assign(result, whole)?;
             }
         }
-        self.drop_temps(0)?;
-        self.run_defers()?;
+        if !late {
+            self.drop_temps(0)?;
+            self.run_defers()?;
+        }
         self.exit_scopes(0)?;
         self.b.ret()?;
         self.dead();
         Ok(())
+    }
+
+    /// What the results that have names hold now, for the caller: a
+    /// value that holds what is freed leaves its variable. A result
+    /// without a variable is the value in `unnamed`, or a zero.
+    fn results_now(
+        &mut self,
+        named: &[Option<crate::LocalId>],
+        parts: &[crate::TypeId],
+        unnamed: &[Option<Operand>],
+    ) -> Built<Vec<Rvalue>> {
+        let mut given = Vec::with_capacity(parts.len());
+        for (at, (var, &part)) in named.iter().zip(parts).enumerate() {
+            let Some(var) = var else {
+                let value = unnamed.get(at).cloned().flatten();
+                given.push(Rvalue::Use(value.unwrap_or_else(|| self.zero(part))));
+                continue;
+            };
+            let var = Place::local(*var);
+            let mut value = Rvalue::Use(Operand::Copy(var.clone()));
+            if !self.flat(part) {
+                value = Rvalue::Use(Operand::Copy(self.slot_of(value)?));
+                self.b.assign(var, Rvalue::Use(self.zero(part)))?;
+            }
+            given.push(value);
+        }
+        Ok(given)
     }
 
     /// Whether the expression is known to be true or false.

@@ -1241,14 +1241,15 @@ func named() (n int) {
 	return 1
 }
 
-func others(n int) {
-	defer println(n)
+func others(n int, m map[int]int) int {
+	defer delete(m, n)
 	defer func() {}()
 	if n > 0 {
 		f := File{fd: n}
 		defer f.close()
 		defer say(n)
 	}
+	return len(m)
 }
 
 func main() {}
@@ -1261,9 +1262,7 @@ func main() {}
         [
             "a.gopp:13:9: not supported yet: a defer statement in a loop",
             "a.gopp:19:8: not supported yet: a defer statement in a function with a label",
-            "a.gopp:27:8: not supported yet: a defer statement in a function whose results have \
-             names",
-            "a.gopp:32:8: not supported yet: a defer statement of a built-in function or a \
+            "a.gopp:32:8: not supported yet: a defer statement of this built-in function or of a \
              conversion",
             "a.gopp:33:8: not supported yet: a function literal",
             "a.gopp:36:9: not supported yet: a deferred call that holds a variable of a block",
@@ -1446,7 +1445,7 @@ func f{at}(n int, p Pair) (int, string) {{
 		total += both.p.a * i
 	}}
 	println(total, \"f{at}\")
-	defer println(total)
+	go println(total)
 	return total + p.b, \"f{at}\"
 }}
 ",
@@ -1573,7 +1572,7 @@ fn the_steps_grow_with_the_source() {
         steps_of(&function(&labels))
     });
     assert_near_linear(&[50, 100, 200, 400], |n| {
-        steps_of(&many_functions(n).replace("\tdefer println(total)\n", ""))
+        steps_of(&many_functions(n).replace("\tgo println(total)\n", ""))
     });
 }
 

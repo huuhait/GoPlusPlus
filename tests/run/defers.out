@@ -15,3 +15,8 @@ note 1 0
 note 2 1
 owned 11 f!
 close 11 f!
+deferred 0
+0 0
+deferred 2
+4 22
+close 22 named

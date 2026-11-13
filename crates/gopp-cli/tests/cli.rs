@@ -830,12 +830,12 @@ fn build_says_what_stops_it() {
     );
     let unchecked = failed(gopp().args(["build", "-emit=c"]).arg(&wrong));
     assert!(unchecked.contains("undefined: missing"), "{unchecked}");
-    let defers = "package main\n\nfunc main() {\n\tdefer println(1)\n}\n";
-    let later = write_source(&dir, "later.gopp", defers);
+    let starts = "package main\n\nfunc main() {\n\tgo println(1)\n}\n";
+    let later = write_source(&dir, "later.gopp", starts);
     let unsupported = failed(gopp().args(["build", "-emit=c"]).arg(&later));
     assert!(unsupported.contains("error[E0439]"), "{unsupported}");
     assert!(
-        unsupported.contains("not supported yet: a defer statement"),
+        unsupported.contains("not supported yet: a go statement"),
         "{unsupported}"
     );
     fs::create_dir(dir.path().join("p")).unwrap();

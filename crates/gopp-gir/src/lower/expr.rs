@@ -1335,23 +1335,39 @@ impl<'a> FuncCx<'a, '_> {
             return Ok(());
         };
         let callee = Shared::unparen(self.tree, *fun);
-        let named = self.results.iter().any(Option::is_some);
+        let known = self.body.types.contains_key(&callee);
+        let prints = match self.builtin_of(callee).filter(|_| !known) {
+            Some(Predeclared::Print) => Some(false),
+            Some(Predeclared::Println) => Some(true),
+            _ => None,
+        };
         let refused = match () {
             () if self.defers[at].in_loop => Some("a defer statement in a loop"),
             () if self.jumps => Some("a defer statement in a function with a label"),
-            () if named => Some("a defer statement in a function whose results have names"),
             () if *unwrap => Some("a call with `!`"),
             () if matches!(self.tree.exprs[callee].kind, ExprKind::FuncLit { .. }) => {
                 Some("a function literal")
             }
-            () if !self.body.types.contains_key(&callee) => {
-                Some("a defer statement of a built-in function or a conversion")
+            () if !known && prints.is_none() => {
+                Some("a defer statement of this built-in function or of a conversion")
             }
             () => None,
         };
         if let Some(what) = refused {
             self.unsupported(span, what);
             return Ok(());
+        }
+        // `print` and `println` write what their arguments were here.
+        if let Some(line) = prints {
+            let wanted = vec![None; args.len()];
+            let mut slots = Vec::with_capacity(args.len());
+            for (value, &arg) in self.values(args, &wanted)?.into_iter().zip(args) {
+                let ty = self.b.rvalue_ty(&value)?;
+                let value = self.taken(arg, ty, value)?;
+                slots.push(self.kept(arg, ty, value)?);
+            }
+            self.empty_moved()?;
+            return self.waits(at, super::func::Waits::Print(line), slots, None, span);
         }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
@@ -1421,11 +1437,23 @@ impl<'a> FuncCx<'a, '_> {
                 _ => self.ends_of(checked, span)?,
             },
         };
+        self.waits(at, super::func::Waits::Call(called), slots, result, span)
+    }
+
+    /// The `defer` statement ran: its call waits with what it keeps.
+    fn waits(
+        &mut self,
+        at: usize,
+        what: super::func::Waits,
+        slots: Vec<(LocalId, Option<super::glue::Ends>)>,
+        result: Option<super::glue::Ends>,
+        span: SourceSpan,
+    ) -> Built {
         let ran = self.b.const_bool(true);
         let flag = Place::local(self.defers[at].flag);
         self.b.assign(flag, Rvalue::Use(ran))?;
         self.defers[at].call = Some(super::func::Pending {
-            called,
+            what,
             slots,
             result,
             span,
@@ -1679,10 +1707,16 @@ impl<'a> FuncCx<'a, '_> {
     fn print(&mut self, line: bool, args: &[ExprId]) -> Built {
         let wanted = vec![None; args.len()];
         let mut values = Vec::with_capacity(args.len());
-        for value in self.values(args, &wanted)? {
-            values.push(self.operand_of(value)?);
+        for (value, &arg) in self.values(args, &wanted)?.into_iter().zip(args) {
+            values.push((self.operand_of(value)?, self.tree.exprs[arg].span));
         }
-        for (at, (value, &arg)) in values.into_iter().zip(args).enumerate() {
+        self.print_values(line, values)
+    }
+
+    /// Each value is given to the runtime, which writes it; `span` is
+    /// where the value is written in the source.
+    pub(super) fn print_values(&mut self, line: bool, values: Vec<(Operand, SourceSpan)>) -> Built {
+        for (at, (value, span)) in values.into_iter().enumerate() {
             if line && at > 0 {
                 self.runtime_call("_gopp_print_space", &[], Vec::new())?;
             }
@@ -1710,7 +1744,7 @@ impl<'a> FuncCx<'a, '_> {
                 }
                 _ => {
                     let what = "`print` of a value of this type";
-                    self.unsupported(self.tree.exprs[arg].span, what);
+                    self.unsupported(span, what);
                     continue;
                 }
             };

@@ -60,10 +60,19 @@ pub(super) struct Deferred {
     pub call: Option<Pending>,
 }
 
+/// What a `defer` statement calls.
+#[derive(Clone)]
+pub(super) enum Waits {
+    /// A function or a method.
+    Call(Callee),
+    /// `print`, or `println` if the flag is set.
+    Print(bool),
+}
+
 /// A call that waits for its function to be left.
 #[derive(Clone)]
 pub(super) struct Pending {
-    pub called: Callee,
+    pub what: Waits,
     /// The receiver and the arguments, each in a slot of the function
     /// that owns it, with how it ends if the call does not take it.
     pub slots: Vec<(LocalId, Option<Ends>)>,
@@ -161,6 +170,10 @@ pub(super) struct FuncCx<'a, 'm> {
     /// their calls for every way out, the slot that says which way it
     /// was, and where each way goes on.
     leave: Option<(BlockId, LocalId, Vec<BlockId>)>,
+    /// The temporaries that a way out reads after that block. Each
+    /// has its value on its own way; the first block gives all of them
+    /// one, so that every way has one.
+    late: FxHashSet<LocalId>,
     /// The places whose values were moved out and that are still to be
     /// made empty: what is evaluated beside the move reads them as they
     /// were (`return s, len(s)`).
@@ -326,6 +339,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             defers: Vec::new(),
             jumps: false,
             leave: None,
+            late: FxHashSet::default(),
             moved: Vec::new(),
         }
     }
@@ -437,9 +451,13 @@ impl FuncCx<'_, '_> {
         self.b.switch_to(entry);
         self.b.set_loc(loc);
         // Every slot has a value from the start, on every way.
-        if let Some(which) = way_out {
-            let none = self.zero(self.b.place_ty(&Place::local(which)));
-            self.b.assign(Place::local(which), Rvalue::Use(none))?;
+        let mut early: Vec<LocalId> = way_out.into_iter().collect();
+        let mut late: Vec<LocalId> = self.late.drain().collect();
+        late.sort_by_key(|local| local.into_raw().into_u32());
+        early.extend(late);
+        for slot in early {
+            let none = self.zero(self.b.place_ty(&Place::local(slot)));
+            self.b.assign(Place::local(slot), Rvalue::Use(none))?;
         }
         for at in 0..self.defers.len() {
             let no = self.b.const_bool(false);
@@ -511,6 +529,19 @@ impl FuncCx<'_, '_> {
             return Ok(());
         };
         let (leave, which, way) = (*leave, *which, ways.len());
+        // What the scopes end after the calls is read after them.
+        let mut read = Vec::new();
+        for scope in &self.scopes {
+            read.extend(scope.owned.iter().map(|(place, _)| place.local));
+            for walk in &scope.walks {
+                if let Operand::Copy(place) | Operand::Move(place) = walk {
+                    read.push(place.local);
+                }
+            }
+        }
+        for local in read {
+            self.read_late(local);
+        }
         let after = self.b.new_block();
         if let Some((_, _, ways)) = &mut self.leave {
             ways.push(after);
@@ -521,6 +552,13 @@ impl FuncCx<'_, '_> {
         self.b.goto(leave)?;
         self.b.switch_to(after);
         Ok(())
+    }
+
+    /// The local is read after the block that makes the deferred calls.
+    pub fn read_late(&mut self, local: LocalId) {
+        if self.b.local_kind(local) == crate::LocalKind::Temp {
+            self.late.insert(local);
+        }
     }
 
     /// The calls of the `defer` statements that ran, the last first. A
@@ -536,29 +574,42 @@ impl FuncCx<'_, '_> {
             let [call, done, after] = [(); 3].map(|()| self.b.new_block());
             self.b.switch(ran, vec![(0, done)], call)?;
             self.b.switch_to(call);
-            let called = &pending.called;
-            let callee = Operand::Const(Constant {
-                kind: ConstantKind::Func(called.func),
-                ty: called.sig,
-            });
             let slot = |&(slot, _): &(LocalId, Option<Ends>)| Operand::Copy(Place::local(slot));
-            let given = pending.slots.iter().map(slot).collect();
-            let result = Place::local(self.b.temp(called.ret));
+            let given: Vec<Operand> = pending.slots.iter().map(slot).collect();
             let around = self.b.loc();
             self.at(pending.span);
-            let unwind = UnwindAction::Continue;
-            self.b
-                .call(callee, given, result.clone(), Some(after), unwind)?;
-            self.b.switch_to(after);
-            // The address of a temporary that a call wrote is not
-            // taken: its value ends in a slot of its own.
-            if let Some(ends) = pending.result {
-                let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
-                self.end(slot, ends)?;
-            }
-            // What a parameter only reads is still the statement's own.
-            for (param, &(slot, ends)) in pending.slots.iter().enumerate() {
-                if let (Some(&true), Some(ends)) = (called.lent.get(param), ends) {
+            // Whether the call leaves a value to the statement: a
+            // parameter that is only read does, and so does `print`.
+            let lent: Vec<bool> = match &pending.what {
+                Waits::Call(called) => {
+                    let callee = Operand::Const(Constant {
+                        kind: ConstantKind::Func(called.func),
+                        ty: called.sig,
+                    });
+                    let result = Place::local(self.b.temp(called.ret));
+                    let unwind = UnwindAction::Continue;
+                    self.b
+                        .call(callee, given, result.clone(), Some(after), unwind)?;
+                    self.b.switch_to(after);
+                    // The address of a temporary that a call wrote is
+                    // not taken: its value ends in a slot of its own.
+                    if let Some(ends) = pending.result {
+                        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
+                        self.end(slot, ends)?;
+                    }
+                    let lent = |param| called.lent.get(param) == Some(&true);
+                    (0..pending.slots.len()).map(lent).collect()
+                }
+                Waits::Print(line) => {
+                    self.b.goto(after)?;
+                    self.b.switch_to(after);
+                    let values = given.into_iter().map(|value| (value, pending.span));
+                    self.print_values(*line, values.collect())?;
+                    vec![true; pending.slots.len()]
+                }
+            };
+            for (&(slot, ends), lent) in pending.slots.iter().zip(lent) {
+                if let (true, Some(ends)) = (lent, ends) {
                     self.end(Place::local(slot), ends)?;
                 }
             }
@@ -710,6 +761,23 @@ impl FuncCx<'_, '_> {
             scope.owned.push((Place::local(var), ends));
         }
         Ok(())
+    }
+
+    /// How the variable of the function ends its value, if it owns one
+    /// that is freed.
+    pub fn var_ends(&self, var: LocalId) -> Option<Ends> {
+        let place = Place::local(var);
+        let owned = self.scopes.iter().flat_map(|scope| &scope.owned);
+        owned
+            .filter(|(of, _)| *of == place)
+            .map(|&(_, ends)| ends)
+            .next()
+    }
+
+    /// Whether the function has `defer` statements: their calls may
+    /// change its results.
+    pub fn defers_calls(&self) -> bool {
+        self.leave.is_some()
     }
 
     /// How a place of the type ends its value; none, with a report, for
