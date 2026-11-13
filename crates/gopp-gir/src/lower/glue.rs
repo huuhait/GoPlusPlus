@@ -242,7 +242,7 @@ impl FuncCx<'_, '_> {
             }
         }
         match made {
-            Ok(_) => self.memo.glues.push((symbol, kind, ty)),
+            Ok(_) => self.memo.glues.push((symbol, super::Made::Glue(kind), ty)),
             Err(_) => drop(self.memo.glue_of.insert((kind, ty), made)),
         }
         Ok(made)

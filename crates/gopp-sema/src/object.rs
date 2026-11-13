@@ -175,6 +175,11 @@ pub struct Body {
     /// The values of the cases of an expression switch that are compared
     /// with the tag by an `@Operator` `Eq` method, each with the method.
     pub case_operators: FxHashMap<ExprId, OperatorUse>,
+    /// The expressions whose interface values are given to a place of an
+    /// interface type with other methods: for each, the type of the value
+    /// and the type of the place. The value says its type another way
+    /// there.
+    pub iface_changes: FxHashMap<ExprId, (TypeId, TypeId)>,
     /// The cases of the type switches that are types, each with its
     /// type; the case `nil` has none.
     pub case_types: FxHashMap<ExprId, TypeId>,

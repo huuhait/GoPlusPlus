@@ -12,7 +12,7 @@ use gopp_sema::{ObjId, ObjKind, Package};
 use lasso::{Spur, ThreadedRodeo};
 use rustc_hash::FxHashMap;
 
-use crate::node::{BadNode, Basic, Context, Dir, Node, NodeId, Required, Wrap};
+use crate::node::{BadNode, Basic, Context, Dir, Node, NodeId, Pair, Required, Wrap};
 
 /// What a symbol is asked for.
 #[derive(Clone, Copy)]
@@ -43,6 +43,17 @@ pub enum Entity<'a> {
     HashGlue(TypeId),
     /// The function that ends a value of the type.
     DropGlue(TypeId),
+    /// The table of the methods of an interface type for the values of
+    /// a type: the type, then the interface type.
+    ITab(TypeId, TypeId),
+    /// What a table of methods holds for the method `name` of the
+    /// declared type `receiver`: in the table of the type itself, or in
+    /// that of the pointers to it if `pointer` is set.
+    IfaceThunk {
+        receiver: TypeId,
+        name: Spur,
+        pointer: bool,
+    },
 }
 
 /// For a type that is declared in a function: the function, and which
@@ -229,6 +240,19 @@ impl<'a> Namer<'a> {
             Entity::EqGlue(ty) => Node::Wrap(Wrap::EqGlue, self.ty(ty)?),
             Entity::HashGlue(ty) => Node::Wrap(Wrap::HashGlue, self.ty(ty)?),
             Entity::DropGlue(ty) => Node::Wrap(Wrap::DropGlue, self.ty(ty)?),
+            Entity::ITab(ty, iface) => Node::Pair(Pair::ITab, self.ty(ty)?, self.ty(iface)?),
+            Entity::IfaceThunk {
+                receiver,
+                name,
+                pointer,
+            } => {
+                let method = self.entity(Entity::Method { receiver, name })?;
+                let wrap = match pointer {
+                    true => Wrap::IfacePtrThunk,
+                    false => Wrap::IfaceThunk,
+                };
+                Node::Wrap(wrap, method)
+            }
         };
         self.add(node)
     }

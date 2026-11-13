@@ -232,8 +232,19 @@ pub(crate) struct Part {
     glues: Vec<Asked>,
 }
 
-/// Glue that is asked for: its symbol, its kind and its type.
-pub(crate) type Asked = (String, glue::Glue, CheckedTypeId);
+/// A function that the package makes once for all that ask for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum Made {
+    /// The glue of a kind for a type.
+    Glue(glue::Glue),
+    /// What a table of methods holds for the method `name` of a
+    /// declared type: in the table of the type itself, or in that of
+    /// the pointers to it if `pointer` is set.
+    Thunk { name: Spur, pointer: bool },
+}
+
+/// A function that is asked for: its symbol, what it is and its type.
+pub(crate) type Asked = (String, Made, CheckedTypeId);
 
 /// What a run keeps beside its module: what it has lowered and declared
 /// already.
@@ -249,6 +260,10 @@ pub(crate) struct Memo<'a> {
     /// The descriptor of each type whose values the run has put into
     /// an interface value.
     pub infos: FxHashMap<CheckedTypeId, Result<GlobalId, &'static str>>,
+    /// The table of the methods of an interface type for the values of
+    /// a type, for each pair that the run has used: the type, then the
+    /// interface type.
+    pub itabs: FxHashMap<(CheckedTypeId, CheckedTypeId), Result<GlobalId, &'static str>>,
     /// What is known of each map type that the run has used.
     pub maps: FxHashMap<CheckedTypeId, Result<map::MapOf, &'static str>>,
     /// Whether two values of a type are equal exactly when their bytes
@@ -293,6 +308,7 @@ impl<'a> Memo<'a> {
             map: None,
             iface: None,
             infos: FxHashMap::default(),
+            itabs: FxHashMap::default(),
             maps: FxHashMap::default(),
             by_bytes: FxHashMap::default(),
             flat: FxHashMap::default(),
@@ -600,7 +616,20 @@ impl<'a> Shared<'a> {
             let (symbol, kind, ty) = asked[at].clone();
             at += 1;
             if made.insert(symbol.clone()) {
-                func::lower_glue(self, &mut module, &mut memo, &symbol, kind, ty);
+                match kind {
+                    Made::Glue(kind) => {
+                        func::lower_glue(self, &mut module, &mut memo, &symbol, kind, ty);
+                    }
+                    Made::Thunk { name, pointer } => {
+                        func::lower_thunk(
+                            self,
+                            &mut module,
+                            &mut memo,
+                            &symbol,
+                            (ty, name, pointer),
+                        );
+                    }
+                }
                 asked.append(&mut memo.glues);
             }
         }

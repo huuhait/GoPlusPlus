@@ -268,8 +268,49 @@ pub(super) fn lower_glue<'a>(
         cx.b.finish()?;
         Ok(made)
     });
-    // What asked for the glue saw that the type has one: a glue that
-    // is not made is a fault of the lowering.
+    not_made(shared, memo, symbol, built);
+}
+
+/// Adds what a table of methods holds for a method of the declared type
+/// `ty` to the module, under its symbol: the method `name`, for the
+/// table of the type or of the pointers to it.
+pub(super) fn lower_thunk<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    symbol: &str,
+    (ty, name, pointer): (CheckedTypeId, Spur, bool),
+) {
+    let sig = match super::iface::thunk_sig(shared, memo, &mut module.types, ty, name) {
+        Ok(sig) => sig,
+        Err(what) => return not_made(shared, memo, symbol, Ok(Err(what))),
+    };
+    let link = Linkage::LinkOnceOdr;
+    let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
+        let made = cx.thunk_body(ty, name, pointer)?;
+        cx.b.drop_unreached();
+        cx.b.finish()?;
+        Ok(made)
+    });
+    not_made(shared, memo, symbol, built);
+}
+
+/// What asked for a function of the package saw that it can be made:
+/// one that is not made is a fault of the lowering, which is reported
+/// at the start of the package.
+fn not_made(
+    shared: &Shared<'_>,
+    memo: &mut Memo<'_>,
+    symbol: &str,
+    built: Built<Result<(), &'static str>>,
+) {
     let failed = match built {
         Ok(Ok(())) => return,
         Ok(Err(what)) => what.to_owned(),

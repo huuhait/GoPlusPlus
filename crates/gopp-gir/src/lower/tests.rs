@@ -1335,18 +1335,111 @@ func same(a, b any) bool {
 }
 
 #[test]
+fn a_method_of_an_interface_value_is_called_through_its_table() {
+    let text = "package main
+
+type Shape interface {
+	Area() int
+	Scale(by int, note string)
+}
+
+type Square struct{ side int }
+
+func (s Square) Area() int { return s.side * s.side }
+
+func (s *Square) Scale(by int, note string) { s.side *= by }
+
+type Tags []string
+
+func (t Tags) Area() int { return len(t) }
+
+func (t *Tags) Scale(by int, note string) {
+	t = append(t, note)
+}
+
+func use(s Shape, note string) int {
+	s.Scale(2, note)
+	return s.Area()
+}
+
+func main() {
+	var s Shape = Square{2}
+	t := Tags{\"a\"}
+	var a any = s
+	_, ok := a.(Square)
+	println(use(s, \"n\"), use(t, \"m\"), ok)
+}
+";
+    let module = gir(text);
+    // Each type has one table for the interface, with the descriptor
+    // of the type and one function for each method, in the order of
+    // their names.
+    let table = |of: &str| {
+        let start = module.find(&format!("global const @_GPTa{of}")).unwrap();
+        let lines: Vec<&str> = module[start..].lines().skip(1).take(3).collect();
+        lines.join("|").replace("    const ", "")
+    };
+    assert_eq!(
+        table("N4mainE6Square"),
+        "global @_GPTiN4mainE6Square|fn @_GPTIM4AreaN4mainE6Square|fn @_GPTIM5ScaleN4mainE6Square"
+    );
+    assert_eq!(
+        table("N4mainE4Tags"),
+        "global @_GPTiN4mainE4Tags|fn @_GPTIM4AreaN4mainE4Tags|fn @_GPTIM5ScaleN4mainE4Tags"
+    );
+    // A call reads the code from the table and passes the address of
+    // the second word; the value that is called on is no argument.
+    assert_eq!(module.matches(" = call copy _").count(), 2);
+    // `Tags.Scale` only reads its string: what is called for it ends
+    // the string that the caller gave.
+    let thunk = module.find("fn _GPTIM5ScaleN4mainE4Tags(").unwrap();
+    let body = &module[thunk..][..module[thunk..].find("\n}\n").unwrap()];
+    assert_eq!(body.matches("@_gopp_string_release").count(), 1);
+    insta::assert_snapshot!(module);
+    // In a Go file a value has the methods of its type only, so the
+    // tables are those of the pointers.
+    let go = text
+        .replace(
+            "var s Shape = Square{2}",
+            "q := Square{2}\n\tvar s Shape = &q",
+        )
+        .replace("use(t, ", "use(&t, ")
+        .replace("a.(Square)", "a.(*Square)")
+        .replace("\tt = append(t, note)", "\t*t = append(*t, note)");
+    let (lowered, messages) = lowered_with(&[("a.go", &go)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let thunks = |name: &str| module.matches(&format!("\nfn {name}(")).count();
+    assert_eq!(
+        [
+            thunks("_GPTpM4AreaN4mainE6Square"),
+            thunks("_GPTpM5ScaleN4mainE4Tags"),
+            thunks("_GPTIM4AreaN4mainE6Square"),
+        ],
+        [1, 1, 0]
+    );
+}
+
+#[test]
 fn interface_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
 type Shape interface{ Area() float64 }
 
+type Named interface {
+	Shape
+	Name() string
+}
+
 type Square struct{ side float64 }
 
 func (s Square) Area() float64 { return s.side * s.side }
 
-func f(v any, s Shape) int {
-	var a Shape = Square{1}
-	_ = a
+func (s Square) Name(more ...string) string { return \"square\" }
+
+type Lister interface{ List(more ...string) int }
+
+func f(v any, s Shape, n Named, l Lister) int {
 	if _, ok := v.(Shape); ok {
 		return 1
 	}
@@ -1356,16 +1449,11 @@ func f(v any, s Shape) int {
 	case complex128:
 		return 3
 	}
-	switch s.(type) {
-	case Square:
-		return 4
-	}
 	var c any = 2i
 	_ = c
-	return len(s.(Square).name())
+	s = n
+	return l.List()
 }
-
-func (s Square) name() string { return \"square\" }
 ";
     for file in ["a.go", "a.gopp"] {
         let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
@@ -1376,17 +1464,57 @@ func (s Square) name() string { return \"square\" }
         assert_eq!(
             messages,
             [
-                "not supported yet: a value in an interface with methods",
                 "not supported yet: a type assertion to an interface type",
                 "not supported yet: a case of an interface type",
                 "not supported yet: a comparison of values of this type",
-                "not supported yet: a value in an interface with methods",
                 "not supported yet: a comparison of values of this type",
-                "not supported yet: a value in an interface with methods",
+                "not supported yet: an interface value in a place of an interface type with \
+                 other methods",
+                "not supported yet: a call of a function with `...`",
             ],
             "{file}"
         );
     }
+    // A method that a struct has from a type that it embeds, and one
+    // that takes any number of arguments.
+    let (_, messages) = lowered_with(
+        &[(
+            "a.go",
+            "package main
+
+type Shape interface{ Area() int }
+
+type Base struct{ n int }
+
+func (b Base) Area() int { return b.n }
+
+type Wide struct {
+	Base
+	w int
+}
+
+type Lister interface{ List(more ...string) int }
+
+type Names struct{}
+
+func (n Names) List(more ...string) int { return len(more) }
+
+func main() {
+	var s Shape = Wide{}
+	var l Lister = Names{}
+	_, _ = s, l
+}
+",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        [
+            "a.go:21:16: not supported yet: a method of an embedded type in an interface",
+            "a.go:22:17: not supported yet: a call of a function with `...`",
+        ]
+    );
 }
 
 #[test]
@@ -1541,7 +1669,10 @@ func f(xs []int, s Shape, name string) (int, string) {
 /// A package of `count` functions that call one another, with types of
 /// their own, strings, a global, and one thing that is not supported.
 fn many_functions(count: usize) -> String {
-    let mut text = "package main\n\nvar total int\n\ntype Pair struct{ a, b int }\n".to_owned();
+    let mut text = "package main\n\nvar total int\n\ntype Pair struct{ a, b int }\n\n\
+                    type Sized interface{ Size() int }\n\n\
+                    func (p Pair) Size() int { return p.a + p.b }\n"
+        .to_owned();
     for at in 0..count {
         let next = (at + 7) % count;
         text += &format!(
@@ -1568,6 +1699,8 @@ func f{at}(n int, p Pair) (int, string) {{
 	if _, ok := held.(Local); ok {{
 		held = p
 	}}
+	var sized Sized = p
+	total += sized.Size()
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}
@@ -1834,6 +1967,31 @@ fn the_steps_grow_with_the_glue_of_types() {
         steps_of(&format!(
             "package main\n\n{types}func f(all []any) []any {{\n{values}\treturn all\n}}\n\n\
              func g(v any) int {{\n\tswitch x := v.(type) {{\n{cases}\t}}\n\treturn 0\n}}\n"
+        ))
+    });
+    // Many types with many methods in one interface, each called
+    // through it.
+    assert_near_linear(&sizes, |n| {
+        let n = n / 10;
+        let methods: String = (0..10).map(|at| format!("\tM{at}(x int) int\n")).collect();
+        let types: String = (0..n)
+            .map(|at| {
+                let methods: String = (0..10)
+                    .map(|m| format!("func (t T{at}) M{m}(x int) int {{ return x + {m} }}\n"))
+                    .collect();
+                format!("type T{at} struct{{ n int }}\n\n{methods}\n")
+            })
+            .collect();
+        let values: String = (0..n)
+            .map(|at| format!("\tall = append(all, T{at}{{}})\n"))
+            .collect();
+        let calls: String = (0..10)
+            .map(|at| format!("\t\tsum += v.M{at}(sum)\n"))
+            .collect();
+        steps_of(&format!(
+            "package main\n\ntype Wide interface {{\n{methods}}}\n\n{types}\
+             func f(all []Wide) int {{\n{values}\tsum := 0\n\tfor _, v := range all {{\n{calls}\t}}\n\
+             \treturn sum\n}}\n"
         ))
     });
     // Many types with a `drop` and a `Clone` method that each hold the

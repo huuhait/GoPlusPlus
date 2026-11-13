@@ -1,0 +1,141 @@
+package main
+
+type Counter int
+
+func (c *Counter) Inc()     { c = c + 1 }
+func (c Counter) Value() int { return int(c) }
+
+type Counting interface {
+	Inc()
+	Value() int
+}
+
+type Tally struct {
+	name  string
+	marks []int
+}
+
+func (t *Tally) Inc()      { t.marks = append(t.marks, len(t.marks)) }
+func (t Tally) Value() int { return len(t.marks) }
+
+type Namer interface {
+	Rename(to string, tags []string) string
+	Tags() []string
+}
+
+type Doc struct {
+	name string
+	tags []string
+}
+
+// Keeps what it is given.
+func (d *Doc) Rename(to string, tags []string) string {
+	old := d.name
+	d.name = to
+	d.tags = tags
+	return old
+}
+
+func (d Doc) Tags() []string { return d.tags }
+
+// Only reads what it is given.
+type Echo struct{ said int }
+
+func (e *Echo) Rename(to string, tags []string) string {
+	e.said += len(to) + len(tags)
+	return to
+}
+
+func (e Echo) Tags() []string { return nil }
+
+type File struct {
+	fd int
+}
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f File) Clone() File {
+	println("dup", f.fd)
+	return File{fd: f.fd + 100}
+}
+
+func (f File) Fd() int { return f.fd }
+
+type Opened interface{ Fd() int }
+
+type MyErr struct {
+	code int
+	what string
+}
+
+func (e MyErr) Error() string { return e.what }
+
+func check(n int) error {
+	if n < 0 {
+		return MyErr{n, "negative"}
+	}
+	return nil
+}
+
+// A method through the interface works on the interface's own value.
+func counters() {
+	var a Counting = Counter(1)
+	a.Inc()
+	a.Inc()
+	b := a
+	a.Inc()
+	println(a.Value(), b.Value())
+
+	var t Counting = Tally{name: "t"}
+	t.Inc()
+	t.Inc()
+	u := t
+	t.Inc()
+	println(t.Value(), u.Value())
+
+	c := Counter(10)
+	var p Local[Counting] = &c
+	p.Inc()
+	println(c.Value(), p.Value())
+}
+
+func names() {
+	tags := []string{"x", "y"}
+	var n Namer = Doc{name: "first"}
+	println(n.Rename("second", tags), len(n.Tags()), len(tags))
+	tags[0] = "changed"
+	println(n.Tags()[0], tags[0])
+	n = Echo{}
+	println(n.Rename("third", tags), len(n.Tags()))
+	title := "a" + "b"
+	println(n.Rename(title, nil), title)
+}
+
+func files() {
+	f := File{fd: 3}
+	var o Opened = f
+	println("boxed", o.Fd(), f.Fd())
+	var x any = o
+	if got, ok := x.(File); ok {
+		println("file", got.Fd())
+	}
+	println("end of files")
+}
+
+func main() {
+	counters()
+	names()
+	files()
+	err := check(-1)
+	if err != nil {
+		println(err.Error(), check(1) == nil)
+	}
+	if e, ok := err.(MyErr); ok {
+		println(e.code)
+	}
+	println("done")
+}

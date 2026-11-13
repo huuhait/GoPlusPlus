@@ -25,6 +25,28 @@ const ARRAY_AT_ONCE: u64 = 64;
 /// value that has the method.
 pub(super) type Receiver<'a> = (ExprId, &'a [u32]);
 
+/// The code that a call runs.
+pub(super) enum Code {
+    /// A function that is known where the call is written.
+    Known(Operand),
+    /// A method of the interface value in the place, found in its table
+    /// of methods when the arguments are worked out: which method of the
+    /// interface, the type of its code, and whether the value may be
+    /// nil.
+    Slot(Place, u32, TypeId, bool),
+}
+
+/// What a call calls, and what it takes and gives.
+pub(super) struct Called {
+    pub code: Code,
+    pub params: std::rc::Rc<[TypeId]>,
+    /// How many of the last parameters are places for views.
+    pub views: usize,
+    /// Which of the parameters are lent their arguments.
+    pub lent: std::rc::Rc<[bool]>,
+    pub ret: TypeId,
+}
+
 /// A check that a place needs before it is used.
 pub(super) enum Check {
     /// The index is below the length. The second slot has the index
@@ -186,8 +208,11 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The value of the expression, for a place of the type `ty`.
     pub fn rvalue_as(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
-        match self.body.iface_conversions.get(&expr) {
-            Some(&(from, to)) => deeper(|| self.in_iface(expr, ty, from, to)),
+        if let Some(&(from, to)) = self.body.iface_conversions.get(&expr) {
+            return deeper(|| self.in_iface(expr, ty, from, to));
+        }
+        match self.body.iface_changes.get(&expr) {
+            Some(&(_, to)) => deeper(|| self.iface_change(expr, ty, to)),
             None => self.rvalue_plain(expr, ty),
         }
     }
@@ -699,7 +724,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The fields on the way of a selector, through the pointers that
     /// lie on it.
-    fn steps(
+    pub(super) fn steps(
         &mut self,
         mut place: Place,
         path: &[u32],
@@ -1189,6 +1214,12 @@ impl<'a> FuncCx<'a, '_> {
                 _ => Ok(self.placeholder(span, ty, "a call of what is not known")),
             };
         }
+        if let Some(method) = self.iface_method(callee) {
+            return match self.iface_called(span, method, args, *spread)? {
+                Ok((called, given)) => self.call_with(expr, &called, given, args),
+                Err(what) => Ok(self.placeholder(span, ty, what)),
+            };
+        }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
             Err(what) => return Ok(self.placeholder(span, ty, what)),
@@ -1216,6 +1247,33 @@ impl<'a> FuncCx<'a, '_> {
             }
             given.push(value);
         }
+        let kind = ConstantKind::Func(called.func);
+        let code = Operand::Const(Constant {
+            kind,
+            ty: called.sig,
+        });
+        let called = Called {
+            code: Code::Known(code),
+            params: called.params,
+            views: called.views,
+            lent: called.lent,
+            ret: called.ret,
+        };
+        self.call_with(expr, &called, given, args)
+    }
+
+    /// The call `expr` of what `called` says, with the arguments
+    /// `args` after the receiver in `given`: each argument is lent or
+    /// given as its parameter asks, the results that hold what is freed
+    /// are the caller's own.
+    pub(super) fn call_with(
+        &mut self,
+        expr: ExprId,
+        called: &Called,
+        mut given: Vec<Operand>,
+        args: &[ExprId],
+    ) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
         let declared = called.params.len() - called.views;
         let wanted: Vec<_> = called.params[given.len()..declared]
             .iter()
@@ -1269,16 +1327,17 @@ impl<'a> FuncCx<'a, '_> {
             given.push(Operand::Copy(Place::local(place)));
         }
         self.empty_moved()?;
-        let result = self.b.temp(called.ret);
-        let next = self.b.new_block();
-        let kind = ConstantKind::Func(called.func);
-        let callee = Operand::Const(Constant {
-            kind,
-            ty: called.sig,
-        });
         // The call is placed where it is written, which a trace names.
         let around = self.b.loc();
         self.at(span);
+        let callee = match &called.code {
+            Code::Known(code) => code.clone(),
+            Code::Slot(value, slot, code, nilable) => {
+                self.table_slot(span, value, *slot, *code, *nilable)?
+            }
+        };
+        let result = self.b.temp(called.ret);
+        let next = self.b.new_block();
         self.b.call(
             callee,
             given,
@@ -1857,6 +1916,10 @@ impl<'a> FuncCx<'a, '_> {
             let have = types.default_type(have);
             if !types.is_interface(have) && !types.is_untyped(have) {
                 return self.in_iface(value, to, have, want);
+            }
+            let methods = |ty| types.interface_methods(ty, self.shared.names);
+            if types.is_interface(have) && methods(have) != methods(want) {
+                return self.iface_change(value, to, want);
             }
         }
         let mut from = self.ty_of(value);

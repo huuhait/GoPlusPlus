@@ -265,6 +265,41 @@ fn every_method_has_its_own_name() {
 }
 
 #[test]
+fn a_table_of_methods_and_what_it_holds_have_their_names() {
+    let (world, package) = World::checked("p", SAMPLE);
+    let mut namer = world.namer();
+    let (vec, shaper) = (ty(&world, &package, "Vec2"), ty(&world, &package, "Shaper"));
+    let name = world.names.get_or_intern("Len");
+    let thunk = |pointer: bool| Entity::IfaceThunk {
+        receiver: vec,
+        name,
+        pointer,
+    };
+    let mut named = |entity: Entity<'_>| {
+        let symbol = symbol_of(&mut namer, entity).unwrap();
+        let readable = demangle(symbol.as_bytes(), 1000).unwrap();
+        (symbol, readable)
+    };
+    let shown = |(symbol, readable): (String, String)| format!("{symbol}: {readable}");
+    assert_eq!(
+        shown(named(Entity::ITab(vec, shaper))),
+        "_GPTaN1pE4Vec2N1pE6Shaper: itab for p.Vec2 as p.Shaper"
+    );
+    assert_eq!(
+        shown(named(Entity::ITab(world.types.pointer(vec), shaper))),
+        "_GPTaPN1pE4Vec2N1pE6Shaper: itab for *p.Vec2 as p.Shaper"
+    );
+    assert_eq!(
+        shown(named(thunk(false))),
+        "_GPTIM3LenN1pE4Vec2: interface thunk for p.Vec2.Len"
+    );
+    assert_eq!(
+        shown(named(thunk(true))),
+        "_GPTpM3LenN1pE4Vec2: interface thunk for (*p.Vec2).Len"
+    );
+}
+
+#[test]
 fn what_has_no_symbol_says_why() {
     let (world, package) = World::checked("p", SAMPLE);
     let mut namer = world.namer();

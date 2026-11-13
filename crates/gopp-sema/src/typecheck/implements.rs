@@ -214,9 +214,15 @@ impl<'a> Checker<'a> {
         };
         if let Some((from, to)) = fit.map(|(from, to)| (held(from), held(to)))
             && self.types.is_interface(to)
-            && !self.types.is_interface(from)
             && !self.open(from)
         {
+            if self.types.is_interface(from) {
+                let methods = |ty| self.types.interface_methods(ty, self.names);
+                if methods(from) != methods(to) {
+                    self.iface_changes.insert(expr, (from, to));
+                }
+                return false;
+            }
             self.iface_conversions.insert(expr, (from, to));
             return self.own_rules(cx) && self.boxed(cx, (expr, x), (from, to), place, how);
         }

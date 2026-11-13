@@ -233,6 +233,15 @@ type Named struct {
 	list []int
 }
 
+type Sized interface {
+	Size() int
+	Grow(by int, note string)
+}
+
+func (n Named) Size() int { return len(n.list) }
+
+func (n *Named) Grow(by int, note string) { n.name += note }
+
 func held(v any) int {
 	switch x := v.(type) {
 	case int:
@@ -243,14 +252,20 @@ func held(v any) int {
 	return 0
 }
 
+func grown(s Sized) int {
+	s.Grow(1, \"!\")
+	return s.Size()
+}
+
 func main() {
-	println(held(7) + held(Named{\"n\", []int{1}}) + held(nil))
+	n := Named{\"n\", []int{1}}
+	println(held(7) + held(n) + held(nil) + grown(&n))
 }
 ";
 
 #[test]
 fn the_descriptor_of_a_type_is_static_data_that_names_its_glue() {
-    let unit = unit("a.gopp", INTERFACES);
+    let unit = unit("a.go", INTERFACES);
     // A descriptor is declared before the functions, which name it,
     // and said after their prototypes, which it names.
     let declared = unit.find("__attribute__((weak)) const T").unwrap();
@@ -351,7 +366,12 @@ fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
         })
         .collect();
     cases.par_iter().for_each(|&(program, target, opt)| {
-        let unit = emit_c23(&module("a.gopp", program), &options(Entry::Main)).unwrap();
+        // A Go file holds a pointer in an interface value.
+        let name = match program == INTERFACES {
+            true => "a.go",
+            false => "a.gopp",
+        };
+        let unit = emit_c23(&module(name, program), &options(Entry::Main)).unwrap();
         let driver = strict(&toolchain, target, opt);
         let mut objects = Vec::new();
         for _ in 0..2 {

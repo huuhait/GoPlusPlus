@@ -1,0 +1,20 @@
+4 3
+3 2
+11 11
+first 2 2
+x changed
+third 0
+ab ab
+dup 3
+boxed 103 3
+dup 103
+dup 203
+file 303
+close 303
+end of files
+close 203
+close 103
+close 3
+negative true
+-1
+done
