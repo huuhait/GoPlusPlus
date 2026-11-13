@@ -97,6 +97,17 @@ typedef struct gopp_type {
   const gopp_methods *methods;
 } gopp_type;
 
+// What an environment of a function value starts with: how many
+// function values share it, and what ends the variables that it holds.
+typedef struct gopp_env {
+  uint64_t count;
+  void (*drop)(uint8_t *env);
+} gopp_env;
+
+// The count of an environment in the frame of a function, which is
+// never counted or freed.
+#define GOPP_ENV_IN_FRAME (~(uint64_t)0)
+
 // The value is the second word of an interface value itself, not in a
 // box (TYP-8).
 #define GOPP_TYPE_INLINE 1
@@ -161,6 +172,8 @@ void _gopp_map_iter_end(void *iter);
 [[noreturn]] void _gopp_panic_slice3_b(uint64_t high, uint64_t max, bool is_signed);
 [[noreturn]] void _gopp_panic_slice3_c(uint64_t low, uint64_t high, bool is_signed);
 [[noreturn]] void _gopp_panic_slice_convert(uint64_t wanted, uint64_t length, bool is_signed);
+void _gopp_func_clone(uint8_t *value);
+void _gopp_func_drop(uint8_t *value);
 uint8_t * _gopp_iface_box(const void *value, uint64_t size);
 void _gopp_iface_clone(uint8_t *value);
 void _gopp_iface_drop(uint8_t *value);

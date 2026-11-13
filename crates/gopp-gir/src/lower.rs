@@ -6,6 +6,7 @@
 //! gives it. So the module is the same for any number of threads.
 
 mod assign;
+mod closure;
 mod equal;
 mod expr;
 mod facts;
@@ -191,6 +192,9 @@ pub(crate) struct Shared<'a> {
     /// lowered from no source.
     no_body: Body,
     no_facts: facts::Facts,
+    /// The function literals of the package, each by its file and its
+    /// expression.
+    literals: FxHashMap<(u32, ExprId), Literal>,
     /// For the symbol of each function of the package: which of its
     /// parameters it does not own, the receiver first. A caller lends
     /// its arguments to those.
@@ -241,8 +245,21 @@ pub(crate) struct Part {
     glues: Vec<Asked>,
 }
 
+/// A function literal: where it is written, and its number there for
+/// its symbol.
+pub(crate) struct Literal {
+    /// The function of the package around it.
+    job: usize,
+    /// The function literal that it is written directly in, if it is
+    /// in one.
+    within: Option<ExprId>,
+    /// From 1 in the order of the source, among the literals that are
+    /// written directly in the same function.
+    ordinal: u64,
+}
+
 /// A function that the package makes once for all that ask for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Made {
     /// The glue of a kind for a type.
     Glue(glue::Glue),
@@ -250,6 +267,9 @@ pub(crate) enum Made {
     /// declared type: in the table of the type itself, or in that of
     /// the pointers to it if `pointer` is set.
     Thunk { name: Spur, pointer: bool },
+    /// The code of the function with the symbol as a value: the
+    /// function with an environment in front, which it does not read.
+    Value(String),
 }
 
 /// A function that is asked for: its symbol, what it is and its type.
@@ -263,6 +283,13 @@ pub(crate) struct Memo<'a> {
     pub types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
     /// The type that every map has, once a map type is lowered.
     pub map: Option<TypeId>,
+    /// The types that function values have: two words, the code and
+    /// its environment.
+    pub func_types: rustc_hash::FxHashSet<TypeId>,
+    /// The function literals that the functions of the run name, which
+    /// are lowered after the function that is lowered now.
+    pub literals: Vec<(&'a Job, ExprId)>,
+    queued: rustc_hash::FxHashSet<(u32, ExprId)>,
     /// The type that every interface value has, once an interface type
     /// is lowered.
     pub iface: Option<TypeId>,
@@ -318,6 +345,9 @@ impl<'a> Memo<'a> {
             namer: Namer::new(shared.types, shared.names).with_locals(locals),
             types: FxHashMap::default(),
             map: None,
+            func_types: rustc_hash::FxHashSet::default(),
+            literals: Vec::new(),
+            queued: rustc_hash::FxHashSet::default(),
             iface: None,
             infos: FxHashMap::default(),
             itypes: FxHashMap::default(),
@@ -338,6 +368,44 @@ impl<'a> Memo<'a> {
             fields: FxHashMap::default(),
             diagnostics: Vec::new(),
             steps: 0,
+        }
+    }
+
+    /// The symbol of the function literal of a file, and the function
+    /// of the package that it is written in; none for a literal that is
+    /// in no function.
+    pub fn literal(
+        &mut self,
+        shared: &'a Shared<'_>,
+        file: u32,
+        expr: ExprId,
+    ) -> Option<(String, &'a Job)> {
+        let literal = shared.literals.get(&(file, expr))?;
+        let node = self.literal_node(shared, file, expr)?;
+        Some((self.namer.symbol(node), &shared.jobs[literal.job]))
+    }
+
+    fn literal_node(
+        &mut self,
+        shared: &Shared<'_>,
+        file: u32,
+        expr: ExprId,
+    ) -> Option<gopp_mangle::NodeId> {
+        let literal = shared.literals.get(&(file, expr))?;
+        let within = match literal.within {
+            Some(within) => func::deeper(|| self.literal_node(shared, file, within))?,
+            None => {
+                let entity = shared.entity(shared.jobs[literal.job].named);
+                self.namer.entity(entity).ok()?
+            }
+        };
+        self.namer.closure(within, literal.ordinal).ok()
+    }
+
+    /// The literal is to be lowered, once.
+    pub fn queue(&mut self, job: &'a Job, expr: ExprId) {
+        if self.queued.insert((job.file, expr)) {
+            self.literals.push((job, expr));
         }
     }
 
@@ -366,6 +434,7 @@ impl<'a> Shared<'a> {
             locals: FxHashMap::default(),
             no_body: Body::default(),
             no_facts: facts::Facts::default(),
+            literals: FxHashMap::default(),
             lent: FxHashMap::default(),
             worked: FxHashMap::default(),
         };
@@ -419,6 +488,7 @@ impl<'a> Shared<'a> {
                 }
             }
         }
+        shared.number_literals();
         // What each function does to its parameters and its variables,
         // which every caller of it reads.
         let facts: Vec<_> = (shared.jobs.par_iter())
@@ -434,6 +504,53 @@ impl<'a> Shared<'a> {
             job.facts = facts;
         }
         shared
+    }
+
+    /// Gives every function literal of the package its number: from 1
+    /// in the order of the source, among those that are written
+    /// directly in the same function or literal.
+    fn number_literals(&mut self) {
+        for (file, (tree, _)) in self.files.iter().enumerate() {
+            let file = file as u32;
+            // The functions of the file, in the order of the source.
+            let mut jobs: Vec<(u32, u32, usize)> = (self.jobs.iter().enumerate())
+                .filter(|(_, job)| job.file == file)
+                .map(|(at, job)| {
+                    let span = tree.decl_nodes[job.decl].span;
+                    (span.lo, span.hi, at)
+                })
+                .collect();
+            jobs.sort_unstable();
+            let mut literals: Vec<(u32, std::cmp::Reverse<u32>, ExprId)> = (tree.exprs.iter())
+                .filter(|(_, expr)| matches!(expr.kind, ExprKind::FuncLit { .. }))
+                .map(|(id, expr)| (expr.span.lo, std::cmp::Reverse(expr.span.hi), id))
+                .collect();
+            literals.sort_unstable();
+            // The literals that are open where the next one starts: the
+            // last of them is the one that it is written in.
+            let mut open: Vec<(u32, ExprId)> = Vec::new();
+            let mut count: FxHashMap<(usize, Option<ExprId>), u64> = FxHashMap::default();
+            for (lo, std::cmp::Reverse(hi), id) in literals {
+                while open.last().is_some_and(|&(end, _)| end <= lo) {
+                    open.pop();
+                }
+                let before = jobs.partition_point(|&(start, _, _)| start <= lo);
+                let around = before.checked_sub(1).map(|at| jobs[at]);
+                let Some((_, _, job)) = around.filter(|&(_, end, _)| hi <= end) else {
+                    continue;
+                };
+                let within = open.last().map(|&(_, within)| within);
+                let ordinal = count.entry((job, within)).or_default();
+                *ordinal += 1;
+                let literal = Literal {
+                    job,
+                    within,
+                    ordinal: *ordinal,
+                };
+                self.literals.insert((file, id), literal);
+                open.push((hi, id));
+            }
+        }
     }
 
     /// What the function of a job is, for its symbol.
@@ -612,6 +729,10 @@ impl<'a> Shared<'a> {
         let mut memo = Memo::new(self, &locals);
         for job in jobs {
             func::lower_function(self, &mut module, &mut memo, job);
+            // The literals of the function, and those of the literals.
+            while let Some((job, literal)) = memo.literals.pop() {
+                func::lower_literal(self, &mut module, &mut memo, job, literal);
+            }
         }
         Part {
             source: merge::Source::new(module),
@@ -647,6 +768,9 @@ impl<'a> Shared<'a> {
                             &symbol,
                             (ty, name, pointer),
                         );
+                    }
+                    Made::Value(of) => {
+                        func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty));
                     }
                 }
                 asked.append(&mut memo.glues);

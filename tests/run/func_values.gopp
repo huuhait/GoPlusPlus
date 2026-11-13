@@ -1,0 +1,65 @@
+package main
+
+type Handler func(name string, tags []string) int
+
+type Route struct {
+	path string
+	run  Handler
+}
+
+var routes []Route
+
+// Only reads what it is given.
+func count(name string, tags []string) int { return len(name) + len(tags) }
+
+// Keeps what it is given.
+var seen []string
+
+func record(name string, tags []string) int {
+	seen = append(seen, name)
+	seen = append(seen, tags...)
+	return len(seen)
+}
+
+func register(path string, run Handler) {
+	routes = append(routes, Route{path, run})
+}
+
+func serve(path string, tags []string) int {
+	for _, route := range routes {
+		if route.path == path {
+			return route.run(path, tags)
+		}
+	}
+	return -1
+}
+
+func choose(n int) Handler {
+	switch n {
+	case 0:
+		return count
+	case 1:
+		return record
+	}
+	return func(name string, tags []string) int { return -2 }
+}
+
+func main() {
+	register("/count", count)
+	register("/record", record)
+	register("/literal", func(name string, tags []string) int { return len(tags) * 10 })
+	tags := []string{"a", "b"}
+	println(serve("/count", tags), serve("/record", tags), serve("/literal", tags), serve("/none", tags))
+	tags[0] = "changed"
+	println(len(seen), seen[1], tags[0])
+	println(serve("/record", []string{"c"}), len(seen))
+
+	first := choose(0)
+	second := first
+	println(first("ab", nil), second("abc", tags))
+	var held any = second
+	if run, ok := held.(Handler); ok {
+		println(run("x", tags))
+	}
+	println(len(routes), routes[2].run("", tags))
+}

@@ -257,6 +257,15 @@ func grown(s Sized) int {
 	return s.Size()
 }
 
+type Op func(a int, note string) int
+
+func plain(a int, note string) int { return a + len(note) }
+
+func through(op Op, a int) int {
+	ops := []Op{op, plain, func(a int, note string) int { return a }}
+	return ops[a%3](a, \"n\")
+}
+
 func sized(v any) int {
 	if s, ok := v.(Sized); ok {
 		return s.Size()
@@ -272,7 +281,7 @@ func sized(v any) int {
 
 func main() {
 	n := Named{\"n\", []int{1}}
-	println(held(7) + held(n) + held(nil) + grown(&n) + sized(&n) + sized(n) + sized(nil))
+	println(held(7) + held(n) + held(nil) + grown(&n) + sized(&n) + sized(n) + sized(nil) + through(plain, 1))
 }
 ";
 

@@ -214,10 +214,27 @@ impl FuncCx<'_, '_> {
             Glue::Hash => Entity::HashGlue(ty),
             Glue::Drop => Entity::DropGlue(ty),
         };
-        // The runtime has the glue of every interface type.
+        // The runtime has the glue of every interface type, and counts
+        // the environments of function values.
         let lowered = self.memo.lower_type(self.shared, self.b.types(), ty);
         if lowered.is_ok_and(|lowered| self.is_iface(lowered)) {
             let glue = Ok(self.iface_glue(kind)?);
+            self.memo.glue_of.insert((kind, ty), glue);
+            return Ok(glue);
+        }
+        if lowered.is_ok_and(|lowered| self.memo.func_types.contains(&lowered)) {
+            let name = match kind {
+                Glue::Clone => Ok("_gopp_func_clone"),
+                Glue::Drop => Ok("_gopp_func_drop"),
+                Glue::Eq | Glue::Hash => Err("a comparison of function values"),
+            };
+            let glue = match name {
+                Ok(name) => {
+                    let sig = self.glue_sig(kind);
+                    Ok(self.function_named(name, sig)?)
+                }
+                Err(what) => Err(what),
+            };
             self.memo.glue_of.insert((kind, ty), glue);
             return Ok(glue);
         }

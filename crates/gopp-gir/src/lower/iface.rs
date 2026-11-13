@@ -13,7 +13,7 @@ use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind};
 use lasso::Spur;
 
-use super::expr::{Called, Check, Code, PlaceMode};
+use super::expr::{Called, Check, Code, PlaceMode, Target};
 use super::func::{Built, FuncCx};
 use super::glue::{Ends, Glue};
 use super::{CalleeKey, Made, Memo, Shared};
@@ -657,13 +657,13 @@ impl FuncCx<'_, '_> {
         Ok(Some([Operand::Copy(value), holds]))
     }
 
-    /// `x == nil` and `x != nil` for an interface value: its first word
-    /// says it.
+    /// `x == nil` and `x != nil` for an interface value or a function
+    /// value: its first word says it.
     pub fn nil_iface(&mut self, op: BinaryOp, value: Operand) -> Built<Rvalue> {
         let value = self.slot_of(Rvalue::Use(value))?;
-        let itab = Operand::Copy(self.b.field(&value, 0)?);
-        let bytes = self.bytes_ty();
-        let none = self.zero(bytes);
+        let first = self.b.field(&value, 0)?;
+        let none = self.zero(self.b.place_ty(&first));
+        let itab = Operand::Copy(first);
         let op = match op {
             BinaryOp::Ne => BinOp::Ne,
             _ => BinOp::Eq,
@@ -1113,7 +1113,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// How a place of the type ends its value, without a report: for
     /// what the package makes.
-    fn ends_quietly(&mut self, ty: CheckedTypeId) -> Built<Result<Ends, &'static str>> {
+    pub fn ends_quietly(&mut self, ty: CheckedTypeId) -> Built<Result<Ends, &'static str>> {
         let shared = self.shared;
         let lowered = self.memo.lower_type(shared, self.b.types(), ty);
         if let Ok(Type::String) = lowered.map(|lowered| self.kind(lowered)) {
@@ -1355,7 +1355,7 @@ impl<'a> FuncCx<'a, '_> {
         (x, path, iface, name): IfaceMethod<'_>,
         args: &[ExprId],
         spread: bool,
-    ) -> Built<Result<(Called, Vec<Operand>), &'static str>> {
+    ) -> Built<Target> {
         if spread {
             return Ok(Err("a call with `...`"));
         }

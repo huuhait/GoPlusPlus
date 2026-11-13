@@ -13,6 +13,7 @@ Every Go++ program is linked with a runtime ([ADR-0035](../adr/0035-runtime-in-c
 | `runtime/slice.c` | what the compiler calls for slices: `_gopp_slice_make`, `_gopp_slice_grow`, `_gopp_slice_append`, `_gopp_slice_copy`, `_gopp_slice_copy_into`, `_gopp_slice_clear`, `_gopp_slice_free`, `_gopp_slice_move_into`, `_gopp_bytes_from_string`, `_gopp_runes_from_string`, and `_gopp_each` |
 | `runtime/map.c` | what the compiler calls for maps: `_gopp_map_make`, `_gopp_map_len`, `_gopp_map_read`, `_gopp_map_set`, `_gopp_map_delete`, `_gopp_map_clear`, `_gopp_map_copy`, `_gopp_map_drop`, and the three functions of a range loop, `_gopp_map_iter_start`, `_gopp_map_iter_next`, `_gopp_map_iter_end`; and what the equality and hash glue of a type calls: `_gopp_hash_bytes`, `_gopp_hash_string`, `_gopp_hash_float`, `_gopp_hash_each`, `_gopp_mem_eq`, `_gopp_each_eq` |
 | `runtime/iface.c` | what the compiler calls for interface values: `_gopp_iface_box`, `_gopp_iface_clone`, `_gopp_iface_drop`, `_gopp_iface_eq`, `_gopp_iface_hash`, `_gopp_iface_table`, `_gopp_panic_assert` and `_gopp_panic_assert_iface` |
+| `runtime/func.c` | what the compiler calls for function values: `_gopp_func_clone` and `_gopp_func_drop` |
 | `runtime/os_linux.c`, `runtime/os_windows.c` | what the runtime asks of the system: writing to the standard error stream and walking the stack. A target gets the one of its system |
 | `runtime/internal.h` | what these files share |
 | `gopp_rt.h` | generated, never written by hand (below) |
@@ -96,6 +97,10 @@ A descriptor is static data that generated code says (`gopp_type`, in `gopp_rt.h
 - `_gopp_iface_table(itab, wanted)` gives the first word that a value has as a value of another interface type: `itab` is the first word that it has now, `wanted` the record of the interface type (`gopp_itype`: its name and the keys of its methods). The result is null for nil and for a value whose type lacks a method; for an interface without methods it is the descriptor. The first time a type is asked for an interface type the table is made: each key of the interface is searched in the methods of the type (`gopp_methods`, in the order of the keys, which the descriptor points to), and the table is kept in a set by the two addresses, a missing method too. A process that runs one program after another forgets the tables when a program starts (`_gopp_rt_init`). Nothing locks the set yet: there is one thread until `P12`.
 - `_gopp_panic_assert_iface(itab, wanted)` is where `x.(I)` ends for an interface type `I`: `panic: interface conversion: main.T is not main.I: missing method M`, or `interface is nil, not main.I`.
 - `_gopp_panic_assert(itab, wanted, iface)` is where `x.(T)` ends for an `x` that holds no `T`: `panic: interface conversion: interface {} is string, not int`, with `nil` for an `x` that holds nothing.
+
+## Function values
+
+A function value is two words: the code, and the environment that the code is given as its first argument. The environment is null for a function that captured nothing. An environment starts with `gopp_env`: the count of the function values that share it, and the function that ends what it holds, which generated code says. `_gopp_func_clone(value)` counts one more value, and `_gopp_func_drop(value)` one less: the last value calls that function and frees the environment. The count is atomic, as that of a string. An environment in the frame of a function has the count `GOPP_ENV_IN_FRAME` and is never counted or freed. The two functions are the clone and the drop glue of every function type.
 
 ## `print` and `println`
 

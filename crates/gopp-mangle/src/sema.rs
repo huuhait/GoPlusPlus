@@ -43,6 +43,9 @@ pub enum Entity<'a> {
     HashGlue(TypeId),
     /// The function that ends a value of the type.
     DropGlue(TypeId),
+    /// The code of a function of a package that is used as a value: the
+    /// function with an environment in front, which it does not read.
+    FuncValue(&'a Package, ObjId),
     /// The methods of a type that the tables of interfaces are made of
     /// while a program runs.
     MethodTable(TypeId),
@@ -245,6 +248,10 @@ impl<'a> Namer<'a> {
             Entity::EqGlue(ty) => Node::Wrap(Wrap::EqGlue, self.ty(ty)?),
             Entity::HashGlue(ty) => Node::Wrap(Wrap::HashGlue, self.ty(ty)?),
             Entity::DropGlue(ty) => Node::Wrap(Wrap::DropGlue, self.ty(ty)?),
+            Entity::FuncValue(package, id) => {
+                let function = self.entity(Entity::Object(package, id))?;
+                Node::Wrap(Wrap::MethodExpr, function)
+            }
             Entity::MethodTable(ty) => Node::Wrap(Wrap::MethodTable, self.ty(ty)?),
             Entity::IfaceDesc(ty) => Node::Wrap(Wrap::IfaceDesc, self.ty(ty)?),
             Entity::ITab(ty, iface) => Node::Pair(Pair::ITab, self.ty(ty)?, self.ty(iface)?),
@@ -262,6 +269,18 @@ impl<'a> Namer<'a> {
             }
         };
         self.add(node)
+    }
+
+    /// The node of the function literal with the number `ordinal`,
+    /// from 1 in the order of the source, among those that are written
+    /// directly in what `within` is the node of.
+    pub fn closure(&mut self, within: NodeId, ordinal: u64) -> Result<NodeId, NoSymbol> {
+        self.add(Node::Closure { ordinal, within })
+    }
+
+    /// The symbol of the entity with the node.
+    pub fn symbol(&self, entity: NodeId) -> String {
+        self.context.symbol(entity)
     }
 
     /// The node of the type: one for all identical types.

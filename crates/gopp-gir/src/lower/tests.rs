@@ -1427,6 +1427,129 @@ func main() {
 }
 
 #[test]
+fn a_function_value_is_its_code_and_its_environment() {
+    let text = "package main
+
+type Op func(a int, note string) int
+
+func plain(a int, note string) int { return a + len(note) }
+
+func keeps(a int, note string) int {
+	last = note
+	return a
+}
+
+var last string
+
+func apply(op Op, a int) int { return op(a, \"n\") }
+
+func pick(first bool) Op {
+	if first {
+		return plain
+	}
+	return func(a int, note string) int {
+		return func(b int) int { return b * 2 }(a)
+	}
+}
+
+func main() {
+	op := pick(true)
+	other := op
+	ops := []Op{op, keeps, func(a int, note string) int { return a }}
+	println(apply(op, 1), apply(other, 2), ops[1](3, \"x\"), len(ops))
+}
+";
+    let module = gir(text);
+    let defined = |name: &str| module.matches(&format!("\nfn {name}(")).count();
+    // The code of a literal is a function of its own, numbered in the
+    // function that it is written in; the code of a function of the
+    // package as a value is the function with an environment in front.
+    assert_eq!(
+        [
+            defined("_GPC1_F4mainE4pick"),
+            defined("_GPC1_C1_F4mainE4pick"),
+            defined("_GPC1_F4mainE4main"),
+            defined("_GPTEF4mainE5plain"),
+            defined("_GPTEF4mainE5keeps"),
+        ],
+        [1, 1, 1, 1, 1]
+    );
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    // A call through a value gives every argument away: `plain` only
+    // reads its string, so its code as a value ends the string, and
+    // that of `keeps`, which stores a copy, ends it too.
+    let released = |name: &str| body(name).matches("@_gopp_string_release").count();
+    assert_eq!(
+        [
+            released("_GPTEF4mainE5plain"),
+            released("_GPTEF4mainE5keeps")
+        ],
+        [1, 1]
+    );
+    // The call in `apply` reads the code and passes the environment
+    // first; the function is lent its parameter and ends nothing.
+    let apply = body("_GPF4mainE5apply");
+    assert_eq!(apply.matches(" = call copy _").count(), 1, "{apply}");
+    assert_eq!(apply.matches("@_gopp_func_drop").count(), 0, "{apply}");
+    // `other := op` is one more value that shares the environment.
+    let main = body("_GPF4mainE4main");
+    assert!(main.matches("@_gopp_func_clone").count() >= 1, "{main}");
+    insta::assert_snapshot!(module);
+    // A Go file checks that the value is not nil before it calls.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let start = module.find("\nfn _GPF4mainE5apply(").unwrap();
+    let apply = &module[start..][..module[start..].find("\n}\n").unwrap()];
+    assert_eq!(apply.matches("assert(").count(), 1, "{apply}");
+}
+
+#[test]
+fn function_values_that_are_not_supported_yet_say_so() {
+    let text = "package main
+
+type T struct{ n int }
+
+func (t T) get() int { return t.n }
+
+func many(more ...int) int { return len(more) }
+
+func main() {
+	n := 1
+	add := func(a int) int { return a + n }
+	get := T{2}.get
+	all := many
+	go func() {}()
+	defer func() {}()
+	println(add(1), get(), all(1))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
+        let messages: Vec<&str> = messages
+            .iter()
+            .map(|message| message.split_once(": ").map_or("", |(_, what)| what))
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "not supported yet: a function literal that uses a variable of the function \
+                 around it",
+                "not supported yet: a method as a value",
+                "not supported yet: a call of a function with `...`",
+                "not supported yet: a go statement",
+                "not supported yet: a function literal",
+                "not supported yet: a call of a function with `...`",
+            ],
+            "{file}"
+        );
+    }
+}
+
+#[test]
 fn an_interface_parameter_is_lent_its_argument_without_a_box() {
     let text = "package main
 
@@ -1957,6 +2080,8 @@ func f{at}(n int, p Pair) (int, string) {{
 	}}
 	var sized Sized = p
 	total += sized.Size()
+	next := func(n int) int {{ return func(m int) int {{ return m + {at} }}(n) }}
+	total += next(n)
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}
@@ -2299,6 +2424,25 @@ fn the_steps_grow_with_the_glue_of_types() {
         );
         // Only a Go file embeds a struct.
         steps_of_file("a.go", &text)
+    });
+    // Many function literals in one function, and literals in
+    // literals, each called through its value.
+    assert_near_linear(&sizes, |n| {
+        let literals: String = (0..n)
+            .map(|at| {
+                format!("\tf{at} := func(a int) int {{ return a + {at} }}\n\tsum += f{at}(sum)\n")
+            })
+            .collect();
+        let n = n / 4;
+        let nested = format!(
+            "return {}1{}",
+            "func() int { return ".repeat(n),
+            " }()".repeat(n)
+        );
+        steps_of(&format!(
+            "package main\n\nfunc f() int {{\n\tsum := 0\n{literals}\treturn sum\n}}\n\n\
+             func g() int {{\n\t{nested}\n}}\n"
+        ))
     });
     // Many types with a `drop` and a `Clone` method that each hold the
     // one before.

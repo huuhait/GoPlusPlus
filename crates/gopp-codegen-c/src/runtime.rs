@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 70] = [
+pub const FUNCS: [RuntimeFunc; 72] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -222,6 +222,8 @@ pub const FUNCS: [RuntimeFunc; 70] = [
         "_gopp_panic_slice_convert",
         "uint64_t wanted, uint64_t length, bool is_signed",
     ),
+    returns("_gopp_func_clone", "uint8_t *value"),
+    returns("_gopp_func_drop", "uint8_t *value"),
     gives(
         "uint8_t *",
         "_gopp_iface_box",
@@ -318,6 +320,17 @@ typedef struct gopp_type {
   const gopp_methods *methods;
 } gopp_type;
 
+// What an environment of a function value starts with: how many
+// function values share it, and what ends the variables that it holds.
+typedef struct gopp_env {
+  uint64_t count;
+  void (*drop)(uint8_t *env);
+} gopp_env;
+
+// The count of an environment in the frame of a function, which is
+// never counted or freed.
+#define GOPP_ENV_IN_FRAME (~(uint64_t)0)
+
 // The value is the second word of an interface value itself, not in a
 // box (TYP-8).
 #define GOPP_TYPE_INLINE 1
@@ -397,7 +410,7 @@ pub(crate) const INTERNAL: Source = ("internal.h", include_str!("../../../runtim
 
 /// The sources of the runtime for a system: every target has all but
 /// the last.
-pub(crate) fn sources(os: Os) -> [Source; 8] {
+pub(crate) fn sources(os: Os) -> [Source; 9] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",
@@ -413,6 +426,7 @@ pub(crate) fn sources(os: Os) -> [Source; 8] {
         ("slice.c", include_str!("../../../runtime/slice.c")),
         ("map.c", include_str!("../../../runtime/map.c")),
         ("iface.c", include_str!("../../../runtime/iface.c")),
+        ("func.c", include_str!("../../../runtime/func.c")),
         of_system,
     ]
 }

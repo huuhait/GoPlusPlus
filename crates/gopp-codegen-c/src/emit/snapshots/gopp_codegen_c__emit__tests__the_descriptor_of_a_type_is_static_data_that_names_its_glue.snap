@@ -12,13 +12,15 @@ typedef struct T24 T24; /* [1](string, *u8) */
 typedef struct T25 T25; /* (u64, [1](string, *u8)) */
 typedef struct T28 T28; /* [2]*u8 */
 typedef struct T31 T31; /* [3]*u8 */
-typedef struct T34 T34; /* [2]string */
-typedef struct T35 T35; /* (string, u64, [2]string) */
-typedef struct T38 T38; /* [1]string */
-typedef struct T39 T39; /* (string, u64, [1]string) */
-typedef struct T42 T42; /* (string, u64, [0]string) */
-typedef struct T50 T50; /* [2](string, *u8) */
-typedef struct T51 T51; /* (u64, [2](string, *u8)) */
+typedef struct T35 T35; /* (fn env(*u8, i64, string) -> i64, *u8) */
+typedef struct T38 T38; /* [](fn env(*u8, i64, string) -> i64, *u8) */
+typedef struct T43 T43; /* [2]string */
+typedef struct T44 T44; /* (string, u64, [2]string) */
+typedef struct T47 T47; /* [1]string */
+typedef struct T48 T48; /* (string, u64, [1]string) */
+typedef struct T51 T51; /* (string, u64, [0]string) */
+typedef struct T58 T58; /* [2](string, *u8) */
+typedef struct T59 T59; /* (u64, [2](string, *u8)) */
 typedef GOPP_CALL int64_t (*T6)(T3); /* fn(_GPTiN4mainE5Named) -> i64 */
 typedef GOPP_CALL void (*T9)(T3 *, int64_t, gopp_string); /* fn(*_GPTiN4mainE5Named, i64, string) -> () */
 typedef void (*T11)(gopp_string *, gopp_string); /* fn "C"(*string, string) -> () */
@@ -28,13 +30,17 @@ typedef bool (*T20)(uint8_t *, uint8_t *); /* fn "C"(*u8, *u8) -> bool */
 typedef void (*T21)(uint8_t *); /* fn "C"(*u8) -> () */
 typedef GOPP_CALL int64_t (*T27)(uint8_t *); /* fn(*u8) -> i64 */
 typedef GOPP_CALL void (*T30)(uint8_t *, int64_t, gopp_string); /* fn(*u8, i64, string) -> () */
-typedef uint8_t * (*T37)(uint8_t *, uint8_t *); /* fn "C"(*u8, *u8) -> *u8 */
-typedef GOPP_CALL void (*T44)(void); /* fn() -> () */
-typedef void (*T47)(uint8_t *, int64_t, int64_t, uint64_t); /* fn "C"(*u8, i64, i64, u64) -> () */
-typedef void (*T48)(int64_t); /* fn "C"(i64) -> () */
-typedef void (*T49)(void); /* fn "C"() -> () */
-typedef void (*T53)(uint8_t *, uint64_t); /* fn "C"(*u8, u64) -> () */
-typedef void (*T54)(gopp_string); /* fn "C"(string) -> () */
+typedef GOPP_CALL int64_t (*T33)(int64_t, gopp_string); /* fn(i64, string) -> i64 */
+typedef GOPP_CALL int64_t (*T34)(GOPP_ENV uint8_t *, int64_t, gopp_string); /* fn env(*u8, i64, string) -> i64 */
+typedef GOPP_CALL int64_t (*T36)(T35, int64_t); /* fn((fn env(*u8, i64, string) -> i64, *u8), i64) -> i64 */
+typedef void (*T40)(uint8_t *, int64_t, int64_t, uint64_t); /* fn "C"(*u8, i64, i64, u64) -> () */
+typedef void (*T41)(gopp_string); /* fn "C"(string) -> () */
+typedef uint8_t * (*T46)(uint8_t *, uint8_t *); /* fn "C"(*u8, *u8) -> *u8 */
+typedef GOPP_CALL void (*T53)(void); /* fn() -> () */
+typedef void (*T56)(int64_t); /* fn "C"(i64) -> () */
+typedef void (*T57)(void); /* fn "C"() -> () */
+typedef void (*T61)(uint8_t *, uint64_t); /* fn "C"(*u8, u64) -> () */
+typedef void (*T62)(uint8_t *, uint64_t, uint64_t, T21); /* fn "C"(*u8, u64, u64, fn "C"(*u8) -> ()) -> () */
 struct T4 {
   int64_t *ptr;
   uint64_t len;
@@ -77,32 +83,42 @@ struct T28 {
 struct T31 {
   uint8_t * a[3];
 };
-struct T34 {
-  gopp_string a[2];
-};
 struct T35 {
-  gopp_string f0;
-  uint64_t f1;
-  T34 f2;
+  T34 f0;
+  uint8_t * f1;
 };
 struct T38 {
+  T35 *ptr;
+  uint64_t len;
+  uint64_t cap;
+  uint8_t *backing;
+};
+struct T43 {
+  gopp_string a[2];
+};
+struct T44 {
+  gopp_string f0;
+  uint64_t f1;
+  T43 f2;
+};
+struct T47 {
   gopp_string a[1];
 };
-struct T39 {
+struct T48 {
   gopp_string f0;
   uint64_t f1;
-  T38 f2;
-};
-struct T42 {
-  gopp_string f0;
-  uint64_t f1;
-};
-struct T50 {
-  T23 a[2];
+  T47 f2;
 };
 struct T51 {
+  gopp_string f0;
+  uint64_t f1;
+};
+struct T58 {
+  T23 a[2];
+};
+struct T59 {
   uint64_t f0;
-  T50 f1;
+  T58 f1;
 };
 _Static_assert(sizeof(T4) == 32 && _Alignof(T4) == 8, "the layout of T4");
 _Static_assert(sizeof(T3) == 56 && _Alignof(T3) == 8, "the layout of T3");
@@ -113,62 +129,70 @@ _Static_assert(sizeof(T24) == 32 && _Alignof(T24) == 8, "the layout of T24");
 _Static_assert(sizeof(T25) == 40 && _Alignof(T25) == 8, "the layout of T25");
 _Static_assert(sizeof(T28) == 16 && _Alignof(T28) == 8, "the layout of T28");
 _Static_assert(sizeof(T31) == 24 && _Alignof(T31) == 8, "the layout of T31");
-_Static_assert(sizeof(T34) == 48 && _Alignof(T34) == 8, "the layout of T34");
-_Static_assert(sizeof(T35) == 80 && _Alignof(T35) == 8, "the layout of T35");
-_Static_assert(sizeof(T38) == 24 && _Alignof(T38) == 8, "the layout of T38");
-_Static_assert(sizeof(T39) == 56 && _Alignof(T39) == 8, "the layout of T39");
-_Static_assert(sizeof(T42) == 32 && _Alignof(T42) == 8, "the layout of T42");
-_Static_assert(sizeof(T50) == 64 && _Alignof(T50) == 8, "the layout of T50");
-_Static_assert(sizeof(T51) == 72 && _Alignof(T51) == 8, "the layout of T51");
+_Static_assert(sizeof(T35) == 16 && _Alignof(T35) == 8, "the layout of T35");
+_Static_assert(sizeof(T38) == 32 && _Alignof(T38) == 8, "the layout of T38");
+_Static_assert(sizeof(T43) == 48 && _Alignof(T43) == 8, "the layout of T43");
+_Static_assert(sizeof(T44) == 80 && _Alignof(T44) == 8, "the layout of T44");
+_Static_assert(sizeof(T47) == 24 && _Alignof(T47) == 8, "the layout of T47");
+_Static_assert(sizeof(T48) == 56 && _Alignof(T48) == 8, "the layout of T48");
+_Static_assert(sizeof(T51) == 32 && _Alignof(T51) == 8, "the layout of T51");
+_Static_assert(sizeof(T58) == 64 && _Alignof(T58) == 8, "the layout of T58");
+_Static_assert(sizeof(T59) == 72 && _Alignof(T59) == 8, "the layout of T59");
 
 static const char gopp_s0[] = "int";
 static const char gopp_s1[] = "main.Named";
 static const char gopp_s2[] = "Size||_GPTiG0_0_LELiE";
 static const char gopp_s3[] = "!";
-static const char gopp_s4[] = "main.Sized";
-static const char gopp_s5[] = "Grow||_GPTiG0_0_LirELE";
-static const char gopp_s6[] = "Size||_GPTiG0_0_LELiE";
-static const char gopp_s7[] = "interface { Size() int }";
-static const char gopp_s8[] = "Size||_GPTiG0_0_LELiE";
-static const char gopp_s9[] = "interface {}";
-static const char gopp_s10[] = "*main.Named";
-static const char gopp_s11[] = "Grow||_GPTiG0_0_LirELE";
-static const char gopp_s12[] = "Size||_GPTiG0_0_LELiE";
-static const char gopp_s13[] = "n";
+static const char gopp_s4[] = "n";
+static const char gopp_s5[] = "main.Sized";
+static const char gopp_s6[] = "Grow||_GPTiG0_0_LirELE";
+static const char gopp_s7[] = "Size||_GPTiG0_0_LELiE";
+static const char gopp_s8[] = "interface { Size() int }";
+static const char gopp_s9[] = "Size||_GPTiG0_0_LELiE";
+static const char gopp_s10[] = "interface {}";
+static const char gopp_s11[] = "*main.Named";
+static const char gopp_s12[] = "Grow||_GPTiG0_0_LirELE";
+static const char gopp_s13[] = "Size||_GPTiG0_0_LELiE";
+static const char gopp_s14[] = "n";
 __attribute__((weak)) const T18 gopp_g0 __asm__("_GPTii");
 __attribute__((weak)) const T18 gopp_g1 __asm__("_GPTiN4mainE5Named");
 __attribute__((weak)) const T25 gopp_g2 __asm__("_GPTmN4mainE5Named");
-__attribute__((weak)) const T35 gopp_g3 __asm__("_GPTnN4mainE5Sized");
-__attribute__((weak)) const T39 gopp_g4 __asm__("_GPTnYn04SizeG0_0_LELiEE");
-__attribute__((weak)) const T42 gopp_g5 __asm__("_GPTnYE");
+__attribute__((weak)) const T44 gopp_g3 __asm__("_GPTnN4mainE5Sized");
+__attribute__((weak)) const T48 gopp_g4 __asm__("_GPTnYn04SizeG0_0_LELiEE");
+__attribute__((weak)) const T51 gopp_g5 __asm__("_GPTnYE");
 __attribute__((weak)) const T31 gopp_g6 __asm__("_GPTaPN4mainE5NamedN4mainE5Sized");
 __attribute__((weak)) const T18 gopp_g7 __asm__("_GPTiPN4mainE5Named");
-__attribute__((weak)) const T51 gopp_g8 __asm__("_GPTmPN4mainE5Named");
+__attribute__((weak)) const T59 gopp_g8 __asm__("_GPTmPN4mainE5Named");
 
 GOPP_CALL int64_t gopp_f0(T3 _1) __asm__("_GPM4SizeN4mainE5Named");
 GOPP_CALL void gopp_f1(T3 * _1, int64_t _2, gopp_string _3) __asm__("_GPM4GrowN4mainE5Named");
 GOPP_CALL int64_t gopp_f2(T12 _1) __asm__("_GPF4mainE4held");
 GOPP_CALL int64_t gopp_f3(T12 _1) __asm__("_GPF4mainE5grown");
-GOPP_CALL int64_t gopp_f4(T12 _1) __asm__("_GPF4mainE5sized");
-GOPP_CALL void gopp_f5(void) __asm__("_GPF4mainE4main");
-__attribute__((weak)) GOPP_CALL int64_t gopp_f6(uint8_t * _1) __asm__("_GPTIM4SizeN4mainE5Named");
-__attribute__((weak)) void gopp_f7(uint8_t * _1) __asm__("_GPTcN4mainE5Named");
-__attribute__((weak)) void gopp_f8(uint8_t * _1) __asm__("_GPTcSi");
-__attribute__((weak)) void gopp_f9(uint8_t * _1) __asm__("_GPTcr");
-__attribute__((weak)) void gopp_f10(uint8_t * _1) __asm__("_GPTdN4mainE5Named");
-__attribute__((weak)) void gopp_f11(uint8_t * _1) __asm__("_GPTdSi");
-__attribute__((weak)) void gopp_f12(uint8_t * _1) __asm__("_GPTdr");
-__attribute__((weak)) GOPP_CALL void gopp_f13(uint8_t * _1, int64_t _2, gopp_string _3) __asm__("_GPTpM4GrowN4mainE5Named");
-__attribute__((weak)) GOPP_CALL int64_t gopp_f14(uint8_t * _1) __asm__("_GPTpM4SizeN4mainE5Named");
+GOPP_CALL int64_t gopp_f4(int64_t _1, gopp_string _2) __asm__("_GPF4mainE5plain");
+GOPP_CALL int64_t gopp_f5(T35 _1, int64_t _2) __asm__("_GPF4mainE7through");
+static GOPP_CALL int64_t gopp_f6(GOPP_ENV uint8_t * _1, int64_t _2, gopp_string _3) __asm__("_GPC1_F4mainE7through");
+GOPP_CALL int64_t gopp_f7(T12 _1) __asm__("_GPF4mainE5sized");
+GOPP_CALL void gopp_f8(void) __asm__("_GPF4mainE4main");
+__attribute__((weak)) GOPP_CALL int64_t gopp_f9(GOPP_ENV uint8_t * _1, int64_t _2, gopp_string _3) __asm__("_GPTEF4mainE5plain");
+__attribute__((weak)) GOPP_CALL int64_t gopp_f10(uint8_t * _1) __asm__("_GPTIM4SizeN4mainE5Named");
+__attribute__((weak)) void gopp_f11(uint8_t * _1) __asm__("_GPTcN4mainE5Named");
+__attribute__((weak)) void gopp_f12(uint8_t * _1) __asm__("_GPTcSi");
+__attribute__((weak)) void gopp_f13(uint8_t * _1) __asm__("_GPTcr");
+__attribute__((weak)) void gopp_f14(uint8_t * _1) __asm__("_GPTdN4mainE5Named");
+__attribute__((weak)) void gopp_f15(uint8_t * _1) __asm__("_GPTdSN4mainE2Op");
+__attribute__((weak)) void gopp_f16(uint8_t * _1) __asm__("_GPTdSi");
+__attribute__((weak)) void gopp_f17(uint8_t * _1) __asm__("_GPTdr");
+__attribute__((weak)) GOPP_CALL void gopp_f18(uint8_t * _1, int64_t _2, gopp_string _3) __asm__("_GPTpM4GrowN4mainE5Named");
+__attribute__((weak)) GOPP_CALL int64_t gopp_f19(uint8_t * _1) __asm__("_GPTpM4SizeN4mainE5Named");
 const T18 gopp_g0 = {(uint8_t *)&gopp_g0, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s0, 3, 0}, 0};
-const T18 gopp_g1 = {(uint8_t *)&gopp_g1, 56ull, 0ull, (T21)gopp_f7, (T21)gopp_f10, 0, 0, {(uint8_t *)gopp_s1, 10, 0}, (uint8_t *)&gopp_g2};
-const T25 gopp_g2 = {1ull, {{{{(uint8_t *)gopp_s2, 21, 0}, (uint8_t *)gopp_f6}}}};
-const T35 gopp_g3 = {{(uint8_t *)gopp_s4, 10, 0}, 2ull, {{{(uint8_t *)gopp_s5, 22, 0}, {(uint8_t *)gopp_s6, 21, 0}}}};
-const T39 gopp_g4 = {{(uint8_t *)gopp_s7, 24, 0}, 1ull, {{{(uint8_t *)gopp_s8, 21, 0}}}};
-const T42 gopp_g5 = {{(uint8_t *)gopp_s9, 12, 0}, 0ull};
-const T31 gopp_g6 = {{(uint8_t *)&gopp_g7, (uint8_t *)gopp_f13, (uint8_t *)gopp_f14}};
-const T18 gopp_g7 = {(uint8_t *)&gopp_g7, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s10, 11, 0}, (uint8_t *)&gopp_g8};
-const T51 gopp_g8 = {2ull, {{{{(uint8_t *)gopp_s11, 22, 0}, (uint8_t *)gopp_f13}, {{(uint8_t *)gopp_s12, 21, 0}, (uint8_t *)gopp_f14}}}};
+const T18 gopp_g1 = {(uint8_t *)&gopp_g1, 56ull, 0ull, (T21)gopp_f11, (T21)gopp_f14, 0, 0, {(uint8_t *)gopp_s1, 10, 0}, (uint8_t *)&gopp_g2};
+const T25 gopp_g2 = {1ull, {{{{(uint8_t *)gopp_s2, 21, 0}, (uint8_t *)gopp_f10}}}};
+const T44 gopp_g3 = {{(uint8_t *)gopp_s5, 10, 0}, 2ull, {{{(uint8_t *)gopp_s6, 22, 0}, {(uint8_t *)gopp_s7, 21, 0}}}};
+const T48 gopp_g4 = {{(uint8_t *)gopp_s8, 24, 0}, 1ull, {{{(uint8_t *)gopp_s9, 21, 0}}}};
+const T51 gopp_g5 = {{(uint8_t *)gopp_s10, 12, 0}, 0ull};
+const T31 gopp_g6 = {{(uint8_t *)&gopp_g7, (uint8_t *)gopp_f18, (uint8_t *)gopp_f19}};
+const T18 gopp_g7 = {(uint8_t *)&gopp_g7, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s11, 11, 0}, (uint8_t *)&gopp_g8};
+const T59 gopp_g8 = {2ull, {{{{(uint8_t *)gopp_s12, 22, 0}, (uint8_t *)gopp_f18}, {{(uint8_t *)gopp_s13, 21, 0}, (uint8_t *)gopp_f19}}}};
 
 GOPP_CALL int64_t gopp_f0(T3 _1) {
   [[maybe_unused]] int64_t _0;
@@ -252,7 +276,7 @@ bb5:
   _16 = (*_15);
   _17 = (&_16);
   _18 = ((uint8_t *)_17);
-  gopp_f7(_18);
+  gopp_f11(_18);
   goto bb6;
 bb6:
   _20 = _16;
@@ -263,7 +287,7 @@ bb6:
   _0 = ((int64_t)(_22 + _24));
   _25 = (&_20);
   _26 = ((uint8_t *)_25);
-  gopp_f10(_26);
+  gopp_f14(_26);
   goto bb7;
 bb7:
   return _0;
@@ -315,7 +339,121 @@ bb4:
   return _0;
 }
 
-GOPP_CALL int64_t gopp_f4(T12 _1) {
+GOPP_CALL int64_t gopp_f4(int64_t _1, gopp_string _2) {
+  [[maybe_unused]] int64_t _0;
+  [[maybe_unused]] uint64_t _3;
+  [[maybe_unused]] int64_t _4;
+  _3 = _2.len;
+  _4 = ((int64_t)_3);
+  _0 = ((int64_t)(_1 + _4));
+  return _0;
+}
+
+GOPP_CALL int64_t gopp_f5(T35 _1, int64_t _2) {
+  [[maybe_unused]] int64_t _0;
+  [[maybe_unused]] T35 _3;
+  [[maybe_unused]] T35 * _4;
+  [[maybe_unused]] uint8_t * _5;
+  [[maybe_unused]] T35 _7;
+  [[maybe_unused]] T35 _8;
+  [[maybe_unused]] T35 _9;
+  [[maybe_unused]] T35 * _10;
+  [[maybe_unused]] uint8_t * _11;
+  [[maybe_unused]] T38 _13;
+  [[maybe_unused]] T38 * _14;
+  [[maybe_unused]] uint8_t * _15;
+  [[maybe_unused]] T38 _17;
+  [[maybe_unused]] uint64_t _18;
+  [[maybe_unused]] uint64_t _19;
+  [[maybe_unused]] uint64_t _20;
+  [[maybe_unused]] T38 _21;
+  [[maybe_unused]] uint64_t _22;
+  [[maybe_unused]] int64_t _23;
+  [[maybe_unused]] int64_t _24;
+  [[maybe_unused]] uint64_t _25;
+  [[maybe_unused]] bool _26;
+  [[maybe_unused]] T35 _27;
+  [[maybe_unused]] T34 _28;
+  [[maybe_unused]] bool _29;
+  [[maybe_unused]] int64_t _30;
+  [[maybe_unused]] T38 * _31;
+  [[maybe_unused]] uint8_t * _32;
+  [[maybe_unused]] T35 * _34;
+  [[maybe_unused]] uint8_t * _35;
+  _3 = _1;
+  _4 = (&_3);
+  _5 = ((uint8_t *)_4);
+  _gopp_func_clone(_5);
+  goto bb1;
+bb1:
+  _7 = ((T35){gopp_f9, ((uint8_t *)0)});
+  _8 = ((T35){gopp_f6, ((uint8_t *)0)});
+  _9 = _7;
+  _10 = (&_9);
+  _11 = ((uint8_t *)_10);
+  _gopp_func_clone(_11);
+  goto bb2;
+bb2:
+  _13 = ((T38){});
+  _14 = (&_13);
+  _15 = ((uint8_t *)_14);
+  _gopp_slice_make(_15, 3ll, 3ll, 16ull);
+  goto bb3;
+bb3:
+  _17 = _13;
+  _18 = 0ull;
+  _17.ptr[_18] = _3;
+  _19 = 1ull;
+  _17.ptr[_19] = _9;
+  _20 = 2ull;
+  _17.ptr[_20] = _8;
+  _21 = _17;
+  _22 = _21.len;
+  _23 = gopp_rem_i64(_2, 3ll);
+  _24 = _23;
+  _25 = ((uint64_t)_24);
+  _26 = (_25 < _22);
+  if (__builtin_expect(!_26, 0)) _gopp_panic_bounds((uint64_t)_24, (uint64_t)_22, true);
+  goto bb4;
+bb4:
+  _27 = _21.ptr[_25];
+  _28 = _27.f0;
+  _29 = (_28 != ((T34)0));
+  if (__builtin_expect(!_29, 0)) _gopp_panic_nil();
+  goto bb5;
+bb5:
+  _30 = _28(_27.f1, _2, ((gopp_string){(uint8_t *)gopp_s4, 1, 0}));
+  goto bb6;
+bb6:
+  _0 = _30;
+  _31 = (&_21);
+  _32 = ((uint8_t *)_31);
+  gopp_f15(_32);
+  goto bb7;
+bb7:
+  _34 = (&_1);
+  _35 = ((uint8_t *)_34);
+  _gopp_func_drop(_35);
+  goto bb8;
+bb8:
+  return _0;
+}
+
+static GOPP_CALL int64_t gopp_f6(GOPP_ENV uint8_t * _1, int64_t _2, gopp_string _3) {
+  [[maybe_unused]] int64_t _0;
+  [[maybe_unused]] bool _4;
+  _0 = _2;
+  _4 = (_3.backing != ((uint8_t *)0));
+  if (!_4) goto bb2;
+  goto bb1;
+bb1:
+  _gopp_string_release(_3);
+  goto bb2;
+bb2:
+  return _0;
+}
+
+GOPP_CALL int64_t gopp_f7(T12 _1) {
   [[maybe_unused]] int64_t _0;
   [[maybe_unused]] uint8_t * _2;
   [[maybe_unused]] uint8_t * _3;
@@ -387,7 +525,7 @@ bb1:
   _3 = (*_5);
   goto bb2;
 bb2:
-  _6 = ((uint8_t *)((T35 *)&gopp_g3));
+  _6 = ((uint8_t *)((T44 *)&gopp_g3));
   _7 = _gopp_iface_table(_2, _6);
   goto bb3;
 bb3:
@@ -446,7 +584,7 @@ bb13:
   _31 = (*_33);
   goto bb14;
 bb14:
-  _34 = ((uint8_t *)((T39 *)&gopp_g4));
+  _34 = ((uint8_t *)((T48 *)&gopp_g4));
   _35 = _gopp_iface_table(_30, _34);
   goto bb15;
 bb15:
@@ -454,7 +592,7 @@ bb15:
   if (!_36) goto bb16;
   goto bb18;
 bb16:
-  _37 = ((uint8_t *)((T42 *)&gopp_g5));
+  _37 = ((uint8_t *)((T51 *)&gopp_g5));
   _38 = _gopp_iface_table(_30, _37);
   goto bb17;
 bb17:
@@ -510,7 +648,7 @@ bb26:
   return _0;
 }
 
-GOPP_CALL void gopp_f5(void) {
+GOPP_CALL void gopp_f8(void) {
   [[maybe_unused]] T4 _1;
   [[maybe_unused]] T4 * _2;
   [[maybe_unused]] uint8_t * _3;
@@ -562,23 +700,29 @@ GOPP_CALL void gopp_f5(void) {
   [[maybe_unused]] int64_t _52;
   [[maybe_unused]] int64_t _53;
   [[maybe_unused]] int64_t _54;
-  [[maybe_unused]] T3 _57;
-  [[maybe_unused]] T3 * _58;
-  [[maybe_unused]] uint8_t * _59;
-  [[maybe_unused]] T12 _61;
-  [[maybe_unused]] T12 * _62;
-  [[maybe_unused]] uint8_t * _63;
-  [[maybe_unused]] T12 _65;
-  [[maybe_unused]] T12 * _66;
-  [[maybe_unused]] uint8_t * _67;
-  [[maybe_unused]] T3 _69;
-  [[maybe_unused]] T3 * _70;
-  [[maybe_unused]] uint8_t * _71;
-  [[maybe_unused]] T12 _73;
-  [[maybe_unused]] T12 * _74;
-  [[maybe_unused]] uint8_t * _75;
+  [[maybe_unused]] T35 _55;
+  [[maybe_unused]] T35 _56;
+  [[maybe_unused]] T35 * _57;
+  [[maybe_unused]] uint8_t * _58;
+  [[maybe_unused]] int64_t _60;
+  [[maybe_unused]] int64_t _61;
+  [[maybe_unused]] T3 _64;
+  [[maybe_unused]] T3 * _65;
+  [[maybe_unused]] uint8_t * _66;
+  [[maybe_unused]] T12 _68;
+  [[maybe_unused]] T12 * _69;
+  [[maybe_unused]] uint8_t * _70;
+  [[maybe_unused]] T12 _72;
+  [[maybe_unused]] T12 * _73;
+  [[maybe_unused]] uint8_t * _74;
+  [[maybe_unused]] T3 _76;
   [[maybe_unused]] T3 * _77;
   [[maybe_unused]] uint8_t * _78;
+  [[maybe_unused]] T12 _80;
+  [[maybe_unused]] T12 * _81;
+  [[maybe_unused]] uint8_t * _82;
+  [[maybe_unused]] T3 * _84;
+  [[maybe_unused]] uint8_t * _85;
   _1 = ((T4){});
   _2 = (&_1);
   _3 = ((uint8_t *)_2);
@@ -588,7 +732,7 @@ bb1:
   _5 = _1;
   _6 = 0ull;
   _5.ptr[_6] = 1ll;
-  _7 = ((T3){((gopp_string){(uint8_t *)gopp_s13, 1, 0}), _5});
+  _7 = ((T3){((gopp_string){(uint8_t *)gopp_s14, 1, 0}), _5});
   _8 = _7;
   _9 = ((uint8_t *)0);
   _10 = (&_9);
@@ -602,7 +746,7 @@ bb2:
   _15 = _8;
   _16 = (&_15);
   _17 = ((uint8_t *)_16);
-  gopp_f7(_17);
+  gopp_f11(_17);
   goto bb3;
 bb3:
   _19 = (&_15);
@@ -635,73 +779,102 @@ bb6:
   (*_37) = _38;
   _39 = ((uint8_t *)((T18 *)&gopp_g7));
   _40 = ((T12){_39, _35});
-  _41 = gopp_f4(_40);
+  _41 = gopp_f7(_40);
   goto bb7;
 bb7:
   _42 = ((int64_t)(_34 + _41));
   _43 = _8;
   _44 = (&_43);
   _45 = ((uint8_t *)_44);
-  gopp_f7(_45);
+  gopp_f11(_45);
   goto bb8;
 bb8:
   _47 = (&_43);
   _48 = ((uint8_t *)_47);
   _49 = ((uint8_t *)((T18 *)&gopp_g1));
   _50 = ((T12){_49, _48});
-  _51 = gopp_f4(_50);
+  _51 = gopp_f7(_50);
   goto bb9;
 bb9:
   _52 = ((int64_t)(_42 + _51));
-  _53 = gopp_f4(((T12){}));
+  _53 = gopp_f7(((T12){}));
   goto bb10;
 bb10:
   _54 = ((int64_t)(_52 + _53));
-  _gopp_print_int(_54);
+  _55 = ((T35){gopp_f9, ((uint8_t *)0)});
+  _56 = _55;
+  _57 = (&_56);
+  _58 = ((uint8_t *)_57);
+  _gopp_func_clone(_58);
   goto bb11;
 bb11:
-  _gopp_print_newline();
+  _60 = gopp_f5(_56, 1ll);
   goto bb12;
 bb12:
-  _57 = _43;
-  _58 = (&_57);
-  _59 = ((uint8_t *)_58);
-  gopp_f10(_59);
+  _61 = ((int64_t)(_54 + _60));
+  _gopp_print_int(_61);
   goto bb13;
 bb13:
-  _61 = _40;
-  _62 = (&_61);
-  _63 = ((uint8_t *)_62);
-  _gopp_iface_drop(_63);
+  _gopp_print_newline();
   goto bb14;
 bb14:
-  _65 = _32;
-  _66 = (&_65);
-  _67 = ((uint8_t *)_66);
-  _gopp_iface_drop(_67);
+  _64 = _43;
+  _65 = (&_64);
+  _66 = ((uint8_t *)_65);
+  gopp_f14(_66);
   goto bb15;
 bb15:
-  _69 = _15;
-  _70 = (&_69);
-  _71 = ((uint8_t *)_70);
-  gopp_f10(_71);
+  _68 = _40;
+  _69 = (&_68);
+  _70 = ((uint8_t *)_69);
+  _gopp_iface_drop(_70);
   goto bb16;
 bb16:
-  _73 = _13;
-  _74 = (&_73);
-  _75 = ((uint8_t *)_74);
-  _gopp_iface_drop(_75);
+  _72 = _32;
+  _73 = (&_72);
+  _74 = ((uint8_t *)_73);
+  _gopp_iface_drop(_74);
   goto bb17;
 bb17:
-  _77 = (&_8);
+  _76 = _15;
+  _77 = (&_76);
   _78 = ((uint8_t *)_77);
-  gopp_f10(_78);
+  gopp_f14(_78);
   goto bb18;
 bb18:
+  _80 = _13;
+  _81 = (&_80);
+  _82 = ((uint8_t *)_81);
+  _gopp_iface_drop(_82);
+  goto bb19;
+bb19:
+  _84 = (&_8);
+  _85 = ((uint8_t *)_84);
+  gopp_f14(_85);
+  goto bb20;
+bb20:
   return;
 }
 
-__attribute__((weak)) GOPP_CALL int64_t gopp_f6(uint8_t * _1) {
+__attribute__((weak)) GOPP_CALL int64_t gopp_f9(GOPP_ENV uint8_t * _1, int64_t _2, gopp_string _3) {
+  [[maybe_unused]] int64_t _0;
+  [[maybe_unused]] int64_t _4;
+  [[maybe_unused]] bool _5;
+  _4 = gopp_f4(_2, _3);
+  goto bb1;
+bb1:
+  _5 = (_3.backing != ((uint8_t *)0));
+  if (!_5) goto bb3;
+  goto bb2;
+bb2:
+  _gopp_string_release(_3);
+  goto bb3;
+bb3:
+  _0 = _4;
+  return _0;
+}
+
+__attribute__((weak)) GOPP_CALL int64_t gopp_f10(uint8_t * _1) {
   [[maybe_unused]] int64_t _0;
   [[maybe_unused]] T3 * * _2;
   [[maybe_unused]] T3 * _3;
@@ -715,7 +888,7 @@ bb1:
   return _0;
 }
 
-__attribute__((weak)) void gopp_f7(uint8_t * _1) {
+__attribute__((weak)) void gopp_f11(uint8_t * _1) {
   [[maybe_unused]] T3 * _2;
   [[maybe_unused]] gopp_string * _3;
   [[maybe_unused]] uint8_t * _4;
@@ -724,18 +897,18 @@ __attribute__((weak)) void gopp_f7(uint8_t * _1) {
   _2 = ((T3 *)_1);
   _3 = (&(*_2).f0);
   _4 = ((uint8_t *)_3);
-  gopp_f9(_4);
+  gopp_f13(_4);
   goto bb1;
 bb1:
   _6 = (&(*_2).f1);
   _7 = ((uint8_t *)_6);
-  gopp_f8(_7);
+  gopp_f12(_7);
   goto bb2;
 bb2:
   return;
 }
 
-__attribute__((weak)) void gopp_f8(uint8_t * _1) {
+__attribute__((weak)) void gopp_f12(uint8_t * _1) {
   [[maybe_unused]] T4 * _2;
   _2 = ((T4 *)_1);
   _gopp_slice_copy(_1, 8ull);
@@ -744,7 +917,7 @@ bb1:
   return;
 }
 
-__attribute__((weak)) void gopp_f9(uint8_t * _1) {
+__attribute__((weak)) void gopp_f13(uint8_t * _1) {
   [[maybe_unused]] gopp_string * _2;
   [[maybe_unused]] bool _3;
   _2 = ((gopp_string *)_1);
@@ -758,7 +931,7 @@ bb2:
   return;
 }
 
-__attribute__((weak)) void gopp_f10(uint8_t * _1) {
+__attribute__((weak)) void gopp_f14(uint8_t * _1) {
   [[maybe_unused]] T3 * _2;
   [[maybe_unused]] gopp_string * _3;
   [[maybe_unused]] uint8_t * _4;
@@ -767,18 +940,38 @@ __attribute__((weak)) void gopp_f10(uint8_t * _1) {
   _2 = ((T3 *)_1);
   _3 = (&(*_2).f0);
   _4 = ((uint8_t *)_3);
-  gopp_f12(_4);
+  gopp_f17(_4);
   goto bb1;
 bb1:
   _6 = (&(*_2).f1);
   _7 = ((uint8_t *)_6);
-  gopp_f11(_7);
+  gopp_f16(_7);
   goto bb2;
 bb2:
   return;
 }
 
-__attribute__((weak)) void gopp_f11(uint8_t * _1) {
+__attribute__((weak)) void gopp_f15(uint8_t * _1) {
+  [[maybe_unused]] T38 * _2;
+  [[maybe_unused]] uint64_t _3;
+  [[maybe_unused]] uint64_t _4;
+  [[maybe_unused]] T35 * _5;
+  [[maybe_unused]] uint8_t * _6;
+  _2 = ((T38 *)_1);
+  _3 = 0ull;
+  _4 = (*_2).len;
+  _5 = (&(*_2).ptr[_3]);
+  _6 = ((uint8_t *)_5);
+  _gopp_each(_6, _4, 16ull, _gopp_func_drop);
+  goto bb1;
+bb1:
+  _gopp_slice_free(_1);
+  goto bb2;
+bb2:
+  return;
+}
+
+__attribute__((weak)) void gopp_f16(uint8_t * _1) {
   [[maybe_unused]] T4 * _2;
   _2 = ((T4 *)_1);
   _gopp_slice_free(_1);
@@ -787,7 +980,7 @@ bb1:
   return;
 }
 
-__attribute__((weak)) void gopp_f12(uint8_t * _1) {
+__attribute__((weak)) void gopp_f17(uint8_t * _1) {
   [[maybe_unused]] gopp_string * _2;
   [[maybe_unused]] bool _3;
   _2 = ((gopp_string *)_1);
@@ -801,7 +994,7 @@ bb2:
   return;
 }
 
-__attribute__((weak)) GOPP_CALL void gopp_f13(uint8_t * _1, int64_t _2, gopp_string _3) {
+__attribute__((weak)) GOPP_CALL void gopp_f18(uint8_t * _1, int64_t _2, gopp_string _3) {
   [[maybe_unused]] T3 * * _4;
   [[maybe_unused]] T3 * _5;
   [[maybe_unused]] bool _7;
@@ -820,7 +1013,7 @@ bb3:
   return;
 }
 
-__attribute__((weak)) GOPP_CALL int64_t gopp_f14(uint8_t * _1) {
+__attribute__((weak)) GOPP_CALL int64_t gopp_f19(uint8_t * _1) {
   [[maybe_unused]] int64_t _0;
   [[maybe_unused]] T3 * * _2;
   [[maybe_unused]] T3 * _3;
@@ -844,23 +1037,28 @@ static const gopp_func_name gopp_funcs[] = {
   {(void *)gopp_f1, "main.Named.Grow"},
   {(void *)gopp_f2, "main.held"},
   {(void *)gopp_f3, "main.grown"},
-  {(void *)gopp_f4, "main.sized"},
-  {(void *)gopp_f5, "main.main"},
-  {(void *)gopp_f6, "interface thunk for main.Named.Size"},
-  {(void *)gopp_f7, "clone glue for main.Named"},
-  {(void *)gopp_f8, "clone glue for []int"},
-  {(void *)gopp_f9, "clone glue for string"},
-  {(void *)gopp_f10, "drop glue for main.Named"},
-  {(void *)gopp_f11, "drop glue for []int"},
-  {(void *)gopp_f12, "drop glue for string"},
-  {(void *)gopp_f13, "interface thunk for (*main.Named).Grow"},
-  {(void *)gopp_f14, "interface thunk for (*main.Named).Size"},
+  {(void *)gopp_f4, "main.plain"},
+  {(void *)gopp_f5, "main.through"},
+  {(void *)gopp_f6, "main.through.func1"},
+  {(void *)gopp_f7, "main.sized"},
+  {(void *)gopp_f8, "main.main"},
+  {(void *)gopp_f9, "method expression main.plain"},
+  {(void *)gopp_f10, "interface thunk for main.Named.Size"},
+  {(void *)gopp_f11, "clone glue for main.Named"},
+  {(void *)gopp_f12, "clone glue for []int"},
+  {(void *)gopp_f13, "clone glue for string"},
+  {(void *)gopp_f14, "drop glue for main.Named"},
+  {(void *)gopp_f15, "drop glue for []main.Op"},
+  {(void *)gopp_f16, "drop glue for []int"},
+  {(void *)gopp_f17, "drop glue for string"},
+  {(void *)gopp_f18, "interface thunk for (*main.Named).Grow"},
+  {(void *)gopp_f19, "interface thunk for (*main.Named).Size"},
 };
-static gopp_func_table gopp_table = {gopp_funcs, 15, 0};
+static gopp_func_table gopp_table = {gopp_funcs, 20, 0};
 
 int main(int argc, char **argv) {
   _gopp_rt_init(argc, argv);
   _gopp_rt_funcs(&gopp_table);
-  gopp_f5();
+  gopp_f8();
   return 0;
 }

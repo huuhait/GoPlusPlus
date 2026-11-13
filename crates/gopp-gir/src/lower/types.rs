@@ -169,7 +169,9 @@ impl Memo<'_> {
                     has_env: true,
                     cc: CallConv::Go,
                 }));
-                types.tuple(&[code, bytes])
+                let value = types.tuple(&[code, bytes]);
+                self.func_types.insert(value);
+                value
             }
             CheckedType::Struct(fields) if fields.is_empty() => TypeInterner::UNIT,
             CheckedType::Struct(fields) => {

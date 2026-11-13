@@ -49,6 +49,10 @@ pub(super) struct Called {
     pub ret: TypeId,
 }
 
+/// What a call calls, with the arguments that come before those that
+/// are written; or why the call is not supported yet.
+pub(super) type Target = Result<(Called, Vec<Operand>), &'static str>;
+
 /// A check that a place needs before it is used.
 pub(super) enum Check {
     /// The index is below the length. The second slot has the index
@@ -434,7 +438,10 @@ impl<'a> FuncCx<'a, '_> {
             // reported.
             ExprKind::BasicLit { .. } if ty == TypeInterner::UNIT => Ok(Rvalue::Use(self.zero(ty))),
             ExprKind::BasicLit { .. } => Ok(self.placeholder(span, ty, "a complex number")),
-            ExprKind::FuncLit { .. } => Ok(self.placeholder(span, ty, "a function literal")),
+            ExprKind::FuncLit { .. } => {
+                let made = self.literal(expr, ty)?;
+                self.fresh(expr, ty, made)
+            }
             ExprKind::Slice { x, lo, hi, max, .. } => {
                 let of = self.ty_of(*x);
                 let of = self.pointee(of);
@@ -483,7 +490,9 @@ impl<'a> FuncCx<'a, '_> {
                     let place = self.place(expr, &mut PlaceMode::default())?;
                     return Ok(Rvalue::Use(Operand::Copy(place)));
                 }
-                ObjKind::Func => "a function as a value",
+                ObjKind::Func => {
+                    return self.func_value(expr, ty, CalleeKey::Object(*object));
+                }
                 ObjKind::Const => "a constant of several parts",
                 _ => "this name",
             },
@@ -513,7 +522,9 @@ impl<'a> FuncCx<'a, '_> {
                         let place = self.place(expr, &mut PlaceMode::default())?;
                         return Ok(Rvalue::Use(Operand::Copy(place)));
                     }
-                    Some(ObjKind::Func) => "a function as a value",
+                    Some(ObjKind::Func) => {
+                        return self.func_value(expr, ty, CalleeKey::Member(*import, *member));
+                    }
                     _ => "a name of another package",
                 }
             }
@@ -1035,8 +1046,10 @@ impl<'a> FuncCx<'a, '_> {
             first = self.stable(first)?;
         }
         let second = self.operand_as(y, right)?;
-        // An interface value is nil when its first word is.
-        if let (BinaryOp::Eq | BinaryOp::Ne, true) = (op, self.is_iface(left)) {
+        // An interface value is nil when its first word is, and so is
+        // a function value.
+        let two_words = self.is_iface(left) || self.memo.func_types.contains(&left);
+        if let (BinaryOp::Eq | BinaryOp::Ne, true) = (op, two_words) {
             let nil = |operand: &Operand| {
                 let zero = ConstantKind::Zero;
                 matches!(operand, Operand::Const(constant) if constant.kind == zero)
@@ -1242,7 +1255,15 @@ impl<'a> FuncCx<'a, '_> {
         }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
-            Err(what) => return Ok(self.placeholder(span, ty, what)),
+            // A function value: its code is called with its
+            // environment.
+            Err(what) => {
+                return match self.value_called(span, callee, *spread)? {
+                    Some(Ok((called, given))) => self.call_with(expr, &called, given, args),
+                    Some(Err(what)) => Ok(self.placeholder(span, ty, what)),
+                    None => Ok(self.placeholder(span, ty, what)),
+                };
+            }
         };
         let mut given = Vec::with_capacity(called.params.len());
         if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {

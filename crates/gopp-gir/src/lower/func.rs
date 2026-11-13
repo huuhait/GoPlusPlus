@@ -238,7 +238,7 @@ pub(super) fn lower_function<'a>(
     let built = FuncBuilder::new(module, &job.symbol, sig, Linkage::External, loc).and_then(|b| {
         let body = &shared.package.files[job.file as usize].bodies[job.at];
         let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
-        cx.function(receiver.as_ref(), *ty, block)?;
+        cx.function(receiver.as_ref(), *ty, block, 0)?;
         cx.b.drop_unreached();
         cx.b.finish()
     });
@@ -247,6 +247,95 @@ pub(super) fn lower_function<'a>(
         let diagnostic = Diagnostic::new(Code::GirVerify, name.span, message);
         memo.diagnostics.push(diagnostic);
     }
+}
+
+/// Adds the function of a function literal of the job to the module:
+/// the code of its value, which takes an environment first.
+pub(super) fn lower_literal<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    job: &'a Job,
+    literal: ExprId,
+) {
+    let (tree, source) = shared.files[job.file as usize];
+    let node = &tree.exprs[literal];
+    let ExprKind::FuncLit { ty, body: block } = &node.kind else {
+        return;
+    };
+    let Some((symbol, _)) = memo.literal(shared, job.file, literal) else {
+        return;
+    };
+    let report = |memo: &mut Memo<'a>, code: Code, message: String| {
+        memo.diagnostics
+            .push(Diagnostic::new(code, node.span, message));
+    };
+    if let ExprKind::FuncType { fails: true, .. } = tree.exprs[*ty].kind {
+        let message = "not supported yet: a function that can fail".to_owned();
+        return report(memo, Code::GirUnsupported, message);
+    }
+    // The type of the code is that of the first word of the value.
+    let body = &shared.package.files[job.file as usize].bodies[job.at];
+    let value = body.types.get(&literal).map(|typed| typed.ty);
+    let value = value.and_then(|value| memo.lower_type(shared, &mut module.types, value).ok());
+    let sig = value.and_then(|value| match module.types.get(value) {
+        Type::Tuple(parts) => parts.first().copied(),
+        _ => None,
+    });
+    let Some(sig) = sig else {
+        let message = format!("{symbol} could not be lowered: its type is no function type");
+        return report(memo, Code::GirVerify, message);
+    };
+    let at = source.line_col(node.span.lo);
+    let loc = Span {
+        file: job.file + 1,
+        line: at.line,
+        col: at.column,
+    };
+    let built = FuncBuilder::new(module, &symbol, sig, Linkage::Internal, loc).and_then(|b| {
+        let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
+        cx.function(None, *ty, block, 1)?;
+        cx.b.drop_unreached();
+        cx.b.finish()
+    });
+    if let Err(error) = built {
+        let message = format!("{symbol} could not be lowered: {error}");
+        report(memo, Code::GirVerify, message);
+    }
+}
+
+/// Adds the code of the function with the symbol `of` and the type
+/// `ty` as a value to the module, under its symbol.
+pub(super) fn lower_value<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    symbol: &str,
+    (of, ty): (&str, CheckedTypeId),
+) {
+    let value = memo.lower_type(shared, &mut module.types, ty);
+    let sig = value.ok().and_then(|value| match module.types.get(value) {
+        Type::Tuple(parts) => parts.first().copied(),
+        _ => None,
+    });
+    let Some(sig) = sig else {
+        return not_made(shared, memo, symbol, Ok(Err("a function type")));
+    };
+    let link = Linkage::LinkOnceOdr;
+    let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
+        let made = cx.value_body(of, ty)?;
+        cx.b.drop_unreached();
+        cx.b.finish()?;
+        Ok(made)
+    });
+    not_made(shared, memo, symbol, built);
 }
 
 /// Adds the glue of a kind for the type to the module, under its
@@ -400,7 +489,16 @@ impl<'a, 'm> FuncCx<'a, 'm> {
 }
 
 impl FuncCx<'_, '_> {
-    fn function(&mut self, receiver: Option<&Param>, ty: ExprId, block: &Block) -> Built {
+    /// The body of a function whose first parameter of the source has
+    /// the number `first`: an environment comes before the parameters
+    /// of a function literal.
+    fn function(
+        &mut self,
+        receiver: Option<&Param>,
+        ty: ExprId,
+        block: &Block,
+        first: u32,
+    ) -> Built {
         let ExprKind::FuncType {
             params, results, ..
         } = &self.tree.exprs[ty].kind
@@ -415,7 +513,7 @@ impl FuncCx<'_, '_> {
                 .name
                 .and_then(|name| self.body.defs.get(&name.span.lo));
             if let (Some(name), Some(&local)) = (param.name, declared) {
-                let slot = self.b.param(at as u32);
+                let slot = self.b.param(first + at as u32);
                 self.b
                     .set_name(slot, self.memo.name(self.shared, name.name));
                 self.vars.insert(local, slot);
@@ -452,7 +550,7 @@ impl FuncCx<'_, '_> {
             _ if results.is_empty() => Vec::new(),
             _ => vec![whole],
         };
-        let mut next = (usize::from(receiver.is_some()) + params.len()) as u32;
+        let mut next = first + (usize::from(receiver.is_some()) + params.len()) as u32;
         for part in parts {
             let view = super::types::is_view(self.b.types(), part).then(|| {
                 next += 1;
@@ -678,6 +776,11 @@ impl FuncCx<'_, '_> {
     }
 
     // ---- places in the source
+
+    /// Which file of the package the function is in.
+    pub fn file(&self) -> u32 {
+        self.file
+    }
 
     pub fn loc(&self, span: SourceSpan) -> Span {
         let at = self.source.line_col(span.lo);
