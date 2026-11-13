@@ -60,9 +60,46 @@ typedef struct gopp_panicking {
 
 static gopp_panicking *panics;
 
+// A panic that was stopped and now leaves the functions between where
+// it started and the function that goes on: each of them ends what it
+// owns. One that starts while a value ends comes on top.
+typedef struct gopp_unwinding {
+  struct gopp_unwinding *outer;
+  // The function that goes on.
+  gopp_frame *target;
+  // The list of frames when the unwinding started: a panic that is
+  // raised while a value ends must be stopped before it gets there.
+  gopp_frame *limit;
+  // What the unwinder of the system keeps of the unwinding.
+  _Alignas(16) uint8_t room[GOPP_UNWIND_ROOM];
+} gopp_unwinding;
+
+static gopp_unwinding *unwindings;
+
 void _gopp_panic_reset(void) {
   frames = 0;
   panics = 0;
+  unwindings = 0;
+}
+
+// A panic left the end of a value (`drop`): nothing can go on.
+[[noreturn]] void _gopp_panic_drop(void) {
+  _gopp_write_text("fatal error: a panic left the end of a value");
+  die();
+}
+
+// The last that unwinding does in a function with a frame, after the
+// function ended what it owns but its results: if one of its deferred
+// calls stopped the panic, the function goes on from where it marked.
+void _gopp_defer_left(uint8_t *frame) {
+  gopp_unwinding *unwinding = unwindings;
+  if (unwinding == 0 || unwinding->target != (gopp_frame *)frame) {
+    return;
+  }
+  unwindings = unwinding->outer;
+  free(unwinding);
+  LEAVES_FRAMES();
+  __builtin_longjmp(((gopp_frame *)frame)->jmp, 1);
 }
 
 void _gopp_defer_push(uint8_t *frame) {
@@ -207,7 +244,17 @@ static bool listed(const gopp_frame *frame) {
   panic->below = panics;
   panic->again = panics != 0 && panics->recovered && same(&panics->value, &panic->value);
   panics = panic;
-  while (frames != 0) {
+  for (;;) {
+    // A panic that started while a value ended, where another panic
+    // left a function, and that nothing stopped before its end.
+    if (unwindings != 0 && frames == unwindings->limit) {
+      write_panics(panic, true);
+      _gopp_write_text("\n");
+      _gopp_panic_drop();
+    }
+    if (frames == 0) {
+      break;
+    }
     gopp_frame *frame = frames;
     panic->at = frame;
     frame->run(frame->record);
@@ -228,8 +275,15 @@ static bool listed(const gopp_frame *frame) {
       rest = below;
     }
     panics = rest;
-    LEAVES_FRAMES();
-    __builtin_longjmp(frame->jmp, 1);
+    // Every function between here and the one that goes on ends what
+    // it owns, and that one comes to `_gopp_defer_left` last.
+    gopp_unwinding *unwinding = _gopp_alloc(sizeof *unwinding);
+    *unwinding = (gopp_unwinding){.outer = unwindings, .target = frame, .limit = frames};
+    unwindings = unwinding;
+    _gopp_os_unwind(unwinding->room);
+    // The system has no unwinder for this: nothing is ended on the way.
+    _gopp_defer_left((uint8_t *)frame);
+    __builtin_unreachable();
   }
   write_panics(panic, true);
   die();

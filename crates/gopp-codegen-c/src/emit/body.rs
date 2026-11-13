@@ -94,54 +94,193 @@ fn unsupported(func: &Function, what: &'static str) -> EmitError {
     }
 }
 
+/// What a function that owns values has for a panic that leaves it:
+/// the cleanup blocks of GIR are one function of C, which Clang calls
+/// wherever the function is left (`__attribute__((cleanup))`), with a
+/// number that says which block to start with. The number is 0 where
+/// the function returns, so the call does nothing then, and Clang
+/// takes it out; a panic finds the number of the call that it leaves.
+struct Guard {
+    /// For each block that unwinding enters from a call: its number,
+    /// from 1.
+    states: Vec<i64>,
+    /// The locals that a cleanup block uses: they are parts of the
+    /// record that the function of the cleanup blocks is given.
+    shared: Vec<bool>,
+}
+
+/// The number that says that a panic left the end of a value, which
+/// ends the program.
+const IN_AN_END: i64 = -1;
+
+impl Guard {
+    /// None for a function that ends no value and has no cleanup
+    /// block: a panic leaves it as it is.
+    fn of(func: &Function, steps: &mut u64) -> Option<Self> {
+        let ends = |block: &gopp_gir::BasicBlock| match block.term.kind {
+            TerminatorKind::Call { unwind, .. } | TerminatorKind::Assert { unwind, .. } => {
+                unwind == UnwindAction::Terminate
+            }
+            _ => false,
+        };
+        let guarded = |block: &gopp_gir::BasicBlock| block.cleanup || ends(block);
+        if !func.blocks().iter().any(|(_, block)| guarded(block)) {
+            return None;
+        }
+        let mut states = vec![0; func.blocks().len()];
+        let mut shared = vec![false; func.locals().len()];
+        let mut next = 0;
+        let mut uses = |place: &Place| {
+            shared[place.local.into_raw().into_u32() as usize] = true;
+            for step in &place.projections {
+                if let ProjectionKind::Index(at) = step.kind {
+                    shared[at.into_raw().into_u32() as usize] = true;
+                }
+            }
+        };
+        for (_, block) in func.blocks().iter() {
+            *steps += 1;
+            for (target, unwinds) in block.term.kind.successors() {
+                let state = &mut states[target.into_raw().into_u32() as usize];
+                if unwinds && *state == 0 {
+                    next += 1;
+                    *state = next;
+                }
+            }
+            if !block.cleanup {
+                continue;
+            }
+            let mut reads = |operand: &Operand| {
+                if let Operand::Copy(place) | Operand::Move(place) = operand {
+                    uses(place);
+                }
+            };
+            for stmt in &block.stmts {
+                *steps += 1;
+                let StatementKind::Assign(assigned) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, value) = &**assigned;
+                match value {
+                    Rvalue::Use(of) | Rvalue::Unary(_, of) | Rvalue::Cast(_, of, _) => reads(of),
+                    Rvalue::Binary(_, a, b) => [a, b].into_iter().for_each(&mut reads),
+                    Rvalue::Aggregate(_, parts) => parts.iter().for_each(&mut reads),
+                    Rvalue::AddrOf(place, _) | Rvalue::Len(place) => {
+                        reads(&Operand::Copy(place.clone()));
+                    }
+                }
+                reads(&Operand::Copy(dest.clone()));
+            }
+            match &block.term.kind {
+                TerminatorKind::Switch { on, .. } => reads(on),
+                TerminatorKind::Call {
+                    callee, args, dest, ..
+                } => {
+                    reads(callee);
+                    args.iter().for_each(&mut reads);
+                    reads(&Operand::Copy(dest.clone()));
+                }
+                TerminatorKind::Assert { cond, args, .. } => {
+                    reads(cond);
+                    args.iter().for_each(&mut reads);
+                }
+                TerminatorKind::Drop { place, .. } => reads(&Operand::Copy(place.clone())),
+                _ => {}
+            }
+        }
+        Some(Self { states, shared })
+    }
+}
+
 /// The text of one function, and the steps that writing it took.
 pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(String, u64)> {
+    let mut steps = 0;
+    let guard = Guard::of(func, &mut steps);
     let mut writer = Writer {
         cx,
         func,
         out: String::new(),
-        steps: 0,
+        steps,
+        guard,
+        unwinding: false,
     };
     let Type::Func(sig) = cx.kind(func.sig()) else {
         return Err(unsupported(func, "a function without a function type"));
     };
-    let _ = writeln!(writer.out, "\n{} {{", prototype(cx, at, func, false)?);
-    for (number, (id, local)) in func.locals().iter().enumerate() {
-        writer.steps += 1;
-        let param = (1..=sig.params.len()).contains(&number);
-        if !param && !cx.empty(local.ty) {
-            let _ = writeln!(
-                writer.out,
-                "  [[maybe_unused]] {} {};",
-                cx.spelled(local.ty),
-                local_name(id)
-            );
-        }
+    if func.blocks().iter().any(|(_, block)| block.catch) {
+        return Err(unsupported(func, "a block that stops a panic"));
     }
     // A label for each block that a jump names.
     let mut targeted = vec![false; func.blocks().len()];
     for (_, block) in func.blocks().iter() {
-        for (target, _) in block.term.kind.successors() {
-            targeted[target.into_raw().into_u32() as usize] = true;
+        for (target, unwinds) in block.term.kind.successors() {
+            targeted[target.into_raw().into_u32() as usize] |= !unwinds;
         }
     }
-    for (number, (id, block)) in func.blocks().iter().enumerate() {
-        if block.cleanup || block.catch {
-            return Err(unsupported(func, "a cleanup block"));
-        }
-        if targeted[number] {
-            let _ = writeln!(writer.out, "{}:", block_name(id));
-        }
-        for stmt in &block.stmts {
-            writer.steps += 1;
-            if let StatementKind::Assign(assigned) = &stmt.kind {
-                let (dest, value) = &**assigned;
-                writer.assign(dest, value)?;
+    let name = cx.func_name(at).to_owned();
+    writer.out.push('\n');
+    if let Some(guard) = &writer.guard {
+        // The record, and the function that the cleanup blocks are.
+        let _ = writeln!(writer.out, "struct {name}_own {{\n  int64_t state;");
+        for (id, local) in func.locals().iter() {
+            let shared = guard.shared[id.into_raw().into_u32() as usize];
+            if shared && !cx.empty(local.ty) {
+                let field = format!("_{}", id.into_raw().into_u32());
+                let _ = writeln!(writer.out, "  {} {field};", cx.spelled(local.ty));
             }
         }
-        writer.steps += 1;
-        writer.end(&block.term.kind)?;
+        let _ = writeln!(
+            writer.out,
+            "}};\n\n[[maybe_unused]] static inline __attribute__((always_inline)) void \
+             {name}_unwind(struct {name}_own *gopp_own) {{\n  switch (gopp_own->state) {{\n  \
+             case 0: return;"
+        );
+        for (number, (id, _)) in func.blocks().iter().enumerate() {
+            if guard.states[number] != 0 {
+                let state = guard.states[number];
+                let _ = writeln!(writer.out, "  case {state}: goto {};", block_name(id));
+            }
+        }
+        writer.out.push_str("  default: _gopp_panic_drop();\n  }\n");
+        writer.unwinding = true;
+        writer.blocks(&targeted)?;
+        writer.unwinding = false;
+        writer.out.push_str("}\n\n");
     }
+    let _ = writeln!(writer.out, "{} {{", prototype(cx, at, func, false)?);
+    let mut given = String::new();
+    for (number, (id, local)) in func.locals().iter().enumerate() {
+        writer.steps += 1;
+        if cx.empty(local.ty) {
+            continue;
+        }
+        let param = (1..=sig.params.len()).contains(&number);
+        match (writer.shared(id), param) {
+            (false, true) | (true, false) => {}
+            (false, false) => {
+                let _ = writeln!(
+                    writer.out,
+                    "  [[maybe_unused]] {} {};",
+                    cx.spelled(local.ty),
+                    writer.local(id)
+                );
+            }
+            // A parameter that a cleanup block uses is in the record.
+            (true, true) => {
+                let _ = writeln!(given, "  {} = _{number};", writer.local(id));
+            }
+        }
+    }
+    if writer.guard.is_some() {
+        // The record is the last variable of the function, so that
+        // all others are still there when its function is called.
+        let _ = writeln!(
+            writer.out,
+            "  struct {name}_own gopp_owned __attribute__((cleanup({name}_unwind)));\n  \
+             struct {name}_own *const gopp_own = &gopp_owned;\n  gopp_own->state = 0;\n{given}"
+        );
+    }
+    writer.blocks(&targeted)?;
     writer.out.push_str("}\n");
     Ok((writer.out, writer.steps))
 }
@@ -151,9 +290,65 @@ struct Writer<'c, 'm> {
     func: &'c Function,
     out: String,
     steps: u64,
+    guard: Option<Guard>,
+    /// The cleanup blocks are written, and not the others.
+    unwinding: bool,
 }
 
 impl Writer<'_, '_> {
+    /// Whether the local is a part of the record of the cleanup blocks.
+    fn shared(&self, local: LocalId) -> bool {
+        let at = local.into_raw().into_u32() as usize;
+        (self.guard.as_ref()).is_some_and(|guard| guard.shared[at])
+    }
+
+    /// The local as an expression of C.
+    fn local(&self, local: LocalId) -> String {
+        match self.shared(local) {
+            true => format!("gopp_own->{}", local_name(local)),
+            false => local_name(local),
+        }
+    }
+
+    /// The blocks that unwinding runs, or the others: each with a
+    /// label if a jump names it.
+    fn blocks(&mut self, targeted: &[bool]) -> Written {
+        let func = self.func;
+        for (number, (id, block)) in func.blocks().iter().enumerate() {
+            if block.cleanup != self.unwinding {
+                continue;
+            }
+            let entered = (self.guard.as_ref()).is_some_and(|guard| guard.states[number] != 0);
+            if targeted[number] || entered {
+                let _ = writeln!(self.out, "{}:", block_name(id));
+            }
+            for stmt in &block.stmts {
+                self.steps += 1;
+                if let StatementKind::Assign(assigned) = &stmt.kind {
+                    let (dest, value) = &**assigned;
+                    self.assign(dest, value)?;
+                }
+            }
+            self.steps += 1;
+            self.end(&block.term.kind)?;
+        }
+        Ok(())
+    }
+
+    /// The number of the block that unwinding starts with is said
+    /// before what may panic.
+    fn state(&self, action: UnwindAction) -> String {
+        let Some(guard) = self.guard.as_ref().filter(|_| !self.unwinding) else {
+            return String::new();
+        };
+        let state = match action {
+            UnwindAction::Cleanup(block) => guard.states[block.into_raw().into_u32() as usize],
+            UnwindAction::Terminate => IN_AN_END,
+            UnwindAction::Continue | UnwindAction::Unreachable => 0,
+        };
+        format!("gopp_own->state = {state}; ")
+    }
+
     fn place_ty(&self, place: &Place) -> TypeId {
         match place.projections.last() {
             Some(last) => last.ty,
@@ -170,7 +365,7 @@ impl Writer<'_, '_> {
 
     /// The place as an expression of C that can be assigned to.
     fn place(&mut self, place: &Place) -> Written<String> {
-        let mut text = local_name(place.local);
+        let mut text = self.local(place.local);
         let mut ty = self.func.locals()[place.local].ty;
         for step in &place.projections {
             self.steps += 1;
@@ -187,9 +382,9 @@ impl Writer<'_, '_> {
                 }
                 (ProjectionKind::Field(at), _) => format!("{text}.f{at}"),
                 (ProjectionKind::Index(at), Type::Array(..)) => {
-                    format!("{text}.a[{}]", local_name(at))
+                    format!("{text}.a[{}]", self.local(at))
                 }
-                (ProjectionKind::Index(at), _) => format!("{text}.ptr[{}]", local_name(at)),
+                (ProjectionKind::Index(at), _) => format!("{text}.ptr[{}]", self.local(at)),
                 (ProjectionKind::ConstIndex(at), _) => format!("{text}.a[{at}]"),
                 (ProjectionKind::Downcast(_), _) => {
                     return Err(unsupported(self.func, "a variant of a value"));
@@ -380,27 +575,21 @@ impl Writer<'_, '_> {
         let _ = writeln!(self.out, "  goto {};", block_name(to));
     }
 
-    /// What unwinding does needs no code of its own, but for a block
-    /// that it runs.
-    fn unwind(&self, action: UnwindAction) -> Written {
-        match action {
-            UnwindAction::Cleanup(_) => Err(unsupported(self.func, "a cleanup block")),
-            _ => Ok(()),
-        }
-    }
-
     /// The end of a block.
     fn end(&mut self, term: &TerminatorKind) -> Written {
         let cx = self.cx;
         match term {
             TerminatorKind::Goto(target) => self.jump(*target),
             TerminatorKind::Return => {
+                let state = self.state(UnwindAction::Continue);
                 let result = self.func.locals().iter().next();
                 match result.filter(|(_, result)| !cx.empty(result.ty)) {
                     Some((id, _)) => {
-                        let _ = writeln!(self.out, "  return {};", local_name(id));
+                        let _ = writeln!(self.out, "  {state}return {};", self.local(id));
                     }
-                    None => self.out.push_str("  return;\n"),
+                    None => {
+                        let _ = writeln!(self.out, "  {state}return;");
+                    }
                 }
             }
             TerminatorKind::Unreachable => self.out.push_str("  __builtin_unreachable();\n"),
@@ -448,7 +637,7 @@ impl Writer<'_, '_> {
                 target,
                 unwind,
             } => {
-                self.unwind(*unwind)?;
+                let state = self.state(*unwind);
                 let called = self.operand(callee)?;
                 let mut given = Vec::with_capacity(args.len());
                 for arg in args {
@@ -459,11 +648,11 @@ impl Writer<'_, '_> {
                 let call = format!("{called}({})", given.join(", "));
                 match cx.empty(self.place_ty(dest)) {
                     true => {
-                        let _ = writeln!(self.out, "  {call};");
+                        let _ = writeln!(self.out, "  {state}{call};");
                     }
                     false => {
                         let dest = self.place(dest)?;
-                        let _ = writeln!(self.out, "  {dest} = {call};");
+                        let _ = writeln!(self.out, "  {state}{dest} = {call};");
                     }
                 }
                 match target {
@@ -479,7 +668,7 @@ impl Writer<'_, '_> {
                 target,
                 unwind,
             } => {
-                self.unwind(*unwind)?;
+                let state = self.state(*unwind);
                 let holds = self.operand(cond)?;
                 let fails = if *expected { "!" } else { "" };
                 let mut said = Vec::with_capacity(args.len());
@@ -494,14 +683,16 @@ impl Writer<'_, '_> {
                 }
                 let _ = writeln!(
                     self.out,
-                    "  if (__builtin_expect({fails}{holds}, 0)) _gopp_panic_{}({});",
+                    "  if (__builtin_expect({fails}{holds}, 0)) {{ {state}_gopp_panic_{}({}); }}",
                     panic_name(*kind),
                     said.join(", ")
                 );
                 self.jump(*target);
             }
             TerminatorKind::Drop { .. } => return Err(unsupported(self.func, "a drop")),
-            TerminatorKind::Resume => return Err(unsupported(self.func, "a cleanup block")),
+            // The function of the cleanup blocks is over, and the
+            // unwinding goes on.
+            TerminatorKind::Resume => self.out.push_str("  return;\n"),
         }
         Ok(())
     }

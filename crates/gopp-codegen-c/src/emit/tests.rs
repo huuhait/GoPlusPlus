@@ -298,7 +298,7 @@ fn the_descriptor_of_a_type_is_static_data_that_names_its_glue() {
 }
 
 #[test]
-fn a_module_that_breaks_a_rule_and_a_cleanup_block_are_refused() {
+fn a_cleanup_block_is_a_function_of_its_own_and_a_module_that_breaks_a_rule_is_refused() {
     use gopp_gir::{CallConv, FuncBuilder, FuncType, Linkage, Place, Span, Type, TypeInterner};
     use gopp_gir::{UnwindAction, verify_module};
     let mut module = Module::default();
@@ -334,11 +334,22 @@ fn a_module_that_breaks_a_rule_and_a_cleanup_block_are_refused() {
     f.resume().unwrap();
     f.finish().unwrap();
     assert_eq!(verify_module(&module), Ok(()));
-    let refused = emit_c23(&module, &options(Entry::None)).unwrap_err();
-    assert_eq!(
-        refused.to_string(),
-        "not supported yet in p.f: a cleanup block"
-    );
+    // The cleanup block is a function that Clang calls where `p.f` is
+    // left; the call says before that its block is the first, and the
+    // return that there is none.
+    let unit = emit_c23(&module, &options(Entry::None)).unwrap();
+    let start = unit.find("struct gopp_f1_own {").unwrap();
+    let written = &unit[start..];
+    for part in [
+        "static inline __attribute__((always_inline)) void gopp_f1_unwind(struct gopp_f1_own \
+         *gopp_own) {\n  switch (gopp_own->state) {\n  case 0: return;\n  case 1: goto bb2;\n  \
+         default: _gopp_panic_drop();\n  }\nbb2:\n  return;\n}",
+        "struct gopp_f1_own gopp_owned __attribute__((cleanup(gopp_f1_unwind)));",
+        "  gopp_own->state = 1; gopp_f0();\n",
+        "  gopp_own->state = 0; return;\n",
+    ] {
+        assert!(written.contains(part), "{part}\n{written}");
+    }
 
     // A function whose first block is a cleanup block.
     let mut g = new(&mut module, "p.g", sig);

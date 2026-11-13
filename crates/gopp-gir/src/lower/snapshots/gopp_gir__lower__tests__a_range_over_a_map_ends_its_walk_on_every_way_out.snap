@@ -22,14 +22,15 @@ fn _GPF4mainE4find(_1: *gopp.map, _2: string) -> i64 [go, external] {
   let _12: *i64
   let _13: *u8
   let _14: *u8
-  let _15: bool
-  let _16: *string
-  let _17: i64 "key"
-  let _18: string "value"
-  let _19: bool
-  let _20: ()
-  let _21: bool
-  let _22: ()
+  let _15: ()
+  let _16: bool
+  let _17: *string
+  let _18: i64 "key"
+  let _19: string "value"
+  let _20: bool
+  let _21: ()
+  let _22: bool
+  let _23: ()
   bb0:
     _3 = copy _1  ; a.gopp:4:26
     _5 = &mut _4  ; a.gopp:4:26
@@ -43,40 +44,44 @@ fn _GPF4mainE4find(_1: *gopp.map, _2: string) -> i64 [go, external] {
     _13 = ptr_to_ptr(copy _12) as *u8  ; a.gopp:4:26
     goto bb2  ; a.gopp:4:26
   bb2:
-    _14 = call const fn @_gopp_map_iter_next(copy _6, copy _11, copy _13) -> [return: bb3, unwind: continue]  ; a.gopp:4:26
-  bb3:
-    _15 = ne(copy _14, const zero: *u8)  ; a.gopp:4:26
-    switch copy _15 [0: bb11, otherwise: bb4]  ; a.gopp:4:26
-  bb4:
-    _16 = ptr_to_ptr(copy _14) as *string  ; a.gopp:4:26
-    storage_live(_17)  ; a.gopp:4:26 scope 1
-    _17 = copy _8  ; a.gopp:4:26 scope 1
-    storage_live(_18)  ; a.gopp:4:26 scope 1
-    _18 = copy (*_16)  ; a.gopp:4:26 scope 1
-    _19 = call const fn @_gopp_string_eq(copy _18, copy _2) -> [return: bb5, unwind: continue]  ; a.gopp:5:6 scope 1
+    _14 = call const fn @_gopp_map_iter_next(copy _6, copy _11, copy _13) -> [return: bb5, unwind: cleanup bb3]  ; a.gopp:4:26
+  bb3: [cleanup]
+    _15 = call const fn @_gopp_map_iter_end(copy _6) -> [return: bb4, unwind: terminate]  ; a.gopp:4:26
+  bb4: [cleanup]
+    resume  ; a.gopp:4:26
   bb5:
-    switch copy _19 [0: bb8, otherwise: bb6]  ; a.gopp:5:6 scope 1
+    _16 = ne(copy _14, const zero: *u8)  ; a.gopp:4:26
+    switch copy _16 [0: bb13, otherwise: bb6]  ; a.gopp:4:26
   bb6:
-    _0 = copy _17  ; a.gopp:6:4 scope 1
-    storage_dead(_18)  ; a.gopp:6:4 scope 1
-    storage_dead(_17)  ; a.gopp:6:4 scope 1
-    _20 = call const fn @_gopp_map_iter_end(copy _6) -> [return: bb7, unwind: continue]  ; a.gopp:6:4 scope 1
+    _17 = ptr_to_ptr(copy _14) as *string  ; a.gopp:4:26
+    storage_live(_18)  ; a.gopp:4:26 scope 1
+    _18 = copy _8  ; a.gopp:4:26 scope 1
+    storage_live(_19)  ; a.gopp:4:26 scope 1
+    _19 = copy (*_17)  ; a.gopp:4:26 scope 1
+    _20 = call const fn @_gopp_string_eq(copy _19, copy _2) -> [return: bb7, unwind: cleanup bb3]  ; a.gopp:5:6 scope 1
   bb7:
-    return  ; a.gopp:6:4 scope 1
+    switch copy _20 [0: bb10, otherwise: bb8]  ; a.gopp:5:6 scope 1
   bb8:
-    _21 = lt(copy _17, const 0: i64)  ; a.gopp:8:6 scope 1
-    switch copy _21 [0: bb10, otherwise: bb9]  ; a.gopp:8:6 scope 1
+    _0 = copy _18  ; a.gopp:6:4 scope 1
+    storage_dead(_19)  ; a.gopp:6:4 scope 1
+    storage_dead(_18)  ; a.gopp:6:4 scope 1
+    _21 = call const fn @_gopp_map_iter_end(copy _6) -> [return: bb9, unwind: terminate]  ; a.gopp:6:4 scope 1
   bb9:
-    storage_dead(_18)  ; a.gopp:9:4 scope 1
-    storage_dead(_17)  ; a.gopp:9:4 scope 1
-    goto bb11  ; a.gopp:9:4 scope 1
+    return  ; a.gopp:6:4 scope 1
   bb10:
-    storage_dead(_18)  ; a.gopp:11:2 scope 1
-    storage_dead(_17)  ; a.gopp:11:2 scope 1
-    goto bb2  ; a.gopp:11:2
+    _22 = lt(copy _18, const 0: i64)  ; a.gopp:8:6 scope 1
+    switch copy _22 [0: bb12, otherwise: bb11]  ; a.gopp:8:6 scope 1
   bb11:
-    _22 = call const fn @_gopp_map_iter_end(copy _6) -> [return: bb12, unwind: continue]  ; a.gopp:11:2
+    storage_dead(_19)  ; a.gopp:9:4 scope 1
+    storage_dead(_18)  ; a.gopp:9:4 scope 1
+    goto bb13  ; a.gopp:9:4 scope 1
   bb12:
+    storage_dead(_19)  ; a.gopp:11:2 scope 1
+    storage_dead(_18)  ; a.gopp:11:2 scope 1
+    goto bb2  ; a.gopp:11:2
+  bb13:
+    _23 = call const fn @_gopp_map_iter_end(copy _6) -> [return: bb14, unwind: terminate]  ; a.gopp:11:2
+  bb14:
     _0 = const -1: i64  ; a.gopp:12:2
     return  ; a.gopp:12:2
 }
@@ -100,28 +105,30 @@ fn _GPF4mainE5pairs(_1: **gopp.map, _2: **gopp.map) -> i64 [go, external] {
   let _13: *i64
   let _14: *u8
   let _15: *u8
-  let _16: bool
-  let _17: *bool
-  let _18: i64 "x"
-  let _19: *gopp.map
-  let _20: (u64, u64, u64)
-  let _21: *(u64, u64, u64)
-  let _22: *u8
-  let _23: ()
-  let _24: i64
-  let _25: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
-  let _26: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
-  let _27: *u8
-  let _28: *i64
-  let _29: *u8
+  let _16: ()
+  let _17: bool
+  let _18: *bool
+  let _19: i64 "x"
+  let _20: *gopp.map
+  let _21: (u64, u64, u64)
+  let _22: *(u64, u64, u64)
+  let _23: *u8
+  let _24: ()
+  let _25: i64
+  let _26: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _27: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _28: *u8
+  let _29: *i64
   let _30: *u8
-  let _31: bool
-  let _32: *bool
-  let _33: i64 "y"
-  let _34: bool
-  let _35: ()
-  let _36: ()
+  let _31: *u8
+  let _32: ()
+  let _33: bool
+  let _34: *bool
+  let _35: i64 "y"
+  let _36: bool
   let _37: ()
+  let _38: ()
+  let _39: ()
   bb0:
     storage_live(_3)  ; a.gopp:16:2
     _3 = const 0: i64  ; a.gopp:16:2
@@ -139,54 +146,62 @@ fn _GPF4mainE5pairs(_1: **gopp.map, _2: **gopp.map) -> i64 [go, external] {
     _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:18:17
     goto bb3  ; a.gopp:18:17
   bb3:
-    _15 = call const fn @_gopp_map_iter_next(copy _7, copy _12, copy _14) -> [return: bb4, unwind: continue]  ; a.gopp:18:17
-  bb4:
-    _16 = ne(copy _15, const zero: *u8)  ; a.gopp:18:17
-    switch copy _16 [0: bb15, otherwise: bb5]  ; a.gopp:18:17
-  bb5:
-    _17 = ptr_to_ptr(copy _15) as *bool  ; a.gopp:18:17
-    storage_live(_18)  ; a.gopp:18:17 scope 1
-    _18 = copy _9  ; a.gopp:18:17 scope 1
-    _19 = copy (*_2)  ; a.gopp:19:18 scope 1
-    _21 = &mut _20  ; a.gopp:19:18 scope 1
-    _22 = ptr_to_ptr(copy _21) as *u8  ; a.gopp:19:18 scope 1
-    _23 = call const fn @_gopp_map_iter_start(copy _22, copy _19) -> [return: bb6, unwind: continue]  ; a.gopp:19:18 scope 1
+    _15 = call const fn @_gopp_map_iter_next(copy _7, copy _12, copy _14) -> [return: bb6, unwind: cleanup bb4]  ; a.gopp:18:17
+  bb4: [cleanup]
+    _16 = call const fn @_gopp_map_iter_end(copy _7) -> [return: bb5, unwind: terminate]  ; a.gopp:18:17
+  bb5: [cleanup]
+    resume  ; a.gopp:18:17
   bb6:
-    _25 = tuple {const 8: u64, const 1: u64, const 8: u64, const 16: u64, const 0: u64, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> ()}  ; a.gopp:19:18 scope 1
-    _26 = &mut _25  ; a.gopp:19:18 scope 1
-    _27 = ptr_to_ptr(copy _26) as *u8  ; a.gopp:19:18 scope 1
-    _28 = &mut _24  ; a.gopp:19:18 scope 1
-    _29 = ptr_to_ptr(copy _28) as *u8  ; a.gopp:19:18 scope 1
-    goto bb7  ; a.gopp:19:18 scope 1
+    _17 = ne(copy _15, const zero: *u8)  ; a.gopp:18:17
+    switch copy _17 [0: bb19, otherwise: bb7]  ; a.gopp:18:17
   bb7:
-    _30 = call const fn @_gopp_map_iter_next(copy _22, copy _27, copy _29) -> [return: bb8, unwind: continue]  ; a.gopp:19:18 scope 1
+    _18 = ptr_to_ptr(copy _15) as *bool  ; a.gopp:18:17
+    storage_live(_19)  ; a.gopp:18:17 scope 1
+    _19 = copy _9  ; a.gopp:18:17 scope 1
+    _20 = copy (*_2)  ; a.gopp:19:18 scope 1
+    _22 = &mut _21  ; a.gopp:19:18 scope 1
+    _23 = ptr_to_ptr(copy _22) as *u8  ; a.gopp:19:18 scope 1
+    _24 = call const fn @_gopp_map_iter_start(copy _23, copy _20) -> [return: bb8, unwind: cleanup bb4]  ; a.gopp:19:18 scope 1
   bb8:
-    _31 = ne(copy _30, const zero: *u8)  ; a.gopp:19:18 scope 1
-    switch copy _31 [0: bb13, otherwise: bb9]  ; a.gopp:19:18 scope 1
+    _26 = tuple {const 8: u64, const 1: u64, const 8: u64, const 16: u64, const 0: u64, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> ()}  ; a.gopp:19:18 scope 1
+    _27 = &mut _26  ; a.gopp:19:18 scope 1
+    _28 = ptr_to_ptr(copy _27) as *u8  ; a.gopp:19:18 scope 1
+    _29 = &mut _25  ; a.gopp:19:18 scope 1
+    _30 = ptr_to_ptr(copy _29) as *u8  ; a.gopp:19:18 scope 1
+    goto bb9  ; a.gopp:19:18 scope 1
   bb9:
-    _32 = ptr_to_ptr(copy _30) as *bool  ; a.gopp:19:18 scope 1
-    storage_live(_33)  ; a.gopp:19:18 scope 2
-    _33 = copy _24  ; a.gopp:19:18 scope 2
-    _34 = eq(copy _18, copy _33)  ; a.gopp:20:7 scope 2
-    switch copy _34 [0: bb12, otherwise: bb10]  ; a.gopp:20:7 scope 2
-  bb10:
-    _3 = add(copy _3, const 1: i64)  ; a.gopp:21:5 scope 2
-    storage_dead(_33)  ; a.gopp:22:5 scope 2
-    _35 = call const fn @_gopp_map_iter_end(copy _22) -> [return: bb11, unwind: continue]  ; a.gopp:22:5 scope 2
-  bb11:
-    storage_dead(_18)  ; a.gopp:22:5 scope 2
-    goto bb3  ; a.gopp:22:5 scope 2
+    _31 = call const fn @_gopp_map_iter_next(copy _23, copy _28, copy _30) -> [return: bb12, unwind: cleanup bb10]  ; a.gopp:19:18 scope 1
+  bb10: [cleanup]
+    _32 = call const fn @_gopp_map_iter_end(copy _23) -> [return: bb11, unwind: terminate]  ; a.gopp:19:18 scope 1
+  bb11: [cleanup]
+    goto bb4  ; a.gopp:19:18 scope 1
   bb12:
-    storage_dead(_33)  ; a.gopp:24:3 scope 2
-    goto bb7  ; a.gopp:24:3 scope 1
+    _33 = ne(copy _31, const zero: *u8)  ; a.gopp:19:18 scope 1
+    switch copy _33 [0: bb17, otherwise: bb13]  ; a.gopp:19:18 scope 1
   bb13:
-    _36 = call const fn @_gopp_map_iter_end(copy _22) -> [return: bb14, unwind: continue]  ; a.gopp:24:3 scope 1
+    _34 = ptr_to_ptr(copy _31) as *bool  ; a.gopp:19:18 scope 1
+    storage_live(_35)  ; a.gopp:19:18 scope 2
+    _35 = copy _25  ; a.gopp:19:18 scope 2
+    _36 = eq(copy _19, copy _35)  ; a.gopp:20:7 scope 2
+    switch copy _36 [0: bb16, otherwise: bb14]  ; a.gopp:20:7 scope 2
   bb14:
-    storage_dead(_18)  ; a.gopp:25:2 scope 1
-    goto bb3  ; a.gopp:25:2
+    _3 = add(copy _3, const 1: i64)  ; a.gopp:21:5 scope 2
+    storage_dead(_35)  ; a.gopp:22:5 scope 2
+    _37 = call const fn @_gopp_map_iter_end(copy _23) -> [return: bb15, unwind: terminate]  ; a.gopp:22:5 scope 2
   bb15:
-    _37 = call const fn @_gopp_map_iter_end(copy _7) -> [return: bb16, unwind: continue]  ; a.gopp:25:2
+    storage_dead(_19)  ; a.gopp:22:5 scope 2
+    goto bb3  ; a.gopp:22:5 scope 2
   bb16:
+    storage_dead(_35)  ; a.gopp:24:3 scope 2
+    goto bb9  ; a.gopp:24:3 scope 1
+  bb17:
+    _38 = call const fn @_gopp_map_iter_end(copy _23) -> [return: bb18, unwind: terminate]  ; a.gopp:24:3 scope 1
+  bb18:
+    storage_dead(_19)  ; a.gopp:25:2 scope 1
+    goto bb3  ; a.gopp:25:2
+  bb19:
+    _39 = call const fn @_gopp_map_iter_end(copy _7) -> [return: bb20, unwind: terminate]  ; a.gopp:25:2
+  bb20:
     _0 = copy _3  ; a.gopp:26:2
     storage_dead(_3)  ; a.gopp:26:2
     return  ; a.gopp:26:2
@@ -226,9 +241,9 @@ declare fn _gopp_map_iter_start(_1: *u8, _2: *gopp.map) -> () [c, external]
 
 declare fn _gopp_map_iter_next(_1: *u8, _2: *u8, _3: *u8) -> *u8 [c, external]
 
-declare fn _gopp_string_eq(_1: string, _2: string) -> bool [c, external]
-
 declare fn _gopp_map_iter_end(_1: *u8) -> () [c, external]
+
+declare fn _gopp_string_eq(_1: string, _2: string) -> bool [c, external]
 
 declare fn _gopp_string_retain(_1: string) -> () [c, external]
 

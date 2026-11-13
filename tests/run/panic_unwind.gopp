@@ -1,0 +1,227 @@
+package main
+
+// A panic is raised at every call of `step`, one after the other, and
+// stopped in `attempt`. What the functions between own must end each
+// time: `opened` and `closed` are equal at the end, and no memory is
+// lost or freed twice.
+
+var countdown int
+var opened, closed int
+
+func step() {
+	countdown--
+	if countdown == 0 {
+		panic("step")
+	}
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func open(fd int) File {
+	step()
+	opened++
+	return File{fd: fd}
+}
+
+func text(n int) string {
+	s := "t"
+	for i := 0; i < n; i++ {
+		s += "x"
+		step()
+	}
+	return s
+}
+
+func list(n int) []string {
+	var out []string
+	for i := 0; i < n; i++ {
+		out = append(out, text(i))
+	}
+	return out
+}
+
+func join(a, b string) string {
+	step()
+	return a + "+" + b
+}
+
+type Named interface{ Name() string }
+
+type Person struct{ name string }
+
+func (p Person) Name() string {
+	step()
+	return "person " + p.name
+}
+
+// Variables of blocks, of loops and of the function, and temporaries
+// that wait for the other operands of their expression.
+func scopes() int {
+	f := open(1)
+	total := len(join(text(2), text(3)))
+	{
+		g := open(2)
+		step()
+		total += g.fd
+	}
+	for i := 0; i < 3; i++ {
+		h := open(10 + i)
+		if i == 1 {
+			continue
+		}
+		step()
+		total += h.fd
+	}
+	names := list(3)
+	for _, name := range names {
+		total += len(name)
+		step()
+	}
+	return total + f.fd
+}
+
+// A map that is walked, with values that are freed.
+func maps() int {
+	m := map[string][]string{}
+	m["a"] = list(2)
+	step()
+	m["b"] = list(1)
+	total := 0
+	for key, values := range m {
+		step()
+		total += len(key) + len(values)
+	}
+	return total
+}
+
+// Function values with what they captured, and interface values.
+func values() int {
+	prefix := text(2)
+	count := 0
+	add := func(s string) string {
+		step()
+		count++
+		return prefix + s
+	}
+	keep := add
+	out := keep(text(1))
+	var n Named = Person{name: out}
+	step()
+	var any1 any = text(3)
+	s, _ := any1.(string)
+	return len(n.Name()) + len(s) + count
+}
+
+// Deferred calls with what they keep, in a function that a panic
+// passes and in one whose deferred call panics itself.
+func deferred() (out string) {
+	f := open(3)
+	defer func(note string) {
+		step()
+		out += note
+	}(text(2))
+	defer join(text(1), "kept")
+	step()
+	out = text(f.fd)
+	return out
+}
+
+// Results: several, with names and without, and a value that is
+// replaced.
+func pair() (string, []string) {
+	a := text(2)
+	b := list(2)
+	a = join(a, text(1))
+	step()
+	return a, b
+}
+
+type Shelf struct {
+	label string
+	rows  [][]string
+}
+
+func (s *Shelf) add(row []string) {
+	step()
+	s.rows = append(s.rows, row)
+}
+
+func size(s Shelf) int {
+	step()
+	return len(s.label) + len(s.rows)
+}
+
+func take(rows [][]string, f File) int {
+	step()
+	return len(rows) + f.fd
+}
+
+// Values that are given away, lent, exchanged and replaced, and
+// values in values.
+func owners() int {
+	shelf := Shelf{label: text(2)}
+	shelf.add(list(2))
+	shelf.add(list(1))
+	var files []File
+	files = append(files, open(4), open(5))
+	total := size(shelf) + len(files)
+	rows := shelf.rows
+	rows[0], rows[1] = rows[1], rows[0]
+	step()
+	f := open(6)
+	total += take(move(rows), move(f))
+	g := open(7)
+	g = open(8)
+	step()
+	shelf.label = join(shelf.label, text(1))
+	other := shelf
+	step()
+	return total + size(move(other)) + g.fd + len(shelf.label)
+}
+
+func work() int {
+	total := scopes()
+	step()
+	total += maps()
+	total += values()
+	total += len(deferred())
+	total += owners()
+	a, b := pair()
+	step()
+	return total + len(a) + len(b)
+}
+
+func attempt() (result int, stopped bool) {
+	defer func() {
+		if recover() != nil {
+			stopped = true
+		}
+	}()
+	held := text(1)
+	result = work() + len(held)
+	return result, false
+}
+
+func main() {
+	stops := 0
+	for target := 1; target < 400; target++ {
+		countdown = target
+		_, stopped := attempt()
+		if !stopped {
+			println("no panic from", target, "on")
+			break
+		}
+		stops++
+	}
+	println("stopped", stops, "panics")
+	println("opened", opened, "closed", closed)
+	countdown = 0
+	result, _ := attempt()
+	println(result)
+}

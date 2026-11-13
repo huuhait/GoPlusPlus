@@ -17,6 +17,13 @@ void _gopp_os_write(const uint8_t *bytes, uint64_t count);
 typedef void (*gopp_frame_fn)(uintptr_t start, uintptr_t at);
 void _gopp_os_frames(gopp_frame_fn each);
 
+// Unwinds the stack from the caller on: every function on it runs what
+// it has for a panic that leaves it, and one of them does not come
+// back. `room` is for what the unwinder keeps meanwhile. Returns at
+// once where the system has no unwinder that does this.
+enum { GOPP_UNWIND_ROOM = 64 };
+void _gopp_os_unwind(uint8_t *room);
+
 // Values as the built-in `print` of Go writes them.
 void _gopp_write_text(const char *text);
 void _gopp_write_string(gopp_string text);

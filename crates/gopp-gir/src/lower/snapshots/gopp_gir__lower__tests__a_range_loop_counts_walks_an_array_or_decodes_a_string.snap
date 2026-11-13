@@ -158,23 +158,27 @@ fn _GPF4mainE5runes(_1: string) -> i64 [go, external] {
   let _8: u64
   let _9: bool
   let _10: u64
-  let _11: i32
-  let _12: u64
-  let _13: bool
-  let _14: bool
-  let _15: ()
-  let _16: string
-  let _17: bool
-  let _18: ()
-  let _19: u64
-  let _20: u64
-  let _21: bool
+  let _11: bool
+  let _12: ()
+  let _13: i32
+  let _14: u64
+  let _15: bool
+  let _16: bool
+  let _17: ()
+  let _18: string
+  let _19: bool
+  let _20: ()
+  let _21: u64
   let _22: u64
-  let _23: i32
+  let _23: bool
   let _24: u64
   let _25: bool
   let _26: ()
-  let _27: i64
+  let _27: i32
+  let _28: u64
+  let _29: bool
+  let _30: ()
+  let _31: i64
   bb0:
     storage_live(_2)  ; a.gopp:29:2
     _2 = const zero: i64  ; a.gopp:29:2
@@ -191,55 +195,73 @@ fn _GPF4mainE5runes(_1: string) -> i64 [go, external] {
     goto bb3  ; a.gopp:31:23
   bb3:
     _9 = lt(copy _8, copy _7)  ; a.gopp:31:23
-    switch copy _9 [0: bb7, otherwise: bb4]  ; a.gopp:31:23
+    switch copy _9 [0: bb11, otherwise: bb4]  ; a.gopp:31:23
   bb4:
-    _10 = call const fn @_gopp_string_decode(copy _4, copy _8) -> [return: bb5, unwind: continue]  ; a.gopp:31:23
-  bb5:
-    _11 = int_to_int(copy _10) as i32  ; a.gopp:31:23
-    _12 = shr(copy _10, const 32: u64)  ; a.gopp:31:23
-    _2 = int_to_int(copy _8) as i64  ; a.gopp:31:23
-    _3 = copy _11  ; a.gopp:31:23
-    _13 = eq(copy _3, const 120: i32)  ; a.gopp:32:6
-    switch copy _13 [0: bb6, otherwise: bb6]  ; a.gopp:32:6
-  bb6:
-    _8 = add(copy _8, copy _12)  ; a.gopp:35:2
-    goto bb3  ; a.gopp:35:2
-  bb7:
-    _14 = ne(copy _4.2, const zero: *u8)  ; a.gopp:35:2
-    switch copy _14 [0: bb9, otherwise: bb8]  ; a.gopp:35:2
-  bb8:
-    _15 = call const fn @_gopp_string_release(copy _4) -> [return: bb9, unwind: continue]  ; a.gopp:35:2
+    _10 = call const fn @_gopp_string_decode(copy _4, copy _8) -> [return: bb9, unwind: cleanup bb5]  ; a.gopp:31:23
+  bb5: [cleanup]
+    _11 = ne(copy _4.2, const zero: *u8)  ; a.gopp:31:23
+    switch copy _11 [0: bb8, otherwise: bb6]  ; a.gopp:31:23
+  bb6: [cleanup]
+    _12 = call const fn @_gopp_string_release(copy _4) -> [return: bb7, unwind: terminate]  ; a.gopp:31:23
+  bb7: [cleanup]
+    goto bb8  ; a.gopp:31:23
+  bb8: [cleanup]
+    resume  ; a.gopp:31:23
   bb9:
-    _16 = copy _1  ; a.gopp:36:12
-    _17 = ne(copy _16.2, const zero: *u8)  ; a.gopp:36:12
-    switch copy _17 [0: bb11, otherwise: bb10]  ; a.gopp:36:12
+    _13 = int_to_int(copy _10) as i32  ; a.gopp:31:23
+    _14 = shr(copy _10, const 32: u64)  ; a.gopp:31:23
+    _2 = int_to_int(copy _8) as i64  ; a.gopp:31:23
+    _3 = copy _13  ; a.gopp:31:23
+    _15 = eq(copy _3, const 120: i32)  ; a.gopp:32:6
+    switch copy _15 [0: bb10, otherwise: bb10]  ; a.gopp:32:6
   bb10:
-    _18 = call const fn @_gopp_string_retain(copy _16) -> [return: bb11, unwind: continue]  ; a.gopp:36:12
+    _8 = add(copy _8, copy _14)  ; a.gopp:35:2
+    goto bb3  ; a.gopp:35:2
   bb11:
-    _19 = len(_16)  ; a.gopp:36:12
-    _20 = const zero: u64  ; a.gopp:36:12
-    goto bb12  ; a.gopp:36:12
+    _16 = ne(copy _4.2, const zero: *u8)  ; a.gopp:35:2
+    switch copy _16 [0: bb13, otherwise: bb12]  ; a.gopp:35:2
   bb12:
-    _21 = lt(copy _20, copy _19)  ; a.gopp:36:12
-    switch copy _21 [0: bb16, otherwise: bb13]  ; a.gopp:36:12
+    _17 = call const fn @_gopp_string_release(copy _4) -> [return: bb13, unwind: terminate]  ; a.gopp:35:2
   bb13:
-    _22 = call const fn @_gopp_string_decode(copy _16, copy _20) -> [return: bb14, unwind: continue]  ; a.gopp:36:12
+    _18 = copy _1  ; a.gopp:36:12
+    _19 = ne(copy _18.2, const zero: *u8)  ; a.gopp:36:12
+    switch copy _19 [0: bb15, otherwise: bb14]  ; a.gopp:36:12
   bb14:
-    _23 = int_to_int(copy _22) as i32  ; a.gopp:36:12
-    _24 = shr(copy _22, const 32: u64)  ; a.gopp:36:12
-    _2 = add(copy _2, const 1: i64)  ; a.gopp:37:3
-    goto bb15  ; a.gopp:38:2
+    _20 = call const fn @_gopp_string_retain(copy _18) -> [return: bb15, unwind: continue]  ; a.gopp:36:12
   bb15:
-    _20 = add(copy _20, copy _24)  ; a.gopp:38:2
-    goto bb12  ; a.gopp:38:2
+    _21 = len(_18)  ; a.gopp:36:12
+    _22 = const zero: u64  ; a.gopp:36:12
+    goto bb16  ; a.gopp:36:12
   bb16:
-    _25 = ne(copy _16.2, const zero: *u8)  ; a.gopp:38:2
-    switch copy _25 [0: bb18, otherwise: bb17]  ; a.gopp:38:2
+    _23 = lt(copy _22, copy _21)  ; a.gopp:36:12
+    switch copy _23 [0: bb24, otherwise: bb17]  ; a.gopp:36:12
   bb17:
-    _26 = call const fn @_gopp_string_release(copy _16) -> [return: bb18, unwind: continue]  ; a.gopp:38:2
-  bb18:
-    _27 = int_to_int(copy _3) as i64  ; a.gopp:39:2
-    _0 = add(copy _2, copy _27)  ; a.gopp:39:2
+    _24 = call const fn @_gopp_string_decode(copy _18, copy _22) -> [return: bb22, unwind: cleanup bb18]  ; a.gopp:36:12
+  bb18: [cleanup]
+    _25 = ne(copy _18.2, const zero: *u8)  ; a.gopp:36:12
+    switch copy _25 [0: bb21, otherwise: bb19]  ; a.gopp:36:12
+  bb19: [cleanup]
+    _26 = call const fn @_gopp_string_release(copy _18) -> [return: bb20, unwind: terminate]  ; a.gopp:36:12
+  bb20: [cleanup]
+    goto bb21  ; a.gopp:36:12
+  bb21: [cleanup]
+    resume  ; a.gopp:36:12
+  bb22:
+    _27 = int_to_int(copy _24) as i32  ; a.gopp:36:12
+    _28 = shr(copy _24, const 32: u64)  ; a.gopp:36:12
+    _2 = add(copy _2, const 1: i64)  ; a.gopp:37:3
+    goto bb23  ; a.gopp:38:2
+  bb23:
+    _22 = add(copy _22, copy _28)  ; a.gopp:38:2
+    goto bb16  ; a.gopp:38:2
+  bb24:
+    _29 = ne(copy _18.2, const zero: *u8)  ; a.gopp:38:2
+    switch copy _29 [0: bb26, otherwise: bb25]  ; a.gopp:38:2
+  bb25:
+    _30 = call const fn @_gopp_string_release(copy _18) -> [return: bb26, unwind: terminate]  ; a.gopp:38:2
+  bb26:
+    _31 = int_to_int(copy _3) as i64  ; a.gopp:39:2
+    _0 = add(copy _2, copy _31)  ; a.gopp:39:2
     storage_dead(_3)  ; a.gopp:39:2
     storage_dead(_2)  ; a.gopp:39:2
     return  ; a.gopp:39:2

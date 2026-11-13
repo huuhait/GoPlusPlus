@@ -49,7 +49,7 @@ GOPP_CALL int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64
   _6 = ((int64_t)(_2 * 3ll));
   _7 = ((int64_t)(_1 + _6));
   _8 = (_2 != 0ll);
-  if (__builtin_expect(!_8, 0)) _gopp_panic_divide();
+  if (__builtin_expect(!_8, 0)) { _gopp_panic_divide(); }
   goto bb1;
 bb1:
   _9 = gopp_div_i64(_1, _2);
@@ -63,7 +63,7 @@ bb1:
   _10 = ((int64_t)(_14 + _15));
   _16 = gopp_shl_u8(_3, (uint64_t)_4);
   _17 = (_5 >= 0ll);
-  if (__builtin_expect(!_17, 0)) _gopp_panic_shift();
+  if (__builtin_expect(!_17, 0)) { _gopp_panic_shift(); }
   goto bb2;
 bb2:
   _18 = gopp_shr_i64(_1, (uint64_t)_5);

@@ -55,18 +55,29 @@ fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (g
   let _10: *_GPTiN4mainE5Point
   let _11: *u8
   let _12: *u8
-  let _13: *u8
-  let _14: gopp.iface
-  let _15: _GPTiN4mainE5Named
-  let _16: _GPTiN4mainE5Named
-  let _17: *_GPTiN4mainE5Named
+  let _13: *_GPTiN4mainE5Named
+  let _14: *u8
+  let _15: ()
+  let _16: gopp.iface
+  let _17: *gopp.iface
   let _18: *u8
-  let _19: *u8
+  let _19: ()
   let _20: *u8
   let _21: gopp.iface
-  let _22: *_GPTiN4mainE5Named
-  let _23: *u8
-  let _24: ()
+  let _22: _GPTiN4mainE5Named
+  let _23: _GPTiN4mainE5Named
+  let _24: *_GPTiN4mainE5Named
+  let _25: *u8
+  let _26: *u8
+  let _27: gopp.iface
+  let _28: *gopp.iface
+  let _29: *u8
+  let _30: ()
+  let _31: *u8
+  let _32: gopp.iface
+  let _33: *_GPTiN4mainE5Named
+  let _34: *u8
+  let _35: ()
   bb0:
     _4 = const zero: *u8  ; a.gopp:11:2
     _5 = &mut _4  ; a.gopp:11:2
@@ -77,24 +88,44 @@ fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (g
     _9 = copy _2  ; a.gopp:11:2
     _10 = &mut _9  ; a.gopp:11:2
     _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:11:2
-    _12 = call const fn @_gopp_iface_box(copy _11, const 16: u64) -> [return: bb1, unwind: continue]  ; a.gopp:11:2
-  bb1:
-    _13 = ptr_to_ptr(const global @_GPTiN4mainE5Point) as *u8  ; a.gopp:11:2
-    _14 = gopp.iface {copy _13, copy _12}  ; a.gopp:11:2
-    _15 = copy _3  ; a.gopp:11:2
-    _3 = const zero: _GPTiN4mainE5Named  ; a.gopp:11:2
-    _16 = copy _15  ; a.gopp:11:2
+    _12 = call const fn @_gopp_iface_box(copy _11, const 16: u64) -> [return: bb5, unwind: cleanup bb3]  ; a.gopp:11:2
+  bb1: [cleanup]
+    _13 = &mut _3  ; a.gopp:11:2
+    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:11:2
+    _15 = call const fn @_GPTdN4mainE5Named(copy _14) -> [return: bb2, unwind: terminate]  ; a.gopp:11:2
+  bb2: [cleanup]
+    resume  ; a.gopp:11:2
+  bb3: [cleanup]
+    _16 = copy _8  ; a.gopp:11:2
     _17 = &mut _16  ; a.gopp:11:2
     _18 = ptr_to_ptr(copy _17) as *u8  ; a.gopp:11:2
-    _19 = call const fn @_gopp_iface_box(copy _18, const 56: u64) -> [return: bb2, unwind: continue]  ; a.gopp:11:2
-  bb2:
-    _20 = ptr_to_ptr(const global @_GPTiN4mainE5Named) as *u8  ; a.gopp:11:2
-    _21 = gopp.iface {copy _20, copy _19}  ; a.gopp:11:2
-    _0 = tuple {copy _8, copy _14, copy _21}  ; a.gopp:11:2
-    _22 = &mut _3  ; a.gopp:11:2
-    _23 = ptr_to_ptr(copy _22) as *u8  ; a.gopp:11:2
-    _24 = call const fn @_GPTdN4mainE5Named(copy _23) -> [return: bb3, unwind: continue]  ; a.gopp:11:2
-  bb3:
+    _19 = call const fn @_gopp_iface_drop(copy _18) -> [return: bb4, unwind: terminate]  ; a.gopp:11:2
+  bb4: [cleanup]
+    goto bb1  ; a.gopp:11:2
+  bb5:
+    _20 = ptr_to_ptr(const global @_GPTiN4mainE5Point) as *u8  ; a.gopp:11:2
+    _21 = gopp.iface {copy _20, copy _12}  ; a.gopp:11:2
+    _22 = copy _3  ; a.gopp:11:2
+    _3 = const zero: _GPTiN4mainE5Named  ; a.gopp:11:2
+    _23 = copy _22  ; a.gopp:11:2
+    _24 = &mut _23  ; a.gopp:11:2
+    _25 = ptr_to_ptr(copy _24) as *u8  ; a.gopp:11:2
+    _26 = call const fn @_gopp_iface_box(copy _25, const 56: u64) -> [return: bb8, unwind: cleanup bb6]  ; a.gopp:11:2
+  bb6: [cleanup]
+    _27 = copy _21  ; a.gopp:11:2
+    _28 = &mut _27  ; a.gopp:11:2
+    _29 = ptr_to_ptr(copy _28) as *u8  ; a.gopp:11:2
+    _30 = call const fn @_gopp_iface_drop(copy _29) -> [return: bb7, unwind: terminate]  ; a.gopp:11:2
+  bb7: [cleanup]
+    goto bb3  ; a.gopp:11:2
+  bb8:
+    _31 = ptr_to_ptr(const global @_GPTiN4mainE5Named) as *u8  ; a.gopp:11:2
+    _32 = gopp.iface {copy _31, copy _26}  ; a.gopp:11:2
+    _0 = tuple {copy _8, copy _21, copy _32}  ; a.gopp:11:2
+    _33 = &mut _3  ; a.gopp:11:2
+    _34 = ptr_to_ptr(copy _33) as *u8  ; a.gopp:11:2
+    _35 = call const fn @_GPTdN4mainE5Named(copy _34) -> [return: bb9, unwind: terminate]  ; a.gopp:11:2
+  bb9:
     return  ; a.gopp:11:2
 }
 
@@ -227,7 +258,7 @@ fn _GPF4mainE4look(_1: gopp.iface) -> i64 [go, external] {
     _0 = const 0: i64  ; a.gopp:22:3 scope 3
     _32 = &mut _31  ; a.gopp:22:3 scope 3
     _33 = ptr_to_ptr(copy _32) as *u8  ; a.gopp:22:3 scope 3
-    _34 = call const fn @_gopp_iface_drop(copy _33) -> [return: bb14, unwind: continue]  ; a.gopp:22:3 scope 3
+    _34 = call const fn @_gopp_iface_drop(copy _33) -> [return: bb14, unwind: terminate]  ; a.gopp:22:3 scope 3
   bb14:
     storage_dead(_31)  ; a.gopp:22:3 scope 3
     return  ; a.gopp:22:3 scope 3
@@ -279,11 +310,14 @@ fn _GPF4mainE4same(_1: gopp.iface, _2: gopp.iface) -> bool [go, external] {
   let _13: *gopp.iface
   let _14: *u8
   let _15: bool
-  let _16: gopp.iface
-  let _17: bool
-  let _18: *gopp.iface
-  let _19: *u8
-  let _20: ()
+  let _16: *gopp.iface
+  let _17: *u8
+  let _18: ()
+  let _19: gopp.iface
+  let _20: bool
+  let _21: *gopp.iface
+  let _22: *u8
+  let _23: ()
   bb0:
     _3 = copy _1  ; a.gopp:28:2
     _4 = &mut _3  ; a.gopp:28:2
@@ -298,25 +332,31 @@ fn _GPF4mainE4same(_1: gopp.iface, _2: gopp.iface) -> bool [go, external] {
     _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:29:2
     _13 = &mut _10  ; a.gopp:29:2
     _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:29:2
-    _15 = call const fn @_gopp_iface_eq(copy _12, copy _14) -> [return: bb2, unwind: continue]  ; a.gopp:29:2
-  bb2:
-    switch copy _15 [0: bb5, otherwise: bb3]  ; a.gopp:29:2
-  bb3:
-    _16 = copy _1  ; a.gopp:29:2
-    _17 = ne(copy _16.0, const zero: *u8)  ; a.gopp:29:2
-    switch copy _17 [0: bb5, otherwise: bb4]  ; a.gopp:29:2
+    _15 = call const fn @_gopp_iface_eq(copy _12, copy _14) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:29:2
+  bb2: [cleanup]
+    _16 = &mut _7  ; a.gopp:29:2
+    _17 = ptr_to_ptr(copy _16) as *u8  ; a.gopp:29:2
+    _18 = call const fn @_gopp_iface_drop(copy _17) -> [return: bb3, unwind: terminate]  ; a.gopp:29:2
+  bb3: [cleanup]
+    resume  ; a.gopp:29:2
   bb4:
-    _8 = const true  ; a.gopp:29:2
-    goto bb6  ; a.gopp:29:2
+    switch copy _15 [0: bb7, otherwise: bb5]  ; a.gopp:29:2
   bb5:
-    _8 = const false  ; a.gopp:29:2
-    goto bb6  ; a.gopp:29:2
+    _19 = copy _1  ; a.gopp:29:2
+    _20 = ne(copy _19.0, const zero: *u8)  ; a.gopp:29:2
+    switch copy _20 [0: bb7, otherwise: bb6]  ; a.gopp:29:2
   bb6:
-    _0 = copy _8  ; a.gopp:29:2
-    _18 = &mut _7  ; a.gopp:29:2
-    _19 = ptr_to_ptr(copy _18) as *u8  ; a.gopp:29:2
-    _20 = call const fn @_gopp_iface_drop(copy _19) -> [return: bb7, unwind: continue]  ; a.gopp:29:2
+    _8 = const true  ; a.gopp:29:2
+    goto bb8  ; a.gopp:29:2
   bb7:
+    _8 = const false  ; a.gopp:29:2
+    goto bb8  ; a.gopp:29:2
+  bb8:
+    _0 = copy _8  ; a.gopp:29:2
+    _21 = &mut _7  ; a.gopp:29:2
+    _22 = ptr_to_ptr(copy _21) as *u8  ; a.gopp:29:2
+    _23 = call const fn @_gopp_iface_drop(copy _22) -> [return: bb9, unwind: terminate]  ; a.gopp:29:2
+  bb9:
     storage_dead(_7)  ; a.gopp:29:2
     return  ; a.gopp:29:2
 }
@@ -419,9 +459,9 @@ fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
 
 declare fn _gopp_iface_box(_1: *u8, _2: u64) -> *u8 [c, external]
 
-declare fn _gopp_iface_clone(_1: *u8) -> () [c, external]
-
 declare fn _gopp_iface_drop(_1: *u8) -> () [c, external]
+
+declare fn _gopp_iface_clone(_1: *u8) -> () [c, external]
 
 declare fn _gopp_panic_assert(_1: *u8, _2: *u8, _3: string) -> () [c, external]
 

@@ -49,6 +49,8 @@ pub struct FuncBuilder<'m> {
     loc: Span,
     /// The blocks in the order in which they were chosen to be written.
     written: Vec<usize>,
+    /// New blocks are cleanup blocks.
+    unwinding: bool,
 }
 
 fn block_id(at: usize) -> BlockId {
@@ -105,6 +107,7 @@ impl<'m> FuncBuilder<'m> {
             scopes: Vec::new(),
             loc,
             written: Vec::new(),
+            unwinding: false,
         })
     }
 
@@ -218,12 +221,18 @@ impl<'m> FuncBuilder<'m> {
         self.scopes.pop();
     }
 
+    /// The blocks that are made from here on are cleanup blocks, or
+    /// are not: unwinding runs what is written into them.
+    pub fn set_unwinding(&mut self, unwinding: bool) {
+        self.unwinding = unwinding;
+    }
+
     /// A new block, which is written after `switch_to`.
     pub fn new_block(&mut self) -> BlockId {
         self.blocks.push(Open {
             stmts: Vec::new(),
             term: None,
-            cleanup: false,
+            cleanup: self.unwinding,
             catch: false,
             cold: false,
         });

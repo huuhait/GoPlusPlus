@@ -21,7 +21,6 @@ use super::{CalleeKey, Made, Memo, Shared};
 use crate::{
     AggKind, AssertKind, BinOp, CallConv, CastKind, Constant, ConstantKind, FuncId, FuncType,
     Global, GlobalId, Linkage, Mutability, Operand, Place, Rvalue, Type, TypeId, TypeInterner,
-    UnwindAction,
 };
 
 /// The marks of a descriptor, as the runtime reads them.
@@ -1157,10 +1156,10 @@ impl<'a> FuncCx<'a, '_> {
         let null = self.zero(self.b.place_ty(pointer));
         let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(pointer.clone()), null);
         let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
+        let unwind = self.unwind()?;
         let next = self.b.new_block();
         let nothing = (AssertKind::Nil, Vec::new());
-        self.b
-            .assert(set, true, nothing, next, UnwindAction::Continue)?;
+        self.b.assert(set, true, nothing, next, unwind)?;
         self.b.switch_to(next);
         Ok(())
     }
@@ -1326,7 +1325,7 @@ impl<'a> FuncCx<'a, '_> {
         }
         let result = Place::local(self.b.temp(ret));
         let next = self.b.new_block();
-        let unwind = UnwindAction::Continue;
+        let unwind = self.unwind()?;
         self.b
             .call(callee, args, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);

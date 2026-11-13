@@ -134,7 +134,7 @@ impl FuncCx<'_, '_> {
     fn called(&mut self, callee: Operand, args: Vec<Operand>, ret: TypeId) -> Built<Operand> {
         let result = Place::local(self.b.temp(ret));
         let next = self.b.new_block();
-        let unwind = crate::UnwindAction::Continue;
+        let unwind = self.unwind()?;
         self.b
             .call(callee, args, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);

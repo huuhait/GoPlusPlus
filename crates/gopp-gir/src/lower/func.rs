@@ -49,6 +49,25 @@ pub(super) struct Scope {
     /// Whether the block has a debug scope: it gets one with its first
     /// variable.
     debug: bool,
+    unwind: Chain,
+}
+
+/// The blocks that unwinding runs for what a scope owns (PAN-6). Each
+/// ends one place and goes on with the block of the place before it, so
+/// the blocks are as many as the places, however many calls there are.
+#[derive(Default)]
+struct Chain {
+    /// What the blocks stand on: the first block of the scope around
+    /// this one. Not known before the first block is asked for.
+    base: Option<Option<BlockId>>,
+    /// The first block to run for the owned places up to each one.
+    owned: Vec<Option<BlockId>>,
+    /// The same for the walks up to each one, which stand on the owned
+    /// places, and how many of those there were then.
+    walks: Vec<Option<BlockId>>,
+    walks_on: usize,
+    /// Every place of the scope has its block.
+    whole: bool,
 }
 
 /// A `defer` statement of the function (PAN-3).
@@ -207,7 +226,7 @@ pub(super) struct FuncCx<'a, 'm> {
     /// their statement ends is freed. They are listed in the order in
     /// which they were made; `owning` says which of them still own.
     pub temps: Vec<(Place, Ends)>,
-    owning: FxHashSet<(LocalId, u32)>,
+    owning: FxHashMap<(LocalId, u32), usize>,
     /// The variables that do not own their values: a plain range
     /// variable of a Go++ file is the element as it is.
     borrowed: FxHashSet<LocalId>,
@@ -228,6 +247,27 @@ pub(super) struct FuncCx<'a, 'm> {
     frame: Option<Frame>,
     /// The symbol of the function that makes its deferred calls.
     deferred: Option<String>,
+    /// How often what the scopes and the temporaries own has changed.
+    owners: u64,
+    /// The first block that unwinding runs for what is owned, as of
+    /// that many changes.
+    unwind_head: Option<(u64, Option<BlockId>)>,
+    /// The first block to run for the temporaries up to each one, and
+    /// the block of the innermost scope that they stand on.
+    temp_heads: Vec<Option<BlockId>>,
+    temp_base: Option<BlockId>,
+    /// Not zero while the end of a value is written: a panic there
+    /// ends the program (PAN-5).
+    pub ending: u32,
+    /// What is written is no place where a panic leaves the function.
+    quiet: bool,
+    /// For a function with a frame: the block that asks the runtime
+    /// whether the function goes on, and ends the results if not.
+    frame_block: Option<BlockId>,
+    /// Which of the owned places of the outermost scope are the
+    /// results, and the results without a name that own a value.
+    results_owned: std::ops::Range<usize>,
+    hidden: Vec<(LocalId, Ends)>,
     /// The places whose values were moved out and that are still to be
     /// made empty: what is evaluated beside the move reads them as they
     /// were (`return s, len(s)`).
@@ -621,7 +661,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             views: Vec::new(),
             outer: FxHashMap::default(),
             temps: Vec::new(),
-            owning: FxHashSet::default(),
+            owning: FxHashMap::default(),
             borrowed: FxHashSet::default(),
             handed: FxHashSet::default(),
             defers: Vec::new(),
@@ -629,6 +669,15 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             owner: None,
             frame: None,
             deferred: None,
+            owners: 0,
+            unwind_head: None,
+            temp_heads: Vec::new(),
+            temp_base: None,
+            ending: 0,
+            quiet: false,
+            frame_block: None,
+            results_owned: 0..0,
+            hidden: Vec::new(),
             moved: Vec::new(),
         }
     }
@@ -686,6 +735,7 @@ impl FuncCx<'_, '_> {
                 }
             }
         }
+        let results_from = self.scopes.last().map_or(0, |scope| scope.owned.len());
         for result in results {
             let declared = result
                 .name
@@ -702,6 +752,7 @@ impl FuncCx<'_, '_> {
             };
             self.results.push(var);
         }
+        let results_to = self.scopes.last().map_or(0, |scope| scope.owned.len());
         let whole = self.b.place_ty(&Place::local(self.b.result()));
         let parts = match self.kind(whole) {
             Type::Tuple(parts) if results.len() > 1 => parts.to_vec(),
@@ -731,12 +782,19 @@ impl FuncCx<'_, '_> {
                 // A deferred call may stop a panic after a `return`
                 // gave the results their values: each result has a
                 // variable, which has them then.
+                let checked = self.result_types();
                 for (at, &part) in parts.iter().enumerate().take(self.results.len()) {
                     if self.results[at].is_none() {
                         let var = self.b.temp(part);
                         let zero = self.zero(part);
                         self.b.assign(Place::local(var), Rvalue::Use(zero))?;
                         self.results[at] = Some(var);
+                        if !self.flat(part)
+                            && let Some(ends) =
+                                self.ends_of(checked.get(at).copied(), block.span)?
+                        {
+                            self.hidden.push((var, ends));
+                        }
                     }
                 }
                 // The first block itself, unless a cell of a parameter
@@ -764,6 +822,13 @@ impl FuncCx<'_, '_> {
                     records: self.b.temp(records),
                     run,
                 });
+                // The blocks of the outermost scope stand on the block
+                // of the frame from here on, which ends the results.
+                self.results_owned = results_from..results_to;
+                if let Some(scope) = self.scopes.first_mut() {
+                    scope.unwind = Chain::default();
+                }
+                self.owners += 1;
                 self.b.switch_to(body);
                 Some((first, body, self.b.loc()))
             }
@@ -786,7 +851,8 @@ impl FuncCx<'_, '_> {
         self.b.switch_to(entry);
         self.b.set_loc(loc);
         // No statement ran; the runtime knows the function from here
-        // on.
+        // on. No panic starts in this block.
+        self.quiet = true;
         let bytes = self.bytes_ty();
         let mut addresses = Vec::new();
         for at in 0..self.defers.len() {
@@ -833,6 +899,7 @@ impl FuncCx<'_, '_> {
             TypeInterner::BOOL,
             vec![node],
         )?;
+        self.quiet = false;
         let after = self.b.new_block();
         self.b.switch(stopped, vec![(0, body)], after)?;
         // A deferred call stopped a panic: the function returns to its
@@ -980,16 +1047,28 @@ impl FuncCx<'_, '_> {
             let given: Vec<Operand> = slots.iter().cloned().map(Operand::Copy).collect();
             let around = self.b.loc();
             self.at(pending.span);
-            // Whether the call leaves a value to the statement: a
-            // parameter that is only read does, and so does `print`.
-            let lent: Vec<bool> = match &pending.what {
+            // What the call leaves to the statement ends after the
+            // call, also where a panic leaves it: a parameter that is
+            // only read, what `print` writes, the value that is called.
+            let lent = |at: usize| match &pending.what {
+                Waits::Call(called) => called.lent.get(at) == Some(&true),
+                Waits::Print(_) => true,
+                Waits::Value(_) => at == 0,
+            };
+            self.open_scope();
+            for (at, (slot, ends)) in slots.iter().zip(&pending.slots).enumerate() {
+                if let (true, Some(ends)) = (lent(at), *ends) {
+                    self.hold(slot.clone(), ends);
+                }
+            }
+            match &pending.what {
                 Waits::Call(called) => {
                     let callee = Operand::Const(Constant {
                         kind: ConstantKind::Func(called.func),
                         ty: called.sig,
                     });
                     let result = Place::local(self.b.temp(called.ret));
-                    let unwind = UnwindAction::Continue;
+                    let unwind = self.unwind()?;
                     self.b
                         .call(callee, given, result.clone(), Some(after), unwind)?;
                     self.b.switch_to(after);
@@ -999,39 +1078,27 @@ impl FuncCx<'_, '_> {
                         let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
                         self.end(slot, ends)?;
                     }
-                    let lent = |param| called.lent.get(param) == Some(&true);
-                    (0..slots.len()).map(lent).collect()
                 }
                 Waits::Print(line) => {
                     self.b.goto(after)?;
                     self.b.switch_to(after);
                     let values = given.into_iter().map(|value| (value, pending.span));
                     self.print_values(*line, values.collect())?;
-                    vec![true; slots.len()]
                 }
                 Waits::Value(code_ty) => {
                     self.b.goto(after)?;
                     self.b.switch_to(after);
-                    let Some(value) = slots.first() else {
-                        continue;
-                    };
-                    let (ret, result) = self.call_value(pending.span, value, *code_ty, given)?;
-                    if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT) {
-                        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
-                        self.end(slot, ends)?;
+                    if let Some(value) = slots.first() {
+                        let (ret, result) =
+                            self.call_value(pending.span, value, *code_ty, given)?;
+                        if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT) {
+                            let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
+                            self.end(slot, ends)?;
+                        }
                     }
-                    // The call gave every argument away; the value
-                    // that was called ends here.
-                    let mut ends = vec![false; slots.len()];
-                    ends[0] = true;
-                    ends
-                }
-            };
-            for ((slot, ends), lent) in slots.into_iter().zip(&pending.slots).zip(lent) {
-                if let (true, Some(ends)) = (lent, *ends) {
-                    self.end(slot, ends)?;
                 }
             }
+            self.close_scope(pending.span)?;
             self.b.set_loc(around);
             self.b.goto(done)?;
             self.b.switch_to(done);
@@ -1123,6 +1190,7 @@ impl FuncCx<'_, '_> {
 
     pub fn open_scope(&mut self) {
         self.scopes.push(Scope::default());
+        self.owners += 1;
     }
 
     /// Ends the innermost scope, which the source ends at the end of
@@ -1133,6 +1201,7 @@ impl FuncCx<'_, '_> {
         if self.scopes.pop().is_some_and(|scope| scope.debug) {
             self.b.pop_scope();
         }
+        self.owners += 1;
         Ok(())
     }
 
@@ -1148,8 +1217,7 @@ impl FuncCx<'_, '_> {
         for scope in (depth..self.scopes.len()).rev() {
             for at in (0..self.scopes[scope].walks.len()).rev() {
                 let walk = self.scopes[scope].walks[at].clone();
-                let params = [self.bytes_ty()];
-                self.runtime_call("_gopp_map_iter_end", &params, vec![walk])?;
+                self.end_walk(walk)?;
             }
             self.end_owned(scope, 0)?;
             for at in (0..self.scopes[scope].vars.len()).rev() {
@@ -1158,6 +1226,197 @@ impl FuncCx<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    // ---- what a panic that leaves the function ends
+
+    /// What unwinding does at a call or a check that is written now: it
+    /// ends what the function owns here (PAN-6), in blocks that all
+    /// calls with the same owners share.
+    pub fn unwind(&mut self) -> Built<UnwindAction> {
+        if self.quiet {
+            return Ok(UnwindAction::Continue);
+        }
+        if self.ending > 0 {
+            return Ok(UnwindAction::Terminate);
+        }
+        // A place that gave its value up and is not empty yet must not
+        // be ended: nothing of this function is, which loses what it
+        // owns and frees nothing twice.
+        let head = match self.moved.is_empty() {
+            true => self.unwind_head()?,
+            false => self.frame_base()?,
+        };
+        Ok(head.map_or(UnwindAction::Continue, UnwindAction::Cleanup))
+    }
+
+    /// A block that unwinding runs: what `fill` writes, and then the
+    /// block `below`, or the unwinding goes on.
+    fn cleanup_block(
+        &mut self,
+        below: Option<BlockId>,
+        fill: impl FnOnce(&mut Self) -> Built,
+    ) -> Built<BlockId> {
+        let back = self.b.current();
+        self.b.set_unwinding(true);
+        let block = self.b.new_block();
+        self.b.switch_to(block);
+        self.ending += 1;
+        let filled = fill(self);
+        self.ending -= 1;
+        filled?;
+        match below {
+            Some(below) => self.b.goto(below)?,
+            None => self.b.resume()?,
+        }
+        self.b.set_unwinding(false);
+        if let Some(back) = back {
+            self.b.switch_to(back);
+        }
+        self.memo.steps += 1;
+        Ok(block)
+    }
+
+    /// For a function with a frame, the last block of every unwinding:
+    /// the runtime is asked whether a deferred call of this function
+    /// stopped the panic, and does not come back if so; if not, the
+    /// results end too.
+    fn frame_base(&mut self) -> Built<Option<BlockId>> {
+        let Some(frame) = self.frame else {
+            return Ok(None);
+        };
+        if self.frame_block.is_none() {
+            let results = self.results_owned.clone();
+            let block = self.cleanup_block(None, |this| {
+                let bytes = this.bytes_ty();
+                let node = this.record(Place::local(frame.node))?;
+                this.runtime_call("_gopp_defer_left", &[bytes], vec![node])?;
+                for at in results.rev() {
+                    let (place, ends) = this.scopes[0].owned[at].clone();
+                    this.end(place, ends)?;
+                }
+                for (var, ends) in this.hidden.clone() {
+                    this.end(Place::local(var), ends)?;
+                }
+                Ok(())
+            })?;
+            self.frame_block = Some(block);
+        }
+        Ok(self.frame_block)
+    }
+
+    /// The first block that unwinding runs for what the scopes and the
+    /// temporaries own now; none if they own nothing.
+    fn unwind_head(&mut self) -> Built<Option<BlockId>> {
+        if let Some((owners, head)) = self.unwind_head
+            && owners == self.owners
+        {
+            return Ok(head);
+        }
+        // The scopes around the innermost one do not change while it
+        // is open: the first of them that has all its blocks is where
+        // the new blocks start.
+        let mut first = self.scopes.len();
+        while first > 0 && !self.scopes[first - 1].unwind.whole {
+            first -= 1;
+            self.memo.steps += 1;
+        }
+        let mut head = match first {
+            0 => self.frame_base()?,
+            _ => Self::chain_head(&self.scopes[first - 1].unwind),
+        };
+        for scope in first..self.scopes.len() {
+            head = self.scope_blocks(scope, head)?;
+        }
+        // The temporaries stand on the scopes.
+        if self.temp_base != head {
+            self.temp_heads.clear();
+            self.temp_base = head;
+        }
+        let mut top = self.temp_heads.last().copied().unwrap_or(head);
+        for at in self.temp_heads.len()..self.temps.len() {
+            let (place, ends) = self.temps[at].clone();
+            let owner = temp_key(&place).and_then(|key| self.owning.get(&key).copied());
+            if owner == Some(at) {
+                top = Some(self.cleanup_block(top, |this| {
+                    // The address of a temporary that a call wrote is
+                    // not taken: its value ends in a slot of its own.
+                    let slot = this.slot_of(Rvalue::Use(Operand::Copy(place)))?;
+                    this.end(slot, ends)
+                })?);
+            }
+            self.temp_heads.push(top);
+        }
+        self.unwind_head = Some((self.owners, top));
+        Ok(top)
+    }
+
+    fn chain_head(chain: &Chain) -> Option<BlockId> {
+        let last = chain.walks.last().or(chain.owned.last());
+        last.copied().unwrap_or(chain.base.flatten())
+    }
+
+    /// The blocks for what the scope owns, on top of the block `below`:
+    /// the first of them to run.
+    fn scope_blocks(&mut self, scope: usize, below: Option<BlockId>) -> Built<Option<BlockId>> {
+        let chain = &mut self.scopes[scope].unwind;
+        if chain.base != Some(below) {
+            *chain = Chain {
+                base: Some(below),
+                ..Chain::default()
+            };
+        }
+        let owned = self.scopes[scope].owned.len();
+        if self.scopes[scope].unwind.walks_on != owned {
+            self.scopes[scope].unwind.walks.clear();
+        }
+        // The frame of the function ends the results itself.
+        let results = match (scope, self.frame) {
+            (0, Some(_)) => self.results_owned.clone(),
+            _ => 0..0,
+        };
+        let mut head = self.scopes[scope].unwind.owned.last().copied();
+        let mut head = head.take().unwrap_or(below);
+        for at in self.scopes[scope].unwind.owned.len()..owned {
+            if !results.contains(&at) {
+                let (place, ends) = self.scopes[scope].owned[at].clone();
+                head = Some(self.cleanup_block(head, |this| this.end(place, ends))?);
+            }
+            self.scopes[scope].unwind.owned.push(head);
+        }
+        self.scopes[scope].unwind.walks_on = owned;
+        let mut head = (self.scopes[scope].unwind.walks.last().copied()).unwrap_or(head);
+        for at in self.scopes[scope].unwind.walks.len()..self.scopes[scope].walks.len() {
+            let walk = self.scopes[scope].walks[at].clone();
+            head = Some(self.cleanup_block(head, |this| this.end_walk(walk))?);
+            self.scopes[scope].unwind.walks.push(head);
+        }
+        self.scopes[scope].unwind.whole = true;
+        Ok(head)
+    }
+
+    /// The types of the results of the function that is lowered, as
+    /// the checker has them.
+    fn result_types(&self) -> Vec<CheckedTypeId> {
+        let types = self.shared.types;
+        let sig = match self.owner {
+            Some((job, None)) => Some(job.sig),
+            Some((_, Some(literal))) => self.body.types.get(&literal).map(|typed| typed.ty),
+            None => None,
+        };
+        match sig.map(|sig| types.get(types.underlying(sig))).as_deref() {
+            Some(gopp_sema::types::Type::Func { results, .. }) => results.to_vec(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The walk of a map is over.
+    fn end_walk(&mut self, walk: Operand) -> Built {
+        let params = [self.bytes_ty()];
+        self.ending += 1;
+        let ended = self.runtime_call("_gopp_map_iter_end", &params, vec![walk]);
+        self.ending -= 1;
+        ended
     }
 
     /// What the places of the scope own from the place `from` on is
@@ -1179,10 +1438,8 @@ impl FuncCx<'_, '_> {
         }
         let declared = &self.body.locals[local.0 as usize];
         let (checked, span) = (declared.ty, declared.span);
-        if let Some(ends) = self.ends_of(Some(checked), span)?
-            && let Some(scope) = self.scopes.last_mut()
-        {
-            scope.owned.push((Place::local(var), ends));
+        if let Some(ends) = self.ends_of(Some(checked), span)? {
+            self.hold(Place::local(var), ends);
         }
         Ok(())
     }
@@ -1245,19 +1502,25 @@ impl FuncCx<'_, '_> {
     /// owns its value from here on.
     pub fn own_temp(&mut self, place: Place, glue: Ends) {
         if let Some(key) = temp_key(&place)
-            && self.owning.insert(key)
+            && !self.owning.contains_key(&key)
         {
+            self.owning.insert(key, self.temps.len());
             self.temps.push((place, glue));
+            self.owners += 1;
         }
     }
 
     pub fn owns_temp(&self, place: &Place) -> bool {
-        temp_key(place).is_some_and(|key| self.owning.contains(&key))
+        temp_key(place).is_some_and(|key| self.owning.contains_key(&key))
     }
 
     /// The temporary gives its value up: whether it owned one.
     pub fn take_temp(&mut self, place: &Place) -> bool {
-        temp_key(place).is_some_and(|key| self.owning.remove(&key))
+        let Some(at) = temp_key(place).and_then(|key| self.owning.remove(&key)) else {
+            return false;
+        };
+        self.temps_changed(at);
+        true
     }
 
     /// The temporary gives its value to another slot, which owns it
@@ -1266,13 +1529,21 @@ impl FuncCx<'_, '_> {
         let (Some(old), Some(new)) = (temp_key(from), temp_key(to)) else {
             return;
         };
-        if !self.owning.remove(&old) {
+        let Some(at) = self.owning.remove(&old) else {
             return;
-        }
-        if let Some(entry) = self.temps.iter_mut().rev().find(|(place, _)| place == from) {
+        };
+        if let Some(entry) = self.temps.get_mut(at) {
             entry.0 = to.clone();
         }
-        self.owning.insert(new);
+        self.owning.insert(new, at);
+        self.temps_changed(at);
+    }
+
+    /// The temporaries from the one with the number `at` on own
+    /// something else than before.
+    fn temps_changed(&mut self, at: usize) {
+        self.temp_heads.truncate(at);
+        self.owners += 1;
     }
 
     /// The places that gave their values up are empty from here on:
@@ -1292,7 +1563,7 @@ impl FuncCx<'_, '_> {
             let Some((place, glue)) = self.temps.pop() else {
                 break;
             };
-            if !self.take_temp(&place) {
+            if !self.took_temp(&place) {
                 continue;
             }
             // The address of a temporary that a call wrote is not
@@ -1303,27 +1574,48 @@ impl FuncCx<'_, '_> {
         Ok(())
     }
 
+    /// The temporary with the highest number was taken off the list:
+    /// whether it owned its value, which it gives up.
+    fn took_temp(&mut self, place: &Place) -> bool {
+        let at = self.temps.len();
+        self.temps_changed(at);
+        let Some(key) = temp_key(place) else {
+            return false;
+        };
+        match self.owning.get(&key) {
+            Some(&owner) if owner == at => self.owning.remove(&key).is_some(),
+            _ => false,
+        }
+    }
+
     /// The innermost scope ends the value in the place where it is
     /// left.
     pub fn hold(&mut self, place: Place, ends: Ends) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.owned.push((place, ends));
+            scope.unwind.whole = false;
+            self.owners += 1;
         }
     }
 
     /// The temporaries from `mark` on live as long as the innermost
     /// scope: what a loop walks.
     pub fn keep_temps(&mut self, mark: usize) -> Built {
-        let kept: Vec<_> = self.temps.drain(mark.min(self.temps.len())..).collect();
-        for (place, glue) in kept {
-            if !self.take_temp(&place) {
+        let mark = mark.min(self.temps.len());
+        let kept: Vec<_> = self.temps.drain(mark..).collect();
+        self.temps_changed(mark);
+        for (at, (place, glue)) in kept.into_iter().enumerate() {
+            let key = temp_key(&place);
+            let owner = key.and_then(|key| self.owning.get(&key).copied());
+            if owner != Some(mark + at) {
                 continue;
+            }
+            if let Some(key) = key {
+                self.owning.remove(&key);
             }
             // In a slot whose address is taken where the scope ends.
             let slot = self.slot_of(Rvalue::Use(Operand::Copy(place)))?;
-            if let Some(scope) = self.scopes.last_mut() {
-                scope.owned.push((slot, glue));
-            }
+            self.hold(slot, glue);
         }
         Ok(())
     }
@@ -1332,6 +1624,8 @@ impl FuncCx<'_, '_> {
     pub fn walked(&mut self, walk: Operand) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.walks.push(walk);
+            scope.unwind.whole = false;
+            self.owners += 1;
         }
     }
 

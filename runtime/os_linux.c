@@ -35,3 +35,25 @@ static _Unwind_Reason_Code visit(struct _Unwind_Context *context, void *each) {
 }
 
 void _gopp_os_frames(gopp_frame_fn each) { _Unwind_Backtrace(visit, &each); }
+
+_Static_assert(sizeof(struct _Unwind_Exception) <= GOPP_UNWIND_ROOM, "the room of an unwinding");
+
+// The unwinder asks before each function whether to go on. It always
+// does: the function that stops the unwinding takes it over itself.
+static _Unwind_Reason_Code go_on(int version, _Unwind_Action actions, _Unwind_Exception_Class class,
+                                 struct _Unwind_Exception *exception,
+                                 struct _Unwind_Context *context, void *nothing) {
+  (void)version, (void)class, (void)exception, (void)context, (void)nothing;
+  // The stack ended, and no function went on.
+  if ((actions & _UA_END_OF_STACK) != 0) {
+    _gopp_panic_drop();
+  }
+  return _URC_NO_REASON;
+}
+
+void _gopp_os_unwind(uint8_t *room) {
+  struct _Unwind_Exception *exception = (struct _Unwind_Exception *)room;
+  *exception = (struct _Unwind_Exception){0};
+  _Unwind_ForcedUnwind(exception, go_on, 0);
+  _gopp_panic_drop();
+}

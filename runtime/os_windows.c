@@ -51,3 +51,7 @@ void _gopp_os_frames(gopp_frame_fn each) {
     }
   }
 }
+
+// Nothing unwinds here yet: what the functions that a panic leaves own
+// is not ended on Windows.
+void _gopp_os_unwind(uint8_t *room) { (void)room; }

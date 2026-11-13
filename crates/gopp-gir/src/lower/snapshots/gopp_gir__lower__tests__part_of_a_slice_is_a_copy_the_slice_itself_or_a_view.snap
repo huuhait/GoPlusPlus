@@ -20,93 +20,102 @@ fn _GPF4mainE5parts(_1: []i64, _2: [4]i64, _3: i64, _4: i64, _5: i64) -> i64 [go
   let _11: i64
   let _12: u64
   let _13: bool
-  let _14: bool
-  let _15: *i64
-  let _16: u64
-  let _17: []i64
-  let _18: *[]i64
-  let _19: *u8
-  let _20: ()
-  let _21: []i64 "copied"
-  let _22: []i64
-  let _23: u64
-  let _24: u64
-  let _25: i64
+  let _14: *[]i64
+  let _15: *u8
+  let _16: ()
+  let _17: bool
+  let _18: *i64
+  let _19: u64
+  let _20: []i64
+  let _21: *[]i64
+  let _22: *u8
+  let _23: ()
+  let _24: []i64 "copied"
+  let _25: []i64
   let _26: u64
-  let _27: i64
-  let _28: u64
-  let _29: bool
-  let _30: bool
-  let _31: *i64
-  let _32: u64
-  let _33: u64
-  let _34: []i64
-  let _35: []i64
-  let _36: u64
-  let _37: u64
-  let _38: i64
+  let _27: u64
+  let _28: i64
+  let _29: u64
+  let _30: i64
+  let _31: u64
+  let _32: bool
+  let _33: *[]i64
+  let _34: *u8
+  let _35: ()
+  let _36: bool
+  let _37: *i64
+  let _38: u64
   let _39: u64
-  let _40: bool
-  let _41: bool
-  let _42: *i64
+  let _40: []i64
+  let _41: []i64
+  let _42: u64
   let _43: u64
-  let _44: []i64
-  let _45: *[]i64 "view"
-  let _46: []i64
-  let _47: u64
-  let _48: u64
-  let _49: i64
-  let _50: u64
-  let _51: i64
-  let _52: u64
-  let _53: i64
+  let _44: i64
+  let _45: u64
+  let _46: bool
+  let _47: bool
+  let _48: *i64
+  let _49: u64
+  let _50: []i64
+  let _51: *[]i64 "view"
+  let _52: []i64
+  let _53: u64
   let _54: u64
-  let _55: bool
-  let _56: bool
-  let _57: bool
-  let _58: bool
-  let _59: *i64
+  let _55: i64
+  let _56: u64
+  let _57: i64
+  let _58: u64
+  let _59: i64
   let _60: u64
-  let _61: []i64
-  let _62: *[]i64
-  let _63: *u8
-  let _64: ()
-  let _65: []i64 "three"
+  let _61: bool
+  let _62: bool
+  let _63: bool
+  let _64: bool
+  let _65: *i64
   let _66: u64
-  let _67: u64
-  let _68: i64
-  let _69: u64
-  let _70: bool
-  let _71: bool
-  let _72: *i64
+  let _67: []i64
+  let _68: *[]i64
+  let _69: *u8
+  let _70: ()
+  let _71: []i64 "three"
+  let _72: u64
   let _73: u64
-  let _74: []i64
-  let _75: *[]i64
-  let _76: *u8
-  let _77: ()
-  let _78: []i64 "array"
-  let _79: u64
-  let _80: i64
-  let _81: u64
-  let _82: i64
-  let _83: i64
-  let _84: u64
-  let _85: i64
-  let _86: i64
-  let _87: u64
-  let _88: i64
-  let _89: *[]i64
-  let _90: *u8
-  let _91: ()
-  let _92: *[]i64
-  let _93: *u8
-  let _94: ()
-  let _95: *[]i64
-  let _96: *u8
-  let _97: ()
+  let _74: i64
+  let _75: u64
+  let _76: bool
+  let _77: *[]i64
+  let _78: *u8
+  let _79: ()
+  let _80: bool
+  let _81: *i64
+  let _82: u64
+  let _83: []i64
+  let _84: *[]i64
+  let _85: *u8
+  let _86: ()
+  let _87: []i64 "array"
+  let _88: u64
+  let _89: i64
+  let _90: u64
+  let _91: i64
+  let _92: i64
+  let _93: u64
+  let _94: i64
+  let _95: i64
+  let _96: u64
+  let _97: i64
   let _98: *[]i64
   let _99: *u8
   let _100: ()
+  let _101: *[]i64
+  let _102: *u8
+  let _103: ()
+  let _104: *[]i64
+  let _105: *u8
+  let _106: ()
+  let _107: *[]i64
+  let _108: *u8
+  let _109: ()
   bb0:
     _6 = copy _1  ; a.gopp:4:2
     _7 = len(_6)  ; a.gopp:4:2
@@ -116,134 +125,152 @@ fn _GPF4mainE5parts(_1: []i64, _2: [4]i64, _3: i64, _4: i64, _5: i64) -> i64 [go
     _11 = copy _4  ; a.gopp:4:2
     _12 = int_to_int(copy _11) as u64  ; a.gopp:4:2
     _13 = le(copy _12, copy _7)  ; a.gopp:4:12
-    assert(copy _13 == true, SliceAlen(copy _11, copy _7)) -> [success: bb1, unwind: continue]  ; a.gopp:4:12
-  bb1:
-    _14 = le(copy _10, copy _12)  ; a.gopp:4:12
-    assert(copy _14 == true, SliceB(copy _9, copy _12)) -> [success: bb2, unwind: continue]  ; a.gopp:4:12
-  bb2:
-    _15 = &mut _6[_10]  ; a.gopp:4:2
-    _16 = sub(copy _12, copy _10)  ; a.gopp:4:2
-    _17 = []i64 {copy _15, copy _16, copy _16, const zero: *u8}  ; a.gopp:4:2
-    _18 = &mut _17  ; a.gopp:4:2
-    _19 = ptr_to_ptr(copy _18) as *u8  ; a.gopp:4:2
-    _20 = call const fn @_gopp_slice_copy(copy _19, const 8: u64) -> [return: bb3, unwind: continue]  ; a.gopp:4:2
+    assert(copy _13 == true, SliceAlen(copy _11, copy _7)) -> [success: bb3, unwind: cleanup bb1]  ; a.gopp:4:12
+  bb1: [cleanup]
+    _14 = &mut _1  ; a.gopp:4:12
+    _15 = ptr_to_ptr(copy _14) as *u8  ; a.gopp:4:12
+    _16 = call const fn @_GPTdSi(copy _15) -> [return: bb2, unwind: terminate]  ; a.gopp:4:12
+  bb2: [cleanup]
+    resume  ; a.gopp:4:12
   bb3:
-    storage_live(_21)  ; a.gopp:4:2
-    _21 = copy _17  ; a.gopp:4:2
-    _22 = copy _1  ; a.gopp:5:2
-    _23 = len(_22)  ; a.gopp:5:2
-    _24 = copy _22.2  ; a.gopp:5:2
-    _25 = copy _3  ; a.gopp:5:2
-    _26 = int_to_int(copy _25) as u64  ; a.gopp:5:2
-    _27 = copy _4  ; a.gopp:5:2
-    _28 = int_to_int(copy _27) as u64  ; a.gopp:5:2
-    _29 = le(copy _28, copy _23)  ; a.gopp:5:6
-    assert(copy _29 == true, SliceAlen(copy _27, copy _23)) -> [success: bb4, unwind: continue]  ; a.gopp:5:6
+    _17 = le(copy _10, copy _12)  ; a.gopp:4:12
+    assert(copy _17 == true, SliceB(copy _9, copy _12)) -> [success: bb4, unwind: cleanup bb1]  ; a.gopp:4:12
   bb4:
-    _30 = le(copy _26, copy _28)  ; a.gopp:5:6
-    assert(copy _30 == true, SliceB(copy _25, copy _28)) -> [success: bb5, unwind: continue]  ; a.gopp:5:6
+    _18 = &mut _6[_10]  ; a.gopp:4:2
+    _19 = sub(copy _12, copy _10)  ; a.gopp:4:2
+    _20 = []i64 {copy _18, copy _19, copy _19, const zero: *u8}  ; a.gopp:4:2
+    _21 = &mut _20  ; a.gopp:4:2
+    _22 = ptr_to_ptr(copy _21) as *u8  ; a.gopp:4:2
+    _23 = call const fn @_gopp_slice_copy(copy _22, const 8: u64) -> [return: bb5, unwind: cleanup bb1]  ; a.gopp:4:2
   bb5:
-    _31 = &mut _22[_26]  ; a.gopp:5:2
-    _32 = sub(copy _28, copy _26)  ; a.gopp:5:2
-    _33 = sub(copy _24, copy _26)  ; a.gopp:5:2
-    _34 = []i64 {copy _31, copy _32, copy _33, copy _22.3}  ; a.gopp:5:2
-    _1 = copy _34  ; a.gopp:5:2
-    _35 = copy _1  ; a.gopp:6:2
-    _36 = len(_35)  ; a.gopp:6:2
-    _37 = copy _35.2  ; a.gopp:6:2
-    _38 = const 1: i64  ; a.gopp:6:2
-    _39 = int_to_int(copy _38) as u64  ; a.gopp:6:2
-    _40 = le(copy _36, copy _36)  ; a.gopp:6:11
-    assert(copy _40 == true, SliceAlen(copy _36, copy _36)) -> [success: bb6, unwind: continue]  ; a.gopp:6:11
-  bb6:
-    _41 = le(copy _39, copy _36)  ; a.gopp:6:11
-    assert(copy _41 == true, SliceB(copy _38, copy _36)) -> [success: bb7, unwind: continue]  ; a.gopp:6:11
-  bb7:
-    _42 = &mut _35[_39]  ; a.gopp:6:2
-    _43 = sub(copy _36, copy _39)  ; a.gopp:6:2
-    _44 = []i64 {copy _42, copy _43, copy _43, const zero: *u8}  ; a.gopp:6:2
-    storage_live(_45)  ; a.gopp:6:2
-    _45 = &mut _44  ; a.gopp:6:2
-    _46 = copy _1  ; a.gopp:7:2
-    _47 = len(_46)  ; a.gopp:7:2
-    _48 = copy _46.2  ; a.gopp:7:2
-    _49 = copy _3  ; a.gopp:7:2
-    _50 = int_to_int(copy _49) as u64  ; a.gopp:7:2
-    _51 = copy _4  ; a.gopp:7:2
-    _52 = int_to_int(copy _51) as u64  ; a.gopp:7:2
-    _53 = copy _5  ; a.gopp:7:2
-    _54 = int_to_int(copy _53) as u64  ; a.gopp:7:2
-    _55 = le(copy _54, copy _48)  ; a.gopp:7:11
-    assert(copy _55 == true, Slice3Acap(copy _53, copy _48)) -> [success: bb8, unwind: continue]  ; a.gopp:7:11
+    storage_live(_24)  ; a.gopp:4:2
+    _24 = copy _20  ; a.gopp:4:2
+    _25 = copy _1  ; a.gopp:5:2
+    _26 = len(_25)  ; a.gopp:5:2
+    _27 = copy _25.2  ; a.gopp:5:2
+    _28 = copy _3  ; a.gopp:5:2
+    _29 = int_to_int(copy _28) as u64  ; a.gopp:5:2
+    _30 = copy _4  ; a.gopp:5:2
+    _31 = int_to_int(copy _30) as u64  ; a.gopp:5:2
+    _32 = le(copy _31, copy _26)  ; a.gopp:5:6
+    assert(copy _32 == true, SliceAlen(copy _30, copy _26)) -> [success: bb8, unwind: cleanup bb6]  ; a.gopp:5:6
+  bb6: [cleanup]
+    _33 = &mut _24  ; a.gopp:5:6
+    _34 = ptr_to_ptr(copy _33) as *u8  ; a.gopp:5:6
+    _35 = call const fn @_GPTdSi(copy _34) -> [return: bb7, unwind: terminate]  ; a.gopp:5:6
+  bb7: [cleanup]
+    goto bb1  ; a.gopp:5:6
   bb8:
-    _56 = le(copy _52, copy _54)  ; a.gopp:7:11
-    assert(copy _56 == true, Slice3B(copy _51, copy _54)) -> [success: bb9, unwind: continue]  ; a.gopp:7:11
+    _36 = le(copy _29, copy _31)  ; a.gopp:5:6
+    assert(copy _36 == true, SliceB(copy _28, copy _31)) -> [success: bb9, unwind: cleanup bb6]  ; a.gopp:5:6
   bb9:
-    _57 = le(copy _52, copy _47)  ; a.gopp:7:11
-    assert(copy _57 == true, SliceAlen(copy _51, copy _47)) -> [success: bb10, unwind: continue]  ; a.gopp:7:11
+    _37 = &mut _25[_29]  ; a.gopp:5:2
+    _38 = sub(copy _31, copy _29)  ; a.gopp:5:2
+    _39 = sub(copy _27, copy _29)  ; a.gopp:5:2
+    _40 = []i64 {copy _37, copy _38, copy _39, copy _25.3}  ; a.gopp:5:2
+    _1 = copy _40  ; a.gopp:5:2
+    _41 = copy _1  ; a.gopp:6:2
+    _42 = len(_41)  ; a.gopp:6:2
+    _43 = copy _41.2  ; a.gopp:6:2
+    _44 = const 1: i64  ; a.gopp:6:2
+    _45 = int_to_int(copy _44) as u64  ; a.gopp:6:2
+    _46 = le(copy _42, copy _42)  ; a.gopp:6:11
+    assert(copy _46 == true, SliceAlen(copy _42, copy _42)) -> [success: bb10, unwind: cleanup bb6]  ; a.gopp:6:11
   bb10:
-    _58 = le(copy _50, copy _52)  ; a.gopp:7:11
-    assert(copy _58 == true, Slice3C(copy _49, copy _52)) -> [success: bb11, unwind: continue]  ; a.gopp:7:11
+    _47 = le(copy _45, copy _42)  ; a.gopp:6:11
+    assert(copy _47 == true, SliceB(copy _44, copy _42)) -> [success: bb11, unwind: cleanup bb6]  ; a.gopp:6:11
   bb11:
-    _59 = &mut _46[_50]  ; a.gopp:7:2
-    _60 = sub(copy _52, copy _50)  ; a.gopp:7:2
-    _61 = []i64 {copy _59, copy _60, copy _60, const zero: *u8}  ; a.gopp:7:2
-    _62 = &mut _61  ; a.gopp:7:2
-    _63 = ptr_to_ptr(copy _62) as *u8  ; a.gopp:7:2
-    _64 = call const fn @_gopp_slice_copy(copy _63, const 8: u64) -> [return: bb12, unwind: continue]  ; a.gopp:7:2
+    _48 = &mut _41[_45]  ; a.gopp:6:2
+    _49 = sub(copy _42, copy _45)  ; a.gopp:6:2
+    _50 = []i64 {copy _48, copy _49, copy _49, const zero: *u8}  ; a.gopp:6:2
+    storage_live(_51)  ; a.gopp:6:2
+    _51 = &mut _50  ; a.gopp:6:2
+    _52 = copy _1  ; a.gopp:7:2
+    _53 = len(_52)  ; a.gopp:7:2
+    _54 = copy _52.2  ; a.gopp:7:2
+    _55 = copy _3  ; a.gopp:7:2
+    _56 = int_to_int(copy _55) as u64  ; a.gopp:7:2
+    _57 = copy _4  ; a.gopp:7:2
+    _58 = int_to_int(copy _57) as u64  ; a.gopp:7:2
+    _59 = copy _5  ; a.gopp:7:2
+    _60 = int_to_int(copy _59) as u64  ; a.gopp:7:2
+    _61 = le(copy _60, copy _54)  ; a.gopp:7:11
+    assert(copy _61 == true, Slice3Acap(copy _59, copy _54)) -> [success: bb12, unwind: cleanup bb6]  ; a.gopp:7:11
   bb12:
-    storage_live(_65)  ; a.gopp:7:2
-    _65 = copy _61  ; a.gopp:7:2
-    _66 = const 4: u64  ; a.gopp:8:2
-    _67 = const zero: u64  ; a.gopp:8:2
-    _68 = copy _4  ; a.gopp:8:2
-    _69 = int_to_int(copy _68) as u64  ; a.gopp:8:2
-    _70 = le(copy _69, copy _66)  ; a.gopp:8:11
-    assert(copy _70 == true, SliceAlen(copy _68, copy _66)) -> [success: bb13, unwind: continue]  ; a.gopp:8:11
+    _62 = le(copy _58, copy _60)  ; a.gopp:7:11
+    assert(copy _62 == true, Slice3B(copy _57, copy _60)) -> [success: bb13, unwind: cleanup bb6]  ; a.gopp:7:11
   bb13:
-    _71 = le(copy _67, copy _69)  ; a.gopp:8:11
-    assert(copy _71 == true, SliceB(copy _67, copy _69)) -> [success: bb14, unwind: continue]  ; a.gopp:8:11
+    _63 = le(copy _58, copy _53)  ; a.gopp:7:11
+    assert(copy _63 == true, SliceAlen(copy _57, copy _53)) -> [success: bb14, unwind: cleanup bb6]  ; a.gopp:7:11
   bb14:
-    _72 = &mut _2[_67]  ; a.gopp:8:2
-    _73 = sub(copy _69, copy _67)  ; a.gopp:8:2
-    _74 = []i64 {copy _72, copy _73, copy _73, const zero: *u8}  ; a.gopp:8:2
-    _75 = &mut _74  ; a.gopp:8:2
-    _76 = ptr_to_ptr(copy _75) as *u8  ; a.gopp:8:2
-    _77 = call const fn @_gopp_slice_copy(copy _76, const 8: u64) -> [return: bb15, unwind: continue]  ; a.gopp:8:2
+    _64 = le(copy _56, copy _58)  ; a.gopp:7:11
+    assert(copy _64 == true, Slice3C(copy _55, copy _58)) -> [success: bb15, unwind: cleanup bb6]  ; a.gopp:7:11
   bb15:
-    storage_live(_78)  ; a.gopp:8:2
-    _78 = copy _74  ; a.gopp:8:2
-    _79 = len(_21)  ; a.gopp:9:2
-    _80 = int_to_int(copy _79) as i64  ; a.gopp:9:2
-    _81 = len((*_45))  ; a.gopp:9:2
-    _82 = int_to_int(copy _81) as i64  ; a.gopp:9:2
-    _83 = add(copy _80, copy _82)  ; a.gopp:9:2
-    _84 = len(_65)  ; a.gopp:9:2
-    _85 = int_to_int(copy _84) as i64  ; a.gopp:9:2
-    _86 = add(copy _83, copy _85)  ; a.gopp:9:2
-    _87 = len(_78)  ; a.gopp:9:2
-    _88 = int_to_int(copy _87) as i64  ; a.gopp:9:2
-    _0 = add(copy _86, copy _88)  ; a.gopp:9:2
-    _89 = &mut _78  ; a.gopp:9:2
-    _90 = ptr_to_ptr(copy _89) as *u8  ; a.gopp:9:2
-    _91 = call const fn @_GPTdSi(copy _90) -> [return: bb16, unwind: continue]  ; a.gopp:9:2
+    _65 = &mut _52[_56]  ; a.gopp:7:2
+    _66 = sub(copy _58, copy _56)  ; a.gopp:7:2
+    _67 = []i64 {copy _65, copy _66, copy _66, const zero: *u8}  ; a.gopp:7:2
+    _68 = &mut _67  ; a.gopp:7:2
+    _69 = ptr_to_ptr(copy _68) as *u8  ; a.gopp:7:2
+    _70 = call const fn @_gopp_slice_copy(copy _69, const 8: u64) -> [return: bb16, unwind: cleanup bb6]  ; a.gopp:7:2
   bb16:
-    _92 = &mut _65  ; a.gopp:9:2
-    _93 = ptr_to_ptr(copy _92) as *u8  ; a.gopp:9:2
-    _94 = call const fn @_GPTdSi(copy _93) -> [return: bb17, unwind: continue]  ; a.gopp:9:2
-  bb17:
-    _95 = &mut _21  ; a.gopp:9:2
-    _96 = ptr_to_ptr(copy _95) as *u8  ; a.gopp:9:2
-    _97 = call const fn @_GPTdSi(copy _96) -> [return: bb18, unwind: continue]  ; a.gopp:9:2
-  bb18:
-    _98 = &mut _1  ; a.gopp:9:2
-    _99 = ptr_to_ptr(copy _98) as *u8  ; a.gopp:9:2
-    _100 = call const fn @_GPTdSi(copy _99) -> [return: bb19, unwind: continue]  ; a.gopp:9:2
+    storage_live(_71)  ; a.gopp:7:2
+    _71 = copy _67  ; a.gopp:7:2
+    _72 = const 4: u64  ; a.gopp:8:2
+    _73 = const zero: u64  ; a.gopp:8:2
+    _74 = copy _4  ; a.gopp:8:2
+    _75 = int_to_int(copy _74) as u64  ; a.gopp:8:2
+    _76 = le(copy _75, copy _72)  ; a.gopp:8:11
+    assert(copy _76 == true, SliceAlen(copy _74, copy _72)) -> [success: bb19, unwind: cleanup bb17]  ; a.gopp:8:11
+  bb17: [cleanup]
+    _77 = &mut _71  ; a.gopp:8:11
+    _78 = ptr_to_ptr(copy _77) as *u8  ; a.gopp:8:11
+    _79 = call const fn @_GPTdSi(copy _78) -> [return: bb18, unwind: terminate]  ; a.gopp:8:11
+  bb18: [cleanup]
+    goto bb6  ; a.gopp:8:11
   bb19:
-    storage_dead(_78)  ; a.gopp:9:2
-    storage_dead(_65)  ; a.gopp:9:2
-    storage_dead(_45)  ; a.gopp:9:2
-    storage_dead(_21)  ; a.gopp:9:2
+    _80 = le(copy _73, copy _75)  ; a.gopp:8:11
+    assert(copy _80 == true, SliceB(copy _73, copy _75)) -> [success: bb20, unwind: cleanup bb17]  ; a.gopp:8:11
+  bb20:
+    _81 = &mut _2[_73]  ; a.gopp:8:2
+    _82 = sub(copy _75, copy _73)  ; a.gopp:8:2
+    _83 = []i64 {copy _81, copy _82, copy _82, const zero: *u8}  ; a.gopp:8:2
+    _84 = &mut _83  ; a.gopp:8:2
+    _85 = ptr_to_ptr(copy _84) as *u8  ; a.gopp:8:2
+    _86 = call const fn @_gopp_slice_copy(copy _85, const 8: u64) -> [return: bb21, unwind: cleanup bb17]  ; a.gopp:8:2
+  bb21:
+    storage_live(_87)  ; a.gopp:8:2
+    _87 = copy _83  ; a.gopp:8:2
+    _88 = len(_24)  ; a.gopp:9:2
+    _89 = int_to_int(copy _88) as i64  ; a.gopp:9:2
+    _90 = len((*_51))  ; a.gopp:9:2
+    _91 = int_to_int(copy _90) as i64  ; a.gopp:9:2
+    _92 = add(copy _89, copy _91)  ; a.gopp:9:2
+    _93 = len(_71)  ; a.gopp:9:2
+    _94 = int_to_int(copy _93) as i64  ; a.gopp:9:2
+    _95 = add(copy _92, copy _94)  ; a.gopp:9:2
+    _96 = len(_87)  ; a.gopp:9:2
+    _97 = int_to_int(copy _96) as i64  ; a.gopp:9:2
+    _0 = add(copy _95, copy _97)  ; a.gopp:9:2
+    _98 = &mut _87  ; a.gopp:9:2
+    _99 = ptr_to_ptr(copy _98) as *u8  ; a.gopp:9:2
+    _100 = call const fn @_GPTdSi(copy _99) -> [return: bb22, unwind: terminate]  ; a.gopp:9:2
+  bb22:
+    _101 = &mut _71  ; a.gopp:9:2
+    _102 = ptr_to_ptr(copy _101) as *u8  ; a.gopp:9:2
+    _103 = call const fn @_GPTdSi(copy _102) -> [return: bb23, unwind: terminate]  ; a.gopp:9:2
+  bb23:
+    _104 = &mut _24  ; a.gopp:9:2
+    _105 = ptr_to_ptr(copy _104) as *u8  ; a.gopp:9:2
+    _106 = call const fn @_GPTdSi(copy _105) -> [return: bb24, unwind: terminate]  ; a.gopp:9:2
+  bb24:
+    _107 = &mut _1  ; a.gopp:9:2
+    _108 = ptr_to_ptr(copy _107) as *u8  ; a.gopp:9:2
+    _109 = call const fn @_GPTdSi(copy _108) -> [return: bb25, unwind: terminate]  ; a.gopp:9:2
+  bb25:
+    storage_dead(_87)  ; a.gopp:9:2
+    storage_dead(_71)  ; a.gopp:9:2
+    storage_dead(_51)  ; a.gopp:9:2
+    storage_dead(_24)  ; a.gopp:9:2
     return  ; a.gopp:9:2
 }
 
@@ -259,6 +286,9 @@ fn _GPF4mainE5bytes(_1: string, _2: []u8) -> (string, []u8) [go, external] {
   let _8: *[]u8
   let _9: *u8
   let _10: ()
+  let _11: string
+  let _12: bool
+  let _13: ()
   bb0:
     _3 = copy _2  ; a.gopp:13:2
     _4 = &mut _3  ; a.gopp:13:2
@@ -268,8 +298,18 @@ fn _GPF4mainE5bytes(_1: string, _2: []u8) -> (string, []u8) [go, external] {
     _7 = const zero: []u8  ; a.gopp:13:2
     _8 = &mut _7  ; a.gopp:13:2
     _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:13:2
-    _10 = call const fn @_gopp_bytes_from_string(copy _9, copy _1) -> [return: bb2, unwind: continue]  ; a.gopp:13:2
-  bb2:
+    _10 = call const fn @_gopp_bytes_from_string(copy _9, copy _1) -> [return: bb6, unwind: cleanup bb2]  ; a.gopp:13:2
+  bb2: [cleanup]
+    _11 = copy _6  ; a.gopp:13:2
+    _12 = ne(copy _11.2, const zero: *u8)  ; a.gopp:13:2
+    switch copy _12 [0: bb5, otherwise: bb3]  ; a.gopp:13:2
+  bb3: [cleanup]
+    _13 = call const fn @_gopp_string_release(copy _11) -> [return: bb4, unwind: terminate]  ; a.gopp:13:2
+  bb4: [cleanup]
+    goto bb5  ; a.gopp:13:2
+  bb5: [cleanup]
+    resume  ; a.gopp:13:2
+  bb6:
     _0 = tuple {copy _6, copy _7}  ; a.gopp:13:2
     return  ; a.gopp:13:2
 }
@@ -346,5 +386,7 @@ declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
 declare fn _gopp_string_from_bytes(_1: *u8) -> string [c, external]
 
 declare fn _gopp_bytes_from_string(_1: *u8, _2: string) -> () [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]
 
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]

@@ -19,7 +19,7 @@ use super::glue::{Ends, Glue};
 use super::{CalleeKey, Made, Shared};
 use crate::{
     AggKind, CastKind, Constant, ConstantKind, FuncId, Operand, Place, Rvalue, Type, TypeId,
-    TypeInterner, UnwindAction,
+    TypeInterner,
 };
 
 /// Where the cells of an environment start: after its count and the
@@ -385,7 +385,7 @@ impl FuncCx<'_, '_> {
         });
         let result = Place::local(self.b.temp(plain.ret));
         let next = self.b.new_block();
-        let unwind = UnwindAction::Continue;
+        let unwind = self.unwind()?;
         self.b
             .call(callee, args, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);
@@ -809,7 +809,7 @@ impl FuncCx<'_, '_> {
         }
         let result = Place::local(self.b.temp(ret));
         let next = self.b.new_block();
-        let unwind = UnwindAction::Continue;
+        let unwind = self.unwind()?;
         self.b
             .call(callee, args, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);
@@ -873,7 +873,7 @@ impl FuncCx<'_, '_> {
         }
         let result = Place::local(self.b.temp(ret));
         let next = self.b.new_block();
-        let unwind = UnwindAction::Continue;
+        let unwind = self.unwind()?;
         self.b
             .call(code, given, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);

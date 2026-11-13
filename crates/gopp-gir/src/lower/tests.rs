@@ -103,6 +103,23 @@ fn file_of(checked: &Checked<'_>, diagnostic: &Diagnostic) -> usize {
 
 /// The text of the module of one file of Go++, which must lower without
 /// a report.
+/// The text of a module or of a function without the blocks that
+/// unwinding runs: what the function does when no panic leaves it.
+fn without_cleanup(text: &str) -> String {
+    let mut kept = String::new();
+    let mut cleanup = false;
+    for line in text.lines() {
+        if line.starts_with("  bb") || !line.starts_with("  ") {
+            cleanup = line.ends_with(": [cleanup]");
+        }
+        if !cleanup {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    kept
+}
+
 fn gir(text: &str) -> String {
     let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
@@ -1142,7 +1159,7 @@ func three(xs [][]int, i, j, k int) [][]int {
         };
         [count("_gopp_slice_copy"), count("_GPTd")]
     };
-    let module = gir(text);
+    let module = without_cleanup(&gir(text));
     // Two places, and variables that are not one another: the bytes
     // change places. Three elements of which two may be one: each is
     // copied, and what the places had ends.
@@ -1152,7 +1169,7 @@ func three(xs [][]int, i, j, k int) [][]int {
     // A Go file has no exchange: every value is copied.
     let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
+    let module = without_cleanup(&print_module(&lowered.module));
     assert_eq!(counts(&module, 4), [2, 2]);
     assert_eq!(counts(&module, 14), [3, 3]);
 }
@@ -1304,6 +1321,102 @@ func main() {
         // `recover` asks the runtime, in the literal that calls it.
         let literal = body("_GPC1_F4mainE7guarded");
         assert_eq!(calls(literal, "_gopp_recover"), 1, "{file}: {literal}");
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
+fn what_a_function_owns_ends_where_a_panic_leaves_it() {
+    let text = "package main
+
+func make(n int) string {
+	s := \"a\"
+	for i := 0; i < n; i++ {
+		s += \"b\"
+	}
+	return s
+}
+
+func join(a, b string) string { return a + b }
+
+func owner(name string, n int) int {
+	first := make(n)
+	total := len(join(make(1), make(2)))
+	if n > 1 {
+		second := make(n)
+		total += len(join(first, second))
+	}
+	total += len(make(3))
+	return total + len(name)
+}
+
+func guarded(n int) (out string) {
+	defer func() { recover() }()
+	held := make(n)
+	out = join(held, make(1))
+	return out
+}
+
+func main() {
+	println(owner(make(1), 2), guarded(2))
+}
+";
+    for file in ["a.gopp", "a.go"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        let body = |symbol: &str| {
+            let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+            &module[start..][..module[start..].find("\n}\n").unwrap()]
+        };
+        let owner = body("_GPF4mainE5owner");
+        let cleanup: String = owner
+            .split("\n  bb")
+            .filter(|block| {
+                block
+                    .lines()
+                    .next()
+                    .is_some_and(|first| first.ends_with("[cleanup]"))
+            })
+            .collect();
+        // Each place that owns a string has one block that ends it,
+        // whatever the number of the calls that a panic may leave:
+        // `first`, `second`, and the two results of `make` that wait
+        // for `join`. The function only reads `name`, which its caller
+        // owns.
+        let ends = cleanup.matches("@_gopp_string_release(").count();
+        assert_eq!(ends, 4, "{file}: {owner}");
+        // A call in such a block ends the program if it panics, and
+        // the last of the blocks lets the panic go on.
+        assert_eq!(cleanup.matches("unwind: cleanup").count(), 0, "{file}");
+        assert_eq!(cleanup.matches("unwind: terminate").count(), ends, "{file}");
+        assert_eq!(cleanup.matches("resume").count(), 1, "{file}: {owner}");
+        // Every call of the function itself names the block of what
+        // is owned where it is made; nothing is where the first is.
+        let normal = without_cleanup(owner);
+        let calls: Vec<&str> = normal
+            .lines()
+            .filter(|line| line.contains("@_GPF4mainE"))
+            .collect();
+        assert_eq!(calls.len(), 7, "{file}: {normal}");
+        assert!(calls[0].contains("unwind: continue"), "{file}: {normal}");
+        for line in &calls[1..] {
+            assert!(line.contains("unwind: cleanup bb"), "{file}: {line}");
+        }
+        // A function with a frame asks the runtime last whether it
+        // goes on, and only then ends its result.
+        let guarded = body("_GPF4mainE7guarded");
+        let left = guarded.find("@_gopp_defer_left(").unwrap();
+        assert_eq!(guarded.matches("@_gopp_defer_left(").count(), 1, "{file}");
+        let after = &guarded[left..];
+        let block = &after[..after.find("resume").unwrap()];
+        assert_eq!(
+            block.matches("@_gopp_string_release(").count(),
+            1,
+            "{file}: {guarded}"
+        );
         if file == "a.gopp" {
             insta::assert_snapshot!(module);
         }
@@ -1640,7 +1753,7 @@ func main() {
     // `n` and the parameter `name` each live in a cell; each literal
     // has an environment with the one cell that it uses, which it
     // shares, and the function lets its two cells go where it ends.
-    let counter = body("_GPF4mainE7counter");
+    let counter = &without_cleanup(body("_GPF4mainE7counter"));
     assert_eq!(
         [
             calls(counter, "_gopp_cell_new"),
@@ -1657,7 +1770,7 @@ func main() {
     assert_eq!(calls(inc, "_gopp_cell_new"), 0, "{inc}");
     // `values` has one cell; `i` has one before the loop and a new one
     // for each next pass, and the old one is let go each time.
-    let each = body("_GPF4mainE4each");
+    let each = &without_cleanup(body("_GPF4mainE4each"));
     assert_eq!(
         [calls(each, "_gopp_cell_new"), calls(each, "_gopp_env_new")],
         [3, 1],
@@ -1767,13 +1880,13 @@ func main() {
             let start = module.find(&format!("\nfn {symbol}(")).unwrap();
             &module[start..][..module[start..].find("\n}\n").unwrap()]
         };
-        let work = body("_GPF4mainE4work");
+        let work = &without_cleanup(body("_GPF4mainE4work"));
         let calls = |name: &str| work.matches(&format!("@{name}(")).count();
         // Each statement keeps its value: the literal as it is made,
         // and one more that shares the environment of `step`. Each is
         // called by its code, and ends then, in the function that
         // makes the deferred calls of `work`.
-        let deferred = body("_GPC0_F4mainE4work");
+        let deferred = &without_cleanup(body("_GPC0_F4mainE4work"));
         assert_eq!(
             deferred.matches(" = call copy _").count(),
             2,
@@ -2905,6 +3018,34 @@ fn the_steps_grow_with_the_glue_of_types() {
             .collect();
         steps_of(&format!(
             "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{body}}}\n"
+        ))
+    });
+    // What unwinding ends: many variables that own, each followed by a
+    // call; blocks in blocks, each with one and a call; one call with
+    // many arguments that are owned while the next is worked out.
+    assert_near_linear(&sizes, |n| {
+        let body: String = (0..n)
+            .map(|at| format!("\ts{at} := make([]int, x)\n\tx += g() + len(s{at})\n"))
+            .collect();
+        steps_of(&function(&body))
+    });
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| {
+                format!(
+                    "\tif x > {at} {{\n\t\ts{at} := make([]int, x)\n\t\tx += g() + len(s{at})\n"
+                )
+            })
+            .collect();
+        steps_of(&function(&format!("{open}{}", "\t}\n".repeat(n))))
+    });
+    assert_near_linear(&sizes, |n| {
+        let params: String = (0..n).map(|at| format!("p{at} []int, ")).collect();
+        let args = "list(), ".repeat(n);
+        steps_of(&format!(
+            "package main\n\nfunc list() []int {{ return nil }}\n\n\
+             func many({params}) int {{ return len(p0) }}\n\n\
+             func f() int {{\n\treturn many({args})\n}}\n"
         ))
     });
     // Many panics and as many deferred calls that stop them, in one

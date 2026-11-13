@@ -14,7 +14,7 @@ use super::{Callee, CalleeKey, Memo, Shared};
 use crate::{
     AggKind, AssertKind, BinOp, CallConv, CastKind, Constant, ConstantKind, FuncType, Global,
     Linkage, LocalId, LocalKind as SlotKind, Mutability, Operand, Place, ProjectionKind, Rvalue,
-    Type, TypeId, TypeInterner, UnOp, UnwindAction,
+    Type, TypeId, TypeInterner, UnOp,
 };
 
 /// A literal of an array with more elements is written one element
@@ -757,9 +757,9 @@ impl<'a> FuncCx<'a, '_> {
         let around = self.b.loc();
         self.at(span);
         let holds = Operand::Copy(Place::local(self.b.assign_temp(holds)?));
+        let unwind = self.unwind()?;
         let next = self.b.new_block();
-        self.b
-            .assert(holds, true, (kind, said), next, UnwindAction::Continue)?;
+        self.b.assert(holds, true, (kind, said), next, unwind)?;
         self.b.switch_to(next);
         self.b.set_loc(around);
         Ok(())
@@ -1420,14 +1420,10 @@ impl<'a> FuncCx<'a, '_> {
             }
         };
         let result = self.b.temp(called.ret);
+        let unwind = self.unwind()?;
         let next = self.b.new_block();
-        self.b.call(
-            callee,
-            given,
-            Place::local(result),
-            Some(next),
-            UnwindAction::Continue,
-        )?;
+        self.b
+            .call(callee, given, Place::local(result), Some(next), unwind)?;
         self.b.switch_to(next);
         self.b.set_loc(around);
         // What the function gives is the caller's own: each result that
@@ -2037,14 +2033,10 @@ impl<'a> FuncCx<'a, '_> {
         let kind = ConstantKind::Func(func);
         let callee = Operand::Const(Constant { kind, ty: sig });
         let result = self.b.temp(ret);
+        let unwind = self.unwind()?;
         let next = self.b.new_block();
-        self.b.call(
-            callee,
-            args,
-            Place::local(result),
-            Some(next),
-            UnwindAction::Continue,
-        )?;
+        self.b
+            .call(callee, args, Place::local(result), Some(next), unwind)?;
         self.b.switch_to(next);
         Ok(Operand::Copy(Place::local(result)))
     }

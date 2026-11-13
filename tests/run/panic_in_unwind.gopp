@@ -1,0 +1,31 @@
+// exit: 2
+package main
+
+// A value ends while a stopped panic leaves its function, and the end
+// of the value panics too: the program ends.
+
+type Bad struct{ n int }
+
+func (b *Bad) drop() {
+	if b.n != 0 {
+		panic("in drop")
+	}
+}
+
+func fail() {
+	panic("first")
+}
+
+func work() {
+	b := Bad{n: 1}
+	fail()
+	println("not reached", b.n)
+}
+
+func main() {
+	defer func() {
+		println("stopped:", recover() != nil)
+	}()
+	work()
+	println("not reached")
+}

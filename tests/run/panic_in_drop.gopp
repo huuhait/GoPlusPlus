@@ -1,0 +1,26 @@
+// exit: 2
+package main
+
+// A panic that leaves a `drop` method ends the program, also when a
+// deferred call would stop it.
+
+type Bad struct{ n int }
+
+func (b *Bad) drop() {
+	if b.n != 0 {
+		panic("in drop")
+	}
+}
+
+func work() {
+	b := Bad{n: 1}
+	println("made", b.n)
+}
+
+func main() {
+	defer func() {
+		println("stopped:", recover() != nil)
+	}()
+	work()
+	println("not reached")
+}

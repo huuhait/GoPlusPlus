@@ -1,6 +1,6 @@
 ---
 source: crates/gopp-gir/src/lower/tests.rs
-expression: gir(text)
+expression: module
 ---
 module "main"
 file 0 "a.gopp"
@@ -38,14 +38,17 @@ fn _GPF4mainE3use(_1: _GPTiN4mainE6Handle) -> i64 [go, external] {
   let _5: *_GPTiN4mainE6Handle
   let _6: *u8
   let _7: ()
-  let _8: _GPTiN4mainE6Handle "g"
-  let _9: i64
-  let _10: *_GPTiN4mainE6Handle
-  let _11: *u8
-  let _12: ()
-  let _13: *_GPTiN4mainE4File
+  let _8: *_GPTiN4mainE4File
+  let _9: *u8
+  let _10: ()
+  let _11: _GPTiN4mainE6Handle "g"
+  let _12: i64
+  let _13: *_GPTiN4mainE6Handle
   let _14: *u8
   let _15: ()
+  let _16: *_GPTiN4mainE4File
+  let _17: *u8
+  let _18: ()
   bb0:
     _2 = _GPTiN4mainE4File {const 1: i64, const str#0 "n"}  ; a.gopp:17:2
     storage_live(_3)  ; a.gopp:17:2
@@ -53,21 +56,27 @@ fn _GPF4mainE3use(_1: _GPTiN4mainE6Handle) -> i64 [go, external] {
     _4 = copy _1  ; a.gopp:18:2
     _5 = &mut _4  ; a.gopp:18:2
     _6 = ptr_to_ptr(copy _5) as *u8  ; a.gopp:18:2
-    _7 = call const fn @_GPTcN4mainE6Handle(copy _6) -> [return: bb1, unwind: continue]  ; a.gopp:18:2
-  bb1:
-    storage_live(_8)  ; a.gopp:18:2
-    _8 = copy _4  ; a.gopp:18:2
-    _9 = add(copy _3.0, copy _8.0)  ; a.gopp:19:2
-    _0 = add(copy _9, copy _1.0)  ; a.gopp:19:2
-    _10 = &mut _8  ; a.gopp:19:2
-    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:19:2
-    _12 = call const fn @_GPTdN4mainE6Handle(copy _11) -> [return: bb2, unwind: continue]  ; a.gopp:19:2
-  bb2:
-    _13 = &mut _3  ; a.gopp:19:2
-    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:19:2
-    _15 = call const fn @_GPTdN4mainE4File(copy _14) -> [return: bb3, unwind: continue]  ; a.gopp:19:2
+    _7 = call const fn @_GPTcN4mainE6Handle(copy _6) -> [return: bb3, unwind: cleanup bb1]  ; a.gopp:18:2
+  bb1: [cleanup]
+    _8 = &mut _3  ; a.gopp:18:2
+    _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:18:2
+    _10 = call const fn @_GPTdN4mainE4File(copy _9) -> [return: bb2, unwind: terminate]  ; a.gopp:18:2
+  bb2: [cleanup]
+    resume  ; a.gopp:18:2
   bb3:
-    storage_dead(_8)  ; a.gopp:19:2
+    storage_live(_11)  ; a.gopp:18:2
+    _11 = copy _4  ; a.gopp:18:2
+    _12 = add(copy _3.0, copy _11.0)  ; a.gopp:19:2
+    _0 = add(copy _12, copy _1.0)  ; a.gopp:19:2
+    _13 = &mut _11  ; a.gopp:19:2
+    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:19:2
+    _15 = call const fn @_GPTdN4mainE6Handle(copy _14) -> [return: bb4, unwind: terminate]  ; a.gopp:19:2
+  bb4:
+    _16 = &mut _3  ; a.gopp:19:2
+    _17 = ptr_to_ptr(copy _16) as *u8  ; a.gopp:19:2
+    _18 = call const fn @_GPTdN4mainE4File(copy _17) -> [return: bb5, unwind: terminate]  ; a.gopp:19:2
+  bb5:
+    storage_dead(_11)  ; a.gopp:19:2
     storage_dead(_3)  ; a.gopp:19:2
     return  ; a.gopp:19:2
 }

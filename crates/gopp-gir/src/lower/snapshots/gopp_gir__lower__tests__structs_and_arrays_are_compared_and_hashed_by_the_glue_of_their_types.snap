@@ -127,29 +127,35 @@ fn _GPF4mainE4keys(_1: _GPTiN4mainE5named) -> i64 [go, external] {
   let _26: *u8
   let _27: bool
   let _28: **gopp.map
-  let _29: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
-  let _30: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
-  let _31: *u8
-  let _32: *u8
-  let _33: *i64
-  let _34: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
-  let _35: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
-  let _36: *u8
-  let _37: *gopp.map
-  let _38: *gopp.map
-  let _39: *gopp.map "loose"
+  let _29: *u8
+  let _30: ()
+  let _31: **gopp.map
+  let _32: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _33: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _34: *u8
+  let _35: *u8
+  let _36: *i64
+  let _37: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _38: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _39: *u8
   let _40: *gopp.map
-  let _41: u64
-  let _42: i64
+  let _41: *gopp.map
+  let _42: *gopp.map "loose"
   let _43: *gopp.map
   let _44: u64
-  let _45: i64
-  let _46: **gopp.map
-  let _47: *u8
-  let _48: ()
-  let _49: **gopp.map
-  let _50: *u8
-  let _51: ()
+  let _45: **gopp.map
+  let _46: *u8
+  let _47: ()
+  let _48: i64
+  let _49: *gopp.map
+  let _50: u64
+  let _51: i64
+  let _52: **gopp.map
+  let _53: *u8
+  let _54: ()
+  let _55: **gopp.map
+  let _56: *u8
+  let _57: ()
   bb0:
     _2 = tuple {const 96: u64, const 8: u64, const 96: u64, const 104: u64, const 4: u64, const null: fn "C"(*u8) -> (), const fn @_GPThN4mainE5named, const fn @_GPTeN4mainE5named, const null: fn "C"(*u8) -> (), const fn @_GPTcN4mainE5named, const fn @_GPTdN4mainE5named}  ; a.gopp:25:2
     _3 = &mut _2  ; a.gopp:25:2
@@ -179,42 +185,54 @@ fn _GPF4mainE4keys(_1: _GPTiN4mainE5named) -> i64 [go, external] {
     _24 = ptr_to_ptr(copy _23) as *u8  ; a.gopp:26:2
     _25 = &mut _21  ; a.gopp:26:2
     _26 = ptr_to_ptr(copy _25) as *u8  ; a.gopp:26:2
-    _27 = call const fn @_gopp_map_read(copy _20, copy _24, copy _19, copy _26) -> [return: bb3, unwind: continue]  ; a.gopp:26:2
-  bb3:
+    _27 = call const fn @_gopp_map_read(copy _20, copy _24, copy _19, copy _26) -> [return: bb5, unwind: cleanup bb3]  ; a.gopp:26:2
+  bb3: [cleanup]
     _28 = &mut _16  ; a.gopp:26:2
-    _29 = tuple {const 96: u64, const 8: u64, const 96: u64, const 104: u64, const 4: u64, const null: fn "C"(*u8) -> (), const fn @_GPThN4mainE5named, const fn @_GPTeN4mainE5named, const null: fn "C"(*u8) -> (), const fn @_GPTcN4mainE5named, const fn @_GPTdN4mainE5named}  ; a.gopp:26:2
-    _30 = &mut _29  ; a.gopp:26:2
-    _31 = ptr_to_ptr(copy _30) as *u8  ; a.gopp:26:2
-    _32 = call const fn @_gopp_map_set(copy _28, copy _31, copy _19) -> [return: bb4, unwind: continue]  ; a.gopp:26:2
-  bb4:
-    _33 = ptr_to_ptr(copy _32) as *i64  ; a.gopp:26:2
-    (*_33) = add(copy _21, const 1: i64)  ; a.gopp:26:2
-    _34 = tuple {const 16: u64, const 1: u64, const 16: u64, const 24: u64, const 4: u64, const null: fn "C"(*u8) -> (), const fn @_GPThA2_d, const fn @_GPTeA2_d, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> ()}  ; a.gopp:27:2
-    _35 = &mut _34  ; a.gopp:27:2
-    _36 = ptr_to_ptr(copy _35) as *u8  ; a.gopp:27:2
-    _37 = call const fn @_gopp_map_make(copy _36, const 0: i64) -> [return: bb5, unwind: continue]  ; a.gopp:27:2
+    _29 = ptr_to_ptr(copy _28) as *u8  ; a.gopp:26:2
+    _30 = call const fn @_GPTdHN4mainE5namedi(copy _29) -> [return: bb4, unwind: terminate]  ; a.gopp:26:2
+  bb4: [cleanup]
+    resume  ; a.gopp:26:2
   bb5:
-    _38 = copy _37  ; a.gopp:27:2
-    storage_live(_39)  ; a.gopp:27:2
-    _39 = copy _38  ; a.gopp:27:2
-    _40 = copy _16  ; a.gopp:28:2
-    _41 = call const fn @_gopp_map_len(copy _40) -> [return: bb6, unwind: continue]  ; a.gopp:28:2
+    _31 = &mut _16  ; a.gopp:26:2
+    _32 = tuple {const 96: u64, const 8: u64, const 96: u64, const 104: u64, const 4: u64, const null: fn "C"(*u8) -> (), const fn @_GPThN4mainE5named, const fn @_GPTeN4mainE5named, const null: fn "C"(*u8) -> (), const fn @_GPTcN4mainE5named, const fn @_GPTdN4mainE5named}  ; a.gopp:26:2
+    _33 = &mut _32  ; a.gopp:26:2
+    _34 = ptr_to_ptr(copy _33) as *u8  ; a.gopp:26:2
+    _35 = call const fn @_gopp_map_set(copy _31, copy _34, copy _19) -> [return: bb6, unwind: cleanup bb3]  ; a.gopp:26:2
   bb6:
-    _42 = int_to_int(copy _41) as i64  ; a.gopp:28:2
-    _43 = copy _39  ; a.gopp:28:2
-    _44 = call const fn @_gopp_map_len(copy _43) -> [return: bb7, unwind: continue]  ; a.gopp:28:2
+    _36 = ptr_to_ptr(copy _35) as *i64  ; a.gopp:26:2
+    (*_36) = add(copy _21, const 1: i64)  ; a.gopp:26:2
+    _37 = tuple {const 16: u64, const 1: u64, const 16: u64, const 24: u64, const 4: u64, const null: fn "C"(*u8) -> (), const fn @_GPThA2_d, const fn @_GPTeA2_d, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> (), const null: fn "C"(*u8) -> ()}  ; a.gopp:27:2
+    _38 = &mut _37  ; a.gopp:27:2
+    _39 = ptr_to_ptr(copy _38) as *u8  ; a.gopp:27:2
+    _40 = call const fn @_gopp_map_make(copy _39, const 0: i64) -> [return: bb7, unwind: cleanup bb3]  ; a.gopp:27:2
   bb7:
-    _45 = int_to_int(copy _44) as i64  ; a.gopp:28:2
-    _0 = add(copy _42, copy _45)  ; a.gopp:28:2
-    _46 = &mut _39  ; a.gopp:28:2
-    _47 = ptr_to_ptr(copy _46) as *u8  ; a.gopp:28:2
-    _48 = call const fn @_GPTdHA2_db(copy _47) -> [return: bb8, unwind: continue]  ; a.gopp:28:2
-  bb8:
-    _49 = &mut _16  ; a.gopp:28:2
-    _50 = ptr_to_ptr(copy _49) as *u8  ; a.gopp:28:2
-    _51 = call const fn @_GPTdHN4mainE5namedi(copy _50) -> [return: bb9, unwind: continue]  ; a.gopp:28:2
-  bb9:
-    storage_dead(_39)  ; a.gopp:28:2
+    _41 = copy _40  ; a.gopp:27:2
+    storage_live(_42)  ; a.gopp:27:2
+    _42 = copy _41  ; a.gopp:27:2
+    _43 = copy _16  ; a.gopp:28:2
+    _44 = call const fn @_gopp_map_len(copy _43) -> [return: bb10, unwind: cleanup bb8]  ; a.gopp:28:2
+  bb8: [cleanup]
+    _45 = &mut _42  ; a.gopp:28:2
+    _46 = ptr_to_ptr(copy _45) as *u8  ; a.gopp:28:2
+    _47 = call const fn @_GPTdHA2_db(copy _46) -> [return: bb9, unwind: terminate]  ; a.gopp:28:2
+  bb9: [cleanup]
+    goto bb3  ; a.gopp:28:2
+  bb10:
+    _48 = int_to_int(copy _44) as i64  ; a.gopp:28:2
+    _49 = copy _42  ; a.gopp:28:2
+    _50 = call const fn @_gopp_map_len(copy _49) -> [return: bb11, unwind: cleanup bb8]  ; a.gopp:28:2
+  bb11:
+    _51 = int_to_int(copy _50) as i64  ; a.gopp:28:2
+    _0 = add(copy _48, copy _51)  ; a.gopp:28:2
+    _52 = &mut _42  ; a.gopp:28:2
+    _53 = ptr_to_ptr(copy _52) as *u8  ; a.gopp:28:2
+    _54 = call const fn @_GPTdHA2_db(copy _53) -> [return: bb12, unwind: terminate]  ; a.gopp:28:2
+  bb12:
+    _55 = &mut _16  ; a.gopp:28:2
+    _56 = ptr_to_ptr(copy _55) as *u8  ; a.gopp:28:2
+    _57 = call const fn @_GPTdHN4mainE5namedi(copy _56) -> [return: bb13, unwind: terminate]  ; a.gopp:28:2
+  bb13:
+    storage_dead(_42)  ; a.gopp:28:2
     storage_dead(_16)  ; a.gopp:28:2
     return  ; a.gopp:28:2
 }

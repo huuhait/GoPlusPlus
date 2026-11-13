@@ -16,7 +16,7 @@ use super::func::{Built, FuncCx, deeper};
 use super::{Callee, CalleeKey};
 use crate::{
     CallConv, CastKind, Constant, ConstantKind, FuncId, FuncType, Operand, Place, Rvalue, Type,
-    TypeId, TypeInterner, UnwindAction,
+    TypeId, TypeInterner,
 };
 
 /// How the value of a type is made a copy of its own.
@@ -380,6 +380,13 @@ impl FuncCx<'_, '_> {
 
     /// The value in the place ends.
     pub fn end(&mut self, place: Place, ends: Ends) -> Built {
+        self.ending += 1;
+        let ended = self.end_here(place, ends);
+        self.ending -= 1;
+        ended
+    }
+
+    fn end_here(&mut self, place: Place, ends: Ends) -> Built {
         match ends {
             Ends::Text => self.counted(place, false),
             Ends::Glue(glue) => {
@@ -404,8 +411,8 @@ impl FuncCx<'_, '_> {
     pub fn call_glue(&mut self, glue: FuncId, at: Operand) -> Built {
         let callee = self.glue_value(Glue::Clone, glue);
         let nothing = Place::local(self.b.temp(TypeInterner::UNIT));
+        let unwind = self.unwind()?;
         let next = self.b.new_block();
-        let unwind = UnwindAction::Continue;
         self.b.call(callee, vec![at], nothing, Some(next), unwind)?;
         self.b.switch_to(next);
         Ok(())
@@ -543,7 +550,7 @@ impl FuncCx<'_, '_> {
                     true => Operand::Copy(Place::local(typed)),
                     false => Operand::Copy(value.clone()),
                 };
-                let unwind = UnwindAction::Continue;
+                let unwind = self.unwind()?;
                 self.b
                     .call(callee, vec![receiver], result.clone(), Some(next), unwind)?;
                 self.b.switch_to(next);
