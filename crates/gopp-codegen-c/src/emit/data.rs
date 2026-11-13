@@ -7,7 +7,7 @@ use std::fmt::Write;
 use gopp_gir::{ConstantKind, Global, Type, TypeId, TypeInterner};
 
 use super::number::int_literal;
-use super::{Cx, EmitError, constness, global_name};
+use super::{Cx, EmitError, constness, global_name, linkage};
 
 /// The definition of the global with the number `at`, which has static
 /// data.
@@ -25,7 +25,8 @@ pub(super) fn global(
     }
     let _ = write!(
         out,
-        "{}{} {} = ",
+        "{}{}{} {} = ",
+        linkage(global.link, true),
         constness(global),
         cx.spelled(global.ty),
         global_name(at)

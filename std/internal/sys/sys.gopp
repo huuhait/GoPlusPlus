@@ -1,0 +1,22 @@
+// Package sys is what the standard library asks of the operating system.
+// No other package makes a system call.
+package sys
+
+// The files that every program has open when it starts.
+const (
+	Stdin  = 0
+	Stdout = 1
+	Stderr = 2
+)
+
+@Extern("C")
+func gopp_sys_write(file int32, bytes *byte, count int) int
+
+// Write writes the bytes to the file with the number. It gives how many
+// were written, or -1 if the system refused them.
+func Write(file int, bytes []byte) int {
+	if len(bytes) == 0 {
+		return 0
+	}
+	return gopp_sys_write(int32(file), &bytes[0], len(bytes))
+}

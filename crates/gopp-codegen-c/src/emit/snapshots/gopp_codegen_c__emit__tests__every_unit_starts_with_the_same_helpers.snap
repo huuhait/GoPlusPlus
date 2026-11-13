@@ -272,6 +272,17 @@ __attribute__((returns_twice)) void _gopp_defer_push(uint8_t *frame);
 #define GOPP_CALL __attribute__((swiftcall))
 #define GOPP_ENV __attribute__((swift_context))
 
+// A function or a table that several units have, of which the linker
+// keeps one: weak where objects are ELF, and what a linker of COFF
+// takes for the same, which refuses two weak definitions.
+#ifdef _WIN32
+#define GOPP_ONCE inline
+#define GOPP_ONCE_DATA __declspec(selectany)
+#else
+#define GOPP_ONCE __attribute__((weak))
+#define GOPP_ONCE_DATA __attribute__((weak))
+#endif
+
 [[maybe_unused]] static char gopp_empty;
 
 [[maybe_unused]] static inline float gopp_float32(uint32_t bits) {

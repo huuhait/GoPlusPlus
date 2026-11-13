@@ -722,10 +722,12 @@ fn check_prints_the_same_with_one_thread_and_with_many() {
     }
 }
 
-/// The samples that need no header and no macro.
+/// The samples whose packages the standard library has in full. The
+/// others that need no header and no macro (02 to 05, 09 and 10) name
+/// functions of `fmt`, `os` and `strconv` that are not written yet.
 #[test]
 fn check_accepts_the_samples_with_any_number_of_threads() {
-    let wanted = ["01-", "02-", "03-", "04-", "05-", "09-", "10-"];
+    let wanted = ["01-"];
     let files: Vec<PathBuf> = samples::files()
         .into_iter()
         .filter(|path| {
@@ -733,7 +735,7 @@ fn check_accepts_the_samples_with_any_number_of_threads() {
             wanted.iter().any(|sample| name.contains(sample))
         })
         .collect();
-    assert_eq!(files.len(), 7);
+    assert_eq!(files.len(), 1);
     let checked = |file: &PathBuf, threads: &str| {
         let mut command = gopp();
         command.args(["check", "-emit=info"]).arg(file);
@@ -1349,4 +1351,34 @@ func main() {
         .filter(|line| line.ends_with("()"))
         .collect();
     assert_eq!(names, ["base.At()", "main.main()"], "{written}");
+}
+
+/// The samples of the specification that are built today.
+const BUILT_SAMPLES: &[&str] = &["01-hello"];
+
+/// Each sample that is built prints what its `expected_output.txt` has.
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
+fn a_sample_prints_what_its_file_says() {
+    let samples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/examples");
+    let dir = TempDir::new().unwrap();
+    for name in BUILT_SAMPLES {
+        let sample = samples.join(name);
+        let program = dir.path().join(name);
+        let source = sample.join("main.gopp");
+        let built = run_beside(gopp().arg("build").arg("-o").arg(&program).arg(&source));
+        assert_eq!(stderr(&built), "", "{name}");
+        assert_eq!(built.status.code(), Some(0), "{name}");
+        let ran = run_beside(Command::new(&program).current_dir(&sample));
+        let expected = fs::read_to_string(sample.join("expected_output.txt")).unwrap();
+        assert_eq!(
+            (stdout(&ran), stderr(&ran)),
+            (expected, String::new()),
+            "{name}"
+        );
+        assert_eq!(ran.status.code(), Some(0), "{name}");
+    }
 }

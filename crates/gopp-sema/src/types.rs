@@ -356,6 +356,8 @@ impl Marks {
     pub const INLINE: Self = Self(1 << 7);
     pub const NO_INLINE: Self = Self(1 << 8);
     pub const NO_BOUNDS: Self = Self(1 << 9);
+    /// `@Extern("C")`: the function is defined in C.
+    pub const EXTERN: Self = Self(1 << 10);
 
     /// The mark of the attribute `@name`, if a method may have it.
     pub fn of(name: &str) -> Option<Self> {
@@ -370,6 +372,7 @@ impl Marks {
             "Inline" => Self::INLINE,
             "NoInline" => Self::NO_INLINE,
             "NoBounds" => Self::NO_BOUNDS,
+            "Extern" => Self::EXTERN,
             _ => return None,
         })
     }

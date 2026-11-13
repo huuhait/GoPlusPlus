@@ -322,7 +322,7 @@ fn the_descriptor_of_a_type_is_static_data_that_names_its_glue() {
     let unit = unit("a.gopp", INTERFACES);
     // A descriptor is declared before the functions, which name it,
     // and said after their prototypes, which it names.
-    let declared = unit.find("__attribute__((weak)) const T").unwrap();
+    let declared = unit.find("extern const T").unwrap();
     let prototype = unit.find("void gopp_f").unwrap();
     let said = unit.find(" = {(uint8_t *)&gopp_g").unwrap();
     assert!(declared < prototype && prototype < said);

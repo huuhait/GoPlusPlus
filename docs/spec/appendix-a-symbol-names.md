@@ -192,7 +192,7 @@ These rows are checked against the code by the `gopp-mangle` tests `symbol_name:
 - **What the checker does not record:** a type declared inside a function needs its function and its ordinal, and an `init` function its number. The lowering knows both and gives them to `gopp_mangle::symbol_of` (`Namer::with_locals`, `Entity::InitFunc`); without them `symbol_of` refuses the type with a reason instead of guessing. A function literal gets its `Closure` name when function literals are lowered (P04.07); until then a type declared inside one is named with the function around it.
 - **What has no symbol:** generic code (only its instances), a constraint, a constant, a type or function in error, and what is named `_`. `symbol_of` says which (`NoSymbol`).
 - **Foreign (header) symbols** keep the name the C or C++ compiler gives them. Go++ never defines a symbol with a C++ or C name for its own entities.
-- **`@Extern("C")`** (MAC-8): the function is defined in C, so its symbol is its C name. The checker does not mark such a function yet (P07), so the code generator takes the name from the attribute and never asks `gopp_mangle::symbol_of` for it.
+- **`@Extern("C")`** (MAC-8): the function is defined in C, so its symbol is its C name. The checker marks such a function, and the lowering calls it by its name and never asks `gopp_mangle::symbol_of` for it.
 - **Compiler helper and linker names** (`_gopp_*`, `.L*`, section names) are not Go++ symbols.
 
 ## A.9 The demangler

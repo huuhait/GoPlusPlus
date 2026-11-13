@@ -17,10 +17,17 @@ typedef struct gopp_function_entry {
 gopp_function_entry *RtlLookupFunctionEntry(uint64_t at, uint64_t *base, void *history);
 
 // The system gives at most 62 frames at once.
-enum { GOPP_STDERR = 2, GOPP_BINARY = 0x8000, GOPP_FRAMES = 62, GOPP_AT_ONCE = 1 << 30 };
+enum {
+  GOPP_STDOUT = 1,
+  GOPP_STDERR = 2,
+  GOPP_BINARY = 0x8000,
+  GOPP_FRAMES = 62,
+  GOPP_AT_ONCE = 1 << 30
+};
 
 void _gopp_os_init(void) {
   // A newline is one byte, as a program of Go writes it.
+  _setmode(GOPP_STDOUT, GOPP_BINARY);
   _setmode(GOPP_STDERR, GOPP_BINARY);
 }
 
@@ -35,6 +42,22 @@ void _gopp_os_write(const uint8_t *bytes, uint64_t count) {
     bytes += written;
     count -= (uint64_t)written;
   }
+}
+
+// For package `internal/sys`: writes the bytes to the file of the
+// number. How many went out, or -1 if the system refused them.
+int64_t gopp_sys_write(int32_t file, const uint8_t *bytes, int64_t count) {
+  int64_t done = 0;
+  while (done < count) {
+    int64_t left = count - done;
+    unsigned int part = left < GOPP_AT_ONCE ? (unsigned int)left : GOPP_AT_ONCE;
+    int written = _write(file, bytes + done, part);
+    if (written <= 0) {
+      return -1;
+    }
+    done += written;
+  }
+  return done;
 }
 
 void _gopp_os_frames(gopp_frame_fn each) {

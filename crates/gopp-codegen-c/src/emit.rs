@@ -214,14 +214,17 @@ pub(crate) fn emit_counted(
         if cx.empty(global.ty) {
             continue;
         }
-        let declared = match global.defined {
-            true => "",
-            false => "extern ",
+        // A global that another unit has, or whose data is written
+        // further down, is only declared here; one that starts as
+        // zeros is what this line makes.
+        let later = !global.parts.is_empty() && global.link != Linkage::Internal;
+        let start = match !global.defined || later {
+            true => "extern ",
+            false => linkage(global.link, true),
         };
         let _ = writeln!(
             out,
-            "{declared}{}{}{} {} __asm__(\"{}\");",
-            linkage(global.link),
+            "{start}{}{} {} __asm__(\"{}\");",
             constness(global),
             cx.spelled(global.ty),
             global_name(at),
@@ -265,12 +268,15 @@ pub(crate) fn emit_counted(
     Ok((out, steps))
 }
 
-/// What a declaration starts with for its linkage.
-pub(crate) fn linkage(link: Linkage) -> &'static str {
-    match link {
-        Linkage::External => "",
-        Linkage::Internal => "static ",
-        Linkage::LinkOnceOdr => "__attribute__((weak)) ",
+/// What a declaration starts with for its linkage. What several units
+/// may each have, of which a program keeps one, is said as the system
+/// of the target takes it (`GOPP_ONCE`, `GOPP_ONCE_DATA`).
+pub(crate) fn linkage(link: Linkage, data: bool) -> &'static str {
+    match (link, data) {
+        (Linkage::External, _) => "",
+        (Linkage::Internal, _) => "static ",
+        (Linkage::LinkOnceOdr, false) => "GOPP_ONCE ",
+        (Linkage::LinkOnceOdr, true) => "GOPP_ONCE_DATA ",
     }
 }
 
@@ -385,6 +391,17 @@ pub(crate) fn convention(swiftcall: bool) -> &'static str {
 /// What a unit has after the header of the runtime and before its own
 /// helpers.
 const PRELUDE: &str = "
+// A function or a table that several units have, of which the linker
+// keeps one: weak where objects are ELF, and what a linker of COFF
+// takes for the same, which refuses two weak definitions.
+#ifdef _WIN32
+#define GOPP_ONCE inline
+#define GOPP_ONCE_DATA __declspec(selectany)
+#else
+#define GOPP_ONCE __attribute__((weak))
+#define GOPP_ONCE_DATA __attribute__((weak))
+#endif
+
 [[maybe_unused]] static char gopp_empty;
 
 [[maybe_unused]] static inline float gopp_float32(uint32_t bits) {

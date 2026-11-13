@@ -58,7 +58,7 @@ pub(super) fn prototype(
         Inline::Always => line.push_str("__attribute__((always_inline)) inline "),
         Inline::Never => line.push_str("__attribute__((noinline)) "),
     }
-    line.push_str(linkage(func.link()));
+    line.push_str(linkage(func.link(), false));
     let go_call = cx.go_call(sig);
     if go_call {
         line.push_str("GOPP_CALL ");

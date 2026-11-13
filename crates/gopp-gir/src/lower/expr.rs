@@ -2378,12 +2378,24 @@ impl<'a> FuncCx<'a, '_> {
             return Ok(known.clone());
         }
         let shared = self.shared;
+        let extern_c = gopp_sema::types::Marks::EXTERN;
+        let in_c = match key {
+            CalleeKey::Object(object) => shared.package.object(object).marks.has(extern_c),
+            CalleeKey::Member(import, member) => self
+                .member(import, member)
+                .is_some_and(|(_, object)| object.marks.has(extern_c)),
+            _ => false,
+        };
         let namer = &mut self.memo.namer;
         let mut function = |package: &Package, id: gopp_sema::ObjId| {
             let object = package.objects.get(id.0 as usize)?;
-            let symbol = match object.kind {
-                ObjKind::Func => symbol_of(namer, Entity::Object(package, id)).ok()?,
-                _ => return None,
+            if !matches!(object.kind, ObjKind::Func) {
+                return None;
+            }
+            // A function of C is called what it is called there.
+            let symbol = match object.marks.has(extern_c) {
+                true => shared.names.resolve(&object.name).to_owned(),
+                false => symbol_of(namer, Entity::Object(package, id)).ok()?,
             };
             Some((symbol, None, object.ty))
         };
@@ -2408,6 +2420,10 @@ impl<'a> FuncCx<'a, '_> {
                 let sig = self
                     .memo
                     .signature(shared, self.b.types(), receiver, checked);
+                let sig = match in_c {
+                    true => sig.and_then(|sig| self.of_c(sig)),
+                    false => sig,
+                };
                 match sig.map(|sig| (sig, self.kind(sig))) {
                     Ok((sig, Type::Func(func))) => Ok(Callee {
                         func: self.function_named(&symbol, sig)?,
@@ -2432,6 +2448,31 @@ impl<'a> FuncCx<'a, '_> {
         };
         self.memo.callees.insert(key, called.clone());
         Ok(called)
+    }
+
+    /// The type of a function with the signature as C calls it. What it
+    /// takes and gives is a number, a bool or a pointer for now.
+    fn of_c(&mut self, sig: TypeId) -> Result<TypeId, &'static str> {
+        let Type::Func(func) = self.kind(sig) else {
+            return Err("a function type");
+        };
+        let mut passed = |ty: TypeId| {
+            let kind = self.kind(ty);
+            matches!(
+                kind,
+                Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_)
+            )
+        };
+        let plain = func.params.iter().all(|&param| passed(param))
+            && (func.ret == TypeInterner::UNIT || passed(func.ret));
+        if !plain {
+            return Err("a function of C that takes or gives what is no number and no pointer");
+        }
+        let func = crate::FuncType {
+            cc: crate::CallConv::C,
+            ..func
+        };
+        Ok(self.b.types().intern(Type::Func(func)))
     }
 
     /// The receiver that a method takes, of the type `wanted`: the

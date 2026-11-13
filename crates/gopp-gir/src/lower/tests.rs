@@ -4749,3 +4749,37 @@ fn the_steps_grow_with_values_compared_by_glue() {
         ))
     });
 }
+
+#[test]
+fn a_function_of_c_is_called_by_its_name_with_the_convention_of_c() {
+    let text = "package main
+
+@Extern(\"C\")
+func putchar(c int32) int32
+
+@Extern(\"C\")
+func write(file int32, bytes *byte, count int) int
+
+func main() {
+	putchar('h')
+	b := byte('i')
+	write(1, &b, 1)
+}
+";
+    let module = gir(text);
+    assert!(
+        module.contains("declare fn putchar(_1: i32) -> i32 [c, external]"),
+        "{module}"
+    );
+    assert!(module.contains("declare fn write(_1: i32, _2: *u8, _3: i64) -> i64 [c, external]"));
+    assert!(
+        module.contains("call const fn @putchar(const 104: i32)"),
+        "{module}"
+    );
+    // What is no number and no pointer does not cross yet.
+    let text = "package main\n\n@Extern(\"C\")\nfunc puts(s string) int32\n\nfunc main() { puts(\"x\") }\n";
+    let (_, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    let expected = "a.gopp:6:15: not supported yet: a function of C that takes or gives what is no \
+                    number and no pointer";
+    assert_eq!(messages, [expected]);
+}

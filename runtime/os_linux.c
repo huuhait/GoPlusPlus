@@ -28,6 +28,23 @@ void _gopp_os_write(const uint8_t *bytes, uint64_t count) {
   }
 }
 
+// For package `internal/sys`: writes the bytes to the file of the
+// number. How many went out, or -1 if the system refused them.
+int64_t gopp_sys_write(int32_t file, const uint8_t *bytes, int64_t count) {
+  int64_t done = 0;
+  while (done < count) {
+    long written = write(file, bytes + done, (unsigned long)(count - done));
+    if (written < 0) {
+      if (*__errno_location() == GOPP_EINTR) {
+        continue;
+      }
+      return -1;
+    }
+    done += written;
+  }
+  return done;
+}
+
 static _Unwind_Reason_Code visit(struct _Unwind_Context *context, void *each) {
   uintptr_t at = _Unwind_GetIP(context);
   (*(gopp_frame_fn *)each)(_Unwind_GetRegionStart(context), at);

@@ -54,8 +54,8 @@ GOPP_CALL void gopp_f1(T8 * _1, int8_t _2, int64_t _3) __asm__("_GPM4growN4mainE
 GOPP_CALL T8 gopp_f2(T8 * _1, T18 _2) __asm__("_GPF4mainE5build");
 GOPP_CALL void gopp_f3(void) __asm__("_GPK4mainE0_");
 GOPP_CALL void gopp_f4(void) __asm__("_GPF4mainE4main");
-__attribute__((weak)) void gopp_f5(uint8_t * _1) __asm__("_GPTdN4mainE3Box");
-__attribute__((weak)) void gopp_f6(uint8_t * _1) __asm__("_GPTdr");
+GOPP_ONCE void gopp_f5(uint8_t * _1) __asm__("_GPTdN4mainE3Box");
+GOPP_ONCE void gopp_f6(uint8_t * _1) __asm__("_GPTdr");
 
 GOPP_CALL T5 gopp_f0(T3 _1) {
   [[maybe_unused]] T5 _0;
@@ -169,7 +169,7 @@ GOPP_CALL void gopp_f4(void) {
   return;
 }
 
-__attribute__((weak)) void gopp_f5(uint8_t * _1) {
+GOPP_ONCE void gopp_f5(uint8_t * _1) {
   [[maybe_unused]] T8 * _2;
   [[maybe_unused]] gopp_string * _3;
   [[maybe_unused]] uint8_t * _4;
@@ -182,7 +182,7 @@ bb1:
   return;
 }
 
-__attribute__((weak)) void gopp_f6(uint8_t * _1) {
+GOPP_ONCE void gopp_f6(uint8_t * _1) {
   [[maybe_unused]] gopp_string * _2;
   [[maybe_unused]] bool _3;
   _2 = ((gopp_string *)_1);

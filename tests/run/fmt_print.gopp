@@ -1,0 +1,22 @@
+package main
+
+import "fmt"
+
+type Temp int
+
+func (t Temp) String() string { return "warm" }
+
+type oops struct{ code int }
+
+func (o oops) Error() string { return "oops happened" }
+
+func main() {
+	fmt.Println("a", 1, true, false, -42, uint8(200), int64(-9223372036854775808), uint64(18446744073709551615))
+	fmt.Println()
+	fmt.Println(nil, Temp(3), oops{1})
+	fmt.Print("x", 1, 2, "y", "z", 3, "\n")
+	n, err := fmt.Println("count me")
+	fmt.Println(n, err)
+	var e error = oops{2}
+	fmt.Println("error:", e)
+}
