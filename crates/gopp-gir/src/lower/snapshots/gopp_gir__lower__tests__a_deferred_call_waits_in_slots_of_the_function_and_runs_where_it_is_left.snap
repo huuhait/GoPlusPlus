@@ -1,0 +1,111 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: gir(text)
+---
+module "main"
+file 0 "a.gopp"
+
+fn _GPF4mainE3say(_1: string, _2: i64) -> () [go, external] {
+  let _0: ()
+  let _1: string "s"
+  let _2: i64 "n"
+  bb0:
+    return  ; a.gopp:3:28
+}
+
+fn _GPF4mainE1f(_1: i64, _2: string) -> i64 [go, external] {
+  let _0: i64
+  let _1: i64 "n"
+  let _2: string "s"
+  let _3: bool
+  let _4: bool
+  let _5: u64
+  let _6: string
+  let _7: bool
+  let _8: ()
+  let _9: string
+  let _10: i64
+  let _11: bool
+  let _12: string
+  let _13: i64
+  let _14: bool
+  let _15: ()
+  let _16: bool
+  let _17: ()
+  let _18: ()
+  let _19: bool
+  let _20: ()
+  let _21: ()
+  let _22: bool
+  let _23: ()
+  bb0:
+    _5 = const zero: u64  ; a.gopp:5:6
+    _3 = const false  ; a.gopp:5:6
+    _9 = const zero: string  ; a.gopp:5:6
+    _10 = const zero: i64  ; a.gopp:5:6
+    _4 = const false  ; a.gopp:5:6
+    _12 = const zero: string  ; a.gopp:5:6
+    _13 = const zero: i64  ; a.gopp:5:6
+    goto bb1  ; a.gopp:5:6
+  bb1:
+    _6 = copy _2  ; a.gopp:6:2
+    _7 = ne(copy _6.2, const zero: *u8)  ; a.gopp:6:2
+    switch copy _7 [0: bb3, otherwise: bb2]  ; a.gopp:6:2
+  bb2:
+    _8 = call const fn @_gopp_string_retain(copy _6) -> [return: bb3, unwind: continue]  ; a.gopp:6:2
+  bb3:
+    _9 = copy _6  ; a.gopp:6:2
+    _10 = copy _1  ; a.gopp:6:2
+    _3 = const true  ; a.gopp:6:2
+    _11 = gt(copy _1, const 0: i64)  ; a.gopp:7:5
+    switch copy _11 [0: bb8, otherwise: bb4]  ; a.gopp:7:5
+  bb4:
+    _12 = const str#0 "big"  ; a.gopp:8:3
+    _13 = copy _1  ; a.gopp:8:3
+    _4 = const true  ; a.gopp:8:3
+    _0 = copy _1  ; a.gopp:9:3
+    _5 = const 0: u64  ; a.gopp:9:3
+    goto bb12  ; a.gopp:9:3
+  bb5:
+    _14 = ne(copy _2.2, const zero: *u8)  ; a.gopp:9:3
+    switch copy _14 [0: bb7, otherwise: bb6]  ; a.gopp:9:3
+  bb6:
+    _15 = call const fn @_gopp_string_release(copy _2) -> [return: bb7, unwind: continue]  ; a.gopp:9:3
+  bb7:
+    return  ; a.gopp:9:3
+  bb8:
+    _0 = const 0: i64  ; a.gopp:11:2
+    _5 = const 1: u64  ; a.gopp:11:2
+    goto bb12  ; a.gopp:11:2
+  bb9:
+    _16 = ne(copy _2.2, const zero: *u8)  ; a.gopp:11:2
+    switch copy _16 [0: bb11, otherwise: bb10]  ; a.gopp:11:2
+  bb10:
+    _17 = call const fn @_gopp_string_release(copy _2) -> [return: bb11, unwind: continue]  ; a.gopp:11:2
+  bb11:
+    return  ; a.gopp:11:2
+  bb12:
+    switch copy _4 [0: bb16, otherwise: bb13]  ; a.gopp:12:1
+  bb13:
+    _18 = call const fn @_GPF4mainE3say(copy _12, copy _13) -> [return: bb14, unwind: continue]  ; a.gopp:8:9
+  bb14:
+    _19 = ne(copy _12.2, const zero: *u8)  ; a.gopp:8:9
+    switch copy _19 [0: bb16, otherwise: bb15]  ; a.gopp:8:9
+  bb15:
+    _20 = call const fn @_gopp_string_release(copy _12) -> [return: bb16, unwind: continue]  ; a.gopp:8:9
+  bb16:
+    switch copy _3 [0: bb20, otherwise: bb17]  ; a.gopp:12:1
+  bb17:
+    _21 = call const fn @_GPF4mainE3say(copy _9, copy _10) -> [return: bb18, unwind: continue]  ; a.gopp:6:8
+  bb18:
+    _22 = ne(copy _9.2, const zero: *u8)  ; a.gopp:6:8
+    switch copy _22 [0: bb20, otherwise: bb19]  ; a.gopp:6:8
+  bb19:
+    _23 = call const fn @_gopp_string_release(copy _9) -> [return: bb20, unwind: continue]  ; a.gopp:6:8
+  bb20:
+    switch copy _5 [0: bb5, otherwise: bb9]  ; a.gopp:12:1
+}
+
+declare fn _gopp_string_retain(_1: string) -> () [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]

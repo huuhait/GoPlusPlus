@@ -1,0 +1,63 @@
+package main
+
+type File struct {
+	fd   int
+	name string
+}
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd, f.name)
+	}
+}
+
+func (f *File) write(text string) { println("write", f.fd, text) }
+
+func open(fd int, name string) File { return File{fd: fd, name: name} }
+
+// Takes its file: it ends in here.
+func closeOwned(f File) {
+	f.name += "!"
+	println("owned", f.fd, f.name)
+}
+
+// Only reads its file: the defer statement keeps it and ends it after
+// the call.
+func show(f File, tag string) { println("show", f.fd, tag) }
+
+func note(lines []string, n int) []string {
+	println("note", len(lines), n)
+	return append(lines, "more")
+}
+
+// The deferred calls run first, the last first; then the variables of
+// the function end, the last first.
+func order() {
+	a := open(1, "a")
+	defer a.write("deferred")
+	b := open(2, "b")
+	defer closeOwned(open(3, "c"))
+	defer show(open(4, "d"), "lent")
+	a.write("body")
+	b.write("body")
+}
+
+// What a defer statement keeps and never gives away ends with the
+// function; a statement that did not run kept nothing.
+func kept(n int) {
+	f := open(10+n, "f")
+	if n > 0 {
+		defer closeOwned(move(f))
+		defer note([]string{"x", "y"}, n)
+	}
+	lines := []string{"one"}
+	defer note(lines, 0)
+	lines = append(lines, "two")
+	println("kept", n, len(lines))
+}
+
+func main() {
+	order()
+	kept(0)
+	kept(1)
+}

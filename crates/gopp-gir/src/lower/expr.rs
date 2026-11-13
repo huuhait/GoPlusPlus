@@ -21,6 +21,10 @@ use crate::{
 /// after another, over zeros.
 const ARRAY_AT_ONCE: u64 = 64;
 
+/// The receiver of a method that is called, and the way from it to the
+/// value that has the method.
+pub(super) type Receiver<'a> = (ExprId, &'a [u32]);
+
 /// A check that a place needs before it is used.
 pub(super) enum Check {
     /// The index is below the length. The second slot has the index
@@ -123,7 +127,7 @@ impl<'a> FuncCx<'a, '_> {
     }
 }
 
-impl FuncCx<'_, '_> {
+impl<'a> FuncCx<'a, '_> {
     // ---- types and constants
 
     /// The type of the value of the expression; the empty type for
@@ -1145,38 +1149,8 @@ impl FuncCx<'_, '_> {
                 _ => Ok(self.placeholder(span, ty, "a call of what is not known")),
             };
         }
-        if *spread {
-            return Ok(self.placeholder(span, ty, "a call with `...`"));
-        }
-        if self.body.instances.contains_key(&callee) {
-            return Ok(self.placeholder(span, ty, "a call of a generic function"));
-        }
-        if self.body.foreign_uses.contains_key(&callee) {
-            return Ok(self.placeholder(span, ty, "a call of a function of a header"));
-        }
-        // The function that is called, and its receiver if it is a
-        // method.
-        let mut receiver = None;
-        let key = match (&self.tree.exprs[callee].kind, self.body.uses.get(&callee)) {
-            (ExprKind::Name(_), Some(Ref::Object(object))) => Some(CalleeKey::Object(*object)),
-            (ExprKind::Selector { .. }, Some(Ref::Member { import, member })) => {
-                Some(CalleeKey::Member(*import, *member))
-            }
-            (ExprKind::Selector { x, sel }, _) => match self.body.selections.get(&callee) {
-                Some(selection) if selection.kind == SelectionKind::Method => {
-                    receiver = Some((*x, &selection.path[..]));
-                    Some(CalleeKey::Method(selection.holder, sel.name))
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        let called = match key {
-            Some(key) => self.callee(key)?,
-            None => Err("a call of this function"),
-        };
-        let called = match called {
-            Ok(called) => called,
+        let (called, receiver) = match self.called_by(callee, *spread)? {
+            Ok(found) => found,
             Err(what) => return Ok(self.placeholder(span, ty, what)),
         };
         let mut given = Vec::with_capacity(called.params.len());
@@ -1294,6 +1268,208 @@ impl FuncCx<'_, '_> {
                 Ok(Rvalue::Use(Operand::Copy(result)))
             }
             _ => self.fresh(expr, called.ret, Rvalue::Use(Operand::Copy(result))),
+        }
+    }
+
+    /// The function that a call of `callee` calls, and its receiver
+    /// with the way to it if it is a method; or why the call is not
+    /// supported.
+    pub(super) fn called_by(
+        &mut self,
+        callee: ExprId,
+        spread: bool,
+    ) -> Built<Result<(Callee, Option<Receiver<'a>>), &'static str>> {
+        if spread {
+            return Ok(Err("a call with `...`"));
+        }
+        if self.body.instances.contains_key(&callee) {
+            return Ok(Err("a call of a generic function"));
+        }
+        if self.body.foreign_uses.contains_key(&callee) {
+            return Ok(Err("a call of a function of a header"));
+        }
+        let body = self.body;
+        let mut receiver = None;
+        let key = match (&self.tree.exprs[callee].kind, body.uses.get(&callee)) {
+            (ExprKind::Name(_), Some(Ref::Object(object))) => Some(CalleeKey::Object(*object)),
+            (ExprKind::Selector { .. }, Some(Ref::Member { import, member })) => {
+                Some(CalleeKey::Member(*import, *member))
+            }
+            (ExprKind::Selector { x, sel }, _) => match body.selections.get(&callee) {
+                Some(selection) if selection.kind == SelectionKind::Method => {
+                    receiver = Some((*x, &selection.path[..]));
+                    Some(CalleeKey::Method(selection.holder, sel.name))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let called = match key {
+            Some(key) => self.callee(key)?,
+            None => Err("a call of this function"),
+        };
+        Ok(called.map(|called| (called, receiver)))
+    }
+
+    /// `defer f(args)` (PAN-3): the receiver and the arguments are
+    /// evaluated now, each for an owner of its own, which is the
+    /// statement until the function is left and its call is made.
+    pub fn defer_call(&mut self, stmt: gopp_syntax::ast::StmtId, expr: ExprId) -> Built {
+        let node = &self.tree.exprs[Shared::unparen(self.tree, expr)];
+        let span = node.span;
+        let Some(at) = self
+            .defers
+            .iter()
+            .position(|deferred| deferred.stmt == stmt)
+        else {
+            return Ok(());
+        };
+        let ExprKind::Call {
+            fun,
+            args,
+            spread,
+            unwrap,
+        } = &node.kind
+        else {
+            self.unsupported(span, "a defer statement of this expression");
+            return Ok(());
+        };
+        let callee = Shared::unparen(self.tree, *fun);
+        let named = self.results.iter().any(Option::is_some);
+        let refused = match () {
+            () if self.defers[at].in_loop => Some("a defer statement in a loop"),
+            () if self.jumps => Some("a defer statement in a function with a label"),
+            () if named => Some("a defer statement in a function whose results have names"),
+            () if *unwrap => Some("a call with `!`"),
+            () if matches!(self.tree.exprs[callee].kind, ExprKind::FuncLit { .. }) => {
+                Some("a function literal")
+            }
+            () if !self.body.types.contains_key(&callee) => {
+                Some("a defer statement of a built-in function or a conversion")
+            }
+            () => None,
+        };
+        if let Some(what) = refused {
+            self.unsupported(span, what);
+            return Ok(());
+        }
+        let (called, receiver) = match self.called_by(callee, *spread)? {
+            Ok(found) => found,
+            Err(what) => {
+                self.unsupported(span, what);
+                return Ok(());
+            }
+        };
+        if called.views > 0 {
+            self.unsupported(span, "a deferred call whose result may be a view");
+            return Ok(());
+        }
+        // A variable of a block that the call holds by its address
+        // would have to live as long as the function.
+        let held = receiver
+            .map(|(x, _)| x)
+            .into_iter()
+            .chain(args.iter().copied());
+        for place in held {
+            let inner = Shared::unparen(self.tree, place);
+            let by_address = Some(place) == receiver.map(|(x, _)| x)
+                || matches!(
+                    self.tree.exprs[inner].kind,
+                    ExprKind::Unary {
+                        op: UnaryOp::Addr,
+                        ..
+                    }
+                );
+            if by_address
+                && self
+                    .root_local(inner)
+                    .is_some_and(|local| self.of_block(local))
+            {
+                self.unsupported(span, "a deferred call that holds a variable of a block");
+                return Ok(());
+            }
+        }
+        let mut slots = Vec::with_capacity(called.params.len());
+        if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {
+            let value = self.receiver(span, x, path, wanted)?;
+            let value = self.given(x, wanted, Rvalue::Use(value))?;
+            let value = self.taken(x, wanted, value)?;
+            slots.push(self.kept(x, wanted, value)?);
+        }
+        let wanted: Vec<_> = called.params[slots.len()..]
+            .iter()
+            .map(|&param| Some(param))
+            .collect();
+        let values = self.values(args, &wanted)?;
+        for (at, value) in values.into_iter().enumerate() {
+            let of = args.get(at).or(args.first());
+            if let (Some(ty), Some(&arg)) = (wanted.get(at).copied().flatten(), of) {
+                let value = self.taken(arg, ty, value)?;
+                slots.push(self.kept(arg, ty, value)?);
+            }
+        }
+        self.empty_moved()?;
+        // What the call gives ends when it is made.
+        let checked = self.body.types.get(&expr).map(|typed| typed.ty);
+        let result = match self.flat(called.ret) {
+            true => None,
+            false => match self.kind(called.ret) {
+                Type::Tuple(_) => {
+                    self.unsupported(span, "a deferred call with several results that are freed");
+                    None
+                }
+                _ => self.ends_of(checked, span)?,
+            },
+        };
+        let ran = self.b.const_bool(true);
+        let flag = Place::local(self.defers[at].flag);
+        self.b.assign(flag, Rvalue::Use(ran))?;
+        self.defers[at].call = Some(super::func::Pending {
+            called,
+            slots,
+            result,
+            span,
+        });
+        Ok(())
+    }
+
+    /// The value in a slot that the function has until it is left,
+    /// with how the value ends.
+    fn kept(
+        &mut self,
+        expr: ExprId,
+        ty: TypeId,
+        value: Rvalue,
+    ) -> Built<(LocalId, Option<super::glue::Ends>)> {
+        let slot = self.b.temp(ty);
+        self.b.assign(Place::local(slot), value)?;
+        let ends = match self.flat(ty) {
+            true => None,
+            false => {
+                let checked = self.checked_as(expr, ty);
+                self.ends_of(checked, self.tree.exprs[expr].span)?
+            }
+        };
+        Ok((slot, ends))
+    }
+
+    /// The variable of the function that the place of the expression
+    /// is in, or is reached through.
+    fn root_local(&self, mut expr: ExprId) -> Option<gopp_sema::LocalId> {
+        loop {
+            expr = match &self.tree.exprs[expr].kind {
+                ExprKind::Paren(x)
+                | ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Unary { x, .. } => *x,
+                ExprKind::Name(_) => {
+                    return match self.denoted(expr) {
+                        Some(Ref::Local(local)) => Some(*local),
+                        _ => None,
+                    };
+                }
+                _ => return None,
+            };
         }
     }
 

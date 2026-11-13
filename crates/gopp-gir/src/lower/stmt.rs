@@ -101,7 +101,7 @@ impl FuncCx<'_, '_> {
                 body,
             } => self.range_stmt(label, node.span, lhs, *define, *x, body)?,
             StmtKind::Go(_) => self.unsupported(node.span, "a go statement"),
-            StmtKind::Defer(_) => self.unsupported(node.span, "a defer statement"),
+            StmtKind::Defer(call) => self.defer_call(id, *call)?,
             StmtKind::Send { .. } => self.unsupported(node.span, "a send"),
             StmtKind::Select { .. } => self.unsupported(node.span, "a select statement"),
         }
@@ -682,6 +682,7 @@ impl FuncCx<'_, '_> {
             }
         }
         self.drop_temps(0)?;
+        self.run_defers()?;
         self.exit_scopes(0)?;
         self.b.ret()?;
         self.dead();

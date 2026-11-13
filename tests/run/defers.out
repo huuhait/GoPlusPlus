@@ -1,0 +1,17 @@
+write 1 body
+write 2 body
+show 4 lent
+close 4 d
+owned 3 c!
+close 3 c!
+write 1 deferred
+close 2 b
+close 1 a
+kept 0 2
+note 1 0
+close 10 f
+kept 1 2
+note 1 0
+note 2 1
+owned 11 f!
+close 11 f!

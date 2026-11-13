@@ -1178,6 +1178,100 @@ func add(l *log, s string, more string) string {
 }
 
 #[test]
+fn a_deferred_call_waits_in_slots_of_the_function_and_runs_where_it_is_left() {
+    let text = "package main
+
+func say(s string, n int) {}
+
+func f(n int, s string) int {
+	defer say(s, n)
+	if n > 0 {
+		defer say(\"big\", n)
+		return n
+	}
+	return 0
+}
+";
+    insta::assert_snapshot!(gir(text));
+    // Both ways out go through one block that makes the two calls.
+    for name in ["a.gopp", "a.go"] {
+        let (lowered, messages) = lowered_with(&[(name, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0]);
+        let module = print_module(&lowered.module);
+        assert_eq!(
+            module.matches("call const fn @_GPF4mainE3say").count(),
+            2,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn defer_statements_that_are_not_supported_yet_say_so() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+func (f *File) close() {}
+
+func say(n int) {}
+
+func loops(n int) {
+	for i := 0; i < n; i++ {
+		defer say(i)
+	}
+}
+
+func labels(n int) {
+again:
+	defer say(n)
+	if n > 0 {
+		n--
+		goto again
+	}
+}
+
+func named() (n int) {
+	defer say(n)
+	return 1
+}
+
+func others(n int) {
+	defer println(n)
+	defer func() {}()
+	if n > 0 {
+		f := File{fd: n}
+		defer f.close()
+		defer say(n)
+	}
+}
+
+func main() {}
+",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        [
+            "a.gopp:13:9: not supported yet: a defer statement in a loop",
+            "a.gopp:19:8: not supported yet: a defer statement in a function with a label",
+            "a.gopp:27:8: not supported yet: a defer statement in a function whose results have \
+             names",
+            "a.gopp:32:8: not supported yet: a defer statement of a built-in function or a \
+             conversion",
+            "a.gopp:33:8: not supported yet: a function literal",
+            "a.gopp:36:9: not supported yet: a deferred call that holds a variable of a block",
+        ]
+    );
+}
+
+#[test]
 fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
     let (_, messages) = lowered_with(
         &[(
@@ -1620,6 +1714,20 @@ fn the_steps_grow_with_the_glue_of_types() {
             "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
              func f(t T{}) int {{\n\tu := t\n\treturn len(u.rows) + len(t.rows)\n}}\n",
             n - 1
+        ))
+    });
+    // Many `defer` statements and as many ways out of the function.
+    assert_near_linear(&sizes, |n| {
+        let body: String = (0..n)
+            .map(|at| {
+                format!(
+                    "\tif x > {at} {{\n\t\tdefer keep(make([]int, x))\n\t}}\n\tif x == {at} \
+                     {{\n\t\treturn\n\t}}\n"
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{body}}}\n"
         ))
     });
     // Values that end: a slice in each of many blocks in blocks that a
