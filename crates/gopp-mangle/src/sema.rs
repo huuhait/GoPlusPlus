@@ -46,6 +46,17 @@ pub enum Entity<'a> {
     /// The code of a function of a package that is used as a value: the
     /// function with an environment in front, which it does not read.
     FuncValue(&'a Package, ObjId),
+    /// The code of the method value `x.name` for an `x` of the declared
+    /// type `receiver`: the method with the receiver in its environment.
+    MethodValue { receiver: TypeId, name: Spur },
+    /// The code of the method expression `T.name`: the method as a
+    /// function that takes its receiver first. With `pointer`, that of
+    /// `(*T).name` for a method that takes its receiver by value.
+    MethodExpr {
+        receiver: TypeId,
+        name: Spur,
+        pointer: bool,
+    },
     /// The methods of a type that the tables of interfaces are made of
     /// while a program runs.
     MethodTable(TypeId),
@@ -251,6 +262,21 @@ impl<'a> Namer<'a> {
             Entity::FuncValue(package, id) => {
                 let function = self.entity(Entity::Object(package, id))?;
                 Node::Wrap(Wrap::MethodExpr, function)
+            }
+            Entity::MethodValue { receiver, name } => {
+                let method = self.entity(Entity::Method { receiver, name })?;
+                Node::Wrap(Wrap::MethodValue, method)
+            }
+            Entity::MethodExpr {
+                receiver,
+                name,
+                pointer,
+            } => {
+                let mut method = self.entity(Entity::Method { receiver, name })?;
+                if pointer {
+                    method = self.add(Node::Wrap(Wrap::IfacePtrThunk, method))?;
+                }
+                Node::Wrap(Wrap::MethodExpr, method)
             }
             Entity::MethodTable(ty) => Node::Wrap(Wrap::MethodTable, self.ty(ty)?),
             Entity::IfaceDesc(ty) => Node::Wrap(Wrap::IfaceDesc, self.ty(ty)?),

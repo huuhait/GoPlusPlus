@@ -370,7 +370,7 @@ fn _GPF4mainE4main() -> () [go, external] {
   bb10:
     _26 = call const fn @_gopp_print_newline() -> [return: bb11, unwind: continue]  ; a.gopp:23:2
   bb11:
-    _27 = copy _17  ; a.gopp:23:2
+    _27 = copy _18  ; a.gopp:23:2
     _28 = &mut _27  ; a.gopp:23:2
     _29 = ptr_to_ptr(copy _28) as *u8  ; a.gopp:23:2
     _30 = call const fn @_GPTdSG0_0_LELiE(copy _29) -> [return: bb12, unwind: continue]  ; a.gopp:23:2

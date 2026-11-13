@@ -510,7 +510,11 @@ impl<'a> FuncCx<'a, '_> {
                     let place = self.place(expr, &mut PlaceMode::default())?;
                     return Ok(Rvalue::Use(Operand::Copy(place)));
                 }
-                SelectionKind::Method | SelectionKind::MethodExpr => "a method as a value",
+                SelectionKind::Method => {
+                    let made = self.method_value(expr, ty)?;
+                    return self.fresh(expr, ty, made);
+                }
+                SelectionKind::MethodExpr => return self.method_expr(expr, ty),
                 SelectionKind::BaseField | SelectionKind::BaseMethod => "a part of a parent",
             },
             (None, Some(Ref::Member { import, member })) => {
@@ -610,9 +614,17 @@ impl<'a> FuncCx<'a, '_> {
             _ => {}
         }
         let value = self.rvalue(expr)?;
+        // A temporary that owns the value gives it to the slot.
+        let owner = match &value {
+            Rvalue::Use(Operand::Copy(place)) if self.owns_temp(place) => Some(place.clone()),
+            _ => None,
+        };
         let ty = self.b.rvalue_ty(&value)?;
         let slot = self.b.temp(ty);
         self.b.assign(Place::local(slot), value)?;
+        if let Some(owner) = owner {
+            self.rehome_temp(&owner, &Place::local(slot));
+        }
         Ok(Place::local(slot))
     }
 
@@ -1653,7 +1665,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The variable of the function that the place of the expression
     /// is in, or is reached through.
-    fn root_local(&self, mut expr: ExprId) -> Option<gopp_sema::LocalId> {
+    pub(super) fn root_local(&self, mut expr: ExprId) -> Option<gopp_sema::LocalId> {
         loop {
             expr = match &self.tree.exprs[expr].kind {
                 ExprKind::Paren(x)
@@ -1748,7 +1760,7 @@ impl<'a> FuncCx<'a, '_> {
     /// The receiver that a method takes, of the type `wanted`: the
     /// value at the end of the way of the selector, its address, or
     /// what it points to.
-    fn receiver(
+    pub(super) fn receiver(
         &mut self,
         span: SourceSpan,
         x: ExprId,

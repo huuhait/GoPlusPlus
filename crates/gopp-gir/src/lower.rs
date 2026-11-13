@@ -270,6 +270,14 @@ pub(crate) enum Made {
     /// The code of the function with the symbol as a value: the
     /// function with an environment in front, which it does not read.
     Value(String),
+    /// The code of a method value: the method `name` of a declared
+    /// type or of an interface type, with its receiver in the
+    /// environment.
+    MethodValue(Spur),
+    /// The code of a method expression: the method `name` of a
+    /// declared type as a function that takes its receiver first, by
+    /// its address if `pointer` is set and the method takes a value.
+    MethodExpr { name: Spur, pointer: bool },
 }
 
 /// A function that is asked for: its symbol, what it is and its type.
@@ -771,6 +779,9 @@ impl<'a> Shared<'a> {
                     }
                     Made::Value(of) => {
                         func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty));
+                    }
+                    Made::MethodValue(_) | Made::MethodExpr { .. } => {
+                        func::lower_bound(self, &mut module, &mut memo, &symbol, (kind, ty));
                     }
                 }
                 asked.append(&mut memo.glues);

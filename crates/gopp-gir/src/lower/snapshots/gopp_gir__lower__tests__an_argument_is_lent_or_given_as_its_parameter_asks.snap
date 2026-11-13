@@ -186,7 +186,7 @@ fn _GPF4mainE5calls(_1: []i64, _2: string) -> i64 [go, external] {
     _48 = ptr_to_ptr(copy _47) as *u8  ; a.gopp:16:2
     _49 = call const fn @_GPTdSi(copy _48) -> [return: bb16, unwind: continue]  ; a.gopp:16:2
   bb16:
-    _50 = copy _39  ; a.gopp:16:2
+    _50 = copy _40  ; a.gopp:16:2
     _51 = &mut _50  ; a.gopp:16:2
     _52 = ptr_to_ptr(copy _51) as *u8  ; a.gopp:16:2
     _53 = call const fn @_GPTdSi(copy _52) -> [return: bb17, unwind: continue]  ; a.gopp:16:2

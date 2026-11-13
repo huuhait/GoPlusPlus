@@ -347,6 +347,50 @@ pub(super) fn lower_value<'a>(
             (&shared.no_body, &shared.no_facts),
         );
         let made = cx.value_body(of, ty)?;
+        // What cannot be made has no body: its reason is reported.
+        if made.is_err() {
+            return Ok(made);
+        }
+        cx.b.drop_unreached();
+        cx.b.finish()?;
+        Ok(made)
+    });
+    not_made(shared, memo, symbol, built);
+}
+
+/// Adds the code of a method value or of a method expression of the
+/// type `ty` to the module, under its symbol.
+pub(super) fn lower_bound<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    symbol: &str,
+    (made, ty): (super::Made, CheckedTypeId),
+) {
+    let (name, first) = match made {
+        super::Made::MethodValue(name) => (name, None),
+        super::Made::MethodExpr { name, pointer } => (name, Some(pointer)),
+        _ => return,
+    };
+    let sig = FuncCx::bound_sig(shared, memo, &mut module.types, (ty, name), first);
+    let sig = match sig {
+        Ok(sig) => sig,
+        Err(what) => return not_made(shared, memo, symbol, Ok(Err(what))),
+    };
+    let link = Linkage::LinkOnceOdr;
+    let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
+        let made = cx.bound_body(ty, name, first)?;
+        // What cannot be made has no body: its reason is reported.
+        if made.is_err() {
+            return Ok(made);
+        }
         cx.b.drop_unreached();
         cx.b.finish()?;
         Ok(made)
@@ -379,6 +423,10 @@ pub(super) fn lower_glue<'a>(
             Glue::Eq => cx.eq_body(ty)?,
             Glue::Hash => cx.hash_body(ty)?,
         };
+        // What cannot be made has no body: its reason is reported.
+        if made.is_err() {
+            return Ok(made);
+        }
         cx.b.drop_unreached();
         cx.b.finish()?;
         Ok(made)
@@ -410,6 +458,10 @@ pub(super) fn lower_thunk<'a>(
             (&shared.no_body, &shared.no_facts),
         );
         let made = cx.thunk_body(ty, name, pointer)?;
+        // What cannot be made has no body: its reason is reported.
+        if made.is_err() {
+            return Ok(made);
+        }
         cx.b.drop_unreached();
         cx.b.finish()?;
         Ok(made)
@@ -1038,6 +1090,21 @@ impl FuncCx<'_, '_> {
     /// The temporary gives its value up: whether it owned one.
     pub fn take_temp(&mut self, place: &Place) -> bool {
         temp_key(place).is_some_and(|key| self.owning.remove(&key))
+    }
+
+    /// The temporary gives its value to another slot, which owns it
+    /// from here on and ends it the same way.
+    pub fn rehome_temp(&mut self, from: &Place, to: &Place) {
+        let (Some(old), Some(new)) = (temp_key(from), temp_key(to)) else {
+            return;
+        };
+        if !self.owning.remove(&old) {
+            return;
+        }
+        if let Some(entry) = self.temps.iter_mut().rev().find(|(place, _)| place == from) {
+            entry.0 = to.clone();
+        }
+        self.owning.insert(new);
     }
 
     /// The places that gave their values up are empty from here on:

@@ -144,7 +144,7 @@ fn _GPF4mainE6owners(_1: _GPTiN4mainE3box, _2: i64) -> []i64 [go, external] {
     _25 = len(_24)  ; a.gopp:14:5
     _26 = int_to_int(copy _25) as i64  ; a.gopp:14:5
     _27 = gt(copy _26, copy _2)  ; a.gopp:14:5
-    _28 = copy _23  ; a.gopp:14:5
+    _28 = copy _24  ; a.gopp:14:5
     _29 = &mut _28  ; a.gopp:14:5
     _30 = ptr_to_ptr(copy _29) as *u8  ; a.gopp:14:5
     _31 = call const fn @_GPTdSi(copy _30) -> [return: bb9, unwind: continue]  ; a.gopp:14:5
@@ -175,7 +175,7 @@ fn _GPF4mainE6owners(_1: _GPTiN4mainE3box, _2: i64) -> []i64 [go, external] {
     _43 = copy _42  ; a.gopp:17:20
     _44 = copy _43  ; a.gopp:17:20
     _45 = len(_44)  ; a.gopp:17:20
-    _46 = copy _42  ; a.gopp:17:20
+    _46 = copy _43  ; a.gopp:17:20
     _47 = const zero: u64  ; a.gopp:17:20
     goto bb16  ; a.gopp:17:20
   bb16:

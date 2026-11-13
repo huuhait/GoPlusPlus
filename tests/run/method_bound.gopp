@@ -1,0 +1,72 @@
+package main
+
+type File struct {
+	fd   int
+	name string
+}
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f File) Clone() File {
+	println("dup", f.fd)
+	return File{fd: f.fd + 100, name: f.name}
+}
+
+func (f File) Fd() int             { return f.fd }
+func (f *File) Rename(s string)    { f.name = s }
+func (f File) Named(s string) bool { return f.name == s }
+
+type List struct{ items []string }
+
+func (l List) Len() int       { return len(l.items) }
+func (l *List) Add(s string)  { l.items = append(l.items, s) }
+func (l List) First() string  { return l.items[0] }
+
+// A method value of a value receiver has a copy of the receiver.
+func values() {
+	l := List{items: []string{"a"}}
+	size := l.Len
+	first := l.First
+	l.Add("b")
+	l.items[0] = "changed"
+	println(size(), first(), l.Len(), l.First())
+
+	f := File{fd: 1, name: "f"}
+	fd := f.Fd
+	println("bound", fd(), f.fd)
+	named := File{fd: 7, name: "t"}.Named
+	println(named("t"), named("x"))
+	println("end of values")
+}
+
+// A method value of a pointer receiver has the variable itself.
+func addresses() func(string) {
+	l := List{}
+	add := l.Add
+	add("x")
+	add("y")
+	println(l.Len(), l.First())
+	f := File{fd: 2, name: "g"}
+	rename := f.Rename
+	rename("renamed")
+	println(f.name)
+	return rename
+}
+
+func main() {
+	values()
+	keep := addresses()
+	println("returned")
+	keep("again")
+	len3 := List.Len
+	add := (*List).Add
+	l := List{}
+	add(&l, "p")
+	add(&l, "q")
+	println(len3(l))
+	println("done")
+}

@@ -1574,6 +1574,80 @@ func main() {
 }
 
 #[test]
+fn a_method_value_has_its_receiver_in_its_environment() {
+    let text = "package main
+
+type List struct{ items []string }
+
+func (l List) Len() int { return len(l.items) }
+
+func (l *List) Add(s string) { l.items = append(l.items, s) }
+
+type Sized interface{ Len() int }
+
+func bound(s Sized) (func() int, func(string), func() int) {
+	l := List{}
+	return l.Len, l.Add, s.Len
+}
+
+func plain() (func(List) int, func(*List, string), func(*List) int) {
+	return List.Len, (*List).Add, (*List).Len
+}
+
+func main() {
+	size, add, other := bound(List{})
+	add(\"a\")
+	a, b, c := plain()
+	l := List{}
+	b(&l, \"x\")
+	println(size(), other(), a(l), c(&l))
+}
+";
+    let module = gir(text);
+    let defined = |name: &str| module.matches(&format!("\nfn {name}(")).count();
+    // One code for each method value and each method expression; the
+    // expression with an address of a method that takes a value has a
+    // name of its own.
+    assert_eq!(
+        [
+            defined("_GPTVM3LenN4mainE4List"),
+            defined("_GPTVM3AddN4mainE4List"),
+            defined("_GPTVM3LenN4mainE5Sized"),
+            defined("_GPTEM3LenN4mainE4List"),
+            defined("_GPTEM3AddN4mainE4List"),
+            defined("_GPTETpM3LenN4mainE4List"),
+        ],
+        [1, 1, 1, 1, 1, 1]
+    );
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+    // `l` lives in a cell, because `l.Add` has its address. Each value
+    // has an environment with the cell of its receiver, and that of
+    // `l.Add` shares the cell of `l` too.
+    let bound = body("_GPF4mainE5bound");
+    assert_eq!(
+        [
+            calls(bound, "_gopp_cell_new"),
+            calls(bound, "_gopp_env_new"),
+            calls(bound, "_gopp_cell_retain"),
+        ],
+        [4, 3, 1],
+        "{bound}"
+    );
+    // The code of the value of an interface method calls through the
+    // table of the interface value in its cell.
+    let dynamic = body("_GPTVM3LenN4mainE5Sized");
+    assert_eq!(dynamic.matches(" = call copy _").count(), 1, "{dynamic}");
+    insta::assert_snapshot!(module);
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    assert!(print_module(&lowered.module).contains("\nfn _GPTVM3AddN4mainE4List("));
+}
+
+#[test]
 fn function_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
@@ -1583,17 +1657,19 @@ func (t T) get() int { return t.n }
 
 func many(more ...int) int { return len(more) }
 
+type Getter interface{ get() int }
+
 func main() {
 	xs := []int{1}
 	for _, &x := range xs {
 		add := func(a int) int { return a + x }
 		println(add(1))
 	}
-	get := T{2}.get
+	get := Getter.get
 	all := many
 	go func() {}()
 	defer func() {}()
-	println(get(), all(1))
+	println(get(T{2}), all(1))
 }
 ";
     // Another name of an element is no variable of its own.
@@ -1606,7 +1682,7 @@ func main() {
         messages,
         [
             "not supported yet: a function literal that uses a variable that has no cell",
-            "not supported yet: a method as a value",
+            "not supported yet: a method of an interface or of an embedded type as a function",
             "not supported yet: a call of a function with `...`",
             "not supported yet: a go statement",
             "not supported yet: a function literal",

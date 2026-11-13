@@ -8,14 +8,15 @@
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::types::{Type as CheckedType, TypeId as CheckedTypeId};
-use gopp_sema::{LocalId as CheckedLocalId, ObjKind};
+use gopp_sema::{LocalId as CheckedLocalId, MethodValue, ObjKind, SelectionKind};
 use gopp_span::{Dialect, Span as SourceSpan};
-use gopp_syntax::ast::ExprId;
+use gopp_syntax::ast::{ExprId, ExprKind};
+use lasso::Spur;
 
-use super::expr::{Called, Check, Code, Target};
+use super::expr::{Called, Check, Code, PlaceMode, Target};
 use super::func::{Built, FuncCx};
 use super::glue::{Ends, Glue};
-use super::{CalleeKey, Made};
+use super::{CalleeKey, Made, Shared};
 use crate::{
     AggKind, CastKind, Constant, ConstantKind, FuncId, Operand, Place, Rvalue, Type, TypeId,
     TypeInterner, UnwindAction,
@@ -334,6 +335,441 @@ impl FuncCx<'_, '_> {
             }
         }
         if plain.ret != TypeInterner::UNIT {
+            let whole = Place::local(self.b.result());
+            self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;
+        }
+        self.b.ret()?;
+        Ok(Ok(()))
+    }
+
+    /// The method `name` of a declared type or of an interface type as
+    /// what a method value or a method expression calls: the type of
+    /// the method without its receiver, and whether the type is an
+    /// interface.
+    fn bound_method(
+        shared: &Shared<'_>,
+        ty: CheckedTypeId,
+        name: Spur,
+    ) -> Option<(CheckedTypeId, bool)> {
+        let types = shared.types;
+        if let Some(methods) = types.interface_methods(ty, shared.names) {
+            let method = methods.iter().find(|method| method.name == name)?;
+            return Some((method.sig, true));
+        }
+        match &*types.get(ty) {
+            CheckedType::Named { id, .. } => {
+                let method = shared.methods.get(&(*id, name))?;
+                Some((method.sig, false))
+            }
+            _ => None,
+        }
+    }
+
+    /// The method value `x.m`, for a place of the type `ty` (CLO-5):
+    /// its code is the method with the receiver in its environment,
+    /// which the package makes once. The receiver is worked out now: a
+    /// copy of `x` for a method that takes a value, the address of `x`
+    /// for one that takes an address, the interface value for a method
+    /// of an interface. It lives in a cell of its own, which the
+    /// environment has; a variable whose address is taken lives in a
+    /// cell too, which the environment shares.
+    pub fn method_value(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
+        let shared = self.shared;
+        let ExprKind::Selector { x, sel } = self.tree.exprs[expr].kind else {
+            return Ok(self.placeholder(span, ty, "a method as a value"));
+        };
+        let selection = self.body.selections.get(&expr);
+        let (Some(selection), Some(code_ty)) = (selection, self.code_type(ty)) else {
+            return Ok(self.placeholder(span, ty, "a method as a value"));
+        };
+        let (holder, path) = (selection.holder, &selection.path[..]);
+        let Some((_, dynamic)) = Self::bound_method(shared, holder, sel.name) else {
+            return Ok(self.placeholder(span, ty, "a method of another package as a value"));
+        };
+        let entity = Entity::MethodValue {
+            receiver: holder,
+            name: sel.name,
+        };
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
+            let what = "a method of a type without a name as a value";
+            return Ok(self.placeholder(span, ty, what));
+        };
+        // The receiver, as the method takes it.
+        let (bound, checked) = match dynamic {
+            true => {
+                let mut mode = PlaceMode::default();
+                let base = self.place(x, &mut mode)?;
+                let value = self.steps(base, path, span, &mut mode)?;
+                let value = self.through(value, span, &mut mode)?;
+                let of = self.b.place_ty(&value);
+                if !self.is_iface(of) {
+                    return Ok(self.placeholder(span, ty, "a method as a value"));
+                }
+                let copy =
+                    self.cloned_value(span, Some(holder), Rvalue::Use(Operand::Copy(value)))?;
+                (copy, Some(holder))
+            }
+            false => {
+                let called = match self.callee(CalleeKey::Method(holder, sel.name))? {
+                    Ok(called) => called,
+                    Err(what) => return Ok(self.placeholder(span, ty, what)),
+                };
+                let Some(&wanted) = called.params.first() else {
+                    return Ok(self.placeholder(span, ty, "a method as a value"));
+                };
+                if !path.is_empty() {
+                    self.parts.insert(x, holder);
+                }
+                let value = self.receiver(span, x, path, wanted)?;
+                let value = self.given(x, wanted, Rvalue::Use(value))?;
+                let value = self.taken(x, wanted, value)?;
+                self.parts.remove(&x);
+                // A value is ended by the glue of its type; an address
+                // owns nothing.
+                let by_value = self.pointee(wanted) == wanted;
+                (value, by_value.then_some(holder))
+            }
+        };
+        let bound = self.operand_of(bound)?;
+        let of = self.b.operand_ty(&bound);
+        // The variable whose address the receiver is, if it is one of
+        // this function: its cell lives as long as the value.
+        let address = self.body.method_values.get(&expr) == Some(&MethodValue::Address);
+        let root = match address {
+            true => self
+                .root_local(x)
+                .filter(|root| self.cells.contains_key(root)),
+            false => None,
+        };
+        let asked = self.memo.funcs.contains_key(&symbol);
+        let code = self.function_named(&symbol, code_ty)?;
+        if !asked {
+            self.memo
+                .glues
+                .push((symbol, Made::MethodValue(sel.name), holder));
+        }
+        // The cell of the receiver, which the environment has alone.
+        let bytes = self.bytes_ty();
+        let word = self.b.types().int(64, false);
+        let cell_ty = self.cell_type(of);
+        let layout = self.b.types().layout(cell_ty, shared.layout);
+        let size = self
+            .b
+            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+        let cell = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
+        let to = self.b.types().ptr(cell_ty);
+        let typed = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, cell.clone(), to))?;
+        let inside = self.b.deref(&Place::local(typed))?;
+        let inside = self.b.field(&inside, 1)?;
+        self.b.assign(inside, Rvalue::Use(bound))?;
+        let drop_sig = self.glue_sig(Glue::Drop);
+        let mut fields = vec![word, word, to, drop_sig];
+        let kept = match root {
+            Some(root) => {
+                let declared = &self.body.locals[root.0 as usize];
+                let (root_checked, root_span) = (declared.ty, declared.span);
+                let root_ty = self.lower(root_checked, root_span);
+                let root_cell = self.cell_type(root_ty);
+                fields.extend([self.b.types().ptr(root_cell), drop_sig]);
+                Some((self.cells[&root], root_ty, root_checked))
+            }
+            None => None,
+        };
+        let env_ty = self.b.types().tuple(&fields);
+        let count = self.b.const_int(word, 1 + u64::from(kept.is_some()))?;
+        let made = self.runtime("_gopp_env_new", &[word], bytes, vec![count])?;
+        let to = self.b.types().ptr(env_ty);
+        let env = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, made.clone(), to))?;
+        let env = self.b.deref(&Place::local(env))?;
+        let slot = self.b.field(&env, ENV_HEAD)?;
+        self.b
+            .assign(slot, Rvalue::Use(Operand::Copy(Place::local(typed))))?;
+        if let Some(checked) = checked.filter(|_| !self.flat(of))
+            && let Some(drop) = self.drop_glue(Some(checked), span)?
+        {
+            let slot = self.b.field(&env, ENV_HEAD + 1)?;
+            let drop = self.glue_value(Glue::Drop, drop);
+            self.b.assign(slot, Rvalue::Use(drop))?;
+        }
+        if let Some((root_cell, root_ty, root_checked)) = kept {
+            let shared_cell = Operand::Copy(Place::local(root_cell));
+            let as_bytes = Rvalue::Cast(CastKind::PtrToPtr, shared_cell.clone(), bytes);
+            let as_bytes = Operand::Copy(Place::local(self.b.assign_temp(as_bytes)?));
+            self.runtime_call("_gopp_cell_retain", &[bytes], vec![as_bytes])?;
+            let slot = self.b.field(&env, ENV_HEAD + 2)?;
+            self.b.assign(slot, Rvalue::Use(shared_cell))?;
+            if !self.flat(root_ty)
+                && let Some(drop) = self.drop_glue(Some(root_checked), span)?
+            {
+                let slot = self.b.field(&env, ENV_HEAD + 3)?;
+                let drop = self.glue_value(Glue::Drop, drop);
+                self.b.assign(slot, Rvalue::Use(drop))?;
+            }
+        }
+        let code = Operand::Const(Constant {
+            kind: ConstantKind::Func(code),
+            ty: code_ty,
+        });
+        Ok(Rvalue::Aggregate(AggKind::Tuple, vec![code, made]))
+    }
+
+    /// The method expression `T.m` or `(*T).m`, for a place of the type
+    /// `ty`: the method as a function that takes its receiver first,
+    /// which the package makes once and which has no environment.
+    pub fn method_expr(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
+        let shared = self.shared;
+        let types = shared.types;
+        let ExprKind::Selector { sel, .. } = self.tree.exprs[expr].kind else {
+            return Ok(self.placeholder(span, ty, "a method as a value"));
+        };
+        let selection = self.body.selections.get(&expr);
+        let (Some(selection), Some(code_ty)) = (selection, self.code_type(ty)) else {
+            return Ok(self.placeholder(span, ty, "a method as a value"));
+        };
+        let holder = selection.holder;
+        let method = match &*types.get(holder) {
+            CheckedType::Named { id, .. } if selection.path.is_empty() => {
+                shared.methods.get(&(*id, sel.name))
+            }
+            _ => None,
+        };
+        let Some(method) = method else {
+            let what = "a method of an interface or of an embedded type as a function";
+            return Ok(self.placeholder(span, ty, what));
+        };
+        // Whether the function takes an address and the method a value.
+        let by_address = matches!(&*types.get(selection.recv), CheckedType::Pointer(_));
+        let takes_address = matches!(&*types.get(method.receiver), CheckedType::Pointer(_));
+        let pointer = by_address && !takes_address;
+        let entity = Entity::MethodExpr {
+            receiver: holder,
+            name: sel.name,
+            pointer,
+        };
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
+            return Ok(self.placeholder(span, ty, "a method without a symbol as a function"));
+        };
+        if let Err(what) = self.callee(CalleeKey::Method(holder, sel.name))? {
+            return Ok(self.placeholder(span, ty, what));
+        }
+        let asked = self.memo.funcs.contains_key(&symbol);
+        let code = self.function_named(&symbol, code_ty)?;
+        if !asked {
+            let made = Made::MethodExpr {
+                name: sel.name,
+                pointer,
+            };
+            self.memo.glues.push((symbol, made, holder));
+        }
+        debug_assert_eq!(selection.kind, SelectionKind::MethodExpr);
+        Ok(self.bare(code, code_ty))
+    }
+
+    /// The type of the code that the package makes for a method value
+    /// (`first` is none) or a method expression of the declared type or
+    /// the interface type `ty`: an environment, then for an expression
+    /// the receiver as `first`, then the parameters of the method.
+    pub fn bound_sig(
+        shared: &Shared<'_>,
+        memo: &mut super::Memo<'_>,
+        types: &mut TypeInterner,
+        (ty, name): (CheckedTypeId, Spur),
+        first: Option<bool>,
+    ) -> Result<TypeId, &'static str> {
+        let Some((sig, _)) = Self::bound_method(shared, ty, name) else {
+            return Err("a method that its type does not have");
+        };
+        let plain = memo.signature(shared, types, None, sig)?;
+        let Type::Func(plain) = types.get(plain).clone() else {
+            return Err("a function type");
+        };
+        let byte = types.int(8, false);
+        let mut params = vec![types.ptr(byte)];
+        if let Some(pointer) = first {
+            let receiver = match &*shared.types.get(ty) {
+                CheckedType::Named { id, .. } => shared.methods.get(&(*id, name)),
+                _ => None,
+            };
+            let Some(receiver) = receiver.map(|method| method.receiver) else {
+                return Err("a method that its type does not have");
+            };
+            let receiver = memo.lower_type(shared, types, receiver)?;
+            params.push(match pointer {
+                true => types.ptr(receiver),
+                false => receiver,
+            });
+        }
+        params.extend(plain.params.iter());
+        Ok(types.intern(Type::Func(crate::FuncType {
+            params: params.into(),
+            ret: plain.ret,
+            has_env: true,
+            cc: crate::CallConv::Go,
+        })))
+    }
+
+    /// The body of the code of a method value (`first` is none) or of a
+    /// method expression of the type `ty`. A method value finds its
+    /// receiver in the cell that its environment has; a method
+    /// expression is given it after the environment, by its address if
+    /// `first` says so. The method is called with it and with what
+    /// follows, through the table of the interface value for a method
+    /// of an interface. What the method only reads of what a call gave
+    /// away ends here.
+    pub fn bound_body(
+        &mut self,
+        ty: CheckedTypeId,
+        name: Spur,
+        first: Option<bool>,
+    ) -> Built<Result<(), &'static str>> {
+        let entry = self.b.new_block();
+        self.b.switch_to(entry);
+        let shared = self.shared;
+        let Some((checked, dynamic)) = Self::bound_method(shared, ty, name) else {
+            return Ok(Err("a method that its type does not have"));
+        };
+        let own = Self::bound_sig(shared, self.memo, self.b.types(), (ty, name), first);
+        let own = match own.map(|own| (own, self.kind(own))) {
+            Ok((id, Type::Func(own))) => (id, own),
+            Ok(_) => return Ok(Err("a function type")),
+            Err(what) => return Ok(Err(what)),
+        };
+        // How many parameters come before those of the method.
+        let before = 1 + u32::from(first.is_some());
+        let called = match dynamic {
+            true => None,
+            false => match self.callee(CalleeKey::Method(ty, name))? {
+                Ok(called) => Some(called),
+                Err(what) => return Ok(Err(what)),
+            },
+        };
+        // The receiver where it is: in the cell of the environment, or
+        // in the parameter.
+        let held = match first {
+            Some(_) => Place::local(self.b.param(1)),
+            None => {
+                let of = match &called {
+                    Some(called) => called.params.first().copied(),
+                    None => self.memo.lower_type(shared, self.b.types(), ty).ok(),
+                };
+                let Some(of) = of else {
+                    return Ok(Err("a method without a receiver"));
+                };
+                let word = self.b.types().int(64, false);
+                let cell = self.cell_type(of);
+                let cell = self.b.types().ptr(cell);
+                let drop = self.glue_sig(Glue::Drop);
+                let env_ty = self.b.types().tuple(&[word, word, cell, drop]);
+                let to = self.b.types().ptr(env_ty);
+                let given = Operand::Copy(Place::local(self.b.param(0)));
+                let env = self
+                    .b
+                    .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given, to))?;
+                let env = self.b.deref(&Place::local(env))?;
+                let cell = self.b.field(&env, ENV_HEAD)?;
+                let cell = self.slot_of(Rvalue::Use(Operand::Copy(cell)))?;
+                let inside = self.b.deref(&cell)?;
+                self.b.field(&inside, 1)?
+            }
+        };
+        let (callee, receiver, ret) = match &called {
+            None => {
+                let methods = shared.types.interface_methods(ty, shared.names);
+                let slot = methods
+                    .and_then(|methods| methods.iter().position(|method| method.name == name));
+                let Some(slot) = slot else {
+                    return Ok(Err("a method that its interface does not have"));
+                };
+                let first_word = self.b.field(&held, 0)?;
+                let first_word = self.slot_of(Rvalue::Use(Operand::Copy(first_word)))?;
+                self.not_nil(&first_word)?;
+                // What a table holds takes the same, without the
+                // convention of an environment.
+                let plain = Type::Func(crate::FuncType {
+                    has_env: false,
+                    ..own.1.clone()
+                });
+                let plain = self.b.types().intern(plain);
+                let code = self.table_slot(&held, slot as u32, plain, None)?;
+                let word = self.b.field(&held, 1)?;
+                (code, self.record(word)?, own.1.ret)
+            }
+            Some(called) => {
+                let Some(&wanted) = called.params.first() else {
+                    return Ok(Err("a method without a receiver"));
+                };
+                let have = self.b.place_ty(&held);
+                let read = called.lent.first() == Some(&true);
+                let receiver = if wanted == have {
+                    // A parameter of the expression is this function's
+                    // own and goes on as it is; what the cell of a
+                    // method value holds stays there.
+                    match first {
+                        Some(_) => Ok(Operand::Copy(held.clone())),
+                        None => self.by_value(held.clone(), ty, read)?,
+                    }
+                } else if self.pointee(have) == wanted {
+                    self.not_nil(&held)?;
+                    let value = self.b.deref(&held)?;
+                    self.by_value(value, ty, read)?
+                } else {
+                    Err("a method with a receiver of this kind as a value")
+                };
+                let receiver = match receiver {
+                    Ok(receiver) => receiver,
+                    Err(what) => return Ok(Err(what)),
+                };
+                let callee = Operand::Const(Constant {
+                    kind: ConstantKind::Func(called.func),
+                    ty: called.sig,
+                });
+                (callee, receiver, called.ret)
+            }
+        };
+        let mut args = vec![receiver];
+        for at in before..own.1.params.len() as u32 {
+            args.push(Operand::Copy(Place::local(self.b.param(at))));
+        }
+        let result = Place::local(self.b.temp(ret));
+        let next = self.b.new_block();
+        let unwind = UnwindAction::Continue;
+        self.b
+            .call(callee, args, result.clone(), Some(next), unwind)?;
+        self.b.switch_to(next);
+        if let (Some(called), CheckedType::Func { params, .. }) =
+            (&called, &*shared.types.get(checked))
+        {
+            // The receiver of an expression that the method only read
+            // where this function has it by value.
+            let by_value = first == Some(false) && called.params.first() == Some(&own.1.params[1]);
+            if by_value && called.lent.first() == Some(&true) && !self.flat(own.1.params[1]) {
+                match self.ends_quietly(ty)? {
+                    Ok(ends) => self.end(Place::local(self.b.param(1)), ends)?,
+                    Err(what) => return Ok(Err(what)),
+                }
+            }
+            for (at, &param) in params.iter().enumerate() {
+                let read = called.lent.get(at + 1) == Some(&true);
+                let Some(&lowered) = called.params.get(at + 1).filter(|_| read) else {
+                    continue;
+                };
+                if self.flat(lowered) {
+                    continue;
+                }
+                let slot = Place::local(self.b.param(before + at as u32));
+                match self.ends_quietly(param)? {
+                    Ok(ends) => self.end(slot, ends)?,
+                    Err(what) => return Ok(Err(what)),
+                }
+            }
+        }
+        if ret != TypeInterner::UNIT {
             let whole = Place::local(self.b.result());
             self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;
         }

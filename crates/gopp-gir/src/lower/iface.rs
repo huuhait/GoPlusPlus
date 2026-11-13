@@ -1125,7 +1125,7 @@ impl<'a> FuncCx<'a, '_> {
     /// Goes on only if the pointer in the place is not nil: a pointer
     /// that an interface value holds or a struct embeds may be nil in
     /// a Go file.
-    fn not_nil(&mut self, pointer: &Place) -> Built {
+    pub fn not_nil(&mut self, pointer: &Place) -> Built {
         let null = self.zero(self.b.place_ty(pointer));
         let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(pointer.clone()), null);
         let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
@@ -1139,7 +1139,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The value in the place as a method takes it by value: where it
     /// is if the method only reads it, a copy otherwise.
-    fn by_value(
+    pub fn by_value(
         &mut self,
         value: Place,
         checked: CheckedTypeId,
