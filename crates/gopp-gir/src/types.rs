@@ -501,8 +501,8 @@ impl TypeInterner {
                 Type::Func(func) => {
                     out.push_str(match (func.cc, func.has_env) {
                         (CallConv::C, _) => "fn \"C\"(",
-                        (CallConv::Go, true) => "fn env(",
-                        (CallConv::Go, false) => "fn(",
+                        (CallConv::Gopp, true) => "fn env(",
+                        (CallConv::Gopp, false) => "fn(",
                     });
                     rest.push(Piece::Type(func.ret));
                     list(&mut rest, &func.params, ") -> ");

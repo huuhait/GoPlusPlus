@@ -92,7 +92,7 @@ fn report(results: &[Formatted]) -> ExitCode {
 }
 
 /// The `.gopp` files under `dir`, sorted by name within each
-/// directory. As gofmt, it leaves out only files whose name starts with a dot.
+/// directory. Only files whose name starts with a dot are left out.
 fn source_files_under(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)?
         .map(|entry| entry.map(|entry| entry.path()))

@@ -7,7 +7,7 @@ file 0 "a.gopp"
 
 global var @_GPR4mainE4last: string [external]
 
-fn _GPF4mainE5plain(_1: i64, _2: string) -> i64 [go, external] {
+fn _GPF4mainE5plain(_1: i64, _2: string) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: string "note"
@@ -20,7 +20,7 @@ fn _GPF4mainE5plain(_1: i64, _2: string) -> i64 [go, external] {
     return  ; a.gopp:5:38
 }
 
-fn _GPF4mainE5keeps(_1: i64, _2: string) -> i64 [go, external] {
+fn _GPF4mainE5keeps(_1: i64, _2: string) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: string "note"
@@ -48,7 +48,7 @@ fn _GPF4mainE5keeps(_1: i64, _2: string) -> i64 [go, external] {
     return  ; a.gopp:9:2
 }
 
-fn _GPF4mainE5apply(_1: (fn env(*u8, i64, string) -> i64, *u8), _2: i64) -> i64 [go, external] {
+fn _GPF4mainE5apply(_1: (fn env(*u8, i64, string) -> i64, *u8), _2: i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: (fn env(*u8, i64, string) -> i64, *u8) "op"
   let _2: i64 "a"
@@ -64,7 +64,7 @@ fn _GPF4mainE5apply(_1: (fn env(*u8, i64, string) -> i64, *u8), _2: i64) -> i64 
     return  ; a.gopp:14:32
 }
 
-fn _GPF4mainE4pick(_1: bool) -> (fn env(*u8, i64, string) -> i64, *u8) [go, external] {
+fn _GPF4mainE4pick(_1: bool) -> (fn env(*u8, i64, string) -> i64, *u8) [gopp, external] {
   let _0: (fn env(*u8, i64, string) -> i64, *u8)
   let _1: bool "first"
   let _2: (fn env(*u8, i64, string) -> i64, *u8)
@@ -88,7 +88,7 @@ fn _GPF4mainE4pick(_1: bool) -> (fn env(*u8, i64, string) -> i64, *u8) [go, exte
     return  ; a.gopp:20:2
 }
 
-fn _GPC1_F4mainE4pick(_1: *u8, _2: i64, _3: string) -> i64 [go, internal] {
+fn _GPC1_F4mainE4pick(_1: *u8, _2: i64, _3: string) -> i64 [gopp, internal] {
   let _0: i64
   let _2: i64 "a"
   let _3: string "note"
@@ -142,7 +142,7 @@ fn _GPC1_F4mainE4pick(_1: *u8, _2: i64, _3: string) -> i64 [go, internal] {
     return  ; a.gopp:21:3
 }
 
-fn _GPC1_C1_F4mainE4pick(_1: *u8, _2: i64) -> i64 [go, internal] {
+fn _GPC1_C1_F4mainE4pick(_1: *u8, _2: i64) -> i64 [gopp, internal] {
   let _0: i64
   let _2: i64 "b"
   bb0:
@@ -150,7 +150,7 @@ fn _GPC1_C1_F4mainE4pick(_1: *u8, _2: i64) -> i64 [go, internal] {
     return  ; a.gopp:21:28
 }
 
-fn _GPF4mainE4main() -> () [go, external] {
+fn _GPF4mainE4main() -> () [gopp, external] {
   let _0: ()
   let _1: (fn env(*u8, i64, string) -> i64, *u8)
   let _2: (fn env(*u8, i64, string) -> i64, *u8) "op"
@@ -390,7 +390,7 @@ fn _GPF4mainE4main() -> () [go, external] {
     return  ; a.gopp:30:1
 }
 
-fn _GPC1_F4mainE4main(_1: *u8, _2: i64, _3: string) -> i64 [go, internal] {
+fn _GPC1_F4mainE4main(_1: *u8, _2: i64, _3: string) -> i64 [gopp, internal] {
   let _0: i64
   let _2: i64 "a"
   let _3: string "note"
@@ -406,7 +406,7 @@ fn _GPC1_F4mainE4main(_1: *u8, _2: i64, _3: string) -> i64 [go, internal] {
     return  ; a.gopp:28:56
 }
 
-fn _GPTEF4mainE5keeps(_1: *u8, _2: i64, _3: string) -> i64 [go, linkonce_odr] {
+fn _GPTEF4mainE5keeps(_1: *u8, _2: i64, _3: string) -> i64 [gopp, linkonce_odr] {
   let _0: i64
   let _4: i64
   let _5: bool
@@ -423,7 +423,7 @@ fn _GPTEF4mainE5keeps(_1: *u8, _2: i64, _3: string) -> i64 [go, linkonce_odr] {
     return
 }
 
-fn _GPTEF4mainE5plain(_1: *u8, _2: i64, _3: string) -> i64 [go, linkonce_odr] {
+fn _GPTEF4mainE5plain(_1: *u8, _2: i64, _3: string) -> i64 [gopp, linkonce_odr] {
   let _0: i64
   let _4: i64
   let _5: bool

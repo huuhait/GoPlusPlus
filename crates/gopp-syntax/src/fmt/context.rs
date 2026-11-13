@@ -195,8 +195,7 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// Where the comment ends when its carriage returns do not count, as
-    /// `gofmt` has it.
+    /// Where the comment ends when its carriage returns do not count.
     pub fn comment_end(&self, comment: Comment) -> u32 {
         comment.pos + self.comment_text(comment).len() as u32
     }
@@ -229,7 +228,7 @@ impl<'a> Cx<'a> {
     }
 
     /// Groups the comments and finds which are documentation or end a
-    /// line, by the rules of Go's parser: `gofmt` aligns by them.
+    /// line: the layout aligns by them.
     fn group_comments(&mut self) {
         let mut next = 0;
         for index in 0..self.tokens.len() {

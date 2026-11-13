@@ -1,5 +1,4 @@
-//! Constant values and their exact arithmetic, as Go's `go/constant`
-//! computes them.
+//! Constant values and their exact arithmetic.
 //!
 //! An integer has any size. A number that is no integer is an exact
 //! fraction while its numerator and denominator stay under 4096 bits, and a
@@ -233,7 +232,7 @@ fn is_format(c: char) -> bool {
     matches!(c, '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}')
 }
 
-/// The text between double quotes, in Go's spelling.
+/// The text between double quotes, as a string literal spells it.
 fn quoted(bytes: &[u8]) -> String {
     let mut out = String::from("\"");
     for chunk in bytes.utf8_chunks() {
@@ -321,7 +320,7 @@ struct Number {
     exp_base: u32,
 }
 
-/// Reads a float or imaginary literal as Go's `big.Float` reads it: `0x`,
+/// Reads a float or imaginary literal: `0x`,
 /// `0b` and `0o` give the base, a plain leading `0` does not.
 fn scan(literal: &str) -> Option<Number> {
     let lower = literal.to_ascii_lowercase();
@@ -367,7 +366,7 @@ fn scan(literal: &str) -> Option<Number> {
     })
 }
 
-/// `5^n` as Go's `big.Float` computes it for a number of `prec` bits: by
+/// `5^n` for a number of `prec` bits: by
 /// squaring, each product rounded.
 fn pow5(mut n: u64, prec: u32) -> Option<Float> {
     // The largest power of five that fits in 64 bits.
@@ -409,8 +408,7 @@ impl Number {
         Some((exp2.checked_add(self.exp)?, exp5))
     }
 
-    /// The float of `PREC` bits that Go's `big.Float` makes of the
-    /// literal: the power of five is itself rounded, so the result is
+    /// The float of `PREC` bits that the literal stands for: the power of five is itself rounded, so the result is
     /// close to the literal, not always the nearest float.
     fn to_float(&self) -> Option<Float> {
         if self.mant.bits() == 0 {
@@ -692,7 +690,7 @@ impl Value {
     fn to_ieee(&self, format: Ieee) -> f64 {
         match self {
             Self::Int64(x) => Rat::from_int(BigInt::from(*x)).to_ieee(format),
-            // As Go: through a float of `PREC` bits, which may round first.
+            // Through a float of `PREC` bits, which may round first.
             Self::Int(x) => int_to_float(x).to_ieee(format),
             Self::Rat(x) => x.to_ieee(format),
             Self::Float(x) => x.to_ieee(format),
@@ -851,7 +849,7 @@ impl Value {
     pub fn shift(&self, left: bool, count: u32) -> Self {
         match (self.as_big_int(), left) {
             (Some(x), true) => make_int(x << count),
-            // The shift of a negative number rounds down, as in Go.
+            // The shift of a negative number rounds down.
             (Some(x), false) => make_int(x >> count),
             (None, _) => Self::Unknown,
         }
@@ -994,9 +992,9 @@ fn huge_float_string(x: &Float) -> String {
             break digits.to_string();
         }
     };
-    // Go finds the exponent of ten by cutting off `log10` of the power of
-    // two, toward zero. Under one that can leave the first digit behind
-    // the point: `0.894562e-4236`. Messages are to read as Go's do.
+    // The exponent of ten is `log10` of the power of two, cut off toward
+    // zero. Under one that can leave the first digit behind the point:
+    // `0.894562e-4236`.
     let cut = (x.mant_exp() as f64 * std::f64::consts::LOG10_2).trunc() as i64;
     if x.mant_exp() < 0 && exp == cut - 2 {
         let digits = digits.trim_end_matches('0');

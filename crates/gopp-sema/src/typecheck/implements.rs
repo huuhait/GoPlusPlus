@@ -1,4 +1,4 @@
-//! Whether a type implements an interface, said as Go says it.
+//! Whether a type implements an interface, and why not.
 
 use super::*;
 use crate::types::{IntoInterface, Lacks};

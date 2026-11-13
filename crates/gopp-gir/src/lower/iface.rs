@@ -92,7 +92,7 @@ pub(super) fn thunk_sig(
         params: params.into(),
         ret: sig.ret,
         has_env: false,
-        cc: CallConv::Go,
+        cc: CallConv::Gopp,
     })))
 }
 
@@ -621,7 +621,7 @@ impl FuncCx<'_, '_> {
     }
 
     /// `x.(T)`: the value that `x` holds, read where it is; the program
-    /// ends if `x` holds no `T`, as in Go.
+    /// ends if `x` holds no `T`.
     pub fn asserted(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let Assertion { looked, wanted, .. } = match self.assertion(expr)? {
@@ -1421,7 +1421,7 @@ impl<'a> FuncCx<'a, '_> {
             params: params.clone().into(),
             ret: sig.ret,
             has_env: false,
-            cc: CallConv::Go,
+            cc: CallConv::Gopp,
         }));
         // An argument may change the variable that holds the value.
         let mut mode = PlaceMode {
@@ -1450,8 +1450,8 @@ impl<'a> FuncCx<'a, '_> {
     }
 
     /// The code of a method of the interface value in the place, read
-    /// from its table of methods; with `nil_at`, the program ends as in
-    /// Go if the value is nil, and names that place.
+    /// from its table of methods; with `nil_at`, the program ends if the
+    /// value is nil, and names that place.
     pub fn table_slot(
         &mut self,
         value: &Place,

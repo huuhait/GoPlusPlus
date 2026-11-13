@@ -26,7 +26,7 @@ global const @_GPTmN4mainE7Problem: (u64, [1](string, *u8)) [linkonce_odr]
     const str#2 "Error||_GPTiG0_0_LELrE"
     const fn @_GPTIM5ErrorN4mainE7Problem
 
-fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [go, external] {
+fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [gopp, external] {
   let _0: string
   let _1: _GPTiN4mainE7Problem "p"
   bb0:
@@ -34,7 +34,7 @@ fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [go, external] 
     return  ; a.gopp:5:35
 }
 
-fn _GPF4mainE7cleanup(_1: i64) -> gopp.iface [go, external] {
+fn _GPF4mainE7cleanup(_1: i64) -> gopp.iface [gopp, external] {
   let _0: gopp.iface
   let _1: i64 "n"
   let _2: bool
@@ -62,7 +62,7 @@ fn _GPF4mainE7cleanup(_1: i64) -> gopp.iface [go, external] {
     return  ; a.gopp:7:22
 }
 
-fn _GPF4mainE3run(_1: i64) -> (i64, gopp.iface) [go, external] {
+fn _GPF4mainE3run(_1: i64) -> (i64, gopp.iface) [gopp, external] {
   let _0: (i64, gopp.iface)
   let _1: i64 "n"
   let _2: i64
@@ -201,7 +201,7 @@ fn _GPC0_F4mainE3run(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:13:6
 }
 
-fn _GPF4mainE4must(_1: i64) -> () [go, external] {
+fn _GPF4mainE4must(_1: i64) -> () [gopp, external] {
   let _0: ()
   let _1: i64 "n"
   let _2: (*u8, fn "C"(*u8) -> (), *u8, *u8)
@@ -313,7 +313,7 @@ fn _GPC0_F4mainE4must(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:18:6
 }
 
-fn _GPTIM5ErrorN4mainE7Problem(_1: *u8) -> string [go, linkonce_odr] {
+fn _GPTIM5ErrorN4mainE7Problem(_1: *u8) -> string [gopp, linkonce_odr] {
   let _0: string
   let _2: *_GPTiN4mainE7Problem
   let _3: string

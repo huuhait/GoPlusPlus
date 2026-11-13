@@ -14,7 +14,7 @@ pub struct Span {
     pub hi: u32,
 }
 
-/// A 1-based line and a 1-based column counted in bytes, as Go reports them.
+/// A 1-based line and a 1-based column counted in bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LineCol {
     pub line: u32,
@@ -228,7 +228,6 @@ mod tests {
     #[test]
     fn a_source_file_ends_in_gopp() {
         assert!(is_source_path(Path::new("a/main.gopp")));
-        assert!(!is_source_path(Path::new("main.go")));
         assert!(!is_source_path(Path::new("main.c")));
         assert!(!is_source_path(Path::new("gopp")));
     }

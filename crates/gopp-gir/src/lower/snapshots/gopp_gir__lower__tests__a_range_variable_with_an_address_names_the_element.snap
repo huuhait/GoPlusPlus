@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc twice(nums []int, grid [2]int, rows [][]
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [go, external] {
+fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [gopp, external] {
   scope 1: block in 0  ; a.gopp:4:10
   scope 2: block in 0  ; a.gopp:7:6
   scope 3: block in 0  ; a.gopp:10:10
@@ -208,7 +208,7 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
     return  ; a.gopp:16:2
 }
 
-fn _GPF4mainE5runes(_1: string, _2: []i32) -> ([]i32, string) [go, external] {
+fn _GPF4mainE5runes(_1: string, _2: []i32) -> ([]i32, string) [gopp, external] {
   let _0: ([]i32, string)
   let _1: string "text"
   let _2: []i32 "points"

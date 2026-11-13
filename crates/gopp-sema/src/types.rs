@@ -710,7 +710,7 @@ fn deep<R>(step: impl FnOnce() -> R) -> R {
 struct Spelling<'a> {
     /// One spelling for all identical types.
     canonical: bool,
-    /// As the runtime of Go names a type in its messages: `interface {}`,
+    /// As the runtime names a type in its messages: `interface {}`,
     /// `struct { x int }`.
     spaced: bool,
     /// The name of the package whose types are written without it.
@@ -1762,9 +1762,9 @@ impl Types {
         Err(NotFound::Missing)
     }
 
-    /// The size and the alignment in bytes of a value of the type, as Go's
-    /// compiler lays it out on a 64-bit machine. `None` for a type whose
-    /// layout is not fixed here: a type parameter, a type of Go++ alone.
+    /// The size and the alignment in bytes of a value of the type on a
+    /// 64-bit machine. `None` for a type whose layout is not fixed here: a
+    /// type parameter, an owner, an option.
     pub fn layout(&self, ty: TypeId, names: &ThreadedRodeo) -> Option<(u64, u64)> {
         self.layout_in(ty, names, &mut Layouts::default()).ok()
     }
@@ -2524,8 +2524,10 @@ impl Types {
         }
     }
 
-    /// Whether the type is of a kind that has a nil in Go: also a pointer,
-    /// a func and an interface with methods, which are never nil here.
+    /// Whether `nil` is written for a value of the type: a slice, a map, a
+    /// channel and an option, and also a pointer, a func and an interface
+    /// with methods, which are never nil and are refused with a message of
+    /// their own.
     pub fn nil_kind(&self, id: TypeId) -> bool {
         matches!(
             &*self.get(self.underlying(id)),
@@ -2711,7 +2713,7 @@ impl Types {
     /// Whether a value of the type `from` may be assigned to a place of
     /// the type `to`. For a constant, `value` is its value: an untyped
     /// constant must fit the type. `nil` counts as a value of every kind
-    /// that has one in Go ([`nil_kind`](Self::nil_kind)).
+    /// that it is written for ([`nil_kind`](Self::nil_kind)).
     pub fn assignable(
         &self,
         from: TypeId,
@@ -2826,7 +2828,6 @@ impl Types {
     /// written with all its methods, in the order of their names, then its
     /// type terms.
     pub fn canonical(&self, id: TypeId, names: &ThreadedRodeo) -> String {
-        // Compared with what Go writes: all of it.
         let spelling = Spelling {
             canonical: true,
             spaced: false,
@@ -2836,7 +2837,7 @@ impl Types {
         self.show(id, names, spelling)
     }
 
-    /// The type as the runtime of Go names it in a message: one spelling
+    /// The type as the runtime names it in a message: one spelling
     /// for all identical types, `interface {}` for the interface without
     /// methods, a struct with spaces inside its braces.
     pub fn runtime_name(&self, id: TypeId, names: &ThreadedRodeo) -> String {

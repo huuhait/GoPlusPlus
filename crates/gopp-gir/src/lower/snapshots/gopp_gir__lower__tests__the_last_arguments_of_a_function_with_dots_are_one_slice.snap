@@ -7,7 +7,7 @@ file 0 "a.gopp"
 
 global var @_GPR4mainE4kept: []string [external]
 
-fn _GPF4mainE3sum(_1: []i64) -> i64 [go, external] {
+fn _GPF4mainE3sum(_1: []i64) -> i64 [gopp, external] {
   scope 1: block in 0  ; a.gopp:7:9
   let _0: i64
   let _1: []i64 "xs"
@@ -42,7 +42,7 @@ fn _GPF4mainE3sum(_1: []i64) -> i64 [go, external] {
     return  ; a.gopp:10:2
 }
 
-fn _GPF4mainE4keep(_1: string, _2: []string) -> i64 [go, external] {
+fn _GPF4mainE4keep(_1: string, _2: []string) -> i64 [gopp, external] {
   let _0: i64
   let _1: string "first"
   let _2: []string "parts"
@@ -115,14 +115,14 @@ fn _GPF4mainE4keep(_1: string, _2: []string) -> i64 [go, external] {
     return  ; a.gopp:16:2
 }
 
-fn _GPF4mainE4pair() -> (string, string) [go, external] {
+fn _GPF4mainE4pair() -> (string, string) [gopp, external] {
   let _0: (string, string)
   bb0:
     _0 = tuple {const str#0 "a", const str#1 "b"}  ; a.gopp:19:32
     return  ; a.gopp:19:32
 }
 
-fn _GPF4mainE4none() -> i64 [go, external] {
+fn _GPF4mainE4none() -> i64 [gopp, external] {
   let _0: i64
   let _1: i64
   bb0:
@@ -132,7 +132,7 @@ fn _GPF4mainE4none() -> i64 [go, external] {
     return  ; a.gopp:21:19
 }
 
-fn _GPF4mainE4each(_1: i64) -> i64 [go, external] {
+fn _GPF4mainE4each(_1: i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: i64
@@ -187,7 +187,7 @@ fn _GPF4mainE4each(_1: i64) -> i64 [go, external] {
     return  ; a.gopp:23:24
 }
 
-fn _GPF4mainE5given(_1: []i64) -> i64 [go, external] {
+fn _GPF4mainE5given(_1: []i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: []i64 "xs"
   let _2: i64
@@ -198,7 +198,7 @@ fn _GPF4mainE5given(_1: []i64) -> i64 [go, external] {
     return  ; a.gopp:25:28
 }
 
-fn _GPF4mainE5owned(_1: string) -> i64 [go, external] {
+fn _GPF4mainE5owned(_1: string) -> i64 [gopp, external] {
   let _0: i64
   let _1: string "a"
   let _2: string
@@ -273,7 +273,7 @@ fn _GPF4mainE5owned(_1: string) -> i64 [go, external] {
     return  ; a.gopp:27:28
 }
 
-fn _GPF4mainE7results() -> i64 [go, external] {
+fn _GPF4mainE7results() -> i64 [gopp, external] {
   let _0: i64
   let _1: (string, string)
   let _2: []string
@@ -344,7 +344,7 @@ fn _GPF4mainE7results() -> i64 [go, external] {
     return  ; a.gopp:29:22
 }
 
-fn _GPF4mainE5value(_1: i64) -> i64 [go, external] {
+fn _GPF4mainE5value(_1: i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: (fn env(*u8, []i64) -> i64, *u8)
@@ -404,7 +404,7 @@ fn _GPF4mainE5value(_1: i64) -> i64 [go, external] {
     return  ; a.gopp:33:2
 }
 
-fn _GPF4mainE8deferred(_1: i64) -> () [go, external] {
+fn _GPF4mainE8deferred(_1: i64) -> () [gopp, external] {
   let _0: ()
   let _1: i64 "a"
   let _2: (*u8, fn "C"(*u8) -> (), *u8, *u8)
@@ -568,7 +568,7 @@ fn _GPC0_F4mainE8deferred(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:36:6
 }
 
-fn _GPF4mainE4main() -> () [go, external] {
+fn _GPF4mainE4main() -> () [gopp, external] {
   let _0: ()
   let _1: []i64
   let _2: *[]i64
@@ -665,7 +665,7 @@ fn _GPF4mainE4main() -> () [go, external] {
     return  ; a.gopp:45:1
 }
 
-fn _GPTEF4mainE3sum(_1: *u8, _2: []i64) -> i64 [go, linkonce_odr] {
+fn _GPTEF4mainE3sum(_1: *u8, _2: []i64) -> i64 [gopp, linkonce_odr] {
   let _0: i64
   let _3: i64
   let _4: *[]i64

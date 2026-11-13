@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\ntype point struct{ x, y int32 }\n\ntype named
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4same(_1: _GPTiN4mainE5named, _2: _GPTiN4mainE5named, _3: [2][3]i16) -> bool [go, external] {
+fn _GPF4mainE4same(_1: _GPTiN4mainE5named, _2: _GPTiN4mainE5named, _3: [2][3]i16) -> bool [gopp, external] {
   let _0: bool
   let _1: _GPTiN4mainE5named "a"
   let _2: _GPTiN4mainE5named "b"
@@ -97,7 +97,7 @@ fn _GPF4mainE4same(_1: _GPTiN4mainE5named, _2: _GPTiN4mainE5named, _3: [2][3]i16
     return  ; a.gopp:21:2
 }
 
-fn _GPF4mainE4keys(_1: _GPTiN4mainE5named) -> i64 [go, external] {
+fn _GPF4mainE4keys(_1: _GPTiN4mainE5named) -> i64 [gopp, external] {
   let _0: i64
   let _1: _GPTiN4mainE5named "a"
   let _2: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())

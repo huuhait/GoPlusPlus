@@ -1,5 +1,4 @@
-//! Labels and the statements that jump, after `go/types` (labels.go and
-//! the branch statements of stmt.go).
+//! Labels and the statements that jump.
 
 use super::*;
 

@@ -1,4 +1,4 @@
-//! Number literals, with the rules and messages of Go's scanner.
+//! Number literals.
 
 use gopp_diag::Code;
 

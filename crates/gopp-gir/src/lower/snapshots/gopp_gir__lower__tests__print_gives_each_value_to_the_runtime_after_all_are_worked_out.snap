@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc next(n int) int { return n + 1 }\n\nfunc
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4next(_1: i64) -> i64 [go, external] {
+fn _GPF4mainE4next(_1: i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "n"
   bb0:
@@ -13,7 +13,7 @@ fn _GPF4mainE4next(_1: i64) -> i64 [go, external] {
     return  ; a.gopp:3:24
 }
 
-fn _GPF4mainE4show(_1: i8, _2: u64, _3: f32, _4: bool, _5: string) -> () [go, external] {
+fn _GPF4mainE4show(_1: i8, _2: u64, _3: f32, _4: bool, _5: string) -> () [gopp, external] {
   let _0: ()
   let _1: i8 "small"
   let _2: u64 "big"

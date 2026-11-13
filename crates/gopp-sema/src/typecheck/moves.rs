@@ -222,8 +222,7 @@ struct Walk<'a> {
     body: &'a Body,
     modes: &'a FxHashMap<ExprId, Transfer>,
     captures: &'a FxHashMap<ExprId, Vec<Capture>>,
-    /// The parameters and receivers by value that are slices or maps,
-    /// in a file with the rules of Go++.
+    /// The parameters and receivers by value that are slices or maps.
     watched: &'a FxHashSet<LocalId>,
     /// The function that is walked: what is declared in it is its own.
     within: Span,

@@ -1,4 +1,4 @@
-//! Conversions `T(x)`, after `go/types` (conversions.go).
+//! Conversions `T(x)`.
 
 use super::*;
 
@@ -101,8 +101,7 @@ impl<'a> Checker<'a> {
                 .then(|| Operand::value(target)),
         };
         let Some(converted) = converted else {
-            // What is converted to a type parameter is no constant, as Go
-            // says it.
+            // What is converted to a type parameter is no constant.
             let described = match self.is_param(target) && matches!(x.mode, Mode::Const(_)) {
                 true => Operand::value(x.ty),
                 false => x.clone(),

@@ -6,7 +6,7 @@ expression: "format!(\"{}\\n{}\", messages.join(\"\\n\"), print_module(&lowered.
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, external] {
+fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [gopp, external] {
   scope 1: block in 0  ; a.gopp:7:9
   let _0: (i64, string)
   let _1: []i64 "xs"
@@ -354,7 +354,7 @@ fn _GPC0_F4mainE1f(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:5:6
 }
 
-fn _GPC1_F4mainE1f(_1: *u8) -> i64 [go, internal] {
+fn _GPC1_F4mainE1f(_1: *u8) -> i64 [gopp, internal] {
   let _0: i64
   let _2: *(u64, u64, *(u64, i64), fn "C"(*u8) -> ())
   let _3: *(u64, i64)

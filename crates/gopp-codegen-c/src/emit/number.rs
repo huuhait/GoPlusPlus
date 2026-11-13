@@ -1,5 +1,5 @@
-//! Numbers as C writes them, and the operations whose results Go
-//! defines where C does not (EXP-8).
+//! Numbers as C writes them, and the operations whose results are
+//! defined where C leaves them open (EXP-8).
 
 use std::fmt::Write;
 

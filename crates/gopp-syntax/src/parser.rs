@@ -1,8 +1,7 @@
-//! The parser: Go's grammar with the Go++ productions (spec appendix B).
+//! The parser of the grammar of spec appendix B.
 //!
-//! It follows the decisions of Go's own parser, so that Go code gets the
-//! same tree and the same errors. It always returns a tree: a syntax error
-//! leaves a `Bad` node, reports a diagnostic and resynchronizes.
+//! It always returns a tree: a syntax error leaves a `Bad` node, reports a
+//! diagnostic and resynchronizes.
 
 mod decl;
 mod expr;
@@ -238,8 +237,8 @@ impl Parser<'_> {
         list
     }
 
-    /// Reports at most one syntax error per line, as Go's compiler does: the
-    /// errors after the first are mostly its consequences.
+    /// Reports at most one syntax error per line: the errors after the
+    /// first are mostly its consequences.
     fn error_at(&mut self, code: Code, span: Span, message: impl Into<String>) {
         let line = self.source.line_col(span.lo).line;
         if line == self.last_error_line {
@@ -249,8 +248,8 @@ impl Parser<'_> {
         self.sink.push(Diagnostic::new(code, span, message));
     }
 
-    /// Reports what is no syntax error: each is said, as in Go, also two
-    /// on one line.
+    /// Reports what is no syntax error: each is said, also two on one
+    /// line.
     fn error_plain(&mut self, code: Code, span: Span, message: impl Into<String>) {
         self.sink.push(Diagnostic::new(code, span, message));
     }

@@ -1,6 +1,5 @@
-//! Operators: what Go's type checker asks of their operands, and how a
-//! value of no type takes the type of what is around it. The functions
-//! follow `go/types` (expr.go, const.go), and the messages are Go's.
+//! Operators: what they ask of their operands, and how a value of no type
+//! takes the type of what is around it.
 
 use super::operators::Overload;
 use super::*;
@@ -216,8 +215,9 @@ impl<'a> Checker<'a> {
         self.types.is_interface(ty)
     }
 
-    /// Whether `nil` is a value of the type by Go's rule. What a `.gopp`
-    /// file asks of pointers, funcs and interfaces is checked on its own.
+    /// Whether `nil` is written for a value of the type
+    /// ([`Types::nil_kind`]). That a pointer, a func and an interface with
+    /// methods are never nil is checked on its own.
     fn has_nil(&self, ty: TypeId) -> bool {
         self.all_types(ty, |this, ty| this.types.nil_kind(ty))
     }

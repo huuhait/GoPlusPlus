@@ -1,4 +1,4 @@
-//! Index and slice expressions, after `go/types` (index.go).
+//! Index and slice expressions.
 
 use super::*;
 

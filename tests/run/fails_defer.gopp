@@ -40,7 +40,8 @@ func several!(a, b string) string {
 	return "done"
 }
 
-// The same for a function of the Go form, and for a function value.
+// The same for a function with the error as a result, and for a
+// function value.
 func named(what string) (text string, err error) {
 	check := func!(note string) { cleanup!(note) }
 	defer check!(what)

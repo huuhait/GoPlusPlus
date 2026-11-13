@@ -1,4 +1,4 @@
-//! Assignments, in the two phases of Go: first the operands of the
+//! Assignments, in two phases: first the operands of the
 //! places on the left and the values on the right, from left to right;
 //! then the stores, from left to right, each with its checks (EXP-3).
 

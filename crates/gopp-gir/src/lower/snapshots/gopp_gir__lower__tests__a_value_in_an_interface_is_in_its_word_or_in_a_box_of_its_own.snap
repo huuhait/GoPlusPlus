@@ -41,7 +41,7 @@ global const @_GPTiN4mainE5Named: gopp.type [linkonce_odr]
     const zero: *u8
     const 0: u64
 
-fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (gopp.iface, gopp.iface, gopp.iface) [go, external] {
+fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (gopp.iface, gopp.iface, gopp.iface) [gopp, external] {
   let _0: (gopp.iface, gopp.iface, gopp.iface)
   let _1: i64 "n"
   let _2: _GPTiN4mainE5Point "p"
@@ -129,7 +129,7 @@ fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (g
     return  ; a.gopp:11:2
 }
 
-fn _GPF4mainE4look(_1: gopp.iface) -> i64 [go, external] {
+fn _GPF4mainE4look(_1: gopp.iface) -> i64 [gopp, external] {
   scope 1: block in 0  ; a.gopp:15:5
   scope 2: block in 0  ; a.gopp:18:9
   scope 3: block in 0  ; a.gopp:18:9
@@ -293,7 +293,7 @@ fn _GPF4mainE4look(_1: gopp.iface) -> i64 [go, external] {
     return  ; a.gopp:24:2
 }
 
-fn _GPF4mainE4same(_1: gopp.iface, _2: gopp.iface) -> bool [go, external] {
+fn _GPF4mainE4same(_1: gopp.iface, _2: gopp.iface) -> bool [gopp, external] {
   let _0: bool
   let _1: gopp.iface "a"
   let _2: gopp.iface "b"

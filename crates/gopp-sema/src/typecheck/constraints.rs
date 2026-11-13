@@ -1,5 +1,4 @@
-//! Constraints: what may be a term of a union, after `go/types`
-//! (union.go), with Go's messages.
+//! Constraints: what may be a term of a union.
 
 use super::implements::Cause;
 use super::*;
@@ -17,7 +16,7 @@ pub(super) struct Instance {
     pub at: Span,
 }
 
-/// A union has no more terms than this, as in Go.
+/// A union has no more terms than this.
 const MAX_TERMS: usize = 100;
 
 impl<'a> Checker<'a> {

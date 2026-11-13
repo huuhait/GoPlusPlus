@@ -10,7 +10,7 @@ global var @_GPR4mainE6second: f64 [external]
 
 global var @_GPR4mainE5first: i64 [external]
 
-fn _GPK4mainE1_() -> () [go, external] {
+fn _GPK4mainE1_() -> () [gopp, external] {
   let _0: ()
   let _1: *f64
   bb0:
@@ -19,7 +19,7 @@ fn _GPK4mainE1_() -> () [go, external] {
     return  ; b.gopp:5:26
 }
 
-fn _GPK4mainE2_() -> () [go, external] {
+fn _GPK4mainE2_() -> () [gopp, external] {
   let _0: ()
   let _1: *i64
   bb0:
@@ -28,7 +28,7 @@ fn _GPK4mainE2_() -> () [go, external] {
     return  ; b.gopp:7:23
 }
 
-fn _GPK4mainE0_() -> () [go, external] {
+fn _GPK4mainE0_() -> () [gopp, external] {
   let _0: ()
   let _1: *i64
   let _2: *f64
@@ -39,7 +39,7 @@ fn _GPK4mainE0_() -> () [go, external] {
     return  ; a.gopp:5:35
 }
 
-fn _GPF4mainE4main() -> () [go, external] {
+fn _GPF4mainE4main() -> () [gopp, external] {
   let _0: ()
   bb0:
     return  ; a.gopp:7:14

@@ -5,21 +5,21 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-fn _GPM4dropN4mainE4File(_1: *_GPTiN4mainE4File) -> () [go, external] {
+fn _GPM4dropN4mainE4File(_1: *_GPTiN4mainE4File) -> () [gopp, external] {
   let _0: ()
   let _1: *_GPTiN4mainE4File "f"
   bb0:
     return  ; a.gopp:8:24
 }
 
-fn _GPM4dropN4mainE6Handle(_1: *_GPTiN4mainE6Handle) -> () [go, external] {
+fn _GPM4dropN4mainE6Handle(_1: *_GPTiN4mainE6Handle) -> () [gopp, external] {
   let _0: ()
   let _1: *_GPTiN4mainE6Handle "h"
   bb0:
     return  ; a.gopp:12:26
 }
 
-fn _GPM5CloneN4mainE6Handle(_1: _GPTiN4mainE6Handle) -> _GPTiN4mainE6Handle [go, external] {
+fn _GPM5CloneN4mainE6Handle(_1: _GPTiN4mainE6Handle) -> _GPTiN4mainE6Handle [gopp, external] {
   let _0: _GPTiN4mainE6Handle
   let _1: _GPTiN4mainE6Handle "h"
   let _2: _GPTiN4mainE6Handle
@@ -29,7 +29,7 @@ fn _GPM5CloneN4mainE6Handle(_1: _GPTiN4mainE6Handle) -> _GPTiN4mainE6Handle [go,
     return  ; a.gopp:14:34
 }
 
-fn _GPF4mainE3use(_1: _GPTiN4mainE6Handle) -> i64 [go, external] {
+fn _GPF4mainE3use(_1: _GPTiN4mainE6Handle) -> i64 [gopp, external] {
   let _0: i64
   let _1: _GPTiN4mainE6Handle "h"
   let _2: _GPTiN4mainE4File

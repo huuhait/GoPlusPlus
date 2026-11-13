@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc ints(a, b int, u uint8, n uint, k int) i
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4ints(_1: i64, _2: i64, _3: u8, _4: u64, _5: i64) -> i64 [go, external] {
+fn _GPF4mainE4ints(_1: i64, _2: i64, _3: u8, _4: u64, _5: i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: i64 "b"
@@ -61,7 +61,7 @@ fn _GPF4mainE4ints(_1: i64, _2: i64, _3: u8, _4: u64, _5: i64) -> i64 [go, exter
     return  ; a.gopp:13:2
 }
 
-fn _GPF4mainE6floats(_1: f64, _2: f64, _3: f32) -> f64 [go, external] {
+fn _GPF4mainE6floats(_1: f64, _2: f64, _3: f32) -> f64 [gopp, external] {
   let _0: f64
   let _1: f64 "x"
   let _2: f64 "y"
@@ -80,7 +80,7 @@ fn _GPF4mainE6floats(_1: f64, _2: f64, _3: f32) -> f64 [go, external] {
     return  ; a.gopp:19:2
 }
 
-fn _GPF4mainE8compares(_1: i64, _2: i64, _3: f64, _4: *i64, _5: *i64) -> bool [go, external] {
+fn _GPF4mainE8compares(_1: i64, _2: i64, _3: f64, _4: *i64, _5: *i64) -> bool [gopp, external] {
   let _0: bool
   let _1: i64 "a"
   let _2: i64 "b"
@@ -99,7 +99,7 @@ fn _GPF4mainE8compares(_1: i64, _2: i64, _3: f64, _4: *i64, _5: *i64) -> bool [g
     return  ; a.gopp:27:2
 }
 
-fn _GPF4mainE8converts(_1: i64, _2: u8, _3: f64) -> (i8, f32, u64, i64) [go, external] {
+fn _GPF4mainE8converts(_1: i64, _2: u8, _3: f64) -> (i8, f32, u64, i64) [gopp, external] {
   let _0: (i8, f32, u64, i64)
   let _1: i64 "a"
   let _2: u8 "u"

@@ -1,5 +1,4 @@
-//! Conditions, `go` and `defer`, and the cases of a `switch`, after
-//! `go/types` (stmt.go).
+//! Conditions, `go` and `defer`, and the cases of a `switch`.
 
 use super::call::Called;
 use super::*;
@@ -29,7 +28,7 @@ impl<'a> Checker<'a> {
             ExprKind::Call { fun, .. } => *fun,
             // Parentheses were refused where the statement was read.
             ExprKind::Paren(_) | ExprKind::MacroCall { .. } | ExprKind::Bad => return,
-            // As Go's parser says it: after the expression.
+            // Said after the expression.
             _ => {
                 let after = Span {
                     lo: span.hi,
@@ -277,8 +276,7 @@ impl<'a> Checker<'a> {
                 }
                 Ok(None) => {}
                 Ok(Some((key, value))) => {
-                    // More than two are refused as Go's parser refuses
-                    // them, whatever is ranged over.
+                    // More than two are refused, whatever is ranged over.
                     let too_many = match (key, value, lhs) {
                         (_, _, [.., last]) if lhs.len() > 2 => {
                             let message = "expected at most 2 expressions".to_owned();

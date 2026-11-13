@@ -331,7 +331,7 @@ file 0 "hello.gopp"
 
 declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
 
-fn main.main() -> () [go, external] {
+fn main.main() -> () [gopp, external] {
   let _0: ()
   let _1: string
   let _2: i64

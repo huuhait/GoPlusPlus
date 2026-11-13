@@ -1,6 +1,5 @@
 //! Assignments: a value given to a variable, a constant, a parameter, a
-//! result, a channel. The functions follow `go/types` (assignments.go),
-//! and the messages are Go's.
+//! result, a channel.
 
 use super::ops::Unfit;
 use super::*;

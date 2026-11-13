@@ -149,7 +149,7 @@ impl Printer<'_> {
             .collect();
         let mut marks = vec![
             match func.cc {
-                CallConv::Go => "go",
+                CallConv::Gopp => "gopp",
                 CallConv::C => "c",
             },
             link(func.link),

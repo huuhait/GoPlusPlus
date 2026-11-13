@@ -286,8 +286,9 @@ impl Orderer<'_> {
         matches!(kind, Some(ObjKind::Const | ObjKind::Var))
     }
 
-    /// Go's order of initialization: again and again the first variable in
-    /// the source that needs no variable that is not yet initialized.
+    /// The order of initialization (INI-1): again and again the first
+    /// variable in the source that needs no variable that is not yet
+    /// initialized.
     /// What a variable needs includes what the functions it names need.
     /// Constants come first.
     fn init_order(&self) -> Vec<Initializer> {

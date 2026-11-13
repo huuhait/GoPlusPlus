@@ -1,8 +1,7 @@
 //! The source formatter: one layout for every `.gopp` file.
 //!
-//! The layout rules are those of Go's `go/printer` and `text/tabwriter`, so
-//! Go code comes out as `gofmt` writes it. The forms that only Go++ has are
-//! laid out like the nearest Go form.
+//! Blocks are indented with tabs, and what stands in columns (the fields of
+//! a struct, the comments at the ends of lines) is aligned with blanks.
 
 mod context;
 mod decls;
@@ -32,8 +31,8 @@ const MAX_PASSES: usize = 8;
 ///
 /// Formatting the result again changes nothing. One pass of the rules does
 /// not promise that: where a line break of the source decides a layout,
-/// `gofmt` itself can give a text that it would lay out differently. Such a
-/// text is formatted again, so the result is what `gofmt` settles on.
+/// one pass can give a text that a second pass lays out differently. Such a
+/// text is formatted again, until nothing changes.
 pub fn format(file: &File, source: &SourceFile, names: &ThreadedRodeo) -> String {
     format_counted(file, source, names).0
 }

@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc find(m map[int]string, wanted string) in
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE4find(_1: *gopp.map, _2: string) -> i64 [go, external] {
+fn _GPF4mainE4find(_1: *gopp.map, _2: string) -> i64 [gopp, external] {
   scope 1: block in 0  ; a.gopp:4:6
   let _0: i64
   let _1: *gopp.map "m"
@@ -86,7 +86,7 @@ fn _GPF4mainE4find(_1: *gopp.map, _2: string) -> i64 [go, external] {
     return  ; a.gopp:12:2
 }
 
-fn _GPF4mainE5pairs(_1: **gopp.map, _2: **gopp.map) -> i64 [go, external] {
+fn _GPF4mainE5pairs(_1: **gopp.map, _2: **gopp.map) -> i64 [gopp, external] {
   scope 1: block in 0  ; a.gopp:18:6
   scope 2: block in 1  ; a.gopp:19:7
   let _0: i64

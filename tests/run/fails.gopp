@@ -39,7 +39,7 @@ func all!(names []string) int {
 	return total
 }
 
-// The Go form of the same thing, and a function of the Go form that
+// The same thing with the error as a result, and such a function that
 // uses `!`: it returns the error too.
 func plain(name string) (string, error) {
 	text := load!(name)

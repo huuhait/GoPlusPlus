@@ -1,4 +1,4 @@
-//! Calls of the predeclared functions, after `go/types` (builtins.go).
+//! Calls of the predeclared functions.
 
 use super::*;
 
@@ -148,8 +148,7 @@ impl<'a> Checker<'a> {
         let unsupported = self.is_param(x.ty) && self.all_types(x.ty, fits);
         if unsupported {
             let message = format!(
-                "{} not supported as argument to built-in {name} for go1.18 (see \
-                 go.dev/issue/50937)",
+                "{} not supported as argument to built-in {name}",
                 self.describe(cx, at, x)
             );
             self.error(

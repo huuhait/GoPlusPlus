@@ -695,7 +695,7 @@ pub fn declarations(
     for (file, unit) in units.iter().enumerate() {
         checker.collect(file, *unit);
     }
-    // Go's order: the declared types, then the aliases, then the rest. The
+    // The declared types, then the aliases, then the rest. The
     // methods come before the rest: the type of a variable may be the
     // result of one.
     let is_type = |checker: &Checker, object: usize, is_alias: bool| matches!(checker.decls[object], Some(Decl { form: Form::Type { alias, .. }, .. }) if alias == is_alias);
@@ -785,7 +785,7 @@ pub fn declarations(
 
 impl<'a> Checker<'a> {
     /// The type `declared` that `expr` writes for a type declaration: no
-    /// type parameter, as in Go.
+    /// type parameter.
     fn no_param_declared(&mut self, cx: &Cx<'a>, expr: ExprId, declared: TypeId) -> TypeId {
         if !matches!(&*self.types.get(declared), Type::Param(_)) {
             return declared;
@@ -1404,7 +1404,6 @@ impl<'a> Checker<'a> {
     /// Whether no value of the type `ty` holds a value of a type of
     /// `nest`, the declared types that the walk is inside of, nor of
     /// itself. `path` is all declared types that the walk went through.
-    /// This is `validType` of Go's type checker.
     fn holds_itself_not(
         &mut self,
         ty: TypeId,

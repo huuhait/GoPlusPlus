@@ -17,7 +17,7 @@ in must
 cleanup 
 in must
 cleanup fatal
-panic: must: cleanup(what) at fails_defer.gopp:77:8: problem: fatal
+panic: must: cleanup(what) at fails_defer.gopp:78:8: problem: fatal
 
 goroutine 1 [running]:
 main.must.func0()

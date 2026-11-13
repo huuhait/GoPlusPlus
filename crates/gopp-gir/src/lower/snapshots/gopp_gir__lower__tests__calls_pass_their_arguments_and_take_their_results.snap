@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\ntype Point struct {\n\tx, y int\n}\n\ntype Li
 module "main"
 file 0 "a.gopp"
 
-fn _GPM3sumN4mainE5Point(_1: _GPTiN4mainE5Point) -> i64 [go, external] {
+fn _GPM3sumN4mainE5Point(_1: _GPTiN4mainE5Point) -> i64 [gopp, external] {
   let _0: i64
   let _1: _GPTiN4mainE5Point "p"
   bb0:
@@ -13,7 +13,7 @@ fn _GPM3sumN4mainE5Point(_1: _GPTiN4mainE5Point) -> i64 [go, external] {
     return  ; a.gopp:12:28
 }
 
-fn _GPM4moveN4mainE5Point(_1: *_GPTiN4mainE5Point, _2: i64) -> () [go, external] {
+fn _GPM4moveN4mainE5Point(_1: *_GPTiN4mainE5Point, _2: i64) -> () [gopp, external] {
   let _0: ()
   let _1: *_GPTiN4mainE5Point "p"
   let _2: i64 "dx"
@@ -22,7 +22,7 @@ fn _GPM4moveN4mainE5Point(_1: *_GPTiN4mainE5Point, _2: i64) -> () [go, external]
     return  ; a.gopp:14:42
 }
 
-fn _GPF4mainE4pair(_1: i64) -> (i64, bool) [go, external] {
+fn _GPF4mainE4pair(_1: i64) -> (i64, bool) [gopp, external] {
   let _0: (i64, bool)
   let _1: i64 "a"
   let _2: bool
@@ -32,7 +32,7 @@ fn _GPF4mainE4pair(_1: i64) -> (i64, bool) [go, external] {
     return  ; a.gopp:16:32
 }
 
-fn _GPF4mainE5named(_1: i64) -> (i64, bool) [go, external] {
+fn _GPF4mainE5named(_1: i64) -> (i64, bool) [gopp, external] {
   let _0: (i64, bool)
   let _1: i64 "a"
   let _2: i64 "n"
@@ -62,7 +62,7 @@ fn _GPF4mainE5named(_1: i64) -> (i64, bool) [go, external] {
     return  ; a.gopp:23:2
 }
 
-fn _GPF4mainE7swapped(_1: i64) -> (i64, i64) [go, external] {
+fn _GPF4mainE7swapped(_1: i64) -> (i64, i64) [gopp, external] {
   let _0: (i64, i64)
   let _1: i64 "a"
   let _2: i64 "n"
@@ -90,7 +90,7 @@ fn _GPF4mainE7swapped(_1: i64) -> (i64, i64) [go, external] {
     return  ; a.gopp:28:2
 }
 
-fn _GPF4mainE4take(_1: i64, _2: bool) -> i64 [go, external] {
+fn _GPF4mainE4take(_1: i64, _2: bool) -> i64 [gopp, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: bool "ok"
@@ -99,7 +99,7 @@ fn _GPF4mainE4take(_1: i64, _2: bool) -> i64 [go, external] {
     return  ; a.gopp:31:33
 }
 
-fn _GPF4mainE5calls(_1: _GPTiN4mainE4Line, _2: *_GPTiN4mainE5Point, _3: *i64) -> i64 [go, external] {
+fn _GPF4mainE5calls(_1: _GPTiN4mainE4Line, _2: *_GPTiN4mainE5Point, _3: *i64) -> i64 [gopp, external] {
   let _0: i64
   let _1: _GPTiN4mainE4Line "l"
   let _2: *_GPTiN4mainE5Point "q"

@@ -458,7 +458,7 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "keep(move(w.Out))      // error\nkeep(mem.Take(&w.Out)) // ok",
         ),
         FailReturnNil => (
-            "A Go-style function returns `nil` for a result whose type is never nil (a \
+            "A function that returns its error as a result returns `nil` for a result whose type is never nil (a \
              pointer, a func, an interface with methods).",
             "Declare the function with `!`, which needs no placeholder on failure, or return \
              an `Option`.",
@@ -607,7 +607,7 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func zero[T any]() T\nx := zero()      // error: cannot infer T\nx := zero[int]() // ok",
         ),
         BangNoZeroResult => (
-            "`f!(x)` in a Go-style function returns early with the error, and the other \
+            "`f!(x)` in a function that returns its error as a result returns early with the error, and the other \
              results get their zero values. Here a result has a type with no zero value.",
             "Declare the function with `!`, or handle the error and return a value.",
             "func load(id int) (*Node, error) {\n\tn := find!(id) // error: no *Node to return\n\treturn n, nil\n}\nfunc load!(id int) *Node { return find!(id) } // ok",
@@ -1496,8 +1496,8 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "n := 5\nn() // error: cannot call non-function n",
         ),
         NoZeroLookup => (
-            "An entry of a map may be missing and a channel may be closed. Go gives the zero \
-             value then, and this type has none.",
+            "An entry of a map may be missing and a channel may be closed. The read gives the \
+             zero value then, and this type has none.",
             "Read with the second value and test it: `v, ok := m[k]`, `v, ok := <-ch`.",
             "u := users[\"bob\"]     // error: User has no zero value\nu, ok := users[\"bob\"] // ok: u is used where ok is true",
         ),
@@ -1775,7 +1775,7 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "The type has this operator or this conversion already, from the type it is declared \
              as. A method would give the same expression a second meaning.",
             "Remove the method, or declare it for another operand type.",
-            "type Meters float64\n@Operator\nfunc (a Meters) Add(b Meters) Meters   // error: Meters + Meters is Go's\n@Operator\nfunc (a Meters) Mul(s Seconds) Speed  // ok",
+            "type Meters float64\n@Operator\nfunc (a Meters) Add(b Meters) Meters   // error: Meters + Meters is built in\n@Operator\nfunc (a Meters) Mul(s Seconds) Speed  // ok",
         ),
         OpTypeParams => (
             "An @Operator method has no type parameters of its own: an operator has no place to \
@@ -1796,7 +1796,7 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "make()[0] = v     // error if SetIndex is the method\nm := make()\nm[0] = v          // ok",
         ),
         OpNoMethod => (
-            "No @Operator method of the type takes this operand, and Go has no such operator \
+            "No @Operator method of the type takes this operand, and there is no built-in operator \
              for these types. The type of the operand must be the parameter type exactly: there \
              is no conversion.",
             "Declare an @Operator method for that operand type, convert the operand, or, for a \

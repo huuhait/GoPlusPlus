@@ -349,7 +349,7 @@ impl FuncCx<'_, '_> {
         let Type::Func(sig) = self.kind(code_ty) else {
             return Ok(None);
         };
-        // The value is worked out before the arguments, as in Go.
+        // The value is worked out before the arguments.
         let value = self.operand_as(callee, ty)?;
         let value = match self.stable(value)? {
             Operand::Copy(place) | Operand::Move(place) => place,
@@ -687,7 +687,7 @@ impl FuncCx<'_, '_> {
             params: params.into(),
             ret: plain.ret,
             has_env: true,
-            cc: crate::CallConv::Go,
+            cc: crate::CallConv::Gopp,
         })))
     }
 

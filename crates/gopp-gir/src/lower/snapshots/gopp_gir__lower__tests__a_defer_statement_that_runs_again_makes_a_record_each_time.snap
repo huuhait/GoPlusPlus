@@ -5,7 +5,7 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-fn _GPF4mainE3say(_1: string, _2: i64) -> () [go, external] {
+fn _GPF4mainE3say(_1: string, _2: i64) -> () [gopp, external] {
   let _0: ()
   let _1: string "s"
   let _2: i64 "n"
@@ -13,7 +13,7 @@ fn _GPF4mainE3say(_1: string, _2: i64) -> () [go, external] {
     return  ; a.gopp:3:28
 }
 
-fn _GPF4mainE5loops(_1: i64, _2: string) -> () [go, external] {
+fn _GPF4mainE5loops(_1: i64, _2: string) -> () [gopp, external] {
   scope 1: block in 0  ; a.gopp:7:6
   scope 2: block in 1  ; a.gopp:9:7
   let _0: ()
@@ -432,7 +432,7 @@ fn _GPC0_F4mainE5loops(_1: *u8) -> () [c, internal] {
     return  ; a.gopp:5:6
 }
 
-fn _GPF4mainE5jumps(_1: i64) -> () [go, external] {
+fn _GPF4mainE5jumps(_1: i64) -> () [gopp, external] {
   let _0: ()
   let _1: i64 "n"
   let _2: (*u8, fn "C"(*u8) -> (), *u8, *u8)

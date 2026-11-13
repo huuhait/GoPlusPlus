@@ -97,7 +97,7 @@ pub(super) enum Waits {
     Delete(super::map::MapOf),
     Clear(super::map::MapOf),
     /// `recover()`, which stops no panic when it is the deferred call
-    /// itself, as in Go.
+    /// itself.
     Nothing,
 }
 
@@ -260,7 +260,7 @@ pub(super) struct FuncCx<'a, 'm> {
     pub temps: Vec<(Place, Ends)>,
     owning: FxHashMap<(LocalId, u32), usize>,
     /// The variables that do not own their values: a plain range
-    /// variable of a Go++ file is the element as it is.
+    /// variable is the element as it is.
     borrowed: FxHashSet<LocalId>,
     /// The names in the `return` that is lowered whose variables end
     /// with the function: each hands its value over.
@@ -405,7 +405,7 @@ pub(super) fn lower_start<'a>(shared: &'a Shared<'a>, module: &mut Module, memo:
         params: [].into(),
         ret: TypeInterner::UNIT,
         has_env: false,
-        cc: crate::CallConv::Go,
+        cc: crate::CallConv::Gopp,
     }));
     let link = Linkage::External;
     let built = FuncBuilder::new(module, &symbol, sig, link, Span::default()).and_then(|b| {

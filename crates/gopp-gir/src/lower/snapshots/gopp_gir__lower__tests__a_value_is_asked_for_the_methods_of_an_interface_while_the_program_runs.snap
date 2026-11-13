@@ -55,7 +55,7 @@ global const @_GPTaN4mainE6SquareN4mainE5Shape: [2]*u8 [linkonce_odr]
     const global @_GPTiN4mainE6Square
     const fn @_GPTIM4AreaN4mainE6Square
 
-fn _GPM4AreaN4mainE6Square(_1: _GPTiN4mainE6Square) -> i64 [go, external] {
+fn _GPM4AreaN4mainE6Square(_1: _GPTiN4mainE6Square) -> i64 [gopp, external] {
   let _0: i64
   let _1: _GPTiN4mainE6Square "s"
   bb0:
@@ -63,7 +63,7 @@ fn _GPM4AreaN4mainE6Square(_1: _GPTiN4mainE6Square) -> i64 [go, external] {
     return  ; a.gopp:14:30
 }
 
-fn _GPM4NameN4mainE6Square(_1: _GPTiN4mainE6Square) -> string [go, external] {
+fn _GPM4NameN4mainE6Square(_1: _GPTiN4mainE6Square) -> string [gopp, external] {
   let _0: string
   let _1: _GPTiN4mainE6Square "s"
   bb0:
@@ -71,7 +71,7 @@ fn _GPM4NameN4mainE6Square(_1: _GPTiN4mainE6Square) -> string [go, external] {
     return  ; a.gopp:16:33
 }
 
-fn _GPM4growN4mainE6Square(_1: *_GPTiN4mainE6Square) -> () [go, external] {
+fn _GPM4growN4mainE6Square(_1: *_GPTiN4mainE6Square) -> () [gopp, external] {
   let _0: ()
   let _1: *_GPTiN4mainE6Square "s"
   bb0:
@@ -79,7 +79,7 @@ fn _GPM4growN4mainE6Square(_1: *_GPTiN4mainE6Square) -> () [go, external] {
     return  ; a.gopp:18:36
 }
 
-fn _GPF4mainE3ask(_1: gopp.iface, _2: gopp.iface, _3: gopp.iface) -> (gopp.iface, gopp.iface, i64) [go, external] {
+fn _GPF4mainE3ask(_1: gopp.iface, _2: gopp.iface, _3: gopp.iface) -> (gopp.iface, gopp.iface, i64) [gopp, external] {
   scope 1: block in 0  ; a.gopp:22:5
   scope 2: block in 0  ; a.gopp:25:9
   scope 3: block in 0  ; a.gopp:25:9
@@ -470,7 +470,7 @@ fn _GPF4mainE3ask(_1: gopp.iface, _2: gopp.iface, _3: gopp.iface) -> (gopp.iface
     return  ; a.gopp:31:2
 }
 
-fn _GPF4mainE3two() -> (gopp.iface, _GPTiN4mainE6Square) [go, external] {
+fn _GPF4mainE3two() -> (gopp.iface, _GPTiN4mainE6Square) [gopp, external] {
   let _0: (gopp.iface, _GPTiN4mainE6Square)
   let _1: *u8
   let _2: **u8
@@ -492,7 +492,7 @@ fn _GPF4mainE3two() -> (gopp.iface, _GPTiN4mainE6Square) [go, external] {
     return  ; a.gopp:34:35
 }
 
-fn _GPF4mainE4main() -> () [go, external] {
+fn _GPF4mainE4main() -> () [gopp, external] {
   let _0: ()
   let _1: *u8
   let _2: **u8
@@ -733,7 +733,7 @@ fn _GPF4mainE4main() -> () [go, external] {
     return  ; a.gopp:42:1
 }
 
-fn _GPTIM4AreaN4mainE6Square(_1: *u8) -> i64 [go, linkonce_odr] {
+fn _GPTIM4AreaN4mainE6Square(_1: *u8) -> i64 [gopp, linkonce_odr] {
   let _0: i64
   let _2: *_GPTiN4mainE6Square
   let _3: i64
@@ -745,7 +745,7 @@ fn _GPTIM4AreaN4mainE6Square(_1: *u8) -> i64 [go, linkonce_odr] {
     return
 }
 
-fn _GPTIM4NameN4mainE6Square(_1: *u8) -> string [go, linkonce_odr] {
+fn _GPTIM4NameN4mainE6Square(_1: *u8) -> string [gopp, linkonce_odr] {
   let _0: string
   let _2: *_GPTiN4mainE6Square
   let _3: string
@@ -757,7 +757,7 @@ fn _GPTIM4NameN4mainE6Square(_1: *u8) -> string [go, linkonce_odr] {
     return
 }
 
-fn _GPTIM4growN4mainE6Square(_1: *u8) -> () [go, linkonce_odr] {
+fn _GPTIM4growN4mainE6Square(_1: *u8) -> () [gopp, linkonce_odr] {
   let _0: ()
   let _2: *_GPTiN4mainE6Square
   let _3: ()

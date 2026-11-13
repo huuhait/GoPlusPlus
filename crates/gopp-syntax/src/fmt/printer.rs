@@ -15,7 +15,7 @@ use crate::token::TokenKind as T;
 pub(super) const INFINITY: i32 = 1 << 30;
 const MAX_NEWLINES: i32 = 2;
 /// Pending white space is written out when it reaches this many entries,
-/// which moves the comments that follow; `gofmt` has the same limit.
+/// which moves the comments that follow.
 const WHITE_SPACE_LIMIT: usize = 16;
 const FORMFEED: u8 = 0x0C;
 

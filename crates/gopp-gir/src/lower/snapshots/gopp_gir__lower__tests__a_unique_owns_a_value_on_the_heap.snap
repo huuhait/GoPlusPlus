@@ -3,7 +3,7 @@ source: crates/gopp-gir/src/lower/tests.rs
 expression: "format!(\"{lent}\\n}}\\n{dropped}\\n}}\\n{cloned}\\n}}\")"
 ---
 
-fn _GPF4mainE4lent() -> i64 [go, external] {
+fn _GPF4mainE4lent() -> i64 [gopp, external] {
   let _0: i64
   let _1: *_GPTiIu6UniqueN4mainE5PointE
   let _2: *_GPTiIu6UniqueN4mainE5PointE "p"

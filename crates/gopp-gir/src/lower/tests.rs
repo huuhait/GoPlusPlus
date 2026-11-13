@@ -142,7 +142,7 @@ fn gir(text: &str) -> String {
 }
 
 #[test]
-fn arithmetic_has_the_results_and_the_checks_of_go() {
+fn arithmetic_has_its_results_and_its_checks() {
     insta::assert_snapshot!(gir("package main
 
 func ints(a, b int, u uint8, n uint, k int) int {
@@ -1762,8 +1762,8 @@ func plain(n int) int {
     };
     // The error is one more result, an interface value: none where the
     // function returns its results.
-    assert!(module.contains("\nfn _GPF4mainE4half(_1: i64) -> (i64, gopp.iface) [go, external]"));
-    assert!(module.contains("\nfn _GPF4mainE5check(_1: i64) -> gopp.iface [go, external]"));
+    assert!(module.contains("\nfn _GPF4mainE4half(_1: i64) -> (i64, gopp.iface) [gopp, external]"));
+    assert!(module.contains("\nfn _GPF4mainE5check(_1: i64) -> gopp.iface [gopp, external]"));
     let half = without_cleanup(body("_GPF4mainE4half"));
     assert!(half.contains("const zero: gopp.iface}"), "{half}");
     // In a function that can fail, an error of a call with the mark is
@@ -2673,7 +2673,7 @@ func main() {
         let odr = module.lines().filter(|line| line.starts_with("fn _GPIF"));
         assert!(
             odr.clone()
-                .all(|line| line.ends_with("[go, linkonce_odr] {"))
+                .all(|line| line.ends_with("[gopp, linkonce_odr] {"))
         );
         // The code of an instance that is a value is made once too.
         assert_eq!(
@@ -2754,7 +2754,7 @@ func main() {
         let odr = module.lines().filter(|line| line.starts_with("fn _GPM"));
         assert!(
             odr.clone()
-                .all(|line| line.ends_with("[go, linkonce_odr] {"))
+                .all(|line| line.ends_with("[gopp, linkonce_odr] {"))
         );
         if file == "a.gopp" {
             insta::assert_snapshot!(module);
@@ -3162,7 +3162,7 @@ func main() {
     let odr = module.lines().filter(|line| line.starts_with("fn _GPIM"));
     assert!(
         odr.clone()
-            .all(|line| line.ends_with("[go, linkonce_odr] {"))
+            .all(|line| line.ends_with("[gopp, linkonce_odr] {"))
     );
 }
 

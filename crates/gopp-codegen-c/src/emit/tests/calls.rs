@@ -57,7 +57,7 @@ fn the_convention_and_the_environment_are_written_for_the_target() {
         params: [bytes, wide].into(),
         ret: wide,
         has_env: true,
-        cc: CallConv::Go,
+        cc: CallConv::Gopp,
     }));
     let of_c_side = FuncBuilder::new(
         &mut module,
@@ -204,7 +204,7 @@ const KINDS: [&str; 18] = [
 /// How many of the kinds have whole words.
 const WHOLE: usize = 14;
 
-/// A value of the kind that the number picks, as Go writes it.
+/// A value of the kind that the number picks, as source text.
 fn value(kind: usize, n: u64) -> String {
     match kind {
         0 => (n % 200) as i64 - 100,
@@ -235,7 +235,7 @@ fn value(kind: usize, n: u64) -> String {
     .to_string()
 }
 
-/// Whether `got` is that value, as a condition of Go.
+/// Whether `got` is that value, as a condition in source text.
 fn holds(kind: usize, got: &str, n: u64) -> String {
     match kind {
         12 => format!("{got}.a == {} && {got}.b == {}.5", n % 1000, n % 77),
@@ -274,7 +274,7 @@ fn holds(kind: usize, got: &str, n: u64) -> String {
 /// How many parameters each function of `many_parameters` has.
 const PARAMS: usize = 24;
 
-/// A program of Go that checks itself. Each `f` has 24 parameters of
+/// A program that checks itself. Each `f` has 24 parameters of
 /// every kind (every other one of the kinds of whole words only) and
 /// gives one to eight of them back; each `g` has the
 /// parameters of its `f` in another order, passes them on and returns
@@ -352,7 +352,7 @@ fn many_parameters(functions: usize) -> String {
     out + &main
 }
 
-/// Calls with 24 parameters and up to eight results pass what Go says,
+/// Calls with 24 parameters and up to eight results pass what was given,
 /// at every level: in registers, in the frame, and through the pointers
 /// that Clang makes for what is too large.
 #[test]

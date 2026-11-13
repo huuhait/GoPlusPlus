@@ -222,7 +222,7 @@ fn a_declared_type_is_not_the_type_it_was_declared_as() {
 }
 
 #[test]
-fn values_are_assignable_as_in_go() {
+fn values_are_assignable_to_what_takes_them() {
     let f = Fixture::new();
     let (int, string) = (f.basic(Basic::Int), f.basic(Basic::String));
     let ints = f.types.slice(int);
@@ -262,7 +262,7 @@ fn values_are_assignable_as_in_go() {
 }
 
 #[test]
-fn nil_is_a_value_of_fewer_types_than_have_one_in_go() {
+fn nil_is_a_value_of_fewer_types_than_it_is_written_for() {
     let f = Fixture::new();
     let int = f.basic(Basic::Int);
     let nil = f.basic(Basic::UntypedNil);
@@ -531,7 +531,7 @@ fn threads_that_build_the_same_type_get_the_same_id() {
 }
 
 #[test]
-fn values_are_laid_out_as_go_lays_them_out() {
+fn values_are_laid_out_by_their_fields() {
     let f = Fixture::new();
     let basic = |basic| f.basic(basic);
     let strukt = |fields: &[(&str, TypeId)]| {

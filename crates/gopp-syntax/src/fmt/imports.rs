@@ -1,4 +1,4 @@
-//! Sorts the imports of each import group, as `gofmt` does: within a run
+//! Sorts the imports of each import group: within a run
 //! of import lines that no blank line divides, by path; a duplicate without
 //! a comment is dropped. The comments of a line move with it.
 
@@ -187,7 +187,7 @@ fn sort_run(cx: &mut Cx, run: &[Spec], rparen: u32, sorted: &mut Vec<Spec>) {
     }
 }
 
-/// The value of a Go string literal.
+/// The value of a string literal.
 pub(super) fn unquote(literal: &str) -> Option<String> {
     if let Some(raw) = literal.strip_prefix('`') {
         return Some(raw.strip_suffix('`')?.replace('\r', ""));
@@ -230,7 +230,7 @@ pub(super) fn unquote(literal: &str) -> Option<String> {
     Some(value)
 }
 
-/// The import path as `gofmt` writes it: a path in a raw string becomes an
+/// The import path in canonical form: a path in a raw string becomes an
 /// ordinary string when nothing in it needs the raw form.
 pub(crate) fn canonical_path(literal: &str) -> Option<String> {
     let value = unquote(literal)?;

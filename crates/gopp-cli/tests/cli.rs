@@ -759,7 +759,7 @@ func main() {
 ";
 
 #[test]
-fn demangle_reads_symbols_as_go_plus_plus() {
+fn demangle_reads_symbols_as_source_text() {
     let names = ["_GPF4mainE3Foo", "_GPTo7opr_DivN4mainE4Vec2LdE"];
     let output = run(gopp().arg("demangle").args(names));
     assert_eq!(output.status.code(), Some(0));

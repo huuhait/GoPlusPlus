@@ -3,7 +3,7 @@ source: crates/gopp-gir/src/lower/tests.rs
 expression: "format!(\"{start}\\n}}\\n{}\\n}}\\n{}\\n}}\", step(4), step(5))"
 ---
 
-fn _GPJ4mainE() -> () [go, external] {
+fn _GPJ4mainE() -> () [gopp, external] {
   let _0: ()
   let _1: ()
   let _2: ()
@@ -27,7 +27,7 @@ fn _GPJ4mainE() -> () [go, external] {
     return
 }
 
-fn _GPC4_J4mainE() -> () [go, external] {
+fn _GPC4_J4mainE() -> () [gopp, external] {
   let _0: ()
   let _1: (string, i64)
   let _2: *string
@@ -42,7 +42,7 @@ fn _GPC4_J4mainE() -> () [go, external] {
     return  ; a.gopp:9:18
 }
 
-fn _GPC5_J4mainE() -> () [go, external] {
+fn _GPC5_J4mainE() -> () [gopp, external] {
   let _0: ()
   let _1: *i64
   let _2: i64

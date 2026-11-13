@@ -1,5 +1,4 @@
-//! The text of documentation comments in canonical form, as `gofmt`
-//! rewrites it: paragraphs, headings (`# Title`), code blocks (indented by
+//! The text of documentation comments in canonical form: paragraphs, headings (`# Title`), code blocks (indented by
 //! a tab), lists (` - item`, `1. item`) and link definitions
 //! (`[text]: url`, moved to the end), with one blank line between them.
 
@@ -227,8 +226,8 @@ fn with_quotes(text: &str, out: &mut String) {
             continue;
         }
         if rest.starts_with("```") {
-            // `gofmt` looks for the end of the run of backquotes at the
-            // wrong place; what it skips must be skipped here too.
+            // The run of backquotes ends where the first three end; what
+            // follows them on the line is skipped.
             let mut end = at + 3;
             while rest.as_bytes().get(end) == Some(&b'`') {
                 end += 1;
@@ -520,7 +519,7 @@ pub(super) fn reformat(text: &str) -> String {
 }
 
 /// Whether a line comment, without its `//`, is a directive such as
-/// `go:noinline` and no text.
+/// `lint:ignore` and no text.
 pub(super) fn is_directive(comment: &str) -> bool {
     if ["line ", "extern ", "export "]
         .iter()
@@ -562,9 +561,9 @@ mod tests {
     fn headings_links_and_quotes() {
         assert_eq!(
             reformat(
-                "Intro.\n\nOld Heading\n\nText with ``quotes'' and [a link].\n\n[a link]: https://go.dev/''x\n[unused]: http://example.com\n"
+                "Intro.\n\nOld Heading\n\nText with ``quotes'' and [a link].\n\n[a link]: https://example.org/''x\n[unused]: http://example.com\n"
             ),
-            "Intro.\n\n# Old Heading\n\nText with \u{201C}quotes\u{201D} and [a link].\n\n[a link]: https://go.dev/''x\n\n[unused]: http://example.com\n"
+            "Intro.\n\n# Old Heading\n\nText with \u{201C}quotes\u{201D} and [a link].\n\n[a link]: https://example.org/''x\n\n[unused]: http://example.com\n"
         );
         assert_eq!(
             reformat("See http://x.y/a''b, ok.\n"),
@@ -574,10 +573,10 @@ mod tests {
 
     #[test]
     fn directives_are_told_from_text() {
-        assert!(is_directive("go:noinline"));
-        assert!(is_directive("line foo.go:10"));
-        assert!(!is_directive(" go:noinline"));
+        assert!(is_directive("lint:ignore"));
+        assert!(is_directive("line foo.gopp:10"));
+        assert!(!is_directive(" lint:ignore"));
         assert!(!is_directive("Note: text"));
-        assert!(!is_directive("go: text"));
+        assert!(!is_directive("lint: text"));
     }
 }
