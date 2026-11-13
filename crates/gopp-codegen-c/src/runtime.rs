@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 90] = [
+pub const FUNCS: [RuntimeFunc; 96] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -242,6 +242,16 @@ pub const FUNCS: [RuntimeFunc; 90] = [
         "const void *value, uint64_t size",
     ),
     returns("_gopp_box_free", "uint8_t *box"),
+    gives(
+        "uint8_t *",
+        "_gopp_shared_new",
+        "const void *value, uint64_t size",
+    ),
+    returns("_gopp_shared_retain", "uint8_t *value"),
+    gives("bool", "_gopp_shared_release", "uint8_t *value"),
+    returns("_gopp_weak_retain", "uint8_t *value"),
+    returns("_gopp_weak_release", "uint8_t *value"),
+    gives("uint8_t *", "_gopp_weak_lock", "uint8_t *value"),
     returns("_gopp_iface_clone", "uint8_t *value"),
     returns("_gopp_iface_drop", "uint8_t *value"),
     gives("bool", "_gopp_iface_eq", "uint8_t *a, uint8_t *b"),
@@ -519,7 +529,7 @@ pub(crate) const INTERNAL: Source = ("internal.h", include_str!("../../../runtim
 
 /// The sources of the runtime for a system: every target has all but
 /// the last.
-pub(crate) fn sources(os: Os) -> [Source; 9] {
+pub(crate) fn sources(os: Os) -> [Source; 10] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",
@@ -536,6 +546,7 @@ pub(crate) fn sources(os: Os) -> [Source; 9] {
         ("map.c", include_str!("../../../runtime/map.c")),
         ("iface.c", include_str!("../../../runtime/iface.c")),
         ("func.c", include_str!("../../../runtime/func.c")),
+        ("shared.c", include_str!("../../../runtime/shared.c")),
         of_system,
     ]
 }

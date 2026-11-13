@@ -36,6 +36,12 @@ enum Cloned {
     /// type, which is copied by its own glue if its copy is more than
     /// its bytes; it ends with its value, and then its box.
     Unique(TypeId, Option<CheckedTypeId>),
+    /// A `Shared`: its copy is one more handle. With its last handle
+    /// its value ends, by the glue of this type if the value owns
+    /// anything, and then the handle that all of them had of the box.
+    Shared(Option<CheckedTypeId>),
+    /// A `Weak`: one more handle of the box, or one less.
+    Weak,
     /// A string: its bytes are counted once more, or once less.
     Text,
     /// A struct of a type with a `drop` method. Its copy is what its
@@ -123,7 +129,13 @@ impl FuncCx<'_, '_> {
             (_, Some(CopyRule::SameBytes)) => return Ok(Cloned::Text),
             (
                 Glue::Clone,
-                Some(CopyRule::Elements | CopyRule::Parts | CopyRule::Method | CopyRule::Pointee),
+                Some(
+                    CopyRule::Elements
+                    | CopyRule::Parts
+                    | CopyRule::Method
+                    | CopyRule::Pointee
+                    | CopyRule::Handle,
+                ),
             ) => {}
             (Glue::Clone, None) => return Err("a copy of a value that cannot be copied"),
             (Glue::Clone, _) => return Err("a value of a type that is not copied by its parts"),
@@ -153,6 +165,12 @@ impl FuncCx<'_, '_> {
                 let value = lower(self, *of)?;
                 Cloned::Unique(value, (!self.flat(value)).then_some(*of))
             }
+            CheckedType::Shared(of) => {
+                let value = lower(self, *of)?;
+                let ends = kind == Glue::Drop && !self.flat(value);
+                Cloned::Shared(ends.then_some(*of))
+            }
+            CheckedType::Weak(_) => Cloned::Weak,
             // An option of what is nil when it is all zero is that
             // value itself.
             CheckedType::Option(held) if lower(self, *held)? == lower(self, ty)? => {
@@ -205,8 +223,10 @@ impl FuncCx<'_, '_> {
             Err(what) => return Ok(Err(what)),
         };
         Ok(Ok(match how {
-            Cloned::Text => Vec::new(),
-            Cloned::Slice(_, each) | Cloned::Unique(_, each) => each.into_iter().collect(),
+            Cloned::Text | Cloned::Weak => Vec::new(),
+            Cloned::Slice(_, each) | Cloned::Unique(_, each) | Cloned::Shared(each) => {
+                each.into_iter().collect()
+            }
             Cloned::Map => match self.map_of_type(ty) {
                 Ok(_) => Vec::new(),
                 Err(what) => return Ok(Err(what)),
@@ -291,7 +311,7 @@ impl FuncCx<'_, '_> {
 
     /// The type of the checker that the expression has where its value
     /// is of the type `ty`: its own, or what it points to if it is read
-    /// through a pointer.
+    /// through a pointer, a `Unique` or a `Shared`.
     pub fn checked_as(&mut self, expr: ExprId, ty: TypeId) -> Option<CheckedTypeId> {
         let types = self.shared.types;
         // A part of the value that is the receiver of a method.
@@ -315,7 +335,7 @@ impl FuncCx<'_, '_> {
                 return Some(checked);
             }
             checked = match &*types.get(types.underlying(checked)) {
-                CheckedType::Pointer(to) => *to,
+                CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => *to,
                 _ => return None,
             };
         }
@@ -504,8 +524,10 @@ impl FuncCx<'_, '_> {
         let word = self.b.types().int(64, false);
         // The glue of the parts that this one calls.
         let part = match &how {
-            Cloned::Slice(_, each) | Cloned::Unique(_, each) => *each,
-            Cloned::Map | Cloned::Fields(_) | Cloned::Text | Cloned::Method(_) => None,
+            Cloned::Slice(_, each) | Cloned::Unique(_, each) | Cloned::Shared(each) => *each,
+            Cloned::Map | Cloned::Fields(_) | Cloned::Text | Cloned::Method(_) | Cloned::Weak => {
+                None
+            }
             Cloned::Elements(_, _, part) | Cloned::Held(part) => Some(*part),
         };
         let of_part = match part.map(|part| self.glue(kind, part)).transpose()? {
@@ -635,6 +657,42 @@ impl FuncCx<'_, '_> {
                         if let Some(glue) = of_part {
                             self.call_glue(glue, made)?;
                         }
+                    }
+                }
+                self.b.goto(done)?;
+                self.b.switch_to(done);
+            }
+            Cloned::Shared(_) | Cloned::Weak => {
+                let [held, done] = [(); 2].map(|()| self.b.new_block());
+                let bytes = self.bytes_ty();
+                let handle = Operand::Copy(value.clone());
+                let at = Rvalue::Cast(CastKind::PtrToPtr, handle.clone(), bytes);
+                let at = Operand::Copy(Place::local(self.b.assign_temp(at)?));
+                // A handle that gave its value up is nil.
+                let null = self.zero(self.b.operand_ty(&handle));
+                let set = self
+                    .b
+                    .assign_temp(Rvalue::Binary(crate::BinOp::Ne, handle, null))?;
+                self.b
+                    .switch(Operand::Copy(Place::local(set)), vec![(0, done)], held)?;
+                self.b.switch_to(held);
+                match (matches!(how, Cloned::Weak), ends) {
+                    (false, false) => {
+                        self.runtime_call("_gopp_shared_retain", &[bytes], vec![at])?
+                    }
+                    (true, false) => self.runtime_call("_gopp_weak_retain", &[bytes], vec![at])?,
+                    (true, true) => self.runtime_call("_gopp_weak_release", &[bytes], vec![at])?,
+                    (false, true) => {
+                        let bool = TypeInterner::BOOL;
+                        let last =
+                            self.runtime("_gopp_shared_release", &[bytes], bool, vec![at.clone()])?;
+                        let ended = self.b.new_block();
+                        self.b.switch(last, vec![(0, done)], ended)?;
+                        self.b.switch_to(ended);
+                        if let Some(glue) = of_part {
+                            self.call_glue(glue, at.clone())?;
+                        }
+                        self.runtime_call("_gopp_weak_release", &[bytes], vec![at])?;
                     }
                 }
                 self.b.goto(done)?;

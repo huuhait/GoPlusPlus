@@ -51,7 +51,10 @@ impl FuncCx<'_, '_> {
         self.memo.steps += 1;
         let parts = match self.kind(ty) {
             Type::String | Type::Slice(_) => return false,
-            Type::Ptr(_) => return !self.is_map(ty) && !self.memo.uniques.contains_key(&ty),
+            Type::Ptr(_) => {
+                let handle = self.memo.held(ty).is_some() || self.memo.weaks.contains_key(&ty);
+                return !self.is_map(ty) && !handle;
+            }
             Type::Array(of, _) | Type::Option(of) => vec![of],
             Type::Tuple(_) if self.memo.func_types.contains(&ty) => return false,
             Type::Tuple(parts) => parts.to_vec(),

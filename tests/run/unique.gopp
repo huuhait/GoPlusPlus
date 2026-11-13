@@ -79,6 +79,10 @@ func scale(p *Point, by int) {
 
 func take(p Unique[Point]) int { return p.x + p.y }
 
+func (p Point) Sum() int { return p.x + p.y }
+
+func (p *Point) Grow() { p.x++ }
+
 func made(x int) Unique[Point] { return NewUnique(Point{x: x, y: x + 1}) }
 
 type Holder struct {
@@ -127,6 +131,9 @@ func points() {
 	r := move(p)
 	r.y++
 	println(r.x, r.y)
+	// A method takes the value or its address through the handle.
+	r.Grow()
+	println(r.Sum(), r.x)
 }
 
 func files() {

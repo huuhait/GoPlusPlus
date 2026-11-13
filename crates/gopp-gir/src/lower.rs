@@ -593,6 +593,11 @@ pub(crate) struct Memo<'a> {
     /// type of what it owns: a pointer to a box of its own, which holds
     /// the value first.
     pub uniques: FxHashMap<TypeId, TypeId>,
+    /// The same for the `Shared` handles and for the `Weak` handles:
+    /// the box of such a handle has the counts of its handles in front
+    /// of it, which the runtime keeps.
+    pub shareds: FxHashMap<TypeId, TypeId>,
+    pub weaks: FxHashMap<TypeId, TypeId>,
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
     /// The global of each variable that the run has named.
@@ -611,6 +616,13 @@ pub(crate) struct Memo<'a> {
 }
 
 impl<'a> Memo<'a> {
+    /// What a `Unique` or a `Shared` handle of the type leads to: a
+    /// field or a method of it is reached through the handle.
+    pub fn held(&self, handle: TypeId) -> Option<TypeId> {
+        let held = self.uniques.get(&handle);
+        held.or_else(|| self.shareds.get(&handle)).copied()
+    }
+
     fn new(shared: &'a Shared<'_>, locals: &'a Locals<'a>) -> Self {
         Self {
             namer: Namer::new(shared.types, shared.names).with_locals(locals),
@@ -631,6 +643,8 @@ impl<'a> Memo<'a> {
             open: Vec::new(),
             dropped: rustc_hash::FxHashSet::default(),
             uniques: FxHashMap::default(),
+            shareds: FxHashMap::default(),
+            weaks: FxHashMap::default(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
             global_keys: FxHashMap::default(),

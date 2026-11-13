@@ -1,0 +1,211 @@
+package main
+
+var live, ended int
+
+type File struct {
+	fd   int
+	name string
+}
+
+func open(fd int) File {
+	live++
+	return File{fd, "f"}
+}
+
+func (f *File) drop() {
+	ended++
+	println("  end", f.fd)
+}
+
+func (f File) Fd() int { return f.fd }
+
+func (f *File) Named() string { return f.name }
+
+func counts(when string) { println(when, live, ended) }
+
+type Holder struct {
+	file  Shared[File]
+	other Option[Shared[File]]
+}
+
+type Owner struct{ name string }
+
+type Pet struct {
+	name  string
+	owner Weak[Owner]
+}
+
+func fd(f *File) int { return f.fd }
+
+func keep(f Shared[File]) Shared[File] { return f }
+
+func sum(files []Shared[File]) int {
+	total := 0
+	for _, f := range files {
+		total += f.fd
+	}
+	return total
+}
+
+func handles() {
+	a := NewShared(open(1))
+	b := a
+	c := keep(b)
+	println(a.fd, b.Fd(), c.Named(), fd(a))
+	counts("three handles")
+}
+
+func kept() {
+	var files []Shared[File]
+	first := NewShared(open(2))
+	files = append(files, first, NewShared(open(3)))
+	files = append(files, first)
+	println(sum(files), len(files))
+	byName := map[string]Shared[File]{"x": first}
+	if x, ok := byName["x"]; ok {
+		println(x.fd)
+	}
+	h := Holder{file: first}
+	g := h
+	g.other = files[1]
+	if o := g.other; o != nil {
+		println(g.file.fd, o.fd, h.other == nil)
+	}
+	counts("in a slice, a map and a struct")
+}
+
+func closed() func() int {
+	f := NewShared(open(4))
+	return func() int { return f.fd }
+}
+
+func boxed() {
+	var v any = NewShared(open(5))
+	w := v
+	if f, ok := w.(Shared[File]); ok {
+		println(f.fd)
+	}
+	counts("in an interface")
+}
+
+func weak() {
+	var pets []Pet
+	{
+		owner := NewShared(Owner{"ann"})
+		pets = append(pets, Pet{"rex", NewWeak(owner)})
+		second := pets[0]
+		if o := second.owner.Lock(); o != nil {
+			println(second.name, "of", o.name)
+		}
+	}
+	if o := pets[0].owner.Lock(); o == nil {
+		println(pets[0].name, "has no owner")
+	}
+	f := NewShared(open(6))
+	w := NewWeak(f)
+	late := w.Lock()
+	f = NewShared(open(7))
+	counts("a locked handle keeps the value")
+	println(late != nil, w.Lock() != nil)
+	late = nil
+	println(w.Lock() == nil)
+	counts("the last handle ended it")
+}
+
+func plain() {
+	n := NewShared(41)
+	m := n
+	words := NewShared([]string{"a", "b"})
+	again := words
+	println(*n+1, *m, len(*words), (*again)[1])
+	given := move(words)
+	println(len(*given))
+}
+
+type Node struct {
+	Name   string
+	Tags   []string
+	Parent Option[Weak[Node]]
+}
+
+func (n Node) Label() string { return n.Name + "!" }
+
+func (n *Node) Path() string {
+	if p := n.Parent; p != nil {
+		if up := p.Lock(); up != nil {
+			return up.Path() + "/" + n.Name
+		}
+		return "?/" + n.Name
+	}
+	return n.Name
+}
+
+func child(of Shared[Node], name string) Shared[Node] {
+	return NewShared(Node{Name: of.Name + "." + name, Tags: []string{name}, Parent: NewWeak(of)})
+}
+
+func first[T Clone](xs []T) T { return xs[0] }
+
+type Stack[T Clone] struct{ items []T }
+
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
+
+func (s *Stack[T]) Top() T { return s.items[len(s.items)-1] }
+
+var held Option[Shared[Node]]
+
+func fails(n Shared[Node]) {
+	defer func() {
+		recover()
+		println("recovered with", n.Name)
+	}()
+	var xs []int
+	println(xs[len(n.Tags)])
+}
+
+func linked() {
+	root := NewShared(Node{Name: "r" + "oot", Tags: []string{"a", "b"}})
+	leaf := child(child(root, "mid"), "leaf")
+	println(leaf.Path(), leaf.Label(), len(leaf.Tags))
+	name := leaf.Name
+	tags := leaf.Tags
+	copied := *leaf
+	leaf = child(root, "other")
+	println(name, tags[0], copied.Name, leaf.Path())
+	for _, &t := range root.Tags {
+		print(t, " ")
+	}
+	println()
+	both := []Shared[Node]{root, leaf}
+	one := first(both)
+	var s Stack[Shared[Node]]
+	s.Push(one)
+	s.Push(leaf)
+	println(one.Name, s.Top().Name, first(both).Label())
+	label := root.Label
+	path := leaf.Path
+	println(label(), path(), root == one, root == leaf)
+	held = leaf
+	fails(root)
+	if k := held; k != nil {
+		println(k.Path())
+	}
+}
+
+func main() {
+	handles()
+	counts("after handles")
+	kept()
+	counts("after kept")
+	{
+		f := closed()
+		println(f(), f())
+	}
+	counts("after closed")
+	boxed()
+	counts("after boxed")
+	weak()
+	counts("after weak")
+	plain()
+	linked()
+}

@@ -3650,18 +3650,90 @@ func main() {
     let cloned = glue("_GPTcIu6UniqueN4mainE5PointE");
     assert_eq!(calls(cloned, "_gopp_iface_box"), 1, "{cloned}");
     insta::assert_snapshot!(format!("{lent}\n}}\n{dropped}\n}}\n{cloned}\n}}"));
-    // The other handles are not lowered yet.
-    let (_, messages) = lowered_with(
-        &[(
-            "a.gopp",
-            "package main\n\nfunc main() {\n\ts := NewShared(1)\n\t_ = s\n}\n",
-        )],
-        usize::MAX,
+}
+
+// rule: OWN-P8
+#[test]
+fn a_shared_value_ends_with_its_last_handle() {
+    let text = "package main
+
+type File struct {
+	fd   int
+	name string
+}
+
+func made(fd int) Shared[File] { return NewShared(File{fd, \"f\"}) }
+
+func read(f *File) int { return f.fd }
+
+func lent() int {
+	f := made(1)
+	return read(f) + f.fd
+}
+
+func copied() int {
+	f := made(2)
+	g := f
+	return f.fd + g.fd
+}
+
+func watched(f Shared[File]) Weak[File] { return NewWeak(f) }
+
+func locked(w Weak[File]) int {
+	if f := w.Lock(); f != nil {
+		return f.fd
+	}
+	return 0
+}
+
+func main() {
+	f := made(3)
+	println(lent(), copied(), locked(watched(f)))
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+    // The handles are pointers to boxes of their own types: a `Shared`
+    // is no `Weak` and no `*File`.
+    let made = body("_GPF4mainE4made");
+    assert!(
+        made.contains(") -> *_GPTiIu6SharedN4mainE4FileE "),
+        "{made}"
     );
-    assert_eq!(
-        messages,
-        ["a.gopp:4:7: not supported yet: the built-in function NewShared"]
+    assert_eq!(calls(made, "_gopp_shared_new"), 1, "{made}");
+    let watched = body("_GPF4mainE7watched");
+    assert!(
+        watched.contains(") -> *_GPTiIu4WeakN4mainE4FileE "),
+        "{watched}"
     );
+    assert_eq!(calls(watched, "_gopp_weak_retain"), 1, "{watched}");
+    // A handle that a pointer parameter is lent is the address of the
+    // value: no handle more.
+    let lent = body("_GPF4mainE4lent");
+    assert_eq!(calls(lent, "_GPTcIu6SharedN4mainE4FileE"), 0, "{lent}");
+    assert!(lent.contains("ptr_to_ptr("), "{lent}");
+    // A copy is one more handle; with the last one the value ends, and
+    // then the handle that all of them had of the box.
+    let copied = body("_GPF4mainE6copied");
+    assert_eq!(calls(copied, "_GPTcIu6SharedN4mainE4FileE"), 1, "{copied}");
+    let cloned = body("_GPTcIu6SharedN4mainE4FileE");
+    assert_eq!(calls(cloned, "_gopp_shared_retain"), 1, "{cloned}");
+    let dropped = body("_GPTdIu6SharedN4mainE4FileE");
+    let release = dropped.find("@_gopp_shared_release(").unwrap();
+    let ends = dropped.find("@_GPTdN4mainE4File(").unwrap();
+    let frees = dropped.find("@_gopp_weak_release(").unwrap();
+    assert!(release < ends && ends < frees, "{dropped}");
+    // A `Weak` ends nothing but the box; `Lock` asks the runtime.
+    let weak = body("_GPTdIu4WeakN4mainE4FileE");
+    assert_eq!(calls(weak, "_gopp_weak_release"), 1, "{weak}");
+    assert_eq!(calls(weak, "_GPTdN4mainE4File"), 0, "{weak}");
+    assert_eq!(calls(body("_GPF4mainE6locked"), "_gopp_weak_lock"), 1);
 }
 
 #[test]

@@ -273,9 +273,9 @@ impl<'a> FuncCx<'a, '_> {
         if own == ty || (ty == unit && self.b.rvalue_ty(&value).is_ok()) {
             return self.given(expr, ty, value);
         }
-        // A `Unique` in a place where a pointer fits is the address of
-        // the value that it owns, and stays its owner (OWN-P6).
-        let owned = self.memo.uniques.get(&own).copied();
+        // A `Unique` or a `Shared` in a place where a pointer fits is
+        // the address of its value, and stays what it is (OWN-P6).
+        let owned = self.memo.held(own);
         let lent = match (owned, self.kind(ty)) {
             (Some(of), Type::Ptr(to)) => to == of,
             _ => false,
@@ -764,8 +764,9 @@ impl<'a> FuncCx<'a, '_> {
             return Ok(place);
         };
         let place = self.held(place, mode)?;
-        // A `Unique` leads to its box, which holds the value first.
-        let unique = self.memo.uniques.contains_key(&self.b.place_ty(&place));
+        // A `Unique` or a `Shared` leads to its box, which holds the
+        // value first.
+        let unique = self.memo.held(self.b.place_ty(&place)).is_some();
         let behind = self.b.deref(&place)?;
         match unique {
             true => self.b.field(&behind, 0),
@@ -1067,11 +1068,22 @@ impl<'a> FuncCx<'a, '_> {
         Ok(Rvalue::Use(Operand::Copy(Place::local(value))))
     }
 
+    /// What a pointer of the source leads to; nothing for a handle and
+    /// for what is no pointer.
+    fn pointer_to(&mut self, ty: TypeId) -> Option<TypeId> {
+        let handle = self.memo.held(ty).is_some() || self.memo.weaks.contains_key(&ty);
+        match self.kind(ty) {
+            Type::Ptr(to) if !handle => Some(to),
+            _ => None,
+        }
+    }
+
     /// What a pointer of the type leads to; the type itself if it is
     /// no pointer.
     pub fn pointee(&mut self, ty: TypeId) -> TypeId {
-        // A `Unique` leads to the value that it owns.
-        if let Some(&value) = self.memo.uniques.get(&ty) {
+        // A `Unique` leads to the value that it owns, a `Shared` to the
+        // one that it shares.
+        if let Some(value) = self.memo.held(ty) {
             return value;
         }
         match self.kind(ty) {
@@ -1317,6 +1329,10 @@ impl<'a> FuncCx<'a, '_> {
                 (None, [value]) if converts => self.convert(expr, *value, ty),
                 _ => Ok(self.placeholder(span, ty, "a call of what is not known")),
             };
+        }
+        if let Some(weak) = self.weak_locked(callee) {
+            let made = self.weak_lock(ty, weak)?;
+            return self.fresh(expr, ty, made);
         }
         if let Some(method) = self.iface_method(callee) {
             return match self.iface_called(span, method, args, *spread)? {
@@ -1809,10 +1825,11 @@ impl<'a> FuncCx<'a, '_> {
         Ok(())
     }
 
-    /// `NewUnique(v)` (OWN-P2): the value is worked out for a new
-    /// owner, which is a box of its own on the heap; the handle of the
-    /// type `ty` has the address of the box.
-    fn new_unique(&mut self, ty: TypeId, value: ExprId) -> Built<Rvalue> {
+    /// `NewUnique(v)` and `NewShared(v)` (OWN-P2): the value is worked
+    /// out for a new owner, which is a box of its own on the heap; the
+    /// handle of the type `ty` has the address of the box, which the
+    /// function `boxed` of the runtime makes.
+    fn on_heap(&mut self, ty: TypeId, value: ExprId, boxed: &str) -> Built<Rvalue> {
         let of = self.pointee(ty);
         let given = self.rvalue_as(value, of)?;
         let given = self.taken(value, of, given)?;
@@ -1824,8 +1841,48 @@ impl<'a> FuncCx<'a, '_> {
             .const_int(word, layout.map_or(0, |layout| layout.size))?;
         let bytes = self.bytes_ty();
         let from = self.record(slot)?;
-        let made = self.runtime("_gopp_iface_box", &[bytes, word], bytes, vec![from, size])?;
+        let made = self.runtime(boxed, &[bytes, word], bytes, vec![from, size])?;
         Ok(Rvalue::Cast(CastKind::PtrToPtr, made, ty))
+    }
+
+    /// The handle at the place as the runtime takes it.
+    fn handle_at(&mut self, place: Place) -> Built<Operand> {
+        let bytes = self.bytes_ty();
+        let handle = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(place), bytes);
+        Ok(Operand::Copy(Place::local(self.b.assign_temp(handle)?)))
+    }
+
+    /// `NewWeak(s)` (OWN-P3): one more `Weak` handle of what `s`
+    /// shares, which is read where it is.
+    fn new_weak(&mut self, ty: TypeId, of: ExprId) -> Built<Rvalue> {
+        let place = self.place(of, &mut PlaceMode::default())?;
+        let handle = self.handle_at(place)?;
+        let bytes = self.bytes_ty();
+        self.runtime_call("_gopp_weak_retain", &[bytes], vec![handle.clone()])?;
+        Ok(Rvalue::Cast(CastKind::PtrToPtr, handle, ty))
+    }
+
+    /// The `Weak` handle that the call `w.Lock()` asks, if `callee` is
+    /// such a method.
+    fn weak_locked(&self, callee: ExprId) -> Option<ExprId> {
+        let ExprKind::Selector { x, sel } = self.tree.exprs[callee].kind else {
+            return None;
+        };
+        let types = self.shared.types;
+        let of = self.body.types.get(&x)?.ty;
+        let weak = matches!(&*types.get(types.underlying(of)), CheckedType::Weak(_));
+        (weak && self.shared.names.resolve(&sel.name) == "Lock").then_some(x)
+    }
+
+    /// `w.Lock()` (OWN-P8): a `Shared` handle of what `w` names if the
+    /// value has not ended, nil if it has. `ty` is the option of the
+    /// handle, which is the handle.
+    fn weak_lock(&mut self, ty: TypeId, weak: ExprId) -> Built<Rvalue> {
+        let place = self.place(weak, &mut PlaceMode::default())?;
+        let handle = self.handle_at(place)?;
+        let bytes = self.bytes_ty();
+        let locked = self.runtime("_gopp_weak_lock", &[bytes], bytes, vec![handle])?;
+        Ok(Rvalue::Cast(CastKind::PtrToPtr, locked, ty))
     }
 
     /// The instance of a generic function of the package that the
@@ -2511,6 +2568,12 @@ impl<'a> FuncCx<'a, '_> {
             let address = Rvalue::AddrOf(place, Mutability::Mut);
             return Ok(Operand::Copy(Place::local(self.b.assign_temp(address)?)));
         }
+        // A `Unique` or a `Shared` is the address of its value.
+        let held = self.memo.held(have);
+        if held.is_some() && held == self.pointer_to(wanted) {
+            let address = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(place), wanted);
+            return Ok(Operand::Copy(Place::local(self.b.assign_temp(address)?)));
+        }
         if self.pointee(have) == wanted && wanted != have {
             return Ok(Operand::Copy(self.deref(place, &mut mode)?));
         }
@@ -2559,7 +2622,15 @@ impl<'a> FuncCx<'a, '_> {
             // The variable gives its value up where it is named.
             (Predeclared::Move, [of], _) => return self.rvalue_as(*of, ty),
             (Predeclared::NewUnique, [value], _) if self.memo.uniques.contains_key(&ty) => {
-                let made = self.new_unique(ty, *value)?;
+                let made = self.on_heap(ty, *value, "_gopp_iface_box")?;
+                return self.fresh(expr, ty, made);
+            }
+            (Predeclared::NewShared, [value], _) if self.memo.shareds.contains_key(&ty) => {
+                let made = self.on_heap(ty, *value, "_gopp_shared_new")?;
+                return self.fresh(expr, ty, made);
+            }
+            (Predeclared::NewWeak, [of], _) if self.memo.weaks.contains_key(&ty) => {
+                let made = self.new_weak(ty, *of)?;
                 return self.fresh(expr, ty, made);
             }
             (Predeclared::Clear, [of], _) if self.clear_slice(span, *of)? => {

@@ -104,7 +104,9 @@ impl Memo<'_> {
             // that of the value. The box has the symbol of the type,
             // which no pointer of the source points to: the handle is
             // told from a `*T` by its type.
-            CheckedType::Unique(to) => {
+            // A `Shared` and a `Weak` are the same with a box that many
+            // handles have (OWN-P8).
+            CheckedType::Unique(to) | CheckedType::Shared(to) | CheckedType::Weak(to) => {
                 let value = self.lower_type(shared, types, *to)?;
                 let name = symbol_of(&mut self.namer, Entity::TypeInfo(ty))
                     .map_err(|_| "a type that has no symbol")?;
@@ -113,10 +115,15 @@ impl Memo<'_> {
                     let _ = types.set_fields(id, &[("value", value)]);
                 }
                 let handle = types.ptr(boxed);
-                self.uniques.insert(handle, value);
+                let handles = match &*kind {
+                    CheckedType::Unique(_) => &mut self.uniques,
+                    CheckedType::Shared(_) => &mut self.shareds,
+                    _ => &mut self.weaks,
+                };
+                handles.insert(handle, value);
                 handle
             }
-            CheckedType::Pointer(to) | CheckedType::Shared(to) | CheckedType::Weak(to) => {
+            CheckedType::Pointer(to) => {
                 let to = self.lower_type(shared, types, *to)?;
                 types.ptr(to)
             }
