@@ -43,6 +43,9 @@ pub(super) struct Scope {
     /// The walks of the range loops over maps that the block has: what
     /// the runtime keeps of each, by its address.
     walks: Vec<Operand>,
+    /// The variables of the block that live in cells, because a
+    /// function literal uses them.
+    cells: Vec<CheckedLocalId>,
     /// Whether the block has a debug scope: it gets one with its first
     /// variable.
     debug: bool,
@@ -134,6 +137,16 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The receivers of the calls that are lowered which are a part of
     /// the value of their expression, each with the type of the part.
     pub parts: FxHashMap<ExprId, CheckedTypeId>,
+    /// For each variable that lives in a cell and is known here: the
+    /// slot with the address of the cell. The variable itself is
+    /// another name of what the cell holds.
+    pub cells: FxHashMap<CheckedLocalId, LocalId>,
+    /// The variables that the function literal that is lowered uses of
+    /// the functions around it, in the order of its environment.
+    pub captured: Vec<CheckedLocalId>,
+    /// The local of each variable that is another name of what a cell
+    /// holds.
+    cell_vars: FxHashMap<LocalId, CheckedLocalId>,
     vars: FxHashMap<CheckedLocalId, LocalId>,
     scopes: Vec<Scope>,
     pub labels: FxHashMap<Spur, Label>,
@@ -294,6 +307,9 @@ pub(super) fn lower_literal<'a>(
     };
     let built = FuncBuilder::new(module, &symbol, sig, Linkage::Internal, loc).and_then(|b| {
         let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
+        let captures = body.captures.get(&literal).map(Vec::as_slice);
+        let captures = captures.unwrap_or_default().iter();
+        cx.captured = captures.map(|capture| capture.local).collect();
         cx.function(None, *ty, block, 1)?;
         cx.b.drop_unreached();
         cx.b.finish()
@@ -463,6 +479,9 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             worked_params: FxHashSet::default(),
             unboxed: FxHashMap::default(),
             parts: FxHashMap::default(),
+            cells: FxHashMap::default(),
+            captured: Vec::new(),
+            cell_vars: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
             labels: FxHashMap::default(),
@@ -508,6 +527,7 @@ impl FuncCx<'_, '_> {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         self.scopes.push(Scope::default());
+        self.open_env()?;
         for (at, param) in receiver.into_iter().chain(params).enumerate() {
             let declared = param
                 .name
@@ -517,6 +537,16 @@ impl FuncCx<'_, '_> {
                 self.b
                     .set_name(slot, self.memo.name(self.shared, name.name));
                 self.vars.insert(local, slot);
+                // A parameter that a function literal uses lives in a
+                // cell, which has the value that the caller gave.
+                if self.facts.celled.contains(&local) {
+                    let ty = self.b.place_ty(&Place::local(slot));
+                    let var = self.declare_cell(local, ty)?;
+                    let place = self.var_place(var)?;
+                    let given = Operand::Copy(Place::local(slot));
+                    self.b.assign(place, Rvalue::Use(given))?;
+                    continue;
+                }
                 // A parameter that the function only reads is the
                 // caller's; any other is the function's own: the caller
                 // gave a copy or the value itself.
@@ -536,8 +566,9 @@ impl FuncCx<'_, '_> {
             let var = match declared {
                 Some(&local) => {
                     let var = self.declare(local)?;
-                    let zero = self.zero(self.b.place_ty(&Place::local(var)));
-                    self.b.assign(Place::local(var), Rvalue::Use(zero))?;
+                    let place = self.var_place(var)?;
+                    let zero = self.zero(self.b.place_ty(&place));
+                    self.b.assign(place, Rvalue::Use(zero))?;
                     Some(var)
                 }
                 None => None,
@@ -562,14 +593,26 @@ impl FuncCx<'_, '_> {
         // none of them ran. What they keep is known when the body is
         // lowered, so the start is written last.
         self.find_defers(&block.stmts, false);
+        // The cells of the parameters and of the results are made
+        // before that start, which is a block of its own.
+        let made: FxHashSet<LocalId> = self.cells.values().copied().collect();
         let start = match self.defers.is_empty() {
             true => None,
             false => {
+                // The first block itself, unless a cell was made in it.
                 let [body, leave] = [(); 2].map(|()| self.b.new_block());
+                let first = match self.b.current() {
+                    Some(current) if current == entry => entry,
+                    _ => {
+                        let first = self.b.new_block();
+                        self.b.goto(first)?;
+                        first
+                    }
+                };
                 let word = self.b.types().int(64, false);
                 self.leave = Some((leave, self.b.temp(word), Vec::new()));
                 self.b.switch_to(body);
-                Some((entry, body, self.b.loc()))
+                Some((first, body, self.b.loc()))
             }
         };
         self.stmts(&block.stmts)?;
@@ -607,7 +650,8 @@ impl FuncCx<'_, '_> {
         self.b.set_loc(loc);
         // Every slot has a value from the start, on every way.
         let mut early: Vec<LocalId> = way_out.into_iter().collect();
-        let mut late: Vec<LocalId> = self.late.drain().collect();
+        let late = self.late.drain().filter(|local| !made.contains(local));
+        let mut late: Vec<LocalId> = late.collect();
         late.sort_by_key(|local| local.into_raw().into_u32());
         early.extend(late);
         for slot in early {
@@ -1061,9 +1105,111 @@ impl FuncCx<'_, '_> {
     pub fn declare(&mut self, local: CheckedLocalId) -> Built<LocalId> {
         let declared = &self.body.locals[local.0 as usize];
         let ty = self.lower(declared.ty, declared.span);
+        if self.facts.celled.contains(&local) {
+            return self.declare_cell(local, ty);
+        }
         let var = self.declare_as(local, ty)?;
         self.owns(local, var)?;
         Ok(var)
+    }
+
+    /// Whether a function literal uses the local, which then lives in
+    /// a cell.
+    pub fn celled(&self, local: CheckedLocalId) -> bool {
+        self.facts.celled.contains(&local)
+    }
+
+    /// The type of the cell of a variable of the type: the count of
+    /// what shares the cell, then the variable.
+    pub fn cell_type(&mut self, of: TypeId) -> TypeId {
+        let word = self.b.types().int(64, false);
+        self.b.types().tuple(&[word, of])
+    }
+
+    /// A new variable of the type `ty` for a local that a function
+    /// literal uses (CLO-2): it lives in a new cell, which the innermost
+    /// scope lets go where it is left and every function value that
+    /// uses the variable shares. The variable is another name of what
+    /// the cell holds, which is all zero.
+    fn declare_cell(&mut self, local: CheckedLocalId, ty: TypeId) -> Built<LocalId> {
+        let declared = &self.body.locals[local.0 as usize];
+        let (checked, span) = (declared.ty, declared.span);
+        let cell_ty = self.cell_type(ty);
+        let layout = self.b.types().layout(cell_ty, self.shared.layout);
+        let word = self.b.types().int(64, false);
+        let size = self
+            .b
+            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+        let bytes = self.bytes_ty();
+        let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
+        let to = self.b.types().ptr(cell_ty);
+        let cell = self
+            .b
+            .assign_temp(Rvalue::Cast(crate::CastKind::PtrToPtr, made, to))?;
+        let drop = match self.flat(ty) {
+            true => None,
+            false => self.drop_glue(Some(checked), span)?,
+        };
+        self.hold(Place::local(cell), Ends::Cell(drop));
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.cells.push(local);
+        }
+        self.name_cell(local, cell, ty)
+    }
+
+    /// The variable of the local as another name of what the cell in
+    /// the slot holds.
+    pub fn name_cell(
+        &mut self,
+        local: CheckedLocalId,
+        cell: LocalId,
+        ty: TypeId,
+    ) -> Built<LocalId> {
+        let var = self.declare_alias(local, ty)?;
+        let inside = self.b.deref(&Place::local(cell))?;
+        let inside = self.b.field(&inside, 1)?;
+        let address = Rvalue::AddrOf(inside, crate::Mutability::Mut);
+        self.b.assign(Place::local(var), address)?;
+        self.cells.insert(local, cell);
+        self.cell_vars.insert(var, local);
+        Ok(var)
+    }
+
+    /// How the value of a variable that lives in a cell ends, where
+    /// the variable gets another value: its cell ends it only with
+    /// itself. None for a variable in no cell, and for a value that
+    /// owns nothing.
+    pub fn cell_ends(&mut self, var: LocalId, span: SourceSpan) -> Built<Option<Ends>> {
+        let Some(&local) = self.cell_vars.get(&var) else {
+            return Ok(None);
+        };
+        let checked = self.body.locals[local.0 as usize].ty;
+        let ty = self.lower(checked, span);
+        match self.flat(ty) {
+            true => Ok(None),
+            false => self.ends_of(Some(checked), span),
+        }
+    }
+
+    /// The slot of the variable of the local, if it is declared.
+    pub fn vars_of(&self, local: CheckedLocalId) -> Option<&LocalId> {
+        self.vars.get(&local)
+    }
+
+    /// The variables of the innermost scope that live in cells.
+    pub fn scope_cells(&self) -> Vec<CheckedLocalId> {
+        self.scopes
+            .last()
+            .map_or(Vec::new(), |scope| scope.cells.clone())
+    }
+
+    /// The place of the variable in the slot: what the slot holds, or
+    /// what it is another name of.
+    pub fn var_place(&mut self, var: LocalId) -> Built<Place> {
+        match self.aliases.contains(&var) {
+            true => self.b.deref(&Place::local(var)),
+            false => Ok(Place::local(var)),
+        }
     }
 
     /// A new variable that does not own its value: it is read while the
@@ -1161,8 +1307,9 @@ impl FuncCx<'_, '_> {
             Some(&var) => Ok(var),
             None => {
                 let var = self.declare(local)?;
-                let zero = self.zero(self.b.place_ty(&Place::local(var)));
-                self.b.assign(Place::local(var), Rvalue::Use(zero))?;
+                let place = self.var_place(var)?;
+                let zero = self.zero(self.b.place_ty(&place));
+                self.b.assign(place, Rvalue::Use(zero))?;
                 Ok(var)
             }
         }

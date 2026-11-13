@@ -757,8 +757,8 @@ impl FuncCx<'_, '_> {
         }
         let (copy, _) = self.copy_of(span, from, checked)?;
         let var = self.declare(local)?;
-        self.b
-            .assign(Place::local(var), Rvalue::Use(Operand::Copy(copy)))
+        let place = self.var_place(var)?;
+        self.b.assign(place, Rvalue::Use(Operand::Copy(copy)))
     }
 }
 

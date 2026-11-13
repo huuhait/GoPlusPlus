@@ -48,6 +48,10 @@ pub(super) enum Ends {
     /// As a string: its bytes are counted once less, which is written
     /// where the string ends and calls nothing for a literal.
     Text,
+    /// The place has the cell of a captured variable, which one less
+    /// shares: the last ends the variable by the drop glue, if it has
+    /// one, and frees the cell.
+    Cell(Option<FuncId>),
 }
 
 /// A function that the compiler makes for a type.
@@ -381,6 +385,17 @@ impl FuncCx<'_, '_> {
             Ends::Glue(glue) => {
                 let at = self.record(place)?;
                 self.call_glue(glue, at)
+            }
+            Ends::Cell(drop) => {
+                let bytes = self.bytes_ty();
+                let cell = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(place), bytes);
+                let cell = Operand::Copy(Place::local(self.b.assign_temp(cell)?));
+                let sig = self.glue_sig(Glue::Drop);
+                let drop = match drop {
+                    Some(drop) => self.glue_value(Glue::Drop, drop),
+                    None => self.zero(sig),
+                };
+                self.runtime_call("_gopp_cell_release", &[bytes, sig], vec![cell, drop])
             }
         }
     }

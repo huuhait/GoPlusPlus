@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 72] = [
+pub const FUNCS: [RuntimeFunc; 76] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -224,6 +224,13 @@ pub const FUNCS: [RuntimeFunc; 72] = [
     ),
     returns("_gopp_func_clone", "uint8_t *value"),
     returns("_gopp_func_drop", "uint8_t *value"),
+    gives("uint8_t *", "_gopp_env_new", "uint64_t cells"),
+    gives("uint8_t *", "_gopp_cell_new", "uint64_t size"),
+    returns("_gopp_cell_retain", "uint8_t *cell"),
+    returns(
+        "_gopp_cell_release",
+        "uint8_t *cell, void (*drop)(uint8_t *value)",
+    ),
     gives(
         "uint8_t *",
         "_gopp_iface_box",
@@ -320,11 +327,19 @@ typedef struct gopp_type {
   const gopp_methods *methods;
 } gopp_type;
 
-// What an environment of a function value starts with: how many
-// function values share it, and what ends the variables that it holds.
+// A variable that a function captured, in an environment: its cell,
+// and what ends the variable, or null if its bytes are all there is.
+typedef struct gopp_captured {
+  uint8_t *cell;
+  void (*drop)(uint8_t *value);
+} gopp_captured;
+
+// The environment of a function value: how many function values share
+// it, and the cells of the variables that the function captured.
 typedef struct gopp_env {
   uint64_t count;
-  void (*drop)(uint8_t *env);
+  uint64_t cells;
+  gopp_captured all[];
 } gopp_env;
 
 // The count of an environment in the frame of a function, which is

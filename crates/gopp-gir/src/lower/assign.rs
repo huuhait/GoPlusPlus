@@ -167,7 +167,10 @@ impl FuncCx<'_, '_> {
     fn put(&mut self, dest: Dest, value: Rvalue) -> Built {
         let place = match dest {
             Dest::Blank => return Ok(()),
-            Dest::New(local, _) => (Place::local(self.declare(local)?), None),
+            Dest::New(local, _) => {
+                let var = self.declare(local)?;
+                (self.var_place(var)?, None)
+            }
             Dest::Place(place, checks, old) => {
                 for check in checks {
                     self.checked(check)?;
@@ -244,7 +247,10 @@ impl FuncCx<'_, '_> {
         // owns nothing (RNG-1). A Go file may write it, and a place that
         // is assigned to owns what it gets: both have a copy.
         let go = self.source.dialect() == gopp_span::Dialect::Go;
-        if let (Dest::New(local, _), false, false) = (&dest, go, self.flat(wanted)) {
+        // A variable that a function literal uses has a copy, in a
+        // cell.
+        let view = matches!(&dest, Dest::New(local, _) if !self.celled(*local));
+        if let (Dest::New(local, _), true, false, false) = (&dest, view, go, self.flat(wanted)) {
             let var = self.declare_view(*local)?;
             return self.store(Place::local(var), value);
         }

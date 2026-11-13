@@ -7,18 +7,24 @@
 //! (PAR-10).
 
 use gopp_mangle::{Entity, symbol_of};
-use gopp_sema::ObjKind;
 use gopp_sema::types::{Type as CheckedType, TypeId as CheckedTypeId};
+use gopp_sema::{LocalId as CheckedLocalId, ObjKind};
 use gopp_span::{Dialect, Span as SourceSpan};
 use gopp_syntax::ast::ExprId;
 
 use super::expr::{Called, Check, Code, Target};
 use super::func::{Built, FuncCx};
+use super::glue::{Ends, Glue};
 use super::{CalleeKey, Made};
 use crate::{
-    AggKind, Constant, ConstantKind, FuncId, Operand, Place, Rvalue, Type, TypeId, TypeInterner,
-    UnwindAction,
+    AggKind, CastKind, Constant, ConstantKind, FuncId, Operand, Place, Rvalue, Type, TypeId,
+    TypeInterner, UnwindAction,
 };
+
+/// Where the cells of an environment start: after its count and the
+/// number of its cells. Each cell has two words, its address and what
+/// ends its variable.
+const ENV_HEAD: u32 = 2;
 
 impl FuncCx<'_, '_> {
     /// The type of the code of a function value of the type: that of
@@ -75,26 +81,158 @@ impl FuncCx<'_, '_> {
         Ok(self.bare(code, code_ty))
     }
 
+    /// The type of the environment of a function literal that uses
+    /// the variables: the count, the number of cells, and for each
+    /// variable the address of its cell and what ends the variable.
+    fn env_type(&mut self, captured: &[CheckedLocalId]) -> TypeId {
+        let word = self.b.types().int(64, false);
+        let drop = self.glue_sig(Glue::Drop);
+        let mut fields = vec![word, word];
+        for &local in captured {
+            let declared = &self.body.locals[local.0 as usize];
+            let of = self.lower(declared.ty, declared.span);
+            let cell = self.cell_type(of);
+            fields.extend([self.b.types().ptr(cell), drop]);
+        }
+        self.b.types().tuple(&fields)
+    }
+
     /// A function literal, for a place of the type `ty`: its code is a
-    /// function of its own, which is lowered after this one.
+    /// function of its own, which is lowered after this one. A literal
+    /// that uses variables of the functions around it has a new
+    /// environment with the cells of those variables, each of which one
+    /// more shares (CLO-2).
     pub fn literal(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
-        if self
-            .body
-            .captures
-            .get(&expr)
-            .is_some_and(|all| !all.is_empty())
-        {
-            let what = "a function literal that uses a variable of the function around it";
-            return Ok(self.placeholder(span, ty, what));
-        }
         let named = self.memo.literal(self.shared, self.file(), expr);
         let (Some((symbol, job)), Some(code_ty)) = (named, self.code_type(ty)) else {
             return Ok(self.placeholder(span, ty, "a function literal"));
         };
+        let captures = self.body.captures.get(&expr).map(Vec::as_slice);
+        let captured: Vec<CheckedLocalId> = (captures.unwrap_or_default().iter())
+            .map(|capture| capture.local)
+            .collect();
+        // Every variable that it uses has its cell here.
+        let mut cells = Vec::with_capacity(captured.len());
+        for local in &captured {
+            match self.cells.get(local) {
+                Some(&cell) => cells.push(cell),
+                None => {
+                    let what = "a function literal that uses a variable that has no cell";
+                    return Ok(self.placeholder(span, ty, what));
+                }
+            }
+        }
         let code = self.function_named(&symbol, code_ty)?;
         self.memo.queue(job, expr);
-        Ok(self.bare(code, code_ty))
+        if captured.is_empty() {
+            return Ok(self.bare(code, code_ty));
+        }
+        let bytes = self.bytes_ty();
+        let word = self.b.types().int(64, false);
+        let env_ty = self.env_type(&captured);
+        let count = self.b.const_int(word, captured.len() as u64)?;
+        let made = self.runtime("_gopp_env_new", &[word], bytes, vec![count])?;
+        let to = self.b.types().ptr(env_ty);
+        let env = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, made.clone(), to))?;
+        let env = self.b.deref(&Place::local(env))?;
+        for (at, (&cell, &local)) in cells.iter().zip(&captured).enumerate() {
+            let shared = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(Place::local(cell)), bytes);
+            let shared = Operand::Copy(Place::local(self.b.assign_temp(shared)?));
+            self.runtime_call("_gopp_cell_retain", &[bytes], vec![shared])?;
+            let at = ENV_HEAD + 2 * at as u32;
+            let slot = self.b.field(&env, at)?;
+            self.b
+                .assign(slot, Rvalue::Use(Operand::Copy(Place::local(cell))))?;
+            let declared = &self.body.locals[local.0 as usize];
+            let (checked, declared_at) = (declared.ty, declared.span);
+            let of = self.lower(checked, declared_at);
+            if !self.flat(of)
+                && let Some(drop) = self.drop_glue(Some(checked), span)?
+            {
+                let slot = self.b.field(&env, at + 1)?;
+                let drop = self.glue_value(Glue::Drop, drop);
+                self.b.assign(slot, Rvalue::Use(drop))?;
+            }
+        }
+        let code = Operand::Const(Constant {
+            kind: ConstantKind::Func(code),
+            ty: code_ty,
+        });
+        Ok(Rvalue::Aggregate(AggKind::Tuple, vec![code, made]))
+    }
+
+    /// At the start of the code of a function literal: the variables
+    /// that it uses of the functions around it are other names of what
+    /// the cells of its environment hold.
+    pub fn open_env(&mut self) -> Built {
+        if self.captured.is_empty() {
+            return Ok(());
+        }
+        let captured = self.captured.clone();
+        let env_ty = self.env_type(&captured);
+        let to = self.b.types().ptr(env_ty);
+        let given = Operand::Copy(Place::local(self.b.param(0)));
+        let env = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given, to))?;
+        let env = self.b.deref(&Place::local(env))?;
+        for (at, &local) in captured.iter().enumerate() {
+            let slot = self.b.field(&env, ENV_HEAD + 2 * at as u32)?;
+            let cell = self.b.assign_temp(Rvalue::Use(Operand::Copy(slot)))?;
+            let declared = &self.body.locals[local.0 as usize];
+            let of = self.lower(declared.ty, declared.span);
+            self.name_cell(local, cell, of)?;
+        }
+        Ok(())
+    }
+
+    /// The next pass of a loop goes on with a new cell for the variable
+    /// of the loop, which has a copy of what the variable holds now
+    /// (CLO-8): a function value of this pass keeps the cell of this
+    /// pass.
+    pub fn next_cell(&mut self, local: CheckedLocalId) -> Built {
+        let (Some(&cell), Some(&var)) = (self.cells.get(&local), self.vars_of(local)) else {
+            return Ok(());
+        };
+        let declared = &self.body.locals[local.0 as usize];
+        let (checked, span) = (declared.ty, declared.span);
+        let of = self.lower(checked, span);
+        let cell_ty = self.cell_type(of);
+        let layout = self.b.types().layout(cell_ty, self.shared.layout);
+        let word = self.b.types().int(64, false);
+        let size = self
+            .b
+            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+        let bytes = self.bytes_ty();
+        let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
+        let to = self.b.types().ptr(cell_ty);
+        let next = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, made, to))?;
+        // The copy, by the rule of the type.
+        let old = self.var_place(var)?;
+        let mut value = Rvalue::Use(Operand::Copy(old));
+        if !self.flat(of) {
+            value = self.cloned_value(span, Some(checked), value)?;
+        }
+        let inside = self.b.deref(&Place::local(next))?;
+        let inside = self.b.field(&inside, 1)?;
+        let value = self.operand_of(value)?;
+        self.b.assign(inside.clone(), Rvalue::Use(value))?;
+        // The function lets the cell of this pass go and has the new
+        // one in the same slot, which the scope of the loop ends.
+        let drop = match self.flat(of) {
+            true => None,
+            false => self.drop_glue(Some(checked), span)?,
+        };
+        self.end(Place::local(cell), Ends::Cell(drop))?;
+        let next = Operand::Copy(Place::local(next));
+        self.b.assign(Place::local(cell), Rvalue::Use(next))?;
+        let address = Rvalue::AddrOf(inside, crate::Mutability::Mut);
+        self.b.assign(Place::local(var), address)
     }
 
     /// What a call of a function value calls, and the first argument of

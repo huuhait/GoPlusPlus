@@ -1508,6 +1508,72 @@ func main() {
 }
 
 #[test]
+fn a_variable_that_a_function_literal_uses_lives_in_a_cell() {
+    let text = "package main
+
+func counter(start int, name string) (func() int, func() string) {
+	n := start
+	inc := func() int {
+		n++
+		return n
+	}
+	label := func() string { return name }
+	return inc, label
+}
+
+func each(values []int) []func() int {
+	var all []func() int
+	for i := 0; i < len(values); i++ {
+		all = append(all, func() int { return values[i] })
+	}
+	return all
+}
+
+func main() {
+	inc, label := counter(1, \"n\")
+	println(inc(), label(), len(each([]int{1, 2})))
+}
+";
+    let module = gir(text);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+    // `n` and the parameter `name` each live in a cell; each literal
+    // has an environment with the one cell that it uses, which it
+    // shares, and the function lets its two cells go where it ends.
+    let counter = body("_GPF4mainE7counter");
+    assert_eq!(
+        [
+            calls(counter, "_gopp_cell_new"),
+            calls(counter, "_gopp_env_new"),
+            calls(counter, "_gopp_cell_retain"),
+            calls(counter, "_gopp_cell_release"),
+        ],
+        [2, 2, 2, 2],
+        "{counter}"
+    );
+    // The code of a literal reads its variable through the cell of its
+    // environment and makes no cell.
+    let inc = body("_GPC1_F4mainE7counter");
+    assert_eq!(calls(inc, "_gopp_cell_new"), 0, "{inc}");
+    // `values` has one cell; `i` has one before the loop and a new one
+    // for each next pass, and the old one is let go each time.
+    let each = body("_GPF4mainE4each");
+    assert_eq!(
+        [calls(each, "_gopp_cell_new"), calls(each, "_gopp_env_new")],
+        [3, 1],
+        "{each}"
+    );
+    insta::assert_snapshot!(module);
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    assert_eq!(module.matches("@_gopp_cell_new(").count(), 5);
+}
+
+#[test]
 fn function_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
@@ -1518,35 +1584,35 @@ func (t T) get() int { return t.n }
 func many(more ...int) int { return len(more) }
 
 func main() {
-	n := 1
-	add := func(a int) int { return a + n }
+	xs := []int{1}
+	for _, &x := range xs {
+		add := func(a int) int { return a + x }
+		println(add(1))
+	}
 	get := T{2}.get
 	all := many
 	go func() {}()
 	defer func() {}()
-	println(add(1), get(), all(1))
+	println(get(), all(1))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
-        let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
-        let messages: Vec<&str> = messages
-            .iter()
-            .map(|message| message.split_once(": ").map_or("", |(_, what)| what))
-            .collect();
-        assert_eq!(
-            messages,
-            [
-                "not supported yet: a function literal that uses a variable of the function \
-                 around it",
-                "not supported yet: a method as a value",
-                "not supported yet: a call of a function with `...`",
-                "not supported yet: a go statement",
-                "not supported yet: a function literal",
-                "not supported yet: a call of a function with `...`",
-            ],
-            "{file}"
-        );
-    }
+    // Another name of an element is no variable of its own.
+    let (_, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    let messages: Vec<&str> = messages
+        .iter()
+        .map(|message| message.split_once(": ").map_or("", |(_, what)| what))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "not supported yet: a function literal that uses a variable that has no cell",
+            "not supported yet: a method as a value",
+            "not supported yet: a call of a function with `...`",
+            "not supported yet: a go statement",
+            "not supported yet: a function literal",
+            "not supported yet: a call of a function with `...`",
+        ]
+    );
 }
 
 #[test]
@@ -2080,7 +2146,7 @@ func f{at}(n int, p Pair) (int, string) {{
 	}}
 	var sized Sized = p
 	total += sized.Size()
-	next := func(n int) int {{ return func(m int) int {{ return m + {at} }}(n) }}
+	next := func(n int) int {{ return func(m int) int {{ return m + int(l.v) + {at} }}(n) }}
 	total += next(n)
 	go println(total)
 	return total + p.b, \"f{at}\"
@@ -2442,6 +2508,32 @@ fn the_steps_grow_with_the_glue_of_types() {
         steps_of(&format!(
             "package main\n\nfunc f() int {{\n\tsum := 0\n{literals}\treturn sum\n}}\n\n\
              func g() int {{\n\t{nested}\n}}\n"
+        ))
+    });
+    // Many variables that one literal uses, many literals that use
+    // one variable, and literals in literals that each use the
+    // variable of the one around.
+    assert_near_linear(&sizes, |n| {
+        let vars: String = (0..n).map(|at| format!("\tv{at} := {at}\n")).collect();
+        let sum: String = (0..n).map(|at| format!(" + v{at}")).collect();
+        let literals: String = (0..n)
+            .map(|at| format!("\tf{at} := func() int {{ return v0 + {at} }}\n\tsum += f{at}()\n"))
+            .collect();
+        let n = n / 4;
+        let nested = format!(
+            "return {}v{n}{}",
+            (0..n)
+                .map(|at| format!("func(v{} int) int {{ return v{at} + ", at + 1))
+                .collect::<String>(),
+            (0..n)
+                .rev()
+                .map(|at| format!(" }}({at})"))
+                .collect::<String>()
+        );
+        steps_of(&format!(
+            "package main\n\nfunc f() int {{\n{vars}\tall := func() int {{ return 0{sum} }}\n\
+             \tsum := all()\n{literals}\treturn sum\n}}\n\n\
+             func g(v0 int) int {{\n\t{nested}\n}}\n"
         ))
     });
     // Many types with a `drop` and a `Clone` method that each hold the

@@ -118,6 +118,11 @@ impl<'m> FuncBuilder<'m> {
         self.module
     }
 
+    /// The block that is being written, if one is chosen.
+    pub fn current(&self) -> Option<BlockId> {
+        self.current.map(block_id)
+    }
+
     /// Whether statements can be written: a block is chosen and has no
     /// end yet.
     pub fn is_open(&self) -> bool {

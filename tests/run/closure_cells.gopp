@@ -1,0 +1,64 @@
+package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f File) Clone() File {
+	println("dup", f.fd)
+	return File{fd: f.fd + 100}
+}
+
+func logger(prefix string) (func(string), func() []string) {
+	var lines []string
+	add := func(s string) { lines = append(lines, prefix+s) }
+	all := func() []string { return lines }
+	return add, all
+}
+
+// The variable lives as long as a function value uses it.
+func holder(fd int) func() int {
+	f := File{fd: fd}
+	return func() int { return f.fd }
+}
+
+func scoped() {
+	read := holder(1)
+	println("made", read())
+	second := read
+	read = func() int { return 0 }
+	println("replaced", second(), read())
+	{
+		inner := holder(2)
+		println("inner", inner())
+	}
+	println("end of scoped")
+}
+
+func passes() []func() int {
+	var fs []func() int
+	for _, fd := range []int{10, 20} {
+		f := File{fd: fd}
+		fs = append(fs, func() int { return f.fd })
+	}
+	return fs
+}
+
+func main() {
+	add, all := logger("> ")
+	add("a")
+	add("b")
+	got := all()
+	got[0] = "changed"
+	println(len(all()), all()[0], got[0])
+	scoped()
+	fs := passes()
+	println(fs[0]() + fs[1]())
+	fs = fs[:1]
+	println("cut")
+	println("done")
+}

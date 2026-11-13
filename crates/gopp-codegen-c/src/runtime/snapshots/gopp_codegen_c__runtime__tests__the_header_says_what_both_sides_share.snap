@@ -97,11 +97,19 @@ typedef struct gopp_type {
   const gopp_methods *methods;
 } gopp_type;
 
-// What an environment of a function value starts with: how many
-// function values share it, and what ends the variables that it holds.
+// A variable that a function captured, in an environment: its cell,
+// and what ends the variable, or null if its bytes are all there is.
+typedef struct gopp_captured {
+  uint8_t *cell;
+  void (*drop)(uint8_t *value);
+} gopp_captured;
+
+// The environment of a function value: how many function values share
+// it, and the cells of the variables that the function captured.
 typedef struct gopp_env {
   uint64_t count;
-  void (*drop)(uint8_t *env);
+  uint64_t cells;
+  gopp_captured all[];
 } gopp_env;
 
 // The count of an environment in the frame of a function, which is
@@ -174,6 +182,10 @@ void _gopp_map_iter_end(void *iter);
 [[noreturn]] void _gopp_panic_slice_convert(uint64_t wanted, uint64_t length, bool is_signed);
 void _gopp_func_clone(uint8_t *value);
 void _gopp_func_drop(uint8_t *value);
+uint8_t * _gopp_env_new(uint64_t cells);
+uint8_t * _gopp_cell_new(uint64_t size);
+void _gopp_cell_retain(uint8_t *cell);
+void _gopp_cell_release(uint8_t *cell, void (*drop)(uint8_t *value));
 uint8_t * _gopp_iface_box(const void *value, uint64_t size);
 void _gopp_iface_clone(uint8_t *value);
 void _gopp_iface_drop(uint8_t *value);

@@ -131,8 +131,9 @@ impl FuncCx<'_, '_> {
             for name in names {
                 if let Some(local) = local(self, name) {
                     let var = self.declare(local)?;
-                    let zero = self.zero(self.b.place_ty(&Place::local(var)));
-                    self.b.assign(Place::local(var), Rvalue::Use(zero))?;
+                    let place = self.var_place(var)?;
+                    let zero = self.zero(self.b.place_ty(&place));
+                    self.b.assign(place, Rvalue::Use(zero))?;
                 }
             }
             return Ok(());
@@ -152,7 +153,8 @@ impl FuncCx<'_, '_> {
         for (name, value) in names.iter().zip(values) {
             if let Some(local) = local(self, name) {
                 let var = self.declare(local)?;
-                self.store(Place::local(var), value)?;
+                let place = self.var_place(var)?;
+                self.store(place, value)?;
             }
         }
         Ok(())
@@ -224,6 +226,13 @@ impl FuncCx<'_, '_> {
         self.targets.pop();
         self.b.goto(after)?;
         self.b.switch_to(after);
+        // Each pass has its own copy of a variable of the loop that a
+        // function literal uses (CLO-8): the next pass goes on with a
+        // new cell.
+        for local in self.scope_cells() {
+            self.at_end(body.span);
+            self.next_cell(local)?;
+        }
         if let Some(post) = post {
             self.stmt(post)?;
         }
@@ -662,8 +671,12 @@ impl FuncCx<'_, '_> {
                         continue;
                     };
                     // What the result had ends.
-                    let place = Place::local(*var);
-                    if let Some(ends) = self.var_ends(*var) {
+                    let place = self.var_place(*var)?;
+                    let ends = match self.var_ends(*var) {
+                        Some(ends) => Some(ends),
+                        None => self.cell_ends(*var, span)?,
+                    };
+                    if let Some(ends) = ends {
                         self.end(place.clone(), ends)?;
                     }
                     self.b.assign(place, Rvalue::Use(value))?;
@@ -688,8 +701,8 @@ impl FuncCx<'_, '_> {
                 }
                 for ((var, (own, value)), &part) in named.iter().zip(&held).zip(&parts) {
                     if let (Some(var), false, true) = (var, own, self.flat(part)) {
-                        self.b
-                            .assign(Place::local(*var), Rvalue::Use(value.clone()))?;
+                        let place = self.var_place(*var)?;
+                        self.b.assign(place, Rvalue::Use(value.clone()))?;
                     }
                 }
                 given = held
@@ -745,7 +758,7 @@ impl FuncCx<'_, '_> {
                 given.push(Rvalue::Use(value.unwrap_or_else(|| self.zero(part))));
                 continue;
             };
-            let var = Place::local(*var);
+            let var = self.var_place(*var)?;
             let mut value = Rvalue::Use(Operand::Copy(var.clone()));
             if !self.flat(part) {
                 value = Rvalue::Use(Operand::Copy(self.slot_of(value)?));

@@ -38,6 +38,9 @@ pub(crate) struct Facts {
     pub worked: Vec<bool>,
     /// The variables whose address is taken.
     reached: FxHashSet<LocalId>,
+    /// The variables that a function literal uses and does not declare:
+    /// each lives in a cell, which the literals that use it share.
+    pub celled: FxHashSet<LocalId>,
     /// A function literal, a `go` or a `defer` statement is in the
     /// body: what they do to the variables is not looked at, so every
     /// variable counts as reached and every parameter as the function's
@@ -106,6 +109,8 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         // A parameter without a name is never used.
         !walk.facts.all && local.is_none_or(|local| !walk.more.contains(local))
     };
+    let captured = walk.body.captures.values().flatten();
+    walk.facts.celled = captured.map(|capture| capture.local).collect();
     let worked = |param: &Param| {
         let local = (param.name).and_then(|name| walk.body.defs.get(&name.span.lo));
         lent(param) && local.is_some_and(|local| walk.called.contains(local))
