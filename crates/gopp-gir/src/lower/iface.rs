@@ -990,6 +990,8 @@ impl<'a> FuncCx<'a, '_> {
                     add(method.method.name, method.method.package);
                 }
             }
+            // A type has the methods of its parents (TYP-23).
+            rest.extend(types.parents(ty));
             if let CheckedType::Struct(fields) = &*types.get(types.underlying(ty)) {
                 for field in fields.iter().filter(|field| field.embedded) {
                     rest.push(match &*types.get(field.ty) {
@@ -1278,7 +1280,7 @@ impl<'a> FuncCx<'a, '_> {
                     self.not_nil(&value)?;
                     value = self.b.deref(&value)?;
                 }
-                value = self.b.field(&value, step)?;
+                value = self.part(&value, step)?;
             }
             let have = self.b.place_ty(&value);
             let read = called

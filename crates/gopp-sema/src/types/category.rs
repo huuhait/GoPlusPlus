@@ -152,7 +152,12 @@ impl Types {
             Type::Param(_) => CopyRule::OfInstance,
             Type::Named { id, args } => match self.own_copy(ty, *id, args) {
                 Some(_) => CopyRule::Method,
-                None => return self.copy_rule(self.underlying(ty)),
+                // The parts of a struct are those of its parents too:
+                // what it is declared as does not say them.
+                None => match &*self.get(self.underlying(ty)) {
+                    Type::Struct(_) => CopyRule::Parts,
+                    _ => return self.copy_rule(self.underlying(ty)),
+                },
             },
             Type::Array { .. } | Type::Option(_) | Type::Struct(_) | Type::Tuple(_) => {
                 CopyRule::Parts

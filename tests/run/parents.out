@@ -1,0 +1,29 @@
+10 ann 1 42 3 pay ann
+29 2 42:pay ann:note
+1 bob 5 eve false true
+3 8 g:pay gil: 9 8
+pay ann 1 1
+9 x y 7
+9 3
+copy
+101 own' first' 3 9
+ends
+  end last'
+  end own'
+  end base 101
+  end first'
+  end last
+  end own
+  end base 1
+  end first
+2 again true false
+2 3
+  end last
+  end own
+  end base 2
+  end first
+  end last
+  end own
+  end base 3
+  end first
+4 6 3 3

@@ -412,6 +412,8 @@ pub(crate) struct Shared<'a> {
     pub path: Spur,
     /// The name `_`.
     pub blank: Spur,
+    /// The name `base`.
+    pub base: Spur,
     /// The names of the method that ends a value and of the method
     /// that copies one.
     pub drop: Spur,
@@ -610,6 +612,10 @@ pub(crate) struct Memo<'a> {
     /// of it, which the runtime keeps.
     pub shareds: FxHashMap<TypeId, TypeId>,
     pub weaks: FxHashMap<TypeId, TypeId>,
+    /// The structs of the types with parents, each with the number of
+    /// its parents: their parts come first, in the order of the
+    /// `@Extends`, and the fields of the type after them (TYP-22).
+    pub leads: FxHashMap<TypeId, u32>,
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
     /// The global of each variable that the run has named.
@@ -657,6 +663,7 @@ impl<'a> Memo<'a> {
             uniques: FxHashMap::default(),
             shareds: FxHashMap::default(),
             weaks: FxHashMap::default(),
+            leads: FxHashMap::default(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
             global_keys: FxHashMap::default(),
@@ -793,6 +800,7 @@ impl<'a> Shared<'a> {
             aborts: checked.aborts,
             path: checked.names.get_or_intern(&checked.package.path),
             blank: checked.names.get_or_intern_static("_"),
+            base: checked.names.get_or_intern_static("base"),
             drop: checked.names.get_or_intern_static("drop"),
             clone: checked.names.get_or_intern_static("Clone"),
             error: checked.names.get_or_intern_static("Error"),
@@ -1185,6 +1193,19 @@ impl<'a> Shared<'a> {
         declared
     }
 
+    /// The receiver of the method of the body, if the expression is the
+    /// name `base` that stands for the parents of its type (TYP-20): no
+    /// variable has the name there.
+    pub fn base_of(&self, tree: &File, body: &Body, expr: ExprId) -> Option<gopp_sema::LocalId> {
+        let named = matches!(tree.exprs[expr].kind, ExprKind::Name(name) if name == self.base);
+        if !named || body.uses.contains_key(&expr) {
+            return None;
+        }
+        let receiver = |local: &gopp_sema::Local| local.kind == LocalKind::Receiver;
+        let at = body.locals.iter().position(receiver)?;
+        Some(gopp_sema::LocalId(at as u32))
+    }
+
     /// The `@Operator` method of the declared type `holder` that is
     /// the one at `which` among them.
     pub fn operator(&self, holder: CheckedTypeId, which: u32) -> Option<&Method> {
@@ -1536,6 +1557,8 @@ impl<'a> Shared<'a> {
                         continue;
                     };
                     rest.push(self.types.underlying(ty));
+                    // A parent may be an instance of a generic type.
+                    rest.extend(self.types.parents(ty));
                     if args.is_empty() {
                         continue;
                     }

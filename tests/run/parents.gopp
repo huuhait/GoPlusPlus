@@ -1,0 +1,170 @@
+package main
+
+type Stamps struct {
+	Created int
+	Note    string
+}
+
+func (s *Stamps) Touch(at int) { s.Created = at }
+
+func (s Stamps) Age(now int) int { return now - s.Created }
+
+type Payment struct {
+	Amount int
+	Payee  string
+}
+
+func (p Payment) Describe() string { return "pay " + p.Payee }
+
+func (p *Payment) Raise(by int) { p.Amount += by }
+
+@Extends(Payment)
+@Extends(Stamps)
+type Card struct {
+	Number string
+	limit  int
+}
+
+func (c *Card) Use(n int) int {
+	c.Raise(n)
+	base[Stamps].Touch(n)
+	return c.Amount + base[Payment].Amount + c.limit
+}
+
+func (c Card) Label() string { return c.Number + ":" + c.Describe() + ":" + base.Note }
+
+@Extends(Card)
+type Gold struct{ Bonus int }
+
+type Describer interface{ Describe() string }
+
+type Toucher interface {
+	Touch(at int)
+	Age(now int) int
+}
+
+func cards() {
+	c := Card{Amount: 10, Payee: "ann", Created: 1, Number: "42", limit: 5}
+	println(c.Amount, c.Payee, c.Created, c.Number, c.Age(4), c.Describe())
+	c.Touch(3)
+	c.Note = "n" + "ote"
+	println(c.Use(2), c.Created, c.Label())
+	d := Card{Payment: Payment{Amount: 1, Payee: "bob"}, Stamps: Stamps{Created: 7}, Number: "7"}
+	e := d
+	e.Payee = "eve"
+	e.Raise(4)
+	println(d.Amount, d.Payee, e.Amount, e.Payee, d == e, d == d)
+	g := Gold{Bonus: 9, Number: "g", Payee: "gil", Created: 2}
+	g.Raise(3)
+	p := &g
+	println(g.Amount, p.Age(10), p.Label(), g.Bonus, p.Use(1))
+	var one Describer = c
+	var two Toucher = g
+	two.Touch(8)
+	println(one.Describe(), two.Age(9), g.Created)
+}
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Base struct {
+	first Res
+	id    int
+}
+
+func (b *Base) drop() { println("  end base", b.id) }
+
+func (b Base) Clone() Base { return Base{b.first, b.id + 100} }
+
+type Log struct{ lines []string }
+
+func (l *Log) Add(s string) { l.lines = append(l.lines, s) }
+
+@Operator
+func (l Log) Index(i int) string { return l.lines[i] }
+
+type Box[T Clone] struct{ held T }
+
+func (b Box[T]) Get() T { return b.held }
+
+func (b *Box[T]) Set(v T) { b.held = v }
+
+@Extends(Base)
+@Extends(Log)
+@Extends(Box[int])
+type Child struct {
+	own  Res
+	last Res
+}
+
+func (c *Child) Note(s string) func() int {
+	return func() int {
+		base[Log].Add(s)
+		return len(c.lines) + base[Box[int]].Get()
+	}
+}
+
+type Key struct{ a, b int }
+
+@Extends(Key)
+type Wide struct{ c int }
+
+func made(id int) Child {
+	return Child{first: Res{"first"}, id: id, own: Res{"own"}, last: Res{"last"}, held: 7}
+}
+
+func parts() {
+	{
+		c := made(1)
+		c.Add("x")
+		note := c.Note("y")
+		println(note(), c[0], c[1], c.Get())
+		c.Set(9)
+		get := c.Get
+		add := c.Add
+		add("z")
+		println(get(), len(c.lines))
+		println("copy")
+		d := c
+		println(d.id, d.own.name, d.first.name, len(d.lines), d.Get())
+		println("ends")
+	}
+	seen := map[Wide]string{}
+	seen[Wide{a: 1, b: 2, c: 3}] = "one"
+	seen[Wide{Key: Key{1, 2}, c: 3}] = "again"
+	seen[Wide{a: 1, b: 2, c: 4}] = "two"
+	println(len(seen), seen[Wide{a: 1, b: 2, c: 3}], Wide{a: 1} == Wide{a: 1}, Wide{a: 1} == Wide{a: 2})
+	many := []Child{made(2), made(3)}
+	println(len(many), many[1].id)
+}
+
+type Count struct{ n int }
+
+func (c *Count) Up() int {
+	c.n++
+	return c.n
+}
+
+@Extends(Count)
+type Twice struct{ tag string }
+
+func (t *Twice) Each() func() int {
+	return func() int { return base.Up() + base.n }
+}
+
+func (t Twice) Peek() int { return base.n }
+
+func literals() {
+	t := Twice{n: 1, tag: "t"}
+	each := t.Each()
+	println(each(), each(), t.n, t.Peek())
+}
+
+func main() {
+	cards()
+	parts()
+	literals()
+}

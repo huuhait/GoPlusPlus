@@ -3652,6 +3652,67 @@ func main() {
     insta::assert_snapshot!(format!("{lent}\n}}\n{dropped}\n}}\n{cloned}\n}}"));
 }
 
+// rule: TYP-17, TYP-20, TYP-22
+#[test]
+fn the_parts_of_the_parents_come_before_the_fields_of_a_type() {
+    let text = "package main
+
+type Stamps struct{ Created int }
+
+func (s *Stamps) Touch(at int) { s.Created = at }
+
+type Payment struct {
+	Amount int
+	Payee  string
+}
+
+func (p Payment) Total() int { return p.Amount }
+
+@Extends(Payment)
+@Extends(Stamps)
+type Card struct{ Number string }
+
+func (c *Card) Use(at int) int {
+	base[Stamps].Touch(at)
+	return base.Amount + c.Created
+}
+
+func made() Card { return Card{Amount: 1, Number: \"n\", Created: 2} }
+
+func total(c Card) int { return c.Total() }
+
+func main() {
+	c := made()
+	println(c.Use(3), total(c))
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    // A method of a parent has the part of that parent as its receiver,
+    // by `base` and by the name of the method alike.
+    let used = body("_GPM3UseN4mainE4Card");
+    assert!(used.contains("&mut (*_1).1"), "{used}");
+    assert!(used.contains("@_GPM5TouchN4mainE6Stamps("), "{used}");
+    assert!(used.contains("(*_1).0.0"), "{used}");
+    let total = body("_GPF4mainE5total");
+    assert!(total.contains("@_GPM5TotalN4mainE7Payment("), "{total}");
+    assert!(total.contains("copy _1.0"), "{total}");
+    // The struct has the part of each parent, in the order of the
+    // `@Extends`, and then its own fields: no word more. A field of an
+    // ancestor is set in the part of its parent.
+    let made = body("_GPF4mainE4made");
+    let whole = "_GPTiN4mainE4Card {const zero: _GPTiN4mainE7Payment, \
+                 const zero: _GPTiN4mainE6Stamps, const str#0 \"n\"}";
+    assert!(made.contains(whole), "{made}");
+    assert!(made.contains(".0.0 = const 1: i64"), "{made}");
+    assert!(made.contains(".1.0 = const 2: i64"), "{made}");
+}
+
 // rule: EXP-16, EXP-17, EXP-19, EXP-20
 #[test]
 fn an_operator_is_a_call_of_the_method_that_stands_for_it() {

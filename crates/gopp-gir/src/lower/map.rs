@@ -210,10 +210,14 @@ impl FuncCx<'_, '_> {
             }
             CheckedType::Struct(fields) => {
                 let mut filled = 0u64;
-                for field in fields.iter() {
-                    let part = lower(self, field.ty).filter(|_| field.name != shared.blank);
-                    let Some(part) = part.filter(|&part| self.equal_by_bytes(field.ty, part))
-                    else {
+                // The parts of the parents are parts of the value too.
+                let parents = shared.types.parents(ty);
+                let parents = parents.iter().map(|&parent| (parent, false));
+                let own = fields.iter();
+                let own = own.map(|field| (field.ty, field.name == shared.blank));
+                for (of, blank) in parents.chain(own) {
+                    let part = lower(self, of).filter(|_| !blank);
+                    let Some(part) = part.filter(|&part| self.equal_by_bytes(of, part)) else {
                         return false;
                     };
                     filled += size(self, part);

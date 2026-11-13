@@ -3,6 +3,7 @@
 //! that has the method as its receiver.
 
 use gopp_sema::OperatorUse;
+use gopp_sema::types::{PARENT, Type as CheckedType};
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind};
 
 use super::CalleeKey;
@@ -32,7 +33,21 @@ impl FuncCx<'_, '_> {
                 ));
             }
         };
-        self.method_call(expr, called, Some((receiver, &[])), None, args)
+        // A method of an ancestor has the part of that parent as its
+        // receiver (EXP-30).
+        let types = self.shared.types;
+        let mut own = self.body.types.get(&receiver).map(|typed| typed.ty);
+        while let Some(
+            CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to),
+        ) = own.map(|own| types.get(types.underlying(own))).as_deref()
+        {
+            own = Some(*to);
+        }
+        let way = own.and_then(|own| types.ancestor_path(own, used.holder));
+        let way: Vec<u32> = way.unwrap_or_default();
+        let way: Vec<u32> = way.iter().map(|step| step | PARENT).collect();
+        let holder = (!way.is_empty()).then_some(used.holder);
+        self.method_call(expr, called, Some((receiver, &way)), holder, args)
             .map(Ok)
     }
 

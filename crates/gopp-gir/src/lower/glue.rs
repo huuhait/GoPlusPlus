@@ -151,12 +151,24 @@ impl FuncCx<'_, '_> {
             }
             CheckedType::Map { .. } => Cloned::Map,
             CheckedType::Struct(fields) => {
+                // The parts of the parents come before the fields.
+                let parents = types.parents(ty);
+                let lead = parents.len() as u32;
+                let parents = parents.iter().copied().enumerate();
+                let own = fields.iter().enumerate();
+                let own = own.map(|(at, field)| (lead as usize + at, field.ty));
                 let mut parts = Vec::new();
-                for (at, field) in fields.iter().enumerate() {
-                    let of = lower(self, field.ty)?;
+                for (at, part) in parents.chain(own) {
+                    let of = lower(self, part)?;
                     if !self.flat(of) {
-                        parts.push((at as u32, field.ty));
+                        parts.push((at as u32, part));
                     }
+                }
+                // A value of a type with parents ends child first: its
+                // fields from the last to the first, then its parents
+                // from the last to the first (OWN-R2).
+                if kind == Glue::Drop && lead > 0 {
+                    parts.reverse();
                 }
                 Cloned::Fields(parts)
             }

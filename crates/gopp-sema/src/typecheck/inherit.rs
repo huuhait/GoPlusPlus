@@ -3,6 +3,7 @@
 //! to what it inherits.
 
 use super::*;
+use crate::object::CaptureUse;
 use crate::types::{Found, Marks, NamedId, PARENT};
 
 impl<'a> Checker<'a> {
@@ -899,6 +900,21 @@ impl<'a> Checker<'a> {
         let is_base = matches!(tree.exprs[of].kind, ExprKind::Name(name) if self.names.resolve(&name) == "base")
             && !cx.body.uses.contains_key(&of);
         let receiver = self.receiver_of.filter(|_| is_base)?;
+        // `base` is the receiver: a function literal that names it uses
+        // the receiver, and may change a receiver that is a value.
+        let is_receiver = |local: &crate::object::Local| local.kind == LocalKind::Receiver;
+        if let Some(at) = cx.body.locals.iter().position(is_receiver) {
+            let local = LocalId(at as u32);
+            let known = self
+                .locals
+                .get(&local)
+                .map(|known| self.types.get(known.ty));
+            let how = match known.as_deref() {
+                Some(Type::Pointer(_)) => CaptureUse::Read,
+                _ => CaptureUse::Write,
+            };
+            self.capture(cx, local, how);
+        }
         let mut parents = self.types.parents(receiver);
         // In the body the type parameters of the type have other names.
         if let Type::Named { id, .. } = &*self.types.get(receiver) {

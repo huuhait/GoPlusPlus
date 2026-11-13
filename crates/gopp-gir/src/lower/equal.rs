@@ -60,11 +60,15 @@ impl FuncCx<'_, '_> {
         let kind = shared.types.get(shared.types.underlying(ty));
         match &*kind {
             CheckedType::Struct(fields) => {
+                // The parts of the parents come before the fields.
+                let parents = shared.types.parents(ty);
+                let lead = parents.len() as u32;
                 let named = fields.iter().enumerate();
                 let named = named.filter(|(_, field)| field.name != shared.blank);
-                Ok(Compared::Fields(
-                    named.map(|(at, field)| (at as u32, field.ty)).collect(),
-                ))
+                let own = named.map(|(at, field)| (lead + at as u32, field.ty));
+                let parents = parents.iter().enumerate();
+                let parents = parents.map(|(at, &parent)| (at as u32, parent));
+                Ok(Compared::Fields(parents.chain(own).collect()))
             }
             CheckedType::Array { len, elem } => {
                 let of = self.memo.lower_type(shared, self.b.types(), *elem)?;

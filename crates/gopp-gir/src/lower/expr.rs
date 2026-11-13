@@ -563,7 +563,7 @@ impl<'a> FuncCx<'a, '_> {
         let span = self.tree.exprs[expr].span;
         let what = match (self.body.selections.get(&expr), self.body.uses.get(&expr)) {
             (Some(selection), _) => match selection.kind {
-                SelectionKind::Field => {
+                SelectionKind::Field | SelectionKind::BaseField => {
                     let place = self.place(expr, &mut PlaceMode::default())?;
                     return Ok(Rvalue::Use(Operand::Copy(place)));
                 }
@@ -572,7 +572,7 @@ impl<'a> FuncCx<'a, '_> {
                     return self.fresh(expr, ty, made);
                 }
                 SelectionKind::MethodExpr => return self.method_expr(expr, ty),
-                SelectionKind::BaseField | SelectionKind::BaseMethod => "a part of a parent",
+                SelectionKind::BaseMethod => "a method of a parent as a value",
             },
             (None, Some(Ref::Member { import, member })) => {
                 match self
@@ -610,6 +610,22 @@ impl<'a> FuncCx<'a, '_> {
         let span = node.span;
         match &node.kind {
             ExprKind::Paren(inner) => return self.place(*inner, mode),
+            // `base` is the receiver: the selector says which parent.
+            ExprKind::Name(_) if self.based(expr).is_some() => {
+                let receiver = self.based(expr).map(|local| self.var(local));
+                if let Some(receiver) = receiver {
+                    let receiver = receiver?;
+                    let place = Place::local(receiver);
+                    // In a function literal the receiver is in a cell.
+                    return match self.aliases.contains(&receiver) {
+                        true => self.b.deref(&place),
+                        false => Ok(place),
+                    };
+                }
+            }
+            ExprKind::Index { x, .. } if self.based(*x).is_some() => {
+                return self.place(*x, mode);
+            }
             ExprKind::Name(_) => match self.denoted(expr) {
                 Some(Ref::Local(local)) => {
                     let var = self.var(*local)?;
@@ -638,7 +654,7 @@ impl<'a> FuncCx<'a, '_> {
             },
             ExprKind::Selector { x, .. } => {
                 if let Some(selection) = self.body.selections.get(&expr)
-                    && selection.kind == SelectionKind::Field
+                    && let SelectionKind::Field | SelectionKind::BaseField = selection.kind
                 {
                     let base = self.place(*x, mode)?;
                     return self.steps(base, &selection.path, span, mode);
@@ -839,23 +855,28 @@ impl<'a> FuncCx<'a, '_> {
         span: SourceSpan,
         mode: &mut PlaceMode,
     ) -> Built<Place> {
+        let _ = span;
         for &step in path {
-            if step & PARENT != 0 {
-                self.unsupported(span, "a part of a parent");
-                let ty = self.b.place_ty(&place);
-                return Ok(Place::local(
-                    self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
-                ));
-            }
             place = self.through(place, mode)?;
             // A value of a type that is not supported has no parts: the
             // type was reported.
             if self.b.place_ty(&place) == TypeInterner::UNIT {
                 return Ok(place);
             }
-            place = self.b.field(&place, step)?;
+            place = self.part(&place, step)?;
         }
         Ok(place)
+    }
+
+    /// The part of the struct at the place that a step of the checker
+    /// names: a field of the type, which comes after the parts of its
+    /// parents, or the part of a parent (TYP-22).
+    pub(super) fn part(&mut self, of: &Place, step: u32) -> Built<Place> {
+        let lead = self.memo.leads.get(&self.b.place_ty(of)).copied();
+        match step & PARENT != 0 {
+            true => self.b.field(of, step & !PARENT),
+            false => self.b.field(of, lead.unwrap_or(0) + step),
+        }
     }
 
     /// The pointer in a slot of its own, if what is evaluated before
@@ -1381,7 +1402,7 @@ impl<'a> FuncCx<'a, '_> {
         &mut self,
         expr: ExprId,
         called: Callee,
-        receiver: Option<Receiver<'a>>,
+        receiver: Option<(ExprId, &[u32])>,
         holder: Option<CheckedTypeId>,
         args: &[ExprId],
     ) -> Built<Rvalue> {
@@ -1966,7 +1987,13 @@ impl<'a> FuncCx<'a, '_> {
                 Some(CalleeKey::Member(*import, *member))
             }
             (ExprKind::Selector { x, sel }, _) => match body.selections.get(&callee) {
-                Some(selection) if selection.kind == SelectionKind::Method => {
+                // `base.M()` calls the method of the parent itself.
+                Some(selection)
+                    if matches!(
+                        selection.kind,
+                        SelectionKind::Method | SelectionKind::BaseMethod
+                    ) =>
+                {
                     receiver = Some((*x, &selection.path[..]));
                     Some(CalleeKey::Method(selection.holder, sel.name))
                 }
@@ -2468,12 +2495,18 @@ impl<'a> FuncCx<'a, '_> {
                 ExprKind::Name(_) => {
                     return match self.denoted(expr) {
                         Some(Ref::Local(local)) => Some(*local),
-                        _ => None,
+                        _ => self.based(expr),
                     };
                 }
                 _ => return None,
             };
         }
+    }
+
+    /// The receiver, if the expression is the name `base` (TYP-20).
+    pub(super) fn based(&self, expr: ExprId) -> Option<gopp_sema::LocalId> {
+        let expr = Shared::unparen(self.tree, expr);
+        self.shared.base_of(self.tree, self.body, expr)
     }
 
     /// What is known of the function that the key names: the checker
@@ -2925,6 +2958,32 @@ impl<'a> FuncCx<'a, '_> {
     // ---- literals
 
     /// A literal: its parts are its own, and so is the value.
+    /// The way to the field `name` of an ancestor of the struct `ty`,
+    /// through the parts of its parents, and the type of the field.
+    fn inherited(&mut self, ty: TypeId, name: &str) -> Option<(Vec<u32>, TypeId)> {
+        let lead = *self.memo.leads.get(&ty)?;
+        let Type::Struct(id) = self.kind(ty) else {
+            return None;
+        };
+        let parents: Vec<TypeId> = self.b.types().struct_fields(id)?.to_vec();
+        for (at, &parent) in parents.iter().enumerate().take(lead as usize) {
+            self.memo.steps += 1;
+            let Type::Struct(of) = self.kind(parent) else {
+                continue;
+            };
+            let names = self.b.types().field_names(of).to_vec();
+            if let Some(found) = names.iter().position(|field| **field == *name) {
+                let part = self.b.types().struct_fields(of)?.get(found).copied()?;
+                return Some((vec![at as u32, found as u32], part));
+            }
+            if let Some((mut way, part)) = self.inherited(parent, name) {
+                way.insert(0, at as u32);
+                return Some((way, part));
+            }
+        }
+        None
+    }
+
     fn composite(&mut self, expr: ExprId, ty: TypeId, elems: &[ExprId]) -> Built<Rvalue> {
         let made = self.composite_of(expr, ty, elems)?;
         self.fresh(expr, ty, made)
@@ -2948,7 +3007,11 @@ impl<'a> FuncCx<'a, '_> {
                 let names = self.b.types().field_names(id).to_vec();
                 // Which field each element sets, in the order of the
                 // source.
+                // A field of an ancestor is set in the part of the
+                // parent that has it (TYP-17): it counts after the
+                // parts of the struct itself, by the way to it.
                 let mut set: Vec<(usize, ExprId)> = Vec::with_capacity(elems.len());
+                let mut deep: Vec<(Vec<u32>, TypeId)> = Vec::new();
                 for (at, &elem) in elems.iter().enumerate() {
                     let (key, value) = value_of(self, elem);
                     let field = match key.map(|key| &self.tree.exprs[key].kind) {
@@ -2964,20 +3027,53 @@ impl<'a> FuncCx<'a, '_> {
                         Some(_) => None,
                         None => Some(at),
                     };
-                    match field.filter(|&field| field < fields.len()) {
-                        Some(field) => set.push((field, value)),
-                        None => self.unsupported(self.tree.exprs[elem].span, "this field"),
+                    let inherited = match (field, key.map(|key| &self.tree.exprs[key].kind)) {
+                        (None, Some(ExprKind::Name(name))) => {
+                            let text = self.memo.name(self.shared, *name).to_owned();
+                            self.inherited(ty, &text)
+                        }
+                        _ => None,
+                    };
+                    match (field.filter(|&field| field < fields.len()), inherited) {
+                        (Some(field), _) => set.push((field, value)),
+                        (None, Some(found)) => {
+                            set.push((fields.len() + deep.len(), value));
+                            deep.push(found);
+                        }
+                        (None, None) => {
+                            self.unsupported(self.tree.exprs[elem].span, "this field");
+                        }
                     }
                 }
                 let exprs: Vec<ExprId> = set.iter().map(|&(_, value)| value).collect();
-                let wanted: Vec<_> = set.iter().map(|&(field, _)| Some(fields[field])).collect();
+                let part_of = |field: usize| match field.checked_sub(fields.len()) {
+                    None => fields[field],
+                    Some(at) => deep[at].1,
+                };
+                let wanted: Vec<_> = set.iter().map(|&(field, _)| Some(part_of(field))).collect();
                 let mut parts: Vec<Operand> =
                     fields.iter().map(|&field| self.zero(field)).collect();
                 let values = self.owned_each(&exprs, &wanted)?;
+                let mut later = Vec::new();
                 for (&(field, _), value) in set.iter().zip(values) {
-                    parts[field] = value;
+                    match field.checked_sub(fields.len()) {
+                        None => parts[field] = value,
+                        Some(at) => later.push((at, value)),
+                    }
                 }
-                Ok(Rvalue::Aggregate(AggKind::Of(ty), parts))
+                let made = Rvalue::Aggregate(AggKind::Of(ty), parts);
+                if later.is_empty() {
+                    return Ok(made);
+                }
+                let whole = self.slot_of(made)?;
+                for (at, value) in later {
+                    let mut place = whole.clone();
+                    for &step in &deep[at].0 {
+                        place = self.b.field(&place, step)?;
+                    }
+                    self.b.assign(place, Rvalue::Use(value))?;
+                }
+                Ok(Rvalue::Use(Operand::Copy(whole)))
             }
             Type::Array(of, len) => {
                 let mut set: Vec<(u64, ExprId)> = Vec::with_capacity(elems.len());

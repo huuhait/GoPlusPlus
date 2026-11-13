@@ -252,10 +252,11 @@ impl Walk<'_> {
                     op: UnaryOp::Star,
                     x,
                 } => *x,
+                // `base` is the receiver of the method (TYP-20).
                 ExprKind::Name(_) => {
                     return match self.body.uses.get(&expr) {
                         Some(Ref::Local(local)) => Some(*local),
-                        _ => None,
+                        _ => self.shared.base_of(self.tree, self.body, expr),
                     };
                 }
                 _ => return None,

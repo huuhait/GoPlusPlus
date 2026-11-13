@@ -5619,6 +5619,59 @@ fn categories(text: &str) -> Vec<String> {
         .collect()
 }
 
+// rule: TYP-24, OWN-R6
+#[test]
+fn a_type_with_parents_is_copied_with_the_parts_of_its_parents() {
+    // What `Child` is declared as is copied by its bytes; its parent is
+    // not.
+    let text = "package p
+
+type Named struct{ name string }
+
+@Extends(Named)
+type Child struct{ n int }
+
+type Plain struct{ n int }
+
+@Extends(Plain)
+type Flat struct{ m int }
+
+var child Child
+var flat Flat
+";
+    let expected = ["child: Copyable, Parts, owned", "flat: Trivial, Bytes"];
+    assert_eq!(categories(text), expected);
+}
+
+// rule: TYP-20, CLO-2
+#[test]
+fn a_function_literal_that_names_base_uses_the_receiver() {
+    let text = "package p
+
+type Count struct{ n int }
+
+func (c *Count) Up() int { c.n++; return c.n }
+
+@Extends(Count)
+type Twice struct{ tag string }
+
+func (t *Twice) Each() func() int {
+	return func() int { return base.Up() }
+}
+
+func (t Twice) Later() func() int {
+	return func() int { return base[Count].n }
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    // A receiver that is a value may be changed through `base`.
+    let expected = ["11:9: t read", "15:9: t write"];
+    assert_eq!(closures(&checked, &names), expected);
+}
+
 // rule: OWN-C1, OWN-C2, OWN-C3, OWN-C4, OWN-R7
 #[test]
 fn a_type_is_copied_by_its_bytes_by_its_own_rule_or_not_at_all() {
