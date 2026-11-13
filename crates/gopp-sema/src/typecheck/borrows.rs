@@ -54,8 +54,10 @@ pub(super) enum Step {
     /// What a `Unique` or a `Shared` holds, which ends with it.
     Held,
     /// The variable as a function literal uses it: where it is, at
-    /// any time. It may be assigned, and not ended or moved.
-    Captured,
+    /// any time. With the first flag the variable may lend: it may be
+    /// assigned, and not ended or moved, while the literal is used.
+    /// With the second the literal may change it.
+    Captured(bool, bool),
 }
 
 /// What a variable may get loans from.
@@ -100,6 +102,9 @@ pub(super) struct Call {
     /// The arguments that hold a function value and no pointer: the
     /// function may keep them.
     pub funcs: Vec<bool>,
+    /// The arguments through which the function may change what they
+    /// reach: those that may hold a pointer.
+    pub changes: Vec<bool>,
     /// For each argument that is a pointer, where more than one is:
     /// the sources of what it points to.
     pub pointees: Vec<Option<(u32, u32)>>,
@@ -124,6 +129,9 @@ pub(super) enum What {
     Declare,
     /// The statement that its variable is declared in ends.
     End,
+    /// A call is given a pointer to it, or a function value that may
+    /// change it.
+    Call,
 }
 
 pub(super) struct Change {
@@ -625,6 +633,7 @@ impl<'a> Walk<'a> {
             args: vec![(0, 0); count],
             sinks: vec![false; count],
             funcs: vec![false; count],
+            changes: vec![false; count],
             pointees: vec![None; count],
             spans: (before.iter().chain(args.iter()))
                 .map(|&arg| self.tree.exprs[arg].span)
@@ -785,7 +794,18 @@ impl<'a> Walk<'a> {
             pointers[0] = receiver && (pointers[0] || by_address);
         }
         let several = pointers.iter().filter(|&&pointer| pointer).count() > 1;
-        if !sinks.contains(&true) && !funcs.contains(&true) && !several {
+        // What the function may change: what a pointer among its
+        // arguments reaches, and what a function value that it is
+        // given, or that is called, may change.
+        let holds = |arg: &ExprId| {
+            let ty = self.type_of(self.unparen(*arg));
+            ty.is_some_and(|ty| types.may_lend(ty))
+        };
+        let mut changes: Vec<bool> = before.iter().chain(args.iter()).map(holds).collect();
+        if before.is_some() && receiver {
+            changes[0] = typed[0] || by_address;
+        }
+        if !sinks.contains(&true) && !funcs.contains(&true) && !changes.contains(&true) {
             return;
         }
         let mut given = Vec::new();
@@ -793,6 +813,7 @@ impl<'a> Walk<'a> {
         self.given_to_calls(given);
         self.calls[call as usize].sinks = sinks;
         self.calls[call as usize].funcs = funcs;
+        self.calls[call as usize].changes = changes;
         for position in (0..pointers.len()).filter(|&at| several && pointers[at]) {
             let arg = self.calls[call as usize].exprs[position];
             let mut found = std::mem::take(&mut self.args);
@@ -963,8 +984,12 @@ impl<'a> Walk<'a> {
                     for capture in self.captured(expr) {
                         let local = capture.local;
                         let lends = self.local_type(local).is_some_and(|ty| self.may_point(ty));
+                        let writes = capture.how != crate::object::CaptureUse::Read;
+                        if self.own(local) && (lends || writes) {
+                            let step = Step::Captured(lends, writes);
+                            found.push(Source::Place(local, vec![step], span));
+                        }
                         if self.own(local) && lends {
-                            found.push(Source::Place(local, vec![Step::Captured], span));
                             found.push(Source::Holder(local, 0, true));
                         }
                     }
@@ -1369,6 +1394,7 @@ impl Problem {
                 gives: vec![false; self.params.len()],
                 stores: Vec::new(),
                 keeps: vec![false; self.params.len()],
+                changes: vec![false; self.params.len()],
             },
             steps: 0,
         };
@@ -1490,33 +1516,57 @@ impl Problem {
                 if !ends {
                     unused.clear();
                 }
-                let moved;
+                let made;
                 let change = match event {
                     Event::Changed(change) => Some(&changes[change as usize]),
                     Event::Moved(local, span) => {
-                        moved = Change {
+                        made = Change {
                             root: local,
                             steps: Vec::new(),
                             at: span,
                             what: What::Move,
                         };
-                        Some(&moved)
+                        Some(&made)
+                    }
+                    // A call may change what it is given a pointer to.
+                    Event::Called(call) => {
+                        made = Change {
+                            root: OUTSIDE,
+                            steps: Vec::new(),
+                            at: self.calls[call as usize].at,
+                            what: What::Call,
+                        };
+                        Some(&made)
                     }
                     _ => None,
                 };
                 // The places that are written: through a pointer of a
-                // variable, those that it may point into.
-                let written = match change {
-                    Some(change) if later[at - first] != EMPTY || !loops_of.is_empty() => {
+                // variable, those that it may point into. What is
+                // written behind a parameter, those who call the
+                // function are told.
+                let told = !self.params.is_empty();
+                let written = match (change, event) {
+                    (Some(_), Event::Called(call)) => known.changed_by(&sets, set, sources, call),
+                    (Some(change), _)
+                        if later[at - first] != EMPTY || !loops_of.is_empty() || told =>
+                    {
                         known.written(&sets, set, change)
                     }
                     _ => Vec::new(),
                 };
+                for (of, way, _) in &written {
+                    let param = self.params.iter().position(|param| param == &Some(*of));
+                    if let (true, Some(param)) = (way.contains(&Step::Target), param) {
+                        lent.lends.changes[param] = true;
+                    }
+                }
                 // A change through a pointer under a loop that ranges
                 // over what the pointer points into.
                 if let Some(change) = change.filter(|_| !loops_of.is_empty()) {
                     'ranged: for (of, way, through) in &written {
-                        if !through {
+                        // A change that is written at the place itself
+                        // was looked at by the walk.
+                        if !through && change.what != What::Call {
                             continue;
                         }
                         for &looped in loops_of.get(of).map_or(&[][..], |all| &all[..]) {
@@ -1549,51 +1599,67 @@ impl Problem {
                     // before one that is read through another.
                     let mut through_other = None;
                     'written: for (root, way, through) in &written {
-                        for at in 0..known.under(*root, way).len() {
+                        // The loans that the change may break, and
+                        // then those who hold one of them: many may
+                        // hold a loan that it does not break.
+                        let loans = known.under(*root, way).len();
+                        for at in 0..loans {
                             known.steps += 1;
-                            let fact = known.under(*root, way)[at];
-                            if !sets.has(set, fact) {
-                                continue;
-                            }
-                            let (holder, loan) = known.facts[fact as usize];
+                            let loan = known.under(*root, way)[at];
                             let (_, held, made) = &known.loans[loan as usize];
-                            let breaks = match lies(way, held) {
+                            let lie = lies(way, held);
+                            let same = matches!(lie, Lies::Same);
+                            let breaks = match lie {
                                 // A pointer that the place holds is
                                 // replaced, not what it points to.
                                 // A function literal uses a variable
                                 // where it is: what is assigned to
                                 // it, the literal sees.
-                                Lies::Above if held[..] == [Step::Captured] => {
-                                    matches!(change.what, What::End | What::Declare | What::Move)
+                                Lies::Above if matches!(held[..], [Step::Captured(..)]) => {
+                                    matches!(held[..], [Step::Captured(true, _)])
+                                        && matches!(
+                                            change.what,
+                                            What::End | What::Declare | What::Move
+                                        )
                                 }
                                 Lies::Above => !held[way.len()..].contains(&Step::Target),
                                 // A write through a pointer to the
                                 // place changes what is there, and the
                                 // place stays: through the variable
                                 // that holds the pointer too.
-                                Lies::Same => !(*through || pointed && holder == change.root),
+                                Lies::Same => !*through,
                                 Lies::Apart => false,
                             };
                             if !breaks {
                                 continue;
                             }
-                            let broken = Broken {
-                                at: change.at,
-                                what: change.what,
-                                of: *root,
-                                holder: Some(holder),
-                                made: *made,
-                            };
-                            // One report says that the change is
-                            // refused.
-                            if read_later(holder) {
-                                through_other = Some(broken);
-                                break 'written;
-                            }
-                            if through_other.is_none()
-                                && known.used(&sets, set, holder, &read_later, &mut unused)
-                            {
-                                through_other = Some(broken);
+                            let made = *made;
+                            for at in 0..known.holders[loan as usize].len() {
+                                known.steps += 1;
+                                let fact = known.holders[loan as usize][at];
+                                let holder = known.facts[fact as usize].0;
+                                let own = same && pointed && holder == change.root;
+                                if own || !sets.has(set, fact) {
+                                    continue;
+                                }
+                                let broken = Broken {
+                                    at: change.at,
+                                    what: change.what,
+                                    of: *root,
+                                    holder: Some(holder),
+                                    made,
+                                };
+                                // One report says that the change is
+                                // refused.
+                                if read_later(holder) {
+                                    through_other = Some(broken);
+                                    break 'written;
+                                }
+                                if through_other.is_none()
+                                    && known.used(&sets, set, holder, &read_later, &mut unused)
+                                {
+                                    through_other = Some(broken);
+                                }
                             }
                         }
                     }
@@ -1705,7 +1771,8 @@ impl Problem {
         // Where the loans go is followed by those who call the
         // function: as a result, or behind a parameter.
         let followed = places.is_none() || !(unknown || nowhere);
-        let captured = |loan: &u32| known.loans[*loan as usize].1[..] == [Step::Captured];
+        let captured =
+            |loan: &u32| matches!(known.loans[*loan as usize].1[..], [Step::Captured(true, _)]);
         let uses = given.iter().any(captured);
         for &loan in given {
             let (of, way, made) = &known.loans[loan as usize];
@@ -1713,7 +1780,11 @@ impl Problem {
             // as the literal: what it holds is what counts, where the
             // literal is followed. Where it is not, the literal uses
             // what it may not, and that is all that is said.
-            let capture = way[..] == [Step::Captured];
+            // A variable that cannot lend is kept with the literal.
+            if matches!(way[..], [Step::Captured(false, _)]) {
+                continue;
+            }
+            let capture = matches!(way[..], [Step::Captured(..)]);
             if uses && capture == followed {
                 continue;
             }
@@ -1820,6 +1891,10 @@ struct Known {
     of_holder: FxHashMap<LocalId, Vec<u32>>,
     of_root: FxHashMap<LocalId, Vec<u32>>,
     of_part: FxHashMap<(LocalId, Step), Vec<u32>>,
+    /// The loans of each variable, and for each loan the facts of
+    /// those that hold it.
+    lent: FxHashMap<LocalId, Vec<u32>>,
+    holders: Vec<Vec<u32>>,
     steps: u64,
 }
 
@@ -1834,6 +1909,8 @@ impl Known {
             of_holder: FxHashMap::default(),
             of_root: FxHashMap::default(),
             of_part: FxHashMap::default(),
+            lent: FxHashMap::default(),
+            holders: Vec::new(),
             steps: 0,
         };
         known.outside = known.loan(OUTSIDE, vec![Step::Target], function);
@@ -1845,12 +1922,12 @@ impl Known {
         self.of_root.get(&root).map_or(&[], |all| &all[..])
     }
 
-    /// The facts of the loans that a change of the place may break:
-    /// those of the place, of what it is in and of its parts. A loan of
-    /// another part of the variable is none.
+    /// The loans that a change of the place may break: those of the
+    /// place, of what it is in and of its parts. A loan of another
+    /// part of the variable is none.
     fn under(&self, root: LocalId, way: &[Step]) -> &[u32] {
         match way.first() {
-            None => self.rooted(root),
+            None => self.lent.get(&root).map_or(&[], |all| &all[..]),
             Some(&first) => {
                 let key = (root, any_index(first));
                 self.of_part.get(&key).map_or(&[], |all| &all[..])
@@ -1873,6 +1950,12 @@ impl Known {
             return loan;
         }
         self.loans.push((key.0, key.1.clone(), made));
+        self.holders.push(Vec::new());
+        self.lent.entry(key.0).or_default().push(next);
+        if let Some(&first) = key.1.first() {
+            let part = (key.0, any_index(first));
+            self.of_part.entry(part).or_default().push(next);
+        }
         self.loan_ids.insert(key, next);
         next
     }
@@ -1887,12 +1970,9 @@ impl Known {
                 self.fact_ids.insert((holder, loan), next);
                 self.facts.push((holder, loan));
                 self.of_holder.entry(holder).or_default().push(next);
-                let (root, way, _) = &self.loans[loan as usize];
-                self.of_root.entry(*root).or_default().push(next);
-                if let Some(&first) = way.first() {
-                    let key = (*root, any_index(first));
-                    self.of_part.entry(key).or_default().push(next);
-                }
+                let root = self.loans[loan as usize].0;
+                self.of_root.entry(root).or_default().push(next);
+                self.holders[loan as usize].push(next);
                 next
             }
         };
@@ -2070,6 +2150,45 @@ impl Known {
         set
     }
 
+    /// The places that the call may change, each with whether it is
+    /// changed through a pointer: all that an argument reaches which
+    /// may hold a pointer, unless the function says that it changes
+    /// nothing there; and the variables that a function value among
+    /// the arguments, or the one that is called, may change.
+    fn changed_by(
+        &mut self,
+        sets: &Sets,
+        set: u32,
+        of: &Sources,
+        call: u32,
+    ) -> Vec<(LocalId, Vec<Step>, bool)> {
+        let record = &of.problem.calls[call as usize];
+        let says = of.says(call);
+        let mut written = Vec::new();
+        for (position, &may) in record.changes.iter().enumerate() {
+            let said = says.map(|lends| lends.changes.get(position).copied().unwrap_or(false));
+            if !may || said == Some(false) {
+                continue;
+            }
+            let reached =
+                self.given_by(sets, set, of, run(&of.problem.args, record.args[position]));
+            for loan in reached {
+                if loan == self.outside {
+                    continue;
+                }
+                let (root, way, _) = &self.loans[loan as usize];
+                match way[..] {
+                    [Step::Captured(_, true)] => written.push((*root, Vec::new(), false)),
+                    [Step::Captured(..)] => {}
+                    _ => written.push((*root, way.clone(), true)),
+                }
+            }
+        }
+        let mut seen = FxHashSet::default();
+        written.retain(|place| seen.insert(place.clone()));
+        written
+    }
+
     /// The first two pointers that the call is given and that may point
     /// to one place: to the same place of a variable, or to a place and
     /// a part of it. What is read through a pointer, and what comes
@@ -2085,7 +2204,8 @@ impl Known {
             loans.retain(|&loan| {
                 let (root, way, _) = &self.loans[loan as usize];
                 let through = way.iter().filter(|step| **step == Step::Target).count() > 1;
-                *root != OUTSIDE && !through && !way.contains(&Step::Captured)
+                let captured = matches!(way[..], [Step::Captured(..)]);
+                *root != OUTSIDE && !through && !captured
             });
             for (other, others) in &pointers {
                 for (&a, &b) in loans

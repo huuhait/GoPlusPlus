@@ -1,20 +1,23 @@
 // exit: 2
 package main
 
-func grow(m *map[int]int) {
+var m = map[int]int{1: 1, 2: 2}
+
+func grow() {
 	m[len(m)+100] = 1
 }
 
 // A new key in a map that a range loop walks is a panic on every run:
-// Go lets the loop see the key or not.
+// Go lets the loop see the key or not. The checker refuses a change of
+// a map of the function under its loop; what a call does to a map of
+// the package it does not see.
 func main() {
-	m := map[int]int{1: 1, 2: 2}
 	for key := range m {
 		m[key] = 0
 	}
 	println(len(m), m[1])
 	for range m {
-		grow(&m)
+		grow()
 	}
 	println("not reached")
 }

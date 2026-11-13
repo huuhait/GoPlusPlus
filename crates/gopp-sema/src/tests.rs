@@ -7035,6 +7035,94 @@ func fine(list [4]Node, i int, n, m *Node) {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-B2, OWN-B9, RNG-3
+#[test]
+fn a_call_changes_what_it_is_given_a_pointer_to() {
+    // A function may change what a pointer that it is given reaches,
+    // so a pointer into a part of that is not used after the call:
+    // of a function (`bad1`), of a method with a pointer receiver
+    // (`bad2`), of a function literal that changes a variable around
+    // it (`bad3`), of a function value (`bad4`). A function that
+    // changes nothing behind its parameter says so (`size`, `Len`),
+    // and a pointer that is made after the call is fine (`fine`). A
+    // call that may change what a loop ranges over is refused as the
+    // change is (`bad5`).
+    let text = "package p
+
+type Item struct{ n int }
+
+type Node struct {
+	Items []Item
+	n     int
+}
+
+func grow(n *Node) { n.Items = append(n.Items, Item{}) }
+
+func (n *Node) Grow() { n.Items = append(n.Items, Item{}) }
+
+func (n *Node) Len() int { return len(n.Items) }
+
+func size(n *Node) int { return len(n.Items) }
+
+func bad1() int {
+	x := Node{Items: []Item{{1}}}
+	q := &x.Items[0]
+	grow(&x)
+	return q.n
+}
+
+func bad2() int {
+	x := Node{Items: []Item{{1}}}
+	q := &x.Items[0]
+	x.Grow()
+	return q.n
+}
+
+func bad3() int {
+	x := Node{Items: []Item{{1}}}
+	q := &x.Items[0]
+	add := func() { x.Items = append(x.Items, Item{}) }
+	add()
+	return q.n
+}
+
+func bad4(f func(*Node)) int {
+	x := Node{Items: []Item{{1}}}
+	q := &x.Items[0]
+	f(&x)
+	return q.n
+}
+
+func fine() int {
+	x := Node{Items: []Item{{1}}}
+	q := &x.Items[0]
+	n := size(&x) + x.Len()
+	grow(&x)
+	q = &x.Items[0]
+	return q.n + n
+}
+
+func insert(m *map[int]int) { m[len(m)] = 1 }
+
+func bad5(m map[int]int) {
+	for range m {
+		insert(&m)
+	}
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:21:2: cannot call grow: it may change x, and q points into x and is used later",
+        "a.gopp:28:2: cannot call x.Grow: it may change x, and q points into x and is used later",
+        "a.gopp:36:2: cannot call add: it may change x, and q points into x and is used later",
+        "a.gopp:43:2: cannot call f: it may change x, and q points into x and is used later",
+        "a.gopp:60:3: cannot call insert: it may change m, which the loop ranges over",
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {

@@ -595,6 +595,8 @@ impl<'a> Checker<'a> {
                 (What::Assign, _) => (Code::OwnBorrowedAssign, Some("assign to")),
                 (What::Move, _) => (Code::OwnBorrowedAssign, Some("move")),
                 (What::Declare | What::End, _) => (Code::OwnBorrowOutlives, None),
+                (What::Call, None) => (Code::OwnRangeMutation, None),
+                (What::Call, _) => (Code::OwnBorrowedAssign, Some("call")),
             };
             if !self.report_once((broken.at, code)) {
                 continue;
@@ -605,9 +607,15 @@ impl<'a> Checker<'a> {
                         What::Grow => "append to",
                         What::Clear => "clear",
                         What::Move => "move",
+                        What::Call => "call",
                         _ => "assign to",
                     };
-                    let message = format!("cannot {does} {place}: the loop ranges over {made}");
+                    let message = match broken.what {
+                        What::Call => format!(
+                            "cannot call {place}: it may change {made}, which the loop ranges over"
+                        ),
+                        _ => format!("cannot {does} {place}: the loop ranges over {made}"),
+                    };
                     let fix = "collect the changes and apply them after the loop".to_owned();
                     Diagnostic::new(code, broken.at, message).with_note(
                         Code::NoteOwnRangeCollect,
@@ -617,8 +625,15 @@ impl<'a> Checker<'a> {
                 }
                 (Some(holder), Some(does)) => {
                     let holder = named(self, holder);
-                    let message =
-                        format!("cannot {does} {place}: {holder} points into it and is used later");
+                    let message = match broken.what {
+                        What::Call => format!(
+                            "cannot call {place}: it may change {owner}, and {holder} points \
+                             into {owner} and is used later"
+                        ),
+                        _ => format!(
+                            "cannot {does} {place}: {holder} points into it and is used later"
+                        ),
+                    };
                     let note = format!("{holder} points into {made} from here");
                     Diagnostic::new(code, broken.at, message).with_note(
                         Code::NoteBorrowedHere,
@@ -1614,6 +1629,11 @@ impl<'a> Walk<'a> {
         let holds = self.events[self.given..].iter().any(|event| match event {
             Event::Holds(_, from, to, _) => to > from,
             Event::Returned(..) | Event::Stored(..) | Event::Called(_) | Event::Left(..) => true,
+            // What is changed through a pointer, those who call the
+            // function are told.
+            Event::Changed(change) => self.changes[*change as usize]
+                .steps
+                .contains(&borrows::Step::Target),
             _ => false,
         });
         let holds = holds || !self.broken.is_empty();

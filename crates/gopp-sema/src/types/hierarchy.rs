@@ -31,6 +31,9 @@ pub struct Lends {
     /// For each parameter: whether the function may keep a function
     /// value that it is given there longer than the call (CLO-4).
     pub keeps: Vec<bool>,
+    /// For each parameter: whether the function may change what the
+    /// parameter reaches through pointers.
+    pub changes: Vec<bool>,
 }
 
 impl Lends {
