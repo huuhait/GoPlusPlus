@@ -67,6 +67,31 @@ typedef struct gopp_unwinding {
 
 static gopp_unwinding *unwindings;
 
+// The trace of the calls with `!` that failed (ERR-14): where each was,
+// the first that failed first, for the error that the last of them
+// passed on. It is no part of the error, and at most this long: the
+// oldest places are dropped.
+enum { GOPP_TRACE = 32 };
+static gopp_string trace[GOPP_TRACE];
+static uint32_t traced;
+static gopp_iface trace_of;
+
+// A call with `!` at the place failed with the error of the two
+// words. If the error is the one that the last such call passed on,
+// the place is one more of its trace; if not, the trace starts over
+// with it.
+void _gopp_err_trace(uint8_t *itab, uint8_t *data, gopp_string position) {
+  if (itab != trace_of.itab || data != trace_of.data) {
+    traced = 0;
+    trace_of = (gopp_iface){itab, data};
+  }
+  if (traced == GOPP_TRACE) {
+    __builtin_memmove(trace, trace + 1, (GOPP_TRACE - 1) * sizeof trace[0]);
+    traced--;
+  }
+  trace[traced++] = position;
+}
+
 // A panic ends the program at once: no deferred call is made for it
 // (`-panic=abort`).
 static bool aborts;
@@ -78,6 +103,8 @@ void _gopp_panic_reset(void) {
   panics = 0;
   unwindings = 0;
   aborts = false;
+  traced = 0;
+  trace_of = (gopp_iface){0, 0};
 }
 
 // A panic left the end of a value (`drop`): nothing can go on.
@@ -502,5 +529,11 @@ void _gopp_panic_must(gopp_string expr, gopp_string position, gopp_string messag
   _gopp_write_string(message);
   // The message was made for this, and is in the text of the panic.
   _gopp_string_release(message);
+  // The places of the calls that passed the error on before this one,
+  // which is the last of the trace and is named above.
+  for (uint32_t at = 0; at + 1 < traced; at++) {
+    _gopp_write_text("\n\t");
+    _gopp_write_string(trace[at]);
+  }
   raise_kept();
 }

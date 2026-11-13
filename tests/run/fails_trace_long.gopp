@@ -1,0 +1,21 @@
+// exit: 2
+package main
+
+type Problem struct{ depth int }
+
+func (p Problem) Error() string { return "problem at the bottom" }
+
+func deep!(n int) int {
+	if n == 0 {
+		return 0, Problem{depth: n}
+	}
+	return deep!(n-1) + 1
+}
+
+func main() {
+	n, err := deep(3)
+	println(n, err.Error())
+	// The trace keeps the last 32 places: 31 of them passed the error
+	// on to the call that panics.
+	println(deep!(40))
+}

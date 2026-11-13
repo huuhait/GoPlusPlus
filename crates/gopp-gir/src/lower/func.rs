@@ -1386,6 +1386,7 @@ impl FuncCx<'_, '_> {
                 let has = set(self, &own)?;
                 self.b.switch(has, vec![(0, stores)], drops)?;
                 self.b.switch_to(stores);
+                self.traced(&error, &marked.place)?;
                 self.b
                     .assign(own, Rvalue::Use(Operand::Copy(error.clone())))?;
                 self.b.goto(done)?;

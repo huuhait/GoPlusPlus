@@ -1,13 +1,13 @@
 // A function that can fail gives its result and the two words of the
 // error back in registers: three in all. A call with `!` in a function
-// that can fail is the call and one compare of the first word of the
-// error; what follows either goes on or returns the error, here
-// without a branch.
+// that can fail is the call, one compare of the first word of the
+// error and one branch; only the way of an error tells the runtime
+// where the call is.
 //
 // asm linux/amd64 half: %rax; %rdx; %ecx; ! (%rdi)
-// asm linux/amd64 twice: callq *%rax; testq %rdx, %rdx; ! cmpq; ! _gopp
-// asm windows/amd64 twice: callq *%rax; testq %rdx, %rdx; ! cmpq; ! _gopp
-// asm linux/arm64 twice: blr x8; cmp x1, #0; ! _gopp
+// asm linux/amd64 twice: callq *%rax; testq %rdx, %rdx; je; _gopp_err_trace; ! cmpq
+// asm windows/amd64 twice: callq *%rax; testq %rdx, %rdx; je; _gopp_err_trace; ! cmpq
+// asm linux/arm64 twice: blr x8; cbz x1; _gopp_err_trace
 package main
 
 type none struct{}

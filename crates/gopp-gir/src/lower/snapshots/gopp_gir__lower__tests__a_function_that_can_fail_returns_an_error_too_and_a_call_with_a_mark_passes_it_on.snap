@@ -98,86 +98,92 @@ fn _GPF4mainE4both(_1: i64) -> (string, i64, gopp.iface) [go, external] {
   let _2: (string, gopp.iface)
   let _3: gopp.iface
   let _4: bool
-  let _5: string
-  let _6: string "held"
-  let _7: string
-  let _8: (i64, gopp.iface)
-  let _9: bool
-  let _10: ()
-  let _11: string
-  let _12: bool
-  let _13: ()
-  let _14: gopp.iface
-  let _15: bool
-  let _16: string
-  let _17: bool
-  let _18: ()
+  let _5: ()
+  let _6: string
+  let _7: string "held"
+  let _8: string
+  let _9: (i64, gopp.iface)
+  let _10: bool
+  let _11: ()
+  let _12: string
+  let _13: bool
+  let _14: ()
+  let _15: gopp.iface
+  let _16: bool
+  let _17: ()
+  let _18: string
   let _19: bool
   let _20: ()
   let _21: bool
   let _22: ()
+  let _23: bool
+  let _24: ()
   bb0:
     _2 = call const fn @_GPF4mainE4name(copy _1) -> [return: bb1, unwind: continue]  ; a.gopp:22:10
   bb1:
     _3 = copy _2.1  ; a.gopp:22:2
     _4 = ne(copy _3.0, const zero: *u8)  ; a.gopp:22:2
-    switch copy _4 [0: bb3, otherwise: bb2]  ; a.gopp:22:2
+    switch copy _4 [0: bb4, otherwise: bb2]  ; a.gopp:22:2
   bb2: [cold]
+    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#5 "a.gopp:22:10") -> [return: bb3, unwind: continue]  ; a.gopp:22:2
+  bb3:
     _0 = tuple {const zero: string, const zero: i64, copy _3}  ; a.gopp:22:10
     return  ; a.gopp:22:10
-  bb3:
-    _5 = copy _2.0  ; a.gopp:22:10
-    storage_live(_6)  ; a.gopp:22:10
-    _6 = copy _5  ; a.gopp:22:10
-    _7 = copy _6  ; a.gopp:23:2
-    _6 = const zero: string  ; a.gopp:23:2
-    _8 = call const fn @_GPF4mainE4half(copy _1) -> [return: bb12, unwind: cleanup bb8]  ; a.gopp:23:15
-  bb4: [cleanup]
-    _9 = ne(copy _6.2, const zero: *u8)  ; a.gopp:23:15
-    switch copy _9 [0: bb7, otherwise: bb5]  ; a.gopp:23:15
+  bb4:
+    _6 = copy _2.0  ; a.gopp:22:10
+    storage_live(_7)  ; a.gopp:22:10
+    _7 = copy _6  ; a.gopp:22:10
+    _8 = copy _7  ; a.gopp:23:2
+    _7 = const zero: string  ; a.gopp:23:2
+    _9 = call const fn @_GPF4mainE4half(copy _1) -> [return: bb13, unwind: cleanup bb9]  ; a.gopp:23:15
   bb5: [cleanup]
-    _10 = call const fn @_gopp_string_release(copy _6) -> [return: bb6, unwind: terminate]  ; a.gopp:23:15
+    _10 = ne(copy _7.2, const zero: *u8)  ; a.gopp:23:15
+    switch copy _10 [0: bb8, otherwise: bb6]  ; a.gopp:23:15
   bb6: [cleanup]
-    goto bb7  ; a.gopp:23:15
+    _11 = call const fn @_gopp_string_release(copy _7) -> [return: bb7, unwind: terminate]  ; a.gopp:23:15
   bb7: [cleanup]
-    resume  ; a.gopp:23:15
+    goto bb8  ; a.gopp:23:15
   bb8: [cleanup]
-    _11 = copy _7  ; a.gopp:23:15
-    _12 = ne(copy _11.2, const zero: *u8)  ; a.gopp:23:15
-    switch copy _12 [0: bb11, otherwise: bb9]  ; a.gopp:23:15
+    resume  ; a.gopp:23:15
   bb9: [cleanup]
-    _13 = call const fn @_gopp_string_release(copy _11) -> [return: bb10, unwind: terminate]  ; a.gopp:23:15
+    _12 = copy _8  ; a.gopp:23:15
+    _13 = ne(copy _12.2, const zero: *u8)  ; a.gopp:23:15
+    switch copy _13 [0: bb12, otherwise: bb10]  ; a.gopp:23:15
   bb10: [cleanup]
-    goto bb11  ; a.gopp:23:15
+    _14 = call const fn @_gopp_string_release(copy _12) -> [return: bb11, unwind: terminate]  ; a.gopp:23:15
   bb11: [cleanup]
-    goto bb4  ; a.gopp:23:15
-  bb12:
-    _14 = copy _8.1  ; a.gopp:23:2
-    _15 = ne(copy _14.0, const zero: *u8)  ; a.gopp:23:2
-    switch copy _15 [0: bb18, otherwise: bb13]  ; a.gopp:23:2
-  bb13: [cold]
-    _0 = tuple {const zero: string, const zero: i64, copy _14}  ; a.gopp:23:15
-    _16 = copy _7  ; a.gopp:23:15
-    _17 = ne(copy _16.2, const zero: *u8)  ; a.gopp:23:15
-    switch copy _17 [0: bb15, otherwise: bb14]  ; a.gopp:23:15
-  bb14:
-    _18 = call const fn @_gopp_string_release(copy _16) -> [return: bb15, unwind: terminate]  ; a.gopp:23:15
+    goto bb12  ; a.gopp:23:15
+  bb12: [cleanup]
+    goto bb5  ; a.gopp:23:15
+  bb13:
+    _15 = copy _9.1  ; a.gopp:23:2
+    _16 = ne(copy _15.0, const zero: *u8)  ; a.gopp:23:2
+    switch copy _16 [0: bb20, otherwise: bb14]  ; a.gopp:23:2
+  bb14: [cold]
+    _17 = call const fn @_gopp_err_trace(copy _15.0, copy _15.1, const str#6 "a.gopp:23:15") -> [return: bb15, unwind: cleanup bb9]  ; a.gopp:23:2
   bb15:
-    _19 = ne(copy _6.2, const zero: *u8)  ; a.gopp:23:15
+    _0 = tuple {const zero: string, const zero: i64, copy _15}  ; a.gopp:23:15
+    _18 = copy _8  ; a.gopp:23:15
+    _19 = ne(copy _18.2, const zero: *u8)  ; a.gopp:23:15
     switch copy _19 [0: bb17, otherwise: bb16]  ; a.gopp:23:15
   bb16:
-    _20 = call const fn @_gopp_string_release(copy _6) -> [return: bb17, unwind: terminate]  ; a.gopp:23:15
+    _20 = call const fn @_gopp_string_release(copy _18) -> [return: bb17, unwind: terminate]  ; a.gopp:23:15
   bb17:
-    storage_dead(_6)  ; a.gopp:23:15
-    return  ; a.gopp:23:15
+    _21 = ne(copy _7.2, const zero: *u8)  ; a.gopp:23:15
+    switch copy _21 [0: bb19, otherwise: bb18]  ; a.gopp:23:15
   bb18:
-    _0 = tuple {copy _7, copy _8.0, const zero: gopp.iface}  ; a.gopp:23:2
-    _21 = ne(copy _6.2, const zero: *u8)  ; a.gopp:23:2
-    switch copy _21 [0: bb20, otherwise: bb19]  ; a.gopp:23:2
+    _22 = call const fn @_gopp_string_release(copy _7) -> [return: bb19, unwind: terminate]  ; a.gopp:23:15
   bb19:
-    _22 = call const fn @_gopp_string_release(copy _6) -> [return: bb20, unwind: terminate]  ; a.gopp:23:2
+    storage_dead(_7)  ; a.gopp:23:15
+    return  ; a.gopp:23:15
   bb20:
-    storage_dead(_6)  ; a.gopp:23:2
+    _0 = tuple {copy _8, copy _9.0, const zero: gopp.iface}  ; a.gopp:23:2
+    _23 = ne(copy _7.2, const zero: *u8)  ; a.gopp:23:2
+    switch copy _23 [0: bb22, otherwise: bb21]  ; a.gopp:23:2
+  bb21:
+    _24 = call const fn @_gopp_string_release(copy _7) -> [return: bb22, unwind: terminate]  ; a.gopp:23:2
+  bb22:
+    storage_dead(_7)  ; a.gopp:23:2
     return  ; a.gopp:23:2
 }
 
@@ -187,16 +193,19 @@ fn _GPF4mainE5check(_1: i64) -> gopp.iface [go, external] {
   let _2: (i64, gopp.iface)
   let _3: gopp.iface
   let _4: bool
+  let _5: ()
   bb0:
     _2 = call const fn @_GPF4mainE4half(copy _1) -> [return: bb1, unwind: continue]  ; a.gopp:27:2
   bb1:
     _3 = copy _2.1  ; a.gopp:27:2
     _4 = ne(copy _3.0, const zero: *u8)  ; a.gopp:27:2
-    switch copy _4 [0: bb3, otherwise: bb2]  ; a.gopp:27:2
+    switch copy _4 [0: bb4, otherwise: bb2]  ; a.gopp:27:2
   bb2: [cold]
+    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#7 "a.gopp:27:2") -> [return: bb3, unwind: continue]  ; a.gopp:27:2
+  bb3:
     _0 = copy _3  ; a.gopp:27:2
     return  ; a.gopp:27:2
-  bb3:
+  bb4:
     _0 = const zero: gopp.iface  ; a.gopp:26:20
     return  ; a.gopp:26:20
 }
@@ -207,38 +216,41 @@ fn _GPF4mainE5plain(_1: i64) -> i64 [go, external] {
   let _2: (i64, gopp.iface)
   let _3: gopp.iface
   let _4: bool
-  let _5: *u8
-  let _6: *[2]*u8
-  let _7: fn(*u8) -> string
-  let _8: **u8
-  let _9: *u8
-  let _10: string
-  let _11: *gopp.iface
-  let _12: *u8
-  let _13: ()
+  let _5: ()
+  let _6: *u8
+  let _7: *[2]*u8
+  let _8: fn(*u8) -> string
+  let _9: **u8
+  let _10: *u8
+  let _11: string
+  let _12: *gopp.iface
+  let _13: *u8
   let _14: ()
+  let _15: ()
   bb0:
     _2 = call const fn @_GPF4mainE4half(copy _1) -> [return: bb1, unwind: continue]  ; a.gopp:31:9
   bb1:
     _3 = copy _2.1  ; a.gopp:31:2
     _4 = ne(copy _3.0, const zero: *u8)  ; a.gopp:31:2
-    switch copy _4 [0: bb6, otherwise: bb2]  ; a.gopp:31:2
+    switch copy _4 [0: bb7, otherwise: bb2]  ; a.gopp:31:2
   bb2: [cold]
-    _5 = copy _3.0  ; a.gopp:31:9
-    _6 = ptr_to_ptr(copy _5) as *[2]*u8  ; a.gopp:31:9
-    _7 = ptr_to_ptr(copy (*_6)[1]) as fn(*u8) -> string  ; a.gopp:31:9
-    _8 = &mut _3.1  ; a.gopp:31:9
-    _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:31:9
-    _10 = call copy _7(copy _9) -> [return: bb3, unwind: continue]  ; a.gopp:31:9
+    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#8 "a.gopp:31:9") -> [return: bb3, unwind: continue]  ; a.gopp:31:9
   bb3:
-    _11 = &mut _3  ; a.gopp:31:9
-    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:31:9
-    _13 = call const fn @_gopp_iface_drop(copy _12) -> [return: bb4, unwind: terminate]  ; a.gopp:31:9
+    _6 = copy _3.0  ; a.gopp:31:9
+    _7 = ptr_to_ptr(copy _6) as *[2]*u8  ; a.gopp:31:9
+    _8 = ptr_to_ptr(copy (*_7)[1]) as fn(*u8) -> string  ; a.gopp:31:9
+    _9 = &mut _3.1  ; a.gopp:31:9
+    _10 = ptr_to_ptr(copy _9) as *u8  ; a.gopp:31:9
+    _11 = call copy _8(copy _10) -> [return: bb4, unwind: continue]  ; a.gopp:31:9
   bb4:
-    _14 = call const fn @_gopp_panic_must(const str#5 "half(n)", const str#6 "a.gopp:31:9", copy _10) -> [return: bb5, unwind: continue]  ; a.gopp:31:9
+    _12 = &mut _3  ; a.gopp:31:9
+    _13 = ptr_to_ptr(copy _12) as *u8  ; a.gopp:31:9
+    _14 = call const fn @_gopp_iface_drop(copy _13) -> [return: bb5, unwind: terminate]  ; a.gopp:31:9
   bb5:
-    unreachable  ; a.gopp:31:9
+    _15 = call const fn @_gopp_panic_must(const str#9 "half(n)", const str#10 "a.gopp:31:9", copy _11) -> [return: bb6, unwind: continue]  ; a.gopp:31:9
   bb6:
+    unreachable  ; a.gopp:31:9
+  bb7:
     _0 = add(copy _2.0, const 1: i64)  ; a.gopp:31:2
     return  ; a.gopp:31:2
 }
@@ -254,6 +266,8 @@ fn _GPTIM5ErrorN4mainE7Problem(_1: *u8) -> string [go, linkonce_odr] {
     _0 = copy _3
     return
 }
+
+declare fn _gopp_err_trace(_1: *u8, _2: *u8, _3: string) -> () [c, external]
 
 declare fn _gopp_string_release(_1: string) -> () [c, external]
 

@@ -222,6 +222,7 @@ bool _gopp_defer_enter(uint8_t *frame);
 [[noreturn]] void _gopp_panic(uint8_t *value, gopp_string error_key, gopp_string string_key);
 void _gopp_recover(uint8_t *value);
 bool _gopp_panicking();
+void _gopp_err_trace(uint8_t *itab, uint8_t *data, gopp_string position);
 void _gopp_panic_aborts();
 bool _gopp_defer_left(uint8_t *frame);
 void _gopp_defer_owns(uint8_t *owned);

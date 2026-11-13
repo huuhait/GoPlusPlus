@@ -1713,6 +1713,19 @@ func plain(n int) int {
     // The way is one that the function does not go otherwise.
     let both = without_cleanup(body("_GPF4mainE4both"));
     assert_eq!(both.matches("[cold]").count(), 2, "{both}");
+    // Only a call that fails tells the runtime where it is, for the
+    // trace of the error.
+    let cold: String = both
+        .split("\n  bb")
+        .filter(|block| {
+            block
+                .lines()
+                .next()
+                .is_some_and(|first| first.ends_with("[cold]"))
+        })
+        .collect();
+    assert_eq!(cold.matches("@_gopp_err_trace(").count(), 2, "{both}");
+    assert_eq!(both.matches("@_gopp_err_trace(").count(), 2, "{both}");
     assert_eq!(both.matches("@_gopp_panic_must(").count(), 0, "{both}");
     assert_eq!(both.matches("\n    return").count(), 3, "{both}");
     // The second way ends the value of `held`, which the `return` had

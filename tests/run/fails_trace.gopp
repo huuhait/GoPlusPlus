@@ -1,0 +1,48 @@
+// exit: 2
+package main
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+func load!(name string) string {
+	if name == "" {
+		return "", Problem{what: "no name"}
+	}
+	return name
+}
+
+func read!(name string) string {
+	return load!(name) + "."
+}
+
+func parse!(name string) int {
+	text := read!(name)
+	return len(text)
+}
+
+func check!(n int) {
+	if n < 0 {
+		return Problem{what: "negative"}
+	}
+}
+
+func size!(n int) int {
+	check!(n)
+	return n
+}
+
+func total!(a, b int) int {
+	return size!(a) + size!(b)
+}
+
+func main() {
+	// An error that is handled: its trace is not written.
+	_, err := parse("")
+	println(err.Error())
+	println(parse!("ok"), total!(1, 2))
+	// Another error starts the trace over: the panic has the places
+	// that this error passed, the first that failed first, and not
+	// those of the error before.
+	println(total!(3, -1))
+}

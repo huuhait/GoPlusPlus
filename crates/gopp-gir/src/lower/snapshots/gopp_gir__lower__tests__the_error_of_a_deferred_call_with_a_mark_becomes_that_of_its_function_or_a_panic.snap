@@ -166,35 +166,38 @@ fn _GPC0_F4mainE3run(_1: *u8) -> () [c, internal] {
   let _6: bool
   let _7: bool
   let _8: bool
-  let _9: *gopp.iface
-  let _10: *u8
-  let _11: ()
+  let _9: ()
+  let _10: *gopp.iface
+  let _11: *u8
+  let _12: ()
   bb0:
     _2 = ptr_to_ptr(copy _1) as *(*u8, *u8, *u8)  ; a.gopp:13:6
     _3 = ptr_to_ptr(copy (*_2).0) as *(bool, i64, *gopp.iface)  ; a.gopp:13:6
-    switch copy (*_3).0 [0: bb8, otherwise: bb1]  ; a.gopp:13:6
+    switch copy (*_3).0 [0: bb9, otherwise: bb1]  ; a.gopp:13:6
   bb1:
     (*_3).0 = const false  ; a.gopp:13:6
     _4 = call const fn @_GPF4mainE7cleanup(copy (*_3).1) -> [return: bb2, unwind: continue]  ; a.gopp:14:8
   bb2:
     _5 = copy _4  ; a.gopp:14:8
     _6 = ne(copy _5.0, const zero: *u8)  ; a.gopp:14:8
-    switch copy _6 [0: bb8, otherwise: bb3]  ; a.gopp:14:8
+    switch copy _6 [0: bb9, otherwise: bb3]  ; a.gopp:14:8
   bb3: [cold]
     _7 = call const fn @_gopp_panicking() -> [return: bb4, unwind: continue]  ; a.gopp:14:8
   bb4:
-    switch copy _7 [0: bb5, otherwise: bb7]  ; a.gopp:14:8
+    switch copy _7 [0: bb5, otherwise: bb8]  ; a.gopp:14:8
   bb5:
     _8 = ne(copy (*(*_3).2).0, const zero: *u8)  ; a.gopp:14:8
-    switch copy _8 [0: bb6, otherwise: bb7]  ; a.gopp:14:8
+    switch copy _8 [0: bb6, otherwise: bb8]  ; a.gopp:14:8
   bb6:
-    (*(*_3).2) = copy _5  ; a.gopp:14:8
-    goto bb8  ; a.gopp:14:8
+    _9 = call const fn @_gopp_err_trace(copy _5.0, copy _5.1, const str#3 "a.gopp:14:8") -> [return: bb7, unwind: continue]  ; a.gopp:14:8
   bb7:
-    _9 = &mut _5  ; a.gopp:14:8
-    _10 = ptr_to_ptr(copy _9) as *u8  ; a.gopp:14:8
-    _11 = call const fn @_gopp_iface_drop(copy _10) -> [return: bb8, unwind: terminate]  ; a.gopp:14:8
+    (*(*_3).2) = copy _5  ; a.gopp:14:8
+    goto bb9  ; a.gopp:14:8
   bb8:
+    _10 = &mut _5  ; a.gopp:14:8
+    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:14:8
+    _12 = call const fn @_gopp_iface_drop(copy _11) -> [return: bb9, unwind: terminate]  ; a.gopp:14:8
+  bb9:
     return  ; a.gopp:13:6
 }
 
@@ -267,43 +270,46 @@ fn _GPC0_F4mainE4must(_1: *u8) -> () [c, internal] {
   let _4: gopp.iface
   let _5: gopp.iface
   let _6: bool
-  let _7: *u8
-  let _8: *[2]*u8
-  let _9: fn(*u8) -> string
-  let _10: **u8
-  let _11: *u8
-  let _12: string
-  let _13: *gopp.iface
-  let _14: *u8
-  let _15: ()
+  let _7: ()
+  let _8: *u8
+  let _9: *[2]*u8
+  let _10: fn(*u8) -> string
+  let _11: **u8
+  let _12: *u8
+  let _13: string
+  let _14: *gopp.iface
+  let _15: *u8
   let _16: ()
+  let _17: ()
   bb0:
     _2 = ptr_to_ptr(copy _1) as *(*u8)  ; a.gopp:18:6
     _3 = ptr_to_ptr(copy (*_2).0) as *(bool, i64)  ; a.gopp:18:6
-    switch copy (*_3).0 [0: bb7, otherwise: bb1]  ; a.gopp:18:6
+    switch copy (*_3).0 [0: bb8, otherwise: bb1]  ; a.gopp:18:6
   bb1:
     (*_3).0 = const false  ; a.gopp:18:6
     _4 = call const fn @_GPF4mainE7cleanup(copy (*_3).1) -> [return: bb2, unwind: continue]  ; a.gopp:19:8
   bb2:
     _5 = copy _4  ; a.gopp:19:8
     _6 = ne(copy _5.0, const zero: *u8)  ; a.gopp:19:8
-    switch copy _6 [0: bb7, otherwise: bb3]  ; a.gopp:19:8
+    switch copy _6 [0: bb8, otherwise: bb3]  ; a.gopp:19:8
   bb3: [cold]
-    _7 = copy _5.0  ; a.gopp:19:8
-    _8 = ptr_to_ptr(copy _7) as *[2]*u8  ; a.gopp:19:8
-    _9 = ptr_to_ptr(copy (*_8)[1]) as fn(*u8) -> string  ; a.gopp:19:8
-    _10 = &mut _5.1  ; a.gopp:19:8
-    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:19:8
-    _12 = call copy _9(copy _11) -> [return: bb4, unwind: continue]  ; a.gopp:19:8
+    _7 = call const fn @_gopp_err_trace(copy _5.0, copy _5.1, const str#4 "a.gopp:19:8") -> [return: bb4, unwind: continue]  ; a.gopp:19:8
   bb4:
-    _13 = &mut _5  ; a.gopp:19:8
-    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:19:8
-    _15 = call const fn @_gopp_iface_drop(copy _14) -> [return: bb5, unwind: terminate]  ; a.gopp:19:8
+    _8 = copy _5.0  ; a.gopp:19:8
+    _9 = ptr_to_ptr(copy _8) as *[2]*u8  ; a.gopp:19:8
+    _10 = ptr_to_ptr(copy (*_9)[1]) as fn(*u8) -> string  ; a.gopp:19:8
+    _11 = &mut _5.1  ; a.gopp:19:8
+    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:19:8
+    _13 = call copy _10(copy _12) -> [return: bb5, unwind: continue]  ; a.gopp:19:8
   bb5:
-    _16 = call const fn @_gopp_panic_must(const str#3 "cleanup(n)", const str#4 "a.gopp:19:8", copy _12) -> [return: bb6, unwind: continue]  ; a.gopp:19:8
+    _14 = &mut _5  ; a.gopp:19:8
+    _15 = ptr_to_ptr(copy _14) as *u8  ; a.gopp:19:8
+    _16 = call const fn @_gopp_iface_drop(copy _15) -> [return: bb6, unwind: terminate]  ; a.gopp:19:8
   bb6:
-    unreachable  ; a.gopp:19:8
+    _17 = call const fn @_gopp_panic_must(const str#5 "cleanup(n)", const str#6 "a.gopp:19:8", copy _13) -> [return: bb7, unwind: continue]  ; a.gopp:19:8
   bb7:
+    unreachable  ; a.gopp:19:8
+  bb8:
     return  ; a.gopp:18:6
 }
 
@@ -328,5 +334,7 @@ declare fn _gopp_iface_drop(_1: *u8) -> () [c, external]
 declare fn _gopp_defer_pop(_1: *u8) -> () [c, external]
 
 declare fn _gopp_panicking() -> bool [c, external]
+
+declare fn _gopp_err_trace(_1: *u8, _2: *u8, _3: string) -> () [c, external]
 
 declare fn _gopp_panic_must(_1: string, _2: string, _3: string) -> () [c, external]

@@ -1,0 +1,37 @@
+0 problem at the bottom
+panic: must: deep(40) at fails_trace_long.gopp:20:10: problem at the bottom
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+	fails_trace_long.gopp:12:9
+
+goroutine 1 [running]:
+main.main()
+	+0x?

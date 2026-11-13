@@ -1,0 +1,9 @@
+problem: no name
+3 3
+panic: must: total(3, -1) at fails_trace.gopp:47:10: problem: negative
+	fails_trace.gopp:31:2
+	fails_trace.gopp:36:20
+
+goroutine 1 [running]:
+main.main()
+	+0x?

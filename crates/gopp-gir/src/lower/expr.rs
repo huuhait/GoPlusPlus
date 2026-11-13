@@ -1482,7 +1482,7 @@ impl<'a> FuncCx<'a, '_> {
         self.b.switch_to(fails);
         self.b.set_cold(fails);
         match self.body.bangs.get(&expr) {
-            Some(gopp_sema::Bang::Return) => self.failed(span, error)?,
+            Some(gopp_sema::Bang::Return) => self.failed(expr, error)?,
             _ => self.must(expr, error)?,
         }
         self.b.switch_to(goes_on);
@@ -1503,7 +1503,10 @@ impl<'a> FuncCx<'a, '_> {
     /// each of its other results, as `return zero..., err` does
     /// (ERR-7). What the statement owns ends on this way; what follows
     /// the call is written as if this way were not there.
-    fn failed(&mut self, span: SourceSpan, error: Place) -> Built {
+    fn failed(&mut self, expr: ExprId, error: Place) -> Built {
+        let span = self.tree.exprs[expr].span;
+        let (_, place) = self.must_texts(expr);
+        self.traced(&error, &place)?;
         let parts = self.result_parts();
         let mut given = Vec::with_capacity(parts.len());
         for &part in parts.iter().take(parts.len().saturating_sub(1)) {
@@ -1520,6 +1523,23 @@ impl<'a> FuncCx<'a, '_> {
         let span = self.tree.exprs[expr].span;
         let (shown, place) = self.must_texts(expr);
         self.must_with(span, &shown, &place, error)
+    }
+
+    /// The call with `!` at the place failed with the error in the
+    /// place: the runtime adds the place to the trace of the error
+    /// (ERR-14). Only a call that fails comes here.
+    pub(super) fn traced(&mut self, error: &Place, place: &str) -> Built {
+        // The two words of the error are given as they are: its
+        // address is not taken, so the way of a call that does not
+        // fail has nothing of this.
+        let string = self.b.types().intern(Type::String);
+        let bytes = self.bytes_ty();
+        let args = vec![
+            Operand::Copy(self.b.field(error, 0)?),
+            Operand::Copy(self.b.field(error, 1)?),
+            self.b.const_str(place.as_bytes()),
+        ];
+        self.runtime_call("_gopp_err_trace", &[bytes, bytes, string], args)
     }
 
     /// The call without its mark, and its file, line and column.
@@ -1553,6 +1573,7 @@ impl<'a> FuncCx<'a, '_> {
     ) -> Built {
         let around = self.b.loc();
         self.at(span);
+        self.traced(&error, place)?;
         let string = self.b.types().intern(Type::String);
         let bytes = self.bytes_ty();
         // `error` has one method, the first of its table.
