@@ -29,7 +29,7 @@ pub enum Status {
 
 /// The rows of features that the language no longer has. Nothing is
 /// reported with them, and their numbers are not used again.
-const RETIRED: [&str; 45] = [
+const RETIRED: [&str; 46] = [
     "err_view_for_ref",
     "err_sema_assign",
     "err_sema_builtin",
@@ -78,6 +78,10 @@ const RETIRED: [&str; 45] = [
     "err_own_binding_read_only",
     "note_own_fix_binding_copy",
     "err_own_get_binding_read_only",
+    // A generic body is held to the rule for a value that an error
+    // guards (OWN-P10) once, for every type argument, so no instance is
+    // refused for it.
+    "err_inst_checked_result",
 ];
 
 /// What the row `number` of the registry is; `None` if there is no such

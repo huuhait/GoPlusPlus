@@ -531,16 +531,30 @@ impl<'a> Checker<'a> {
         {
             let name = self.names.resolve(&cx.body.locals[local.0 as usize].name);
             let other = self.names.resolve(&cx.body.locals[by.0 as usize].name);
-            let (holds, test) = match known {
-                Known::Nil => (format!("{other} is nil"), format!("{other} != nil")),
-                _ => (format!("{other} is true"), format!("!{other}")),
+            let shown = self.type_string(x.ty);
+            // What says whether the value is set may have no name (`_`).
+            let (message, fix) = match (by == local, known) {
+                (true, _) => (
+                    format!(
+                        "cannot use {name} here: {shown} has no zero value, and what says \
+                         whether {name} is set has no name"
+                    ),
+                    format!("name the last value, and use {name} where it says that {name} is set"),
+                ),
+                (false, known) => {
+                    let (holds, test) = match known {
+                        Known::Nil => (format!("{other} is nil"), format!("{other} != nil")),
+                        _ => (format!("{other} is true"), format!("!{other}")),
+                    };
+                    (
+                        format!(
+                            "cannot use {name} here: {shown} has no zero value, so {name} is set \
+                             only where {holds}"
+                        ),
+                        format!("return or go on where {test}, and use {name} after that"),
+                    )
+                }
             };
-            let message = format!(
-                "cannot use {name} here: {} has no zero value, so {name} is set only where \
-                 {holds}",
-                self.type_string(x.ty)
-            );
-            let fix = format!("return or go on where {test}, and use {name} after that");
             self.error_with_fix(
                 Code::ValueUnchecked,
                 span,

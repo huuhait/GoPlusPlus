@@ -13852,3 +13852,53 @@ func bad(o Option[int], m Maybe) {
         ]
     );
 }
+
+#[test]
+fn a_value_that_an_error_guards_is_checked_in_a_generic_body_too() {
+    let text = "package p
+
+type Node struct{ v int }
+
+func number(get func() (int, error)) int {
+	v, _ := get()
+	return v
+}
+
+func unnamed(get func() (*Node, error)) *Node {
+	v, _ := get()
+	return v
+}
+
+func unchecked[T any](get func() (T, error)) T {
+	v, err := get()
+	_ = err
+	return v
+}
+
+func checked[T any]!(get func() (T, error)) T {
+	v, err := get()
+	if err != nil {
+		return nil, err
+	}
+	return v
+}
+
+func use!() int {
+	return checked!(func() (int, error) { return 1, nil })
+}
+";
+    // A type parameter may be a type without a zero value: the body is
+    // held to the rule once, for every type argument (OWN-P10). What
+    // has a zero value needs no check, and a guard without a name says
+    // so.
+    assert_eq!(
+        messages("a.gopp", text),
+        [
+            "a.gopp:12:9: cannot use v here: *Node has no zero value, and what says whether v is \
+             set has no name",
+            "    name the last value, and use v where it says that v is set",
+            "a.gopp:18:9: cannot use v here: T has no zero value, so v is set only where err is nil",
+            "    return or go on where err != nil, and use v after that",
+        ]
+    );
+}
