@@ -1,10 +1,7 @@
-use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use gopp_diag::Sink;
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use gopp_testutil::{linear, samples, stress};
 use lasso::ThreadedRodeo;
 
@@ -16,17 +13,15 @@ use crate::token::TokenKind;
 
 struct Formatted {
     text: String,
-    /// The text after one pass of the layout rules, as one run of gofmt.
-    one_pass: String,
     /// The tree of the input without spans and layout.
     shape: String,
     comments: Vec<String>,
 }
 
 /// Formats `text`, or returns its first diagnostic.
-fn try_format(text: &str, dialect: Dialect) -> Result<Formatted, String> {
+fn try_format(text: &str) -> Result<Formatted, String> {
     let map = SourceMap::new();
-    let source = SourceFile::new("test".into(), text.to_owned(), dialect).unwrap();
+    let source = SourceFile::new("test".into(), text.to_owned()).unwrap();
     let id = map.add(source);
     let source = map.file(id);
     let names = ThreadedRodeo::new();
@@ -45,22 +40,17 @@ fn try_format(text: &str, dialect: Dialect) -> Result<Formatted, String> {
     };
     Ok(Formatted {
         text: formatted,
-        one_pass: format_once(&file, &source, &names).0,
         shape: dump_shape(&file, source.text(), &names),
         comments: lexed.comments.iter().map(comment).collect(),
     })
 }
 
-fn formatted(text: &str, dialect: Dialect) -> Formatted {
-    try_format(text, dialect).unwrap_or_else(|error| panic!("{error}\n{text}"))
+fn formatted(text: &str) -> Formatted {
+    try_format(text).unwrap_or_else(|error| panic!("{error}\n{text}"))
 }
 
 fn gopp(text: &str) -> String {
-    formatted(text, Dialect::Gopp).text
-}
-
-fn go(text: &str) -> String {
-    formatted(text, Dialect::Go).text
+    formatted(text).text
 }
 
 /// A random number generator with a fixed sequence per seed.
@@ -79,8 +69,8 @@ impl Random {
 /// joins runs of blanks, removes and adds blank lines, breaks and joins
 /// lines after tokens that do not end a statement, or adds comments between
 /// tokens; the seed decides which of these it does.
-fn damage(text: &str, dialect: Dialect, seed: u64) -> String {
-    let source = SourceFile::new("damage".into(), text.to_owned(), dialect).unwrap();
+fn damage(text: &str, seed: u64) -> String {
+    let source = SourceFile::new("damage".into(), text.to_owned()).unwrap();
     let map = SourceMap::new();
     let id = map.add(source);
     let lexed = lexer::lex(id, &map.file(id), &Sink::new(10));
@@ -205,9 +195,9 @@ fn damage(text: &str, dialect: Dialect, seed: u64) -> String {
 
 /// What the formatter promises for `text`: formatting again changes
 /// nothing, and the tree and the comments are those of `text`.
-fn check_properties(text: &str, dialect: Dialect, name: &str) -> String {
-    let first = formatted(text, dialect);
-    let second = formatted(&first.text, dialect);
+fn check_properties(text: &str, name: &str) -> String {
+    let first = formatted(text);
+    let second = formatted(&first.text);
     assert!(first.text == second.text, "{name}: not idempotent");
     assert!(first.shape == second.shape, "{name}: the tree changed");
     assert_eq!(first.comments, second.comments, "{name}");
@@ -217,9 +207,8 @@ fn check_properties(text: &str, dialect: Dialect, name: &str) -> String {
 #[test]
 fn every_sample_is_in_canonical_layout() {
     for path in samples::files() {
-        let dialect = Dialect::from_path(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        let formatted = check_properties(&text, dialect, &path.display().to_string());
+        let formatted = check_properties(&text, &path.display().to_string());
         assert!(formatted == text, "{} is not formatted", path.display());
     }
 }
@@ -227,12 +216,11 @@ fn every_sample_is_in_canonical_layout() {
 #[test]
 fn damaged_samples_keep_their_tree_and_comments() {
     for (index, path) in samples::files().iter().enumerate() {
-        let dialect = Dialect::from_path(path).unwrap();
         let text = fs::read_to_string(path).unwrap();
         for seed in 0..5 {
-            let damaged = damage(&text, dialect, (index * 5 + seed) as u64);
+            let damaged = damage(&text, (index * 5 + seed) as u64);
             let name = format!("{}, damage {seed}", path.display());
-            let formatted = check_properties(&damaged, dialect, &name);
+            let formatted = check_properties(&damaged, &name);
             // Without changed blank lines the sample itself comes back.
             if seed == 0 {
                 assert!(formatted == text, "{name}");
@@ -279,9 +267,6 @@ fn header_imports_keep_their_order() {
     let source = "package p\n\nimport (\n\"os\"\n\"fmt\"\n\"<vector>\"\n\"<algorithm>\"\n\"b/zlib.h\"\n\"a\"\n\"a\"\n)\n";
     let sorted = "package p\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"<vector>\"\n\t\"<algorithm>\"\n\t\"b/zlib.h\"\n\t\"a\"\n)\n";
     assert_eq!(gopp(source), sorted);
-    // To Go these are paths like any other.
-    let as_go = "package p\n\nimport (\n\t\"<algorithm>\"\n\t\"<vector>\"\n\t\"a\"\n\t\"b/zlib.h\"\n\t\"fmt\"\n\t\"os\"\n)\n";
-    assert_eq!(go(source), as_go);
 }
 
 #[test]
@@ -307,254 +292,10 @@ fn groups_without_declarations_are_kept() {
     assert_eq!(gopp(expected), expected);
 }
 
-#[test]
-fn build_lines_move_to_the_top_in_canonical_form() {
-    let source = "// Copyright.\n\npackage p\n\n//go:build (linux&&amd64)||darwin\n// +build linux\n\nvar x int\n";
-    let expected = "// Copyright.\n\n//go:build (linux && amd64) || darwin\n// +build linux,amd64 darwin\n\npackage p\n\nvar x int\n";
-    assert_eq!(go(source), expected);
-    assert_eq!(go(expected), expected);
-}
-
-fn go_root() -> Option<PathBuf> {
-    let output = Command::new("go").args(["env", "GOROOT"]).output().ok()?;
-    let root = String::from_utf8(output.stdout).ok()?;
-    Some(Path::new(root.trim()).join("src"))
-}
-
-fn go_files_under(dir: &Path, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            go_files_under(&path, files);
-        } else if path.extension().is_some_and(|extension| extension == "go") {
-            files.push(path);
-        }
-    }
-}
-
-/// The files among `paths` that `gofmt` would change or cannot parse.
-fn not_in_gofmt_layout(paths: &[PathBuf]) -> HashSet<PathBuf> {
-    let mut rejected = HashSet::new();
-    for chunk in paths.chunks(500) {
-        let output = Command::new("gofmt")
-            .arg("-l")
-            .args(chunk)
-            .output()
-            .unwrap();
-        let listed = String::from_utf8_lossy(&output.stdout).into_owned();
-        rejected.extend(listed.lines().map(PathBuf::from));
-        // A syntax error is reported as `path:line:column: message`.
-        let errors = String::from_utf8_lossy(&output.stderr).into_owned();
-        let paths = errors.lines().filter_map(|line| line.split_once(".go:"));
-        rejected.extend(paths.map(|(path, _)| PathBuf::from(format!("{path}.go"))));
-    }
-    rejected
-}
-
-/// Where `actual`, the formatter's text for `path`, first differs from
-/// `expected`.
-fn difference(path: &Path, actual: &str, expected: &str) -> Option<String> {
-    let mut lines = actual.lines().zip(expected.lines()).enumerate();
-    let (line, (got, want)) = match lines.find(|(_, (got, want))| got != want) {
-        Some(found) => found,
-        None if actual == expected => return None,
-        None => (
-            actual.lines().count().min(expected.lines().count()),
-            ("", ""),
-        ),
-    };
-    let line = line + 1;
-    Some(format!(
-        "{}:{line}:\n  gofmt: {want:?}\n  gopp:  {got:?}",
-        path.display()
-    ))
-}
-
-/// How the file at `path`, which is in gofmt's layout, comes out changed.
-fn change(path: &Path) -> Option<String> {
-    let text = fs::read_to_string(path).unwrap();
-    match try_format(&text, Dialect::Go) {
-        Ok(formatted) => difference(path, &formatted.text, &text),
-        Err(error) => Some(format!("{}: does not parse: {error}", path.display())),
-    }
-}
-
-fn assert_no_failures(failures: &[String], tried: usize) {
-    assert!(
-        failures.is_empty(),
-        "{} of {tried} files differ:\n{}",
-        failures.len(),
-        failures[..failures.len().min(40)].join("\n")
-    );
-}
-
-/// Files of the standard library that between them have every kind of
-/// declaration, statement, expression and comment.
-const STANDARD_LIBRARY_SUBSET: &[&str] = &[
-    "bufio/bufio.go",
-    "bytes/buffer.go",
-    "container/heap/heap.go",
-    "context/context.go",
-    "crypto/sha256/sha256.go",
-    "encoding/binary/binary.go",
-    "encoding/json/decode.go",
-    "errors/wrap.go",
-    "fmt/print.go",
-    "go/ast/ast.go",
-    "go/printer/nodes.go",
-    "go/token/token.go",
-    "io/io.go",
-    "maps/maps.go",
-    "math/bits/bits.go",
-    "net/ip.go",
-    "os/file.go",
-    "path/filepath/path.go",
-    "regexp/syntax/prog.go",
-    "runtime/chan.go",
-    "runtime/select.go",
-    "slices/sort.go",
-    "sort/sort.go",
-    "strconv/atoi.go",
-    "strings/builder.go",
-    "sync/once.go",
-    "syscall/syscall_linux.go",
-    "text/tabwriter/tabwriter.go",
-    "time/format.go",
-    "unicode/utf8/utf8.go",
-];
-
-#[test]
-fn standard_library_files_in_gofmt_layout_are_unchanged() {
-    let Some(root) = go_root() else {
-        eprintln!("skipped: `go` is not on PATH");
-        return;
-    };
-    let files = STANDARD_LIBRARY_SUBSET.iter().map(|file| root.join(file));
-    let files: Vec<PathBuf> = files.filter(|path| path.exists()).collect();
-    assert!(files.len() >= 20, "only {} of the files exist", files.len());
-    let rejected = not_in_gofmt_layout(&files);
-    let mut failures = Vec::new();
-    for path in files.iter().filter(|path| !rejected.contains(*path)) {
-        failures.extend(change(path));
-    }
-    assert_no_failures(&failures, files.len());
-}
-
-/// Files that `gofmt` accepts and this parser, like Go's compiler, does
-/// not: `func ( /* receiver type */ ) f0()` has no receiver.
-const KNOWN_REJECTED: &[&str] = &["go/doc/testdata/issue17788.go"];
-
-/// Every file under GOROOT that `gofmt` leaves as it is must come out of
-/// the formatter as it is. Needs `go` and `gofmt` on `PATH`.
-#[test]
-#[ignore = "long: formats the whole Go standard library"]
-fn the_go_standard_library_is_unchanged() {
-    let mut files = Vec::new();
-    go_files_under(&go_root().unwrap(), &mut files);
-    files.sort();
-    assert!(
-        files.len() > 5000,
-        "only {} files under GOROOT",
-        files.len()
-    );
-    let rejected = not_in_gofmt_layout(&files);
-    let known = |path: &PathBuf| KNOWN_REJECTED.iter().any(|known| path.ends_with(known));
-    files.retain(|path| !rejected.contains(path) && !known(path));
-
-    let mut failures = Vec::new();
-    for path in &files {
-        failures.extend(change(path));
-    }
-    println!(
-        "{} files in gofmt layout, {} unchanged",
-        files.len(),
-        files.len() - failures.len()
-    );
-    assert_no_failures(&failures, files.len());
-}
-
-/// The layout rules themselves: on text whose layout is damaged, the
-/// formatter and `gofmt` must agree.
-#[test]
-#[ignore = "long: runs gofmt on damaged files of the Go standard library"]
-fn damaged_standard_library_files_come_out_as_gofmt_writes_them() {
-    const STRIDE: usize = 12;
-    let mut files = Vec::new();
-    go_files_under(&go_root().unwrap(), &mut files);
-    files.sort();
-    let rejected = not_in_gofmt_layout(&files);
-    let known = |path: &PathBuf| KNOWN_REJECTED.iter().any(|known| path.ends_with(known));
-    files.retain(|path| !rejected.contains(path) && !known(path));
-    let files: Vec<&PathBuf> = files.iter().step_by(STRIDE).collect();
-    assert!(files.len() >= 300, "only {} files", files.len());
-
-    let dir = std::env::temp_dir().join(format!("gopp-fmt-damaged-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    let mut damaged = Vec::new();
-    for (index, path) in files.iter().enumerate() {
-        let text = damage(
-            &fs::read_to_string(path).unwrap(),
-            Dialect::Go,
-            index as u64,
-        );
-        fs::write(dir.join(format!("{index}.go")), &text).unwrap();
-        damaged.push(text);
-    }
-    let gofmt = |flag: &str| Command::new("gofmt").arg(flag).arg(&dir).output().unwrap();
-    let read = |index: usize| fs::read_to_string(dir.join(format!("{index}.go"))).unwrap();
-    // Damage can make a file that gofmt refuses: a comment that starts
-    // with `//line` is a directive once it is in the first column.
-    let errors = String::from_utf8_lossy(&gofmt("-w").stderr).into_owned();
-    let refused = errors.lines().filter_map(|line| line.split_once(".go:"));
-    let refused: HashSet<PathBuf> = refused
-        .map(|(path, _)| PathBuf::from(format!("{path}.go")))
-        .collect();
-    assert!(refused.len() * 100 < files.len(), "gofmt failed: {errors}");
-    let one_run: Vec<String> = (0..files.len()).map(read).collect();
-    // On some of its own results gofmt changes its mind; it is run until
-    // it does not.
-    for _ in 0..8 {
-        if gofmt("-l").stdout.is_empty() {
-            break;
-        }
-        gofmt("-w");
-    }
-    let settled: Vec<String> = (0..files.len()).map(read).collect();
-    fs::remove_dir_all(&dir).unwrap();
-
-    let mut failures = Vec::new();
-    let mut repeated = 0;
-    for (index, path) in files.iter().enumerate() {
-        if refused.contains(&dir.join(format!("{index}.go"))) {
-            continue;
-        }
-        repeated += usize::from(one_run[index] != settled[index]);
-        let formatted = match try_format(&damaged[index], Dialect::Go) {
-            Ok(formatted) => formatted,
-            Err(error) => {
-                failures.push(format!("{}: does not parse: {error}", path.display()));
-                continue;
-            }
-        };
-        failures.extend(difference(path, &formatted.one_pass, &one_run[index]));
-        failures.extend(difference(path, &formatted.text, &settled[index]));
-        let problem = match try_format(&formatted.text, Dialect::Go) {
-            Err(error) => format!("the result does not parse: {error}"),
-            Ok(again) if again.text != formatted.text => "not idempotent".to_owned(),
-            Ok(again) if again.shape != formatted.shape => "the tree changed".to_owned(),
-            Ok(_) => continue,
-        };
-        failures.push(format!("{}: {problem}", path.display()));
-    }
-    let compared = files.len() - refused.len();
-    println!("{compared} damaged files, {repeated} that gofmt formats more than once");
-    assert_no_failures(&failures, compared);
-}
-
 /// The steps of one pass over `text`.
 fn steps(text: &str) -> u64 {
     let map = SourceMap::new();
-    let source = SourceFile::new("test".into(), text.to_owned(), Dialect::Gopp).unwrap();
+    let source = SourceFile::new("test".into(), text.to_owned()).unwrap();
     let id = map.add(source);
     let source = map.file(id);
     let names = ThreadedRodeo::new();

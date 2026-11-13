@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gopp_diag::{Severity, Sink, render_text};
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap, is_source_path};
 use gopp_syntax::fmt::format;
 use gopp_syntax::parser::parse;
 use lasso::ThreadedRodeo;
@@ -42,7 +42,7 @@ impl Formatted {
     }
 }
 
-pub fn run(paths: &[PathBuf], mode: Mode, go: bool) -> ExitCode {
+pub fn run(paths: &[PathBuf], mode: Mode) -> ExitCode {
     let color = io::stderr().is_terminal();
     if paths.is_empty() {
         if mode.write {
@@ -54,8 +54,7 @@ pub fn run(paths: &[PathBuf], mode: Mode, go: bool) -> ExitCode {
             eprintln!("error: reading standard input: {error}");
             return ExitCode::from(EXIT_ERRORS);
         }
-        let dialect = if go { Dialect::Go } else { Dialect::Gopp };
-        let formatted = format_bytes(Path::new("<standard input>"), &bytes, dialect, mode, color);
+        let formatted = format_bytes(Path::new("<standard input>"), &bytes, mode, color);
         return report(&[formatted]);
     }
 
@@ -92,7 +91,7 @@ fn report(results: &[Formatted]) -> ExitCode {
     exit_code(failed)
 }
 
-/// The `.go` and `.gopp` files under `dir`, sorted by name within each
+/// The `.gopp` files under `dir`, sorted by name within each
 /// directory. As gofmt, it leaves out only files whose name starts with a dot.
 fn source_files_under(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)?
@@ -105,7 +104,7 @@ fn source_files_under(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
             .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."));
         if path.is_dir() {
             source_files_under(&path, files)?;
-        } else if !hidden && Dialect::from_path(&path).is_some() {
+        } else if !hidden && is_source_path(&path) {
             files.push(path);
         }
     }
@@ -113,17 +112,17 @@ fn source_files_under(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
 }
 
 fn format_file(path: &Path, mode: Mode, color: bool) -> Formatted {
-    let Some(dialect) = Dialect::from_path(path) else {
-        return Formatted::error(format_args!("{}: not a .gopp or .go file", path.display()));
-    };
+    if !is_source_path(path) {
+        return Formatted::error(format_args!("{}: not a .gopp file", path.display()));
+    }
     match fs::read(path) {
-        Ok(bytes) => format_bytes(path, &bytes, dialect, mode, color),
+        Ok(bytes) => format_bytes(path, &bytes, mode, color),
         Err(error) => Formatted::error(format_args!("{}: {error}", path.display())),
     }
 }
 
-fn format_bytes(path: &Path, bytes: &[u8], dialect: Dialect, mode: Mode, color: bool) -> Formatted {
-    let source = match SourceFile::from_bytes(path.to_owned(), bytes, dialect) {
+fn format_bytes(path: &Path, bytes: &[u8], mode: Mode, color: bool) -> Formatted {
+    let source = match SourceFile::from_bytes(path.to_owned(), bytes) {
         Ok(source) => source,
         Err(error) => return Formatted::error(error),
     };

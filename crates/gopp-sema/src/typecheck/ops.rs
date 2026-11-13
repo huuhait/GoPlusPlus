@@ -219,7 +219,7 @@ impl<'a> Checker<'a> {
     /// Whether `nil` is a value of the type by Go's rule. What a `.gopp`
     /// file asks of pointers, funcs and interfaces is checked on its own.
     fn has_nil(&self, ty: TypeId) -> bool {
-        self.all_types(ty, |this, ty| this.types.has_nil(ty, Dialect::Go))
+        self.all_types(ty, |this, ty| this.types.nil_kind(ty))
     }
 
     // ---- constants
@@ -647,11 +647,7 @@ impl<'a> Checker<'a> {
                     _ if x.is_value() => match &*self.types.get(self.types.underlying(x.ty)) {
                         Type::Pointer(elem) => Operand::variable(*elem),
                         Type::Param(_) if !self.open(x.ty) => self.indirect_param(cx, inner, &x),
-                        Type::Unique(_) | Type::Shared(_) | Type::Option(_)
-                            if self.own_rules(cx) =>
-                        {
-                            self.read(cx, x)
-                        }
+                        Type::Unique(_) | Type::Shared(_) | Type::Option(_) => self.read(x),
                         _ => {
                             if !self.open(x.ty) {
                                 let message = format!(
@@ -686,7 +682,7 @@ impl<'a> Checker<'a> {
                 let is_literal =
                     matches!(cx.tree.exprs[literal].kind, ExprKind::CompositeLit { .. });
                 // A value on the heap has an owner: one, or several.
-                if is_literal && self.own_rules(cx) {
+                if is_literal {
                     let written = self.expr_string(cx, literal);
                     let message = format!("cannot take the address of {written}");
                     let fix = format!("use NewUnique({written}) or NewShared({written})");
@@ -698,9 +694,8 @@ impl<'a> Checker<'a> {
                     );
                 }
                 // `&s[i:j]` in a `.gopp` file is those elements of `s`.
-                let is_view = self.own_rules(cx)
-                    && matches!(cx.tree.exprs[literal].kind, ExprKind::Slice { .. });
-                let held = self.own_rules(cx) && self.held_shared(cx, inner);
+                let is_view = matches!(cx.tree.exprs[literal].kind, ExprKind::Slice { .. });
+                let held = self.held_shared(cx, inner);
                 if self.operators.contains_key(&literal) && x.mode != Mode::Variable {
                     let message = format!(
                         "invalid operation: cannot take address of {}: what @Operator Index \
@@ -743,7 +738,7 @@ impl<'a> Checker<'a> {
         if !x.is_value() {
             return Operand::UNKNOWN;
         }
-        let x = self.read(cx, x);
+        let x = self.read(x);
         // `~` belongs to constraints; on an integer, `^` was meant.
         let op = match op {
             UnaryOp::Tilde => {
@@ -979,10 +974,10 @@ impl<'a> Checker<'a> {
                 },
                 _ => x.clone(),
             };
-            this.is_nil(x) || this.read(cx, held.clone()).ty != held.ty
+            this.is_nil(x) || this.read(held.clone()).ty != held.ty
         };
         if !(is_comparison(op) && refers(self, &x) && refers(self, &y)) {
-            (x, y) = (self.read(cx, x), self.read(cx, y));
+            (x, y) = (self.read(x), self.read(y));
         }
         // A method of the type of an operand may stand for the operator.
         let operands = ((left, &x), (right, &y));
@@ -1020,11 +1015,11 @@ impl<'a> Checker<'a> {
         };
         if let Some((constant, ty)) = held
             && constant.ty != nil
-            && self.may_overload(cx, ty)
+            && self.may_overload(ty)
             && matches!(self.implicit(constant, ty), Err(Unfit::Other))
         {
             let at = self.span(cx, whole.unwrap_or(left));
-            self.no_operator(cx, (at, &written(self)), op, (&x, &y));
+            self.no_operator((at, &written(self)), op, (&x, &y));
             return Operand::UNKNOWN;
         }
         self.match_types(cx, (left, &mut x), (right, &mut y));
@@ -1039,9 +1034,9 @@ impl<'a> Checker<'a> {
                 return Operand::UNKNOWN;
             }
             // A type that may have operator methods has none for this.
-            if self.may_overload(cx, x.ty) || self.may_overload(cx, y.ty) {
+            if self.may_overload(x.ty) || self.may_overload(y.ty) {
                 let at = self.span(cx, whole.unwrap_or(left));
-                self.no_operator(cx, (at, &written(self)), op, (&x, &y));
+                self.no_operator((at, &written(self)), op, (&x, &y));
                 return Operand::UNKNOWN;
             }
             let message = format!(
@@ -1063,12 +1058,12 @@ impl<'a> Checker<'a> {
             BinaryOp::OrOr | BinaryOp::AndAnd => Self::is_boolean,
             _ => Self::is_integer,
         };
-        let lacking = self.may_overload(cx, x.ty)
+        let lacking = self.may_overload(x.ty)
             && !matches!(op, BinaryOp::OrOr | BinaryOp::AndAnd)
             && !(self.open(x.ty) || self.all_types(x.ty, holds));
         if lacking {
             let at = self.span(cx, whole.unwrap_or(left));
-            self.no_operator(cx, (at, &written(self)), op, (&x, &y));
+            self.no_operator((at, &written(self)), op, (&x, &y));
             return Operand::UNKNOWN;
         }
         if !self.defined(cx, left, &x, binary_text(op), holds) {
@@ -1147,9 +1142,7 @@ impl<'a> Checker<'a> {
             Mode::Const(value) => Some(value),
             _ => None,
         };
-        !self
-            .types
-            .assignable(x.ty, value, to, Dialect::Go, self.names)
+        !self.types.assignable(x.ty, value, to, self.names)
     }
 
     /// Where the type of `x` or the type `to` is a type parameter: that
@@ -1222,7 +1215,6 @@ impl<'a> Checker<'a> {
     /// second operand that the error is about, the cause, and the code.
     pub(super) fn uncomparable(
         &self,
-        cx: &Cx<'a>,
         op: BinaryOp,
         x: &Operand,
         y: &Operand,
@@ -1234,12 +1226,11 @@ impl<'a> Checker<'a> {
         let comparable = |this: &Self, ty: TypeId| this.open(ty) || this.types.comparable(ty);
         // The operand that the error is about, and what is wrong with it.
         let wrong: Option<(bool, String, Code)> = {
-            let mismatched = self.unfit(cx, x, y.ty, false) && self.unfit(cx, y, x.ty, false);
+            let mismatched = self.unfit(x, y.ty, false) && self.unfit(y, x.ty, false);
             // In a `.gopp` file a pointer of any kind, a func and an
             // interface with methods are never nil (OWN-P9).
-            let with_nil = matches!(op, BinaryOp::Eq | BinaryOp::Ne)
-                && self.own_rules(cx)
-                && (self.is_nil(x) != self.is_nil(y));
+            let with_nil =
+                matches!(op, BinaryOp::Eq | BinaryOp::Ne) && (self.is_nil(x) != self.is_nil(y));
             let other = if self.is_nil(x) { y.ty } else { x.ty };
             let is_struct = matches!(
                 &*self.types.get(self.types.underlying(other)),
@@ -1257,11 +1248,10 @@ impl<'a> Checker<'a> {
                 );
                 Some((true, cause, Code::MismatchedTypes))
             } else if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
-                // In a `.gopp` file a func is never nil, so it is compared
-                // to nothing.
+                // A func is never nil, so it is compared to nothing.
                 let func = |this: &Self, ty: TypeId| {
                     let under = this.types.get(this.types.underlying(ty));
-                    this.own_rules(cx) && matches!(&*under, Type::Func { .. })
+                    matches!(&*under, Type::Func { .. })
                 };
                 let cause = |this: &Self, ty: TypeId| match func(this, ty) {
                     true => "func values cannot be compared".to_owned(),
@@ -1327,7 +1317,7 @@ impl<'a> Checker<'a> {
         if x.ty == Types::INVALID || y.ty == Types::INVALID {
             return Operand::UNKNOWN;
         }
-        if let Some((second, cause, code)) = self.uncomparable(cx, op, &x, &y) {
+        if let Some((second, cause, code)) = self.uncomparable(op, &x, &y) {
             let message = format!(
                 "invalid operation: {} {} {} ({cause})",
                 self.expr_string(cx, left),

@@ -4,7 +4,6 @@
 
 use std::sync::atomic::Ordering;
 
-use gopp_span::Dialect;
 use lasso::{Spur, ThreadedRodeo};
 
 use super::{Type, TypeId, Types, deep};
@@ -47,7 +46,7 @@ impl Types {
             | Type::Weak(_)
             | Type::Func { .. } => return Some((ty, NoZero::NeverNil)),
             Type::Interface { .. } => {
-                let never_nil = !self.has_nil(ty, Dialect::Gopp);
+                let never_nil = !self.has_nil(ty);
                 return never_nil.then_some((ty, NoZero::NeverNil));
             }
             Type::Array { len: 0, .. } => return None,
@@ -80,7 +79,7 @@ impl Types {
                 // Whether an interface has nil, its name says: `error`.
                 let found = match &*self.get(under) {
                     Type::Interface { .. } => {
-                        let never_nil = !self.has_nil(ty, Dialect::Gopp);
+                        let never_nil = !self.has_nil(ty);
                         never_nil.then_some((under, NoZero::NeverNil))
                     }
                     _ => deep(|| self.no_zero_in(under, names, steps)),

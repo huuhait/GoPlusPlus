@@ -84,7 +84,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-    use gopp_span::{Dialect, FileId, SourceFile, SourceMap, Span};
+    use gopp_span::{FileId, SourceFile, SourceMap, Span};
 
     use super::*;
 
@@ -92,7 +92,7 @@ mod tests {
         let map = SourceMap::new();
         (0..count)
             .map(|_| {
-                let file = SourceFile::new("f.gopp".into(), String::new(), Dialect::Gopp);
+                let file = SourceFile::new("f.gopp".into(), String::new());
                 map.add(file.unwrap())
             })
             .collect()

@@ -98,8 +98,6 @@ pub(super) struct Printer<'a> {
     /// The last token if it was `(` or `[`.
     prev_open: Option<T>,
     wsbuf: Vec<Ws>,
-    pub go_build: Vec<usize>,
-    pub plus_build: Vec<usize>,
 
     /// Where the next token is in the source; an estimate until a caller
     /// sets it.
@@ -139,8 +137,6 @@ impl<'a> Printer<'a> {
             last_tok: None,
             prev_open: None,
             wsbuf: Vec::with_capacity(WHITE_SPACE_LIMIT),
-            go_build: Vec::new(),
-            plus_build: Vec::new(),
             pos: Pos::START,
             out: Pos::START,
             last: Pos {
@@ -702,11 +698,6 @@ impl<'a> Printer<'a> {
             self.indent = 0;
         }
         if text.starts_with("//") {
-            if crate::constraint::is_go_build(text) {
-                self.go_build.push(self.output.len());
-            } else if crate::constraint::is_plus_build(text) {
-                self.plus_build.push(self.output.len());
-            }
             self.write_string(pos, text.trim_end(), true);
             self.indent = indent;
             return;

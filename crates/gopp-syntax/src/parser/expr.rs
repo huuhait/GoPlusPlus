@@ -143,7 +143,7 @@ impl Parser<'_> {
                     x = self.call(x, false);
                 }
                 // LEX-5: after an operand, `!` before `(` is the unwrapping mark.
-                T::Bang if self.gopp && self.peek(1) == T::LParen => {
+                T::Bang if self.peek(1) == T::LParen => {
                     self.bump();
                     self.bump();
                     x = self.call(x, true);
@@ -203,7 +203,7 @@ impl Parser<'_> {
                 self.alloc_expr(ExprKind::FuncLit { ty, body }, lo)
             }
             T::LBrack | T::Chan | T::Map | T::Struct | T::Interface => self.type_(),
-            T::Hash if self.gopp => self.macro_call(),
+            T::Hash => self.macro_call(),
             _ => self.literal().unwrap_or_else(|| {
                 let bad = self.bad_expr();
                 self.expected("expression");

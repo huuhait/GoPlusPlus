@@ -5,7 +5,7 @@ use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::constant::Value;
 use gopp_sema::types::{PARENT, Type as CheckedType, TypeId as CheckedTypeId};
 use gopp_sema::{LocalKind, ObjKind, Package, Predeclared, PredeclaredKind, Ref, SelectionKind};
-use gopp_span::{Dialect, Span as SourceSpan};
+use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind, UnaryOp};
 
 use super::func::{Built, FuncCx, deeper};
@@ -447,7 +447,7 @@ impl<'a> FuncCx<'a, '_> {
                 Operand::Copy(place) | Operand::Move(place) => place,
                 constant => Place::local(self.b.assign_temp(Rvalue::Use(constant))?),
             };
-            let place = self.deref(pointer, span, &mut PlaceMode::default())?;
+            let place = self.deref(pointer, &mut PlaceMode::default())?;
             return Ok(Rvalue::Use(Operand::Copy(place)));
         }
         match &node.kind {
@@ -651,7 +651,7 @@ impl<'a> FuncCx<'a, '_> {
                     Operand::Copy(place) | Operand::Move(place) => place,
                     constant => Place::local(self.b.assign_temp(Rvalue::Use(constant))?),
                 };
-                return self.deref(pointer, span, mode);
+                return self.deref(pointer, mode);
             }
             _ => {}
         }
@@ -739,18 +739,14 @@ impl<'a> FuncCx<'a, '_> {
         Some(id)
     }
 
-    /// What the pointer in `place` leads to. In a Go file a pointer may
-    /// be nil, which is checked; `span` is where the pointer is used.
-    pub fn deref(&mut self, place: Place, span: SourceSpan, mode: &mut PlaceMode) -> Built<Place> {
+    /// What the pointer in `place` leads to.
+    pub fn deref(&mut self, place: Place, mode: &mut PlaceMode) -> Built<Place> {
         // What is no pointer has no type that is known, which was
         // reported: it stays what it is.
         let Type::Ptr(_) = self.kind(self.b.place_ty(&place)) else {
             return Ok(place);
         };
         let place = self.held(place, mode)?;
-        if self.source.dialect() == Dialect::Go {
-            self.check(Check::Nil(Operand::Copy(place.clone()), span), mode)?;
-        }
         // A `Unique` leads to its box, which holds the value first.
         let unique = self.memo.uniques.contains_key(&self.b.place_ty(&place));
         let behind = self.b.deref(&place)?;
@@ -830,7 +826,7 @@ impl<'a> FuncCx<'a, '_> {
                     self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
                 ));
             }
-            place = self.through(place, span, mode)?;
+            place = self.through(place, mode)?;
             // A value of a type that is not supported has no parts: the
             // type was reported.
             if self.b.place_ty(&place) == TypeInterner::UNIT {
@@ -854,14 +850,9 @@ impl<'a> FuncCx<'a, '_> {
     }
 
     /// The place itself, or what it points to if it holds a pointer.
-    pub fn through(
-        &mut self,
-        place: Place,
-        span: SourceSpan,
-        mode: &mut PlaceMode,
-    ) -> Built<Place> {
+    pub fn through(&mut self, place: Place, mode: &mut PlaceMode) -> Built<Place> {
         match self.kind(self.b.place_ty(&place)) {
-            Type::Ptr(_) => self.deref(place, span, mode),
+            Type::Ptr(_) => self.deref(place, mode),
             _ => Ok(place),
         }
     }
@@ -876,7 +867,7 @@ impl<'a> FuncCx<'a, '_> {
     ) -> Built<Place> {
         let span = self.tree.exprs[expr].span;
         let base = self.place(x, mode)?;
-        let mut base = self.through(base, span, mode)?;
+        let mut base = self.through(base, mode)?;
         let len = match self.kind(self.b.place_ty(&base)) {
             Type::Array(_, len) => Length::Known(len),
             // A string is a value: its length is read where it is.
@@ -952,7 +943,7 @@ impl<'a> FuncCx<'a, '_> {
         let span = self.tree.exprs[expr].span;
         let mut mode = PlaceMode::default();
         let base = self.place(x, &mut mode)?;
-        let base = self.through(base, span, &mut mode)?;
+        let base = self.through(base, &mut mode)?;
         let [lo, hi, max] = bounds;
         if !matches!(self.kind(self.b.place_ty(&base)), Type::String) || max.is_some() {
             return Ok(self.placeholder(span, ty, "a slice of a slice or an array"));
@@ -1321,7 +1312,7 @@ impl<'a> FuncCx<'a, '_> {
             // A function value: its code is called with its
             // environment.
             Err(what) => {
-                return match self.value_called(span, callee, *spread)? {
+                return match self.value_called(callee, *spread)? {
                     Some(Ok((called, given))) => self.call_with(expr, &called, given, args),
                     Some(Err(what)) => Ok(self.placeholder(span, ty, what)),
                     None => Ok(self.placeholder(span, ty, what)),
@@ -2461,7 +2452,7 @@ impl<'a> FuncCx<'a, '_> {
             return Ok(Operand::Copy(Place::local(self.b.assign_temp(address)?)));
         }
         if self.pointee(have) == wanted && wanted != have {
-            return Ok(Operand::Copy(self.deref(place, span, &mut mode)?));
+            return Ok(Operand::Copy(self.deref(place, &mut mode)?));
         }
         Ok(Operand::Copy(place))
     }
@@ -2515,7 +2506,7 @@ impl<'a> FuncCx<'a, '_> {
                 return Ok(Rvalue::Use(self.zero(ty)));
             }
             (Predeclared::Cap, [of], _) => {
-                if let Some(cap) = self.cap(span, ty, *of)? {
+                if let Some(cap) = self.cap(ty, *of)? {
                     return Ok(cap);
                 }
             }
@@ -2524,7 +2515,7 @@ impl<'a> FuncCx<'a, '_> {
         if let (Predeclared::Len, [of]) = (called, args) {
             let mut mode = PlaceMode::default();
             let place = self.place(*of, &mut mode)?;
-            let place = self.through(place, span, &mut mode)?;
+            let place = self.through(place, &mut mode)?;
             if let Type::String | Type::Slice(_) | Type::Array(..) =
                 self.kind(self.b.place_ty(&place))
             {

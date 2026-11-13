@@ -73,8 +73,7 @@ C/C++ dependencies (`cdep`) keep taking their flags from their own CMake target 
 - **What a condition leaves out is parsed and nothing more.** It must be correct syntax. Its names are not looked up, it is not type-checked, and an import that is left out is not loaded. Two declarations may have the same name when their conditions never hold together.
 - **A word** is the name of an operating system (`linux`, `windows`, …) or of an architecture (`amd64`, `arm64`, …), `unix`, the name of a build profile of the main module (`@Build(debug)` holds only in the profile `debug`, P06 D6.12), or a tag that the module of the file declares in its `gopp.mod` (`tags fast`; `-tags=fast` turns it on). Any other word is a compile error. A profile name may not equal an OS, architecture or tag word.
 - **The file name counts too, as in Go.** A file whose name ends in `_linux`, `_amd64` or `_linux_amd64` before the extension is for that system only. `_test` marks a test file.
-- **A `.go` file** uses Go's form: a `//go:build` line (or `// +build` lines) in its header, read as Go reads them; a word nobody knows does not hold and is no error.
-- **In a `.gopp` file, Go's `//go:build` comment above the `package` clause is a compile error** that shows the attribute to write.
+- **Go's `//go:build` comment above the `package` clause is a compile error** that shows the attribute to write.
 - `@If` ([MAC-15](13-macros-surface.md)) is different: its declaration is still type-checked. Code that cannot compile on another system needs `@Build`.
 
 ## 14.3 Examples

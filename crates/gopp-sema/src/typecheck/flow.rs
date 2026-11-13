@@ -148,7 +148,7 @@ impl<'a> Checker<'a> {
     /// after the variable was last known, where a later turn may differ,
     /// nor of a variable that a function literal uses.
     pub(super) fn close_of_nil(&mut self, cx: &Cx<'a>, at: ExprId) {
-        if !self.own_rules(cx) || self.memo.is_none() {
+        if self.memo.is_none() {
             return;
         }
         let Some(local) = self.flow_local(cx, at) else {
@@ -191,7 +191,7 @@ impl<'a> Checker<'a> {
     /// that no variable holds, nor in the copy that a type assertion
     /// gives, where the write would be lost (ADR-0018).
     pub(super) fn lost_entry(&mut self, cx: &Cx<'a>, place: ExprId, held: ExprId) {
-        if !self.own_rules(cx) || self.memo.is_none() {
+        if self.memo.is_none() {
             return;
         }
         let held = self.unparen(cx, held);
@@ -358,7 +358,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         if let ([_], true) = (rhs, lhs.len() > 1) {
-            return self.flow_guards(cx, &locals, types);
+            return self.flow_guards(&locals, types);
         }
         if lhs.len() != rhs.len() {
             return;
@@ -525,7 +525,7 @@ impl<'a> Checker<'a> {
         local: LocalId,
         x: Operand,
     ) -> Operand {
-        if !self.own_rules(cx) || self.memo.is_none() || self.unnarrowed == Some(expr) {
+        if self.memo.is_none() || self.unnarrowed == Some(expr) {
             return x;
         }
         let span = cx.tree.exprs[expr].span;
@@ -584,11 +584,10 @@ impl<'a> Checker<'a> {
     /// its type has no zero value to stand for it (OWN-P10).
     pub(super) fn flow_guards(
         &mut self,
-        cx: &Cx<'a>,
         locals: &[std::option::Option<LocalId>],
         types: &[TypeId],
     ) {
-        if !self.own_rules(cx) || locals.len() < 2 || locals.len() != types.len() {
+        if locals.len() < 2 || locals.len() != types.len() {
             return;
         }
         let Some((&by, values)) = locals.split_last() else {

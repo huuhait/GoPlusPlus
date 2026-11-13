@@ -325,12 +325,9 @@ pub(super) fn of(
 impl<'a> Checker<'a> {
     /// The parameters and receivers by value of the body that are
     /// slices or maps: what a function writes to the elements of one is
-    /// written to its own copy (PAR-1). A Go file has no such rule.
+    /// written to its own copy (PAR-1).
     fn own_collections(&mut self, cx: &Cx<'a>) -> FxHashSet<LocalId> {
         let mut found = FxHashSet::default();
-        if !self.own_rules(cx) {
-            return found;
-        }
         for (at, declared) in cx.body.locals.iter().enumerate() {
             self.steps += 1;
             if !matches!(declared.kind, LocalKind::Param | LocalKind::Receiver) {

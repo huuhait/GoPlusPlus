@@ -64,7 +64,7 @@ impl<'a> Checker<'a> {
             }
             let package = self.package_of(name.name);
             let marks = self.marks(&cx, &node.attrs);
-            let operator = self.own_rules(&cx) && marks.has(Marks::OPERATOR);
+            let operator = marks.has(Marks::OPERATOR);
             if operator {
                 self.operator_names.insert(name.span);
             }
@@ -96,9 +96,7 @@ impl<'a> Checker<'a> {
                     if !own.is_empty() {
                         self.mono_method(name.span, &receiver_params, &own);
                     }
-                    self.in_method_sig = true;
                     let sig = self.typ(&cx, *ty);
-                    self.in_method_sig = false;
                     match own.is_empty() {
                         true => sig,
                         false => self.types.generic_func_type(sig, &own),
@@ -107,7 +105,7 @@ impl<'a> Checker<'a> {
                 false => Types::INVALID,
             };
             // The method that ends a value: `func (t *T) drop()` (OWN-R7).
-            if self.own_rules(&cx) && self.names.resolve(&name.name) == "drop" {
+            if self.names.resolve(&name.name) == "drop" {
                 self.types.set_drops(named);
                 let plain = matches!(&*self.types.get(sig), Type::Func { type_params, params, results, .. }
                     if type_params.is_empty() && params.is_empty() && results.is_empty());
@@ -128,7 +126,7 @@ impl<'a> Checker<'a> {
                 pointer_receiver,
                 receiver_params,
             };
-            if with_signatures && self.own_rules(&cx) {
+            if with_signatures {
                 let fails = matches!(tree.exprs[*ty].kind, ExprKind::FuncType { fails: true, .. });
                 let marked = operators::Marked {
                     named,
@@ -506,31 +504,6 @@ impl<'a> Checker<'a> {
             let note = format!("other declaration of {name}");
             self.emit(diagnostic.with_note(Code::NoteOtherDeclaration, Some(other), note));
         }
-    }
-
-    /// An embedded field is of a declared type that is no pointer, or of
-    /// a pointer to one that is no interface.
-    pub(super) fn embedded_field(&mut self, ty: TypeId, span: Span) {
-        let (base, pointer) = match &*self.types.get(ty) {
-            Type::Pointer(elem) => (*elem, true),
-            _ => (ty, false),
-        };
-        let is_param = matches!(&*self.types.get(base), Type::Param(_));
-        let (code, what) = match &*self.types.get(self.types.underlying(base)) {
-            _ if is_param => (
-                Code::EmbeddedFieldTypeParam,
-                "a (pointer to a) type parameter",
-            ),
-            _ if self.types.is_unsafe_pointer(base, self.names) => {
-                (Code::EmbeddedFieldUnsafePointer, "unsafe.Pointer")
-            }
-            Type::Pointer(_) => (Code::EmbeddedFieldPointer, "a pointer"),
-            Type::Interface { .. } if pointer => {
-                (Code::EmbeddedFieldPointerIface, "a pointer to an interface")
-            }
-            _ => return,
-        };
-        self.error(code, span, format!("embedded field type cannot be {what}"));
     }
 
     /// Where the struct type that `ty` writes declares its field `name`.

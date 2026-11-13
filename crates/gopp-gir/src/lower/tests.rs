@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_sema::types::Types;
 use gopp_sema::{Package, PackageLoader, Unit, check};
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::ast::File;
 use gopp_syntax::parser::parse;
 use gopp_target::TargetLayout;
@@ -33,8 +33,7 @@ fn checked<T>(texts: &[(&str, &str)], then: impl FnOnce(&Checked<'_>, Vec<String
     let mut sources = Vec::new();
     let mut files: Vec<File> = Vec::new();
     for &(name, text) in texts {
-        let dialect = Dialect::from_path(name.as_ref()).unwrap();
-        let id = map.add(SourceFile::new(name.into(), text.to_owned(), dialect).unwrap());
+        let id = map.add(SourceFile::new(name.into(), text.to_owned()).unwrap());
         let source = map.file(id);
         files.push(parse(id, &source, &names, &sink));
         sources.push(source);
@@ -544,33 +543,6 @@ func g() {
 }
 
 #[test]
-fn a_go_file_has_nil_pointers_and_embedded_structs() {
-    let text = "package main
-
-type Point struct{ x int }
-
-func (p Point) get() int { return p.x }
-
-func (p *Point) set(x int) { p.x = x }
-
-type Line struct {
-	Point
-	end *Point
-}
-
-func read(p *Point, q *int, l Line, m *Line) int {
-	*q = p.x
-	l.set(l.x)
-	m.set(m.get() + l.end.get())
-	return *q
-}
-";
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    insta::assert_snapshot!(print_module(&lowered.module));
-}
-
-#[test]
 fn strings_are_joined_compared_and_cut_by_the_runtime_and_by_their_parts() {
     insta::assert_snapshot!(gir("package main
 
@@ -1047,9 +1019,6 @@ func taken(c bool) int {
         module.matches("call const fn @_gopp_slice_copy").count()
     };
     assert_eq!(copies(text, "a.gopp"), 3);
-    // A Go file has no `move` and takes addresses as Go does.
-    let plain = text.replace("move(a)", "a").replace("len(p)", "len(*p)");
-    assert_eq!(copies(&plain, "a.go"), 4);
     insta::assert_snapshot!(gir(text));
 }
 
@@ -1089,11 +1058,6 @@ func use(h Handle) int {
     // of `Handle` its `Clone`.
     assert_eq!(calls(&module), [2, 1]);
     insta::assert_snapshot!(module);
-    // In a Go file the two are methods like any other: nothing calls
-    // them.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    assert_eq!(calls(&print_module(&lowered.module)), [0, 0]);
 }
 
 #[test]
@@ -1274,16 +1238,10 @@ func three(xs [][]int, i, j, k int) [][]int {
     assert_eq!(counts(&module, 4), [0, 0]);
     assert_eq!(counts(&module, 9), [0, 0]);
     assert_eq!(counts(&module, 14), [3, 3]);
-    // A Go file has no exchange: every value is copied.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = without_cleanup(&print_module(&lowered.module));
-    assert_eq!(counts(&module, 4), [2, 2]);
-    assert_eq!(counts(&module, 14), [3, 3]);
 }
 
 #[test]
-fn a_string_that_is_added_to_grows_where_it_is_in_both_dialects() {
+fn a_string_that_is_added_to_grows_where_it_is() {
     let text = "package main
 
 type log struct{ text string }
@@ -1297,7 +1255,8 @@ func add(l *log, s string, more string) string {
 	return s
 }
 ";
-    for name in ["a.gopp", "a.go"] {
+    {
+        let name = "a.gopp";
         let (lowered, messages) = lowered_with(&[(name, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0]);
         let module = print_module(&lowered.module);
@@ -1325,7 +1284,8 @@ func f(n int, s string) int {
 ";
     insta::assert_snapshot!(gir(text));
     // Both ways out go through one block that makes the two calls.
-    for name in ["a.gopp", "a.go"] {
+    {
+        let name = "a.gopp";
         let (lowered, messages) = lowered_with(&[(name, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0]);
         let module = print_module(&lowered.module);
@@ -1376,7 +1336,8 @@ func main() {
 	println(code, text, plain(1))
 }
 ";
-    for file in ["a.gopp", "a.go"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -1466,7 +1427,8 @@ func main() {
 	println(owner(make(1), 2), guarded(2))
 }
 ";
-    for file in ["a.gopp", "a.go"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -1556,7 +1518,8 @@ again:
 	defer say(\"last\", n)
 }
 ";
-    for file in ["a.gopp", "a.go"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -1624,7 +1587,8 @@ func read(n int) {
 	}
 }
 ";
-    for file in ["a.gopp", "a.go"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -1655,7 +1619,8 @@ func read(n int) {
 fn a_deferred_built_in_function_keeps_what_its_statement_had() {
     // A Go++ function changes the map of its caller through a pointer;
     // a write to its own copy that nothing reads is refused.
-    for (file, map) in [("a.gopp", "*map[string]int"), ("a.go", "map[string]int")] {
+    {
+        let (file, map) = ("a.gopp", "*map[string]int");
         let text = format!(
             "package main
 
@@ -1727,7 +1692,8 @@ func guarded(n int) (out string) {
 	return held + make(1)
 }
 ";
-    for file in ["a.gopp", "a.go"] {
+    {
+        let file = "a.gopp";
         let module = gir_aborting(file, text);
         // No function tells the runtime of itself, and no block is
         // run by unwinding: a panic is the end.
@@ -1830,9 +1796,6 @@ func plain(n int) int {
     assert!(module.contains("\"half(n)\""), "{module}");
     assert!(module.contains("\"a.gopp:31:9\""), "{module}");
     insta::assert_snapshot!(module);
-    // A Go file has no such mark.
-    let (_, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert!(!messages.is_empty());
 }
 
 #[test]
@@ -2011,98 +1974,6 @@ func same(a, b any) bool {
     assert_eq!(calls("_gopp_iface_eq"), 1);
     assert_eq!(calls("_gopp_panic_assert"), 1);
     insta::assert_snapshot!(module);
-    // A Go file makes the same module but for the pointers that it
-    // checks.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
-    assert_eq!(module.matches("call const fn @_gopp_iface_box(").count(), 2);
-}
-
-#[test]
-fn a_method_of_an_interface_value_is_called_through_its_table() {
-    let text = "package main
-
-type Shape interface {
-	Area() int
-	Scale(by int, note string)
-}
-
-type Square struct{ side int }
-
-func (s Square) Area() int { return s.side * s.side }
-
-func (s *Square) Scale(by int, note string) { s.side *= by }
-
-type Tags []string
-
-func (t Tags) Area() int { return len(t) }
-
-func (t *Tags) Scale(by int, note string) {
-	t = append(t, note)
-}
-
-func use(s Shape, note string) int {
-	s.Scale(2, note)
-	return s.Area()
-}
-
-func main() {
-	var s Shape = Square{2}
-	t := Tags{\"a\"}
-	var a any = s
-	_, ok := a.(Square)
-	println(use(s, \"n\"), use(t, \"m\"), ok)
-}
-";
-    let module = gir(text);
-    // Each type has one table for the interface, with the descriptor
-    // of the type and one function for each method, in the order of
-    // their names.
-    let table = |of: &str| {
-        let start = module.find(&format!("global const @_GPTa{of}")).unwrap();
-        let lines: Vec<&str> = module[start..].lines().skip(1).take(3).collect();
-        lines.join("|").replace("    const ", "")
-    };
-    assert_eq!(
-        table("N4mainE6Square"),
-        "global @_GPTiN4mainE6Square|fn @_GPTIM4AreaN4mainE6Square|fn @_GPTIM5ScaleN4mainE6Square"
-    );
-    assert_eq!(
-        table("N4mainE4Tags"),
-        "global @_GPTiN4mainE4Tags|fn @_GPTIM4AreaN4mainE4Tags|fn @_GPTIM5ScaleN4mainE4Tags"
-    );
-    // A call reads the code from the table and passes the address of
-    // the second word; the value that is called on is no argument.
-    assert_eq!(module.matches(" = call copy _").count(), 2);
-    // `Tags.Scale` only reads its string: what is called for it ends
-    // the string that the caller gave.
-    let thunk = module.find("fn _GPTIM5ScaleN4mainE4Tags(").unwrap();
-    let body = &module[thunk..][..module[thunk..].find("\n}\n").unwrap()];
-    assert_eq!(body.matches("@_gopp_string_release").count(), 1);
-    insta::assert_snapshot!(module);
-    // In a Go file a value has the methods of its type only, so the
-    // tables are those of the pointers.
-    let go = text
-        .replace(
-            "var s Shape = Square{2}",
-            "q := Square{2}\n\tvar s Shape = &q",
-        )
-        .replace("use(t, ", "use(&t, ")
-        .replace("a.(Square)", "a.(*Square)")
-        .replace("\tt = append(t, note)", "\t*t = append(*t, note)");
-    let (lowered, messages) = lowered_with(&[("a.go", &go)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
-    let thunks = |name: &str| module.matches(&format!("\nfn {name}(")).count();
-    assert_eq!(
-        [
-            thunks("_GPTpM4AreaN4mainE6Square"),
-            thunks("_GPTpM5ScaleN4mainE4Tags"),
-            thunks("_GPTIM4AreaN4mainE6Square"),
-        ],
-        [1, 1, 0]
-    );
 }
 
 #[test]
@@ -2177,13 +2048,6 @@ func main() {
     let main = body("_GPF4mainE4main");
     assert!(main.matches("@_gopp_func_clone").count() >= 1, "{main}");
     insta::assert_snapshot!(module);
-    // A Go file checks that the value is not nil before it calls.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
-    let start = module.find("\nfn _GPF4mainE5apply(").unwrap();
-    let apply = &module[start..][..module[start..].find("\n}\n").unwrap()];
-    assert_eq!(apply.matches("assert(").count(), 1, "{apply}");
 }
 
 #[test]
@@ -2246,7 +2110,7 @@ func main() {
         "{each}"
     );
     insta::assert_snapshot!(module);
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
     let module = print_module(&lowered.module);
     assert_eq!(module.matches("@_gopp_cell_new(").count(), 5);
@@ -2321,7 +2185,7 @@ func main() {
     let dynamic = body("_GPTVM3LenN4mainE5Sized");
     assert_eq!(dynamic.matches(" = call copy _").count(), 1, "{dynamic}");
     insta::assert_snapshot!(module);
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
     assert!(print_module(&lowered.module).contains("\nfn _GPTVM3AddN4mainE4List("));
 }
@@ -2341,7 +2205,8 @@ func main() {
 	println(work(3))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -2443,7 +2308,8 @@ func main() {
 	println(direct(2), deferred(3), inner(true), lent(xs), helper(xs), escapes(xs), passed(xs))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -2561,7 +2427,8 @@ func main() {
 	println(none(), each(1), given(xs), owned(\"o\"), results(), value(2))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -2666,13 +2533,6 @@ func main() {
     };
     assert_eq!([clones("6passes"), clones("5twice")], [1, 2]);
     insta::assert_snapshot!(module);
-    // A Go file lends the same way.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
-    let main = module.find("fn _GPF4mainE4main(").unwrap();
-    let main = &module[main..][..module[main..].find("\n}\n").unwrap()];
-    assert_eq!(boxes(main), 1);
 }
 
 #[test]
@@ -2754,85 +2614,6 @@ func main() {
     assert_eq!(calls("_gopp_iface_table"), 9);
     assert_eq!(calls("_gopp_panic_assert_iface"), 1);
     insta::assert_snapshot!(module);
-    // In a Go file a value has no method that takes its address.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
-    assert!(module.contains("@_GPTIM4AreaN4mainE6Square"));
-    assert!(!module.contains("@_GPTIM4growN4mainE6Square"));
-}
-
-#[test]
-fn a_method_of_an_embedded_type_is_reached_by_the_fields_on_the_way() {
-    let text = "package main
-
-type Shape interface {
-	Area() int
-	Grow(by int)
-}
-
-type Base struct {
-	w, h int
-	tag  string
-}
-
-func (b Base) Area() int { return b.w * b.h }
-
-func (b *Base) Grow(by int) { b.w += by }
-
-type Box struct {
-	*Base
-	depth int
-}
-
-type Crate struct {
-	Box
-	label string
-}
-
-type Wrapped struct {
-	Shape
-	extra int
-}
-
-func main() {
-	base := Base{1, 2, \"t\"}
-	crate := Crate{Box{&base, 1}, \"c\"}
-	var s Shape = crate
-	s.Grow(2)
-	var w Shape = Wrapped{s, 1}
-	w.Grow(3)
-	println(s.Area(), w.Area(), base.w, crate.Area(), crate.Box.Area())
-}
-";
-    // The direct calls at the end read the part of `crate` that has
-    // the method where it is.
-    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
-    assert_eq!(messages, [] as [&str; 0]);
-    let module = print_module(&lowered.module);
-    let body = |name: &str| {
-        let start = module.find(&format!("\nfn {name}(")).unwrap();
-        &module[start..][..module[start..].find("\n}\n").unwrap()]
-    };
-    // What the table of `Crate` holds for `Grow`: the box, the two
-    // fields on the way, and the method of `Base` with the pointer
-    // that `Box` embeds, which may be nil as for any call of it.
-    let grow = body("_GPTIM4GrowN4mainE5Crate");
-    assert!(
-        grow.contains("@_GPM4GrowN4mainE4Base(copy (*_4).0.0, "),
-        "{grow}"
-    );
-    assert_eq!(grow.matches("assert(").count(), 0, "{grow}");
-    // For `Area` the value of `Base` is read through that pointer,
-    // which is checked first.
-    let area = body("_GPTIM4AreaN4mainE5Crate");
-    assert!(area.contains("call const fn @_GPM4AreaN4mainE4Base("));
-    assert_eq!(area.matches("assert(").count(), 1, "{area}");
-    // What the table of `Wrapped` holds calls through the table of the
-    // interface value in its field.
-    let wrapped = body("_GPTIM4GrowN4mainE7Wrapped");
-    assert_eq!(wrapped.matches(" = call copy _").count(), 1, "{wrapped}");
-    insta::assert_snapshot!(format!("{area}\n}}\n{wrapped}\n}}"));
 }
 
 #[test]
@@ -2859,9 +2640,10 @@ func main() {
 	println(a(), n, s, c)
 }
 ";
-    // A Go++ file copies a value of a type parameter only if the
-    // constraint says that it has a copy.
-    for (file, copied) in [("a.go", "any"), ("a.gopp", "Clone")] {
+    // A value of a type parameter is copied only if the constraint says
+    // that it has a copy.
+    {
+        let (file, copied) = ("a.gopp", "Clone");
         let text = text.replace("COPIED", copied);
         let (lowered, messages) = lowered_with(&[(file, &text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
@@ -2941,7 +2723,8 @@ func main() {
 	println(a(), b())
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -3025,7 +2808,8 @@ fn a_type_argument_that_generic_code_builds_is_bounded() {
              func main() {{\n\tprintln(g0(1))\n}}\n"
         )
     };
-    for (file, constraint) in [("a.go", "any"), ("a.gopp", "Clone")] {
+    {
+        let (file, constraint) = ("a.gopp", "Clone");
         assert_eq!(
             bounded(file, &nested(48, constraint), limits),
             [] as [&str; 0],
@@ -3069,7 +2853,8 @@ fn a_type_argument_that_generic_code_builds_is_bounded() {
              func g{n}[T any](n int) int {{ return n }}\n\nfunc main() {{\n\tprintln(g0[int](1))\n}}\n"
         )
     };
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         assert_eq!(
             bounded(file, &doubled(11), limits),
             [] as [&str; 0],
@@ -3104,7 +2889,8 @@ fn a_type_argument_that_generic_code_builds_is_bounded() {
              func main() {{\n\tvar first F0[int]\n\tprintln(first.m(1))\n}}\n"
         )
     };
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         assert_eq!(
             bounded(file, &through_types(48), limits),
             [] as [&str; 0],
@@ -3134,7 +2920,8 @@ func main() {
 	println(id[Deep](1))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         assert_eq!(bounded(file, passed, limits), [] as [&str; 0], "{file}");
     }
 }
@@ -3165,7 +2952,8 @@ func main() {
 	println(one[int](1))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let with = |instances: u64, code: u64| {
             let limits = Limits {
                 instances: (instances, 0),
@@ -3215,7 +3003,7 @@ func main() {
         code: (0, 3),
         ..all
     };
-    assert_eq!(bounded("a.go", text, grown), [] as [&str; 0]);
+    assert_eq!(bounded("a.gopp", text, grown), [] as [&str; 0]);
 }
 
 /// What lowering the one file of a package reports, each report with
@@ -3405,7 +3193,8 @@ func main() {
 	println(local[int](1), local[string](2), b.size())
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -3447,7 +3236,8 @@ func main() {
         let said = said.map(|message| message.split_once(": ").map_or("", |(_, what)| what));
         said.map(str::to_owned).collect::<Vec<String>>()
     };
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         assert_eq!(
             said(file, text),
             [
@@ -3457,8 +3247,7 @@ func main() {
             "{file}"
         );
     }
-    // A method with type parameters of its own as a value, which only
-    // a Go++ file has.
+    // A method with type parameters of its own as a value.
     let text = "package main
 
 type List[T any] struct{ items []T }
@@ -3517,19 +3306,12 @@ func (c Counted) Clone() Counted { return Counted{n: c.n} }
 
 func (c Counted) String() string { return \"c\" }
 
-type Tagged struct{ tag string }
-
-func (t *Tagged) String() string { return t.tag }
-
 func sink(v any) {}
 
 func size(v any) int { return 1 }
 ";
-    // A type that has the method of a type that it embeds, which only
-    // a Go file writes.
-    let embeds = "type Wrapped struct {\n\tPoint\n\tn int\n}\n";
     // Each type, whether its values are compared, and whether it has
-    // the method `String`. The last two are for a Go file only.
+    // the method `String`.
     let types = [
         ("int", true, 0),
         ("string", true, 0),
@@ -3544,8 +3326,6 @@ func size(v any) int { return 1 }
         ("func() int", false, 0),
         ("Counted", false, 1),
         ("[]Counted", false, 0),
-        ("Wrapped", true, 1),
-        ("*Tagged", true, 1),
     ];
     // Each body, and what it asks of the type: nothing, values that
     // are compared, or the method.
@@ -3607,35 +3387,24 @@ func size(v any) int { return 1 }
             3,
         ),
     ];
-    let cases: Vec<_> = (["a.go", "a.gopp"].iter())
+    let cases: Vec<_> = (["a.gopp"].iter())
         .flat_map(|file| types.iter().map(move |ty| (*file, *ty)))
         .flat_map(|(file, ty)| bodies.iter().map(move |body| (file, ty, *body)))
-        .filter(|(file, (ty, compared, named), (_, asks))| {
-            let written = *file == "a.go" || !["Wrapped", "*Tagged"].contains(ty);
-            written
-                && match asks {
-                    1 => *compared,
-                    2 => *named != 0,
-                    _ => true,
-                }
+        .filter(|(_, (_, compared, named), (_, asks))| match asks {
+            1 => *compared,
+            2 => *named != 0,
+            _ => true,
         })
         .collect();
-    assert_eq!(cases.len(), (15 + 13) * 11 + (9 + 7) * 2 + (5 + 3) * 3);
+    assert_eq!(cases.len(), 13 * 11 + 7 * 2 + 3 * 3);
     // Side by side: each case is checked and lowered four times.
     let of_case = |&(file, (ty, ..), (body, asks)): &(&str, (&str, bool, i32), (&str, i32))| {
         let mut differ = Vec::new();
-        let declared = match file {
-            "a.go" => format!("{declared}\n{embeds}"),
-            _ => declared.to_owned(),
-        };
-        // A Go++ file copies a value of a type parameter, and keeps it
-        // in an interface, only if the constraint says that it may.
-        let constraint = match (file, asks) {
-            ("a.go", 1) => "comparable",
-            ("a.go", 2) => "Stringer",
-            ("a.go", _) => "any",
-            (_, 1) => "interface{ comparable; Clone; Send }",
-            (_, 2) => "interface{ Stringer; Clone; Send }",
+        // A value of a type parameter is copied, and kept in an
+        // interface, only if the constraint says that it may be.
+        let constraint = match asks {
+            1 => "interface{ comparable; Clone; Send }",
+            2 => "interface{ Stringer; Clone; Send }",
             _ => "interface{ Clone; Send }",
         };
         let lowered = |text: &str, symbol: &str, method: Option<&str>| {
@@ -3744,7 +3513,8 @@ func main() {
 	println(show(flat()), show(named(2)), size(named(3)))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         // Nothing points into the slot that a call puts its result in,
         // which the rules of a module say.
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
@@ -3794,7 +3564,8 @@ func f(v any, s Shape, n Named) int {
 	return 0
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
         let messages: Vec<&str> = messages
             .iter()
@@ -3809,39 +3580,6 @@ func f(v any, s Shape, n Named) int {
             "{file}"
         );
     }
-    // A struct without a name that has a method from a type that it
-    // embeds.
-    let (_, messages) = lowered_with(
-        &[(
-            "a.go",
-            "package main
-
-type Shape interface{ Area() int }
-
-type Base struct{ n int }
-
-func (b Base) Area() int { return b.n }
-
-type Wide struct {
-	Base
-	w int
-}
-
-func main() {
-	var s Shape = struct{ Base }{}
-	_ = s
-}
-",
-        )],
-        usize::MAX,
-    );
-    assert_eq!(
-        messages,
-        [
-            "a.go:15:16: not supported yet: a value in an interface whose type has a method that \
-             is not supported yet"
-        ]
-    );
 }
 
 #[test]
@@ -3952,7 +3690,8 @@ func main() {
 	println(sizes[\"a\"], len(sizes))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         assert!(
@@ -3990,7 +3729,8 @@ func main() {
 	println(total, name, size, twice(zero))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    {
+        let file = "a.gopp";
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
@@ -4053,7 +3793,7 @@ func main() {
 fn what_is_appended_from_a_value_of_no_known_type_is_no_fault() {
     let (_, messages) = lowered_with(
         &[(
-            "a.go",
+            "a.gopp",
             "package main
 
 import \"other\"
@@ -4068,8 +3808,8 @@ func f(names []string) []string {
     assert_eq!(
         messages,
         [
-            "a.go:6:23: not supported yet: a call of what is not known",
-            "a.go:6:9: not supported yet: the end of a value whose type is not known",
+            "a.gopp:6:23: not supported yet: a call of what is not known",
+            "a.gopp:6:9: not supported yet: the end of a value whose type is not known",
         ]
     );
 }
@@ -4078,7 +3818,7 @@ func f(names []string) []string {
 fn values_that_cannot_be_compared_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
-            "a.go",
+            "a.gopp",
             "package main
 
 type boxed struct {
@@ -4100,9 +3840,9 @@ func f(a, b boxed) int {
     assert_eq!(
         messages,
         [
-            "a.go:9:7: not supported yet: a comparison of values of this type",
-            "a.go:9:2: not supported yet: a comparison of values of this type",
-            "a.go:10:5: not supported yet: a comparison of values of this type",
+            "a.gopp:9:7: not supported yet: a comparison of values of this type",
+            "a.gopp:9:2: not supported yet: a comparison of values of this type",
+            "a.gopp:10:5: not supported yet: a comparison of values of this type",
         ]
     );
 }
@@ -4122,10 +3862,10 @@ func show(small int8, big uint64, ratio float32, ok bool, name string) {
 }
 
 #[test]
-fn a_pointer_of_a_go_file_is_printed_as_its_address() {
+fn a_pointer_is_printed_as_its_address() {
     let (lowered, messages) = lowered_with(
         &[(
-            "a.go",
+            "a.gopp",
             "package main\n\nfunc show(p *int, q *[4]bool) { println(p, q) }\n",
         )],
         usize::MAX,
@@ -4141,14 +3881,14 @@ fn a_pointer_of_a_go_file_is_printed_as_its_address() {
     // printed.
     let (lowered, messages) = lowered_with(
         &[(
-            "a.go",
+            "a.gopp",
             "package main\n\nfunc show(pair [2]int) { println(1, pair, 2) }\n",
         )],
         usize::MAX,
     );
     assert_eq!(
         messages,
-        ["a.go:3:37: not supported yet: `print` of a value of this type"]
+        ["a.gopp:3:37: not supported yet: `print` of a value of this type"]
     );
     let text = print_module(&lowered.module);
     assert_eq!(text.matches("@_gopp_print_int(").count(), 2, "{text}");
@@ -4734,28 +4474,6 @@ fn the_steps_grow_with_the_glue_of_types() {
              func h() int {{ return f(T{{}}) + g(T{{}}) }}\n"
         ))
     });
-    // Many types that embed one type, which embeds another with the
-    // methods, in one interface. What a table holds for a method walks
-    // one field for each level, so a chain of types that each embed
-    // the one before would grow with the square of its length.
-    assert_near_linear(&sizes, |n| {
-        let n = n / 4;
-        let types: String = (2..n)
-            .map(|at| format!("type T{at} struct {{\n\tT1\n\tn{at} int\n}}\n\n"))
-            .collect();
-        let types = format!("type T1 struct {{\n\tT0\n\tn1 int\n}}\n\n{types}");
-        let values: String = (0..n)
-            .map(|at| format!("\tall = append(all, T{at}{{}})\n"))
-            .collect();
-        let text = format!(
-            "package main\n\ntype Shape interface {{\n\tArea() int\n\tName() string\n}}\n\n\
-             type T0 struct{{ n int }}\n\nfunc (t T0) Area() int {{ return t.n }}\n\n\
-             func (t T0) Name() string {{ return \"t\" }}\n\n{types}\
-             func f(all []Shape) []Shape {{\n{values}\treturn all\n}}\n"
-        );
-        // Only a Go file embeds a struct.
-        steps_of_file("a.go", &text)
-    });
     // Many function literals in one function, and literals in
     // literals, each called through its value.
     assert_near_linear(&sizes, |n| {
@@ -5030,87 +4748,4 @@ fn the_steps_grow_with_values_compared_by_glue() {
             "package main\n\nfunc f(a, b *{deep}) bool {{\n\treturn *a == *b\n}}\n"
         ))
     });
-}
-
-/// Every directory of Go's standard library whose files check as one
-/// package, with nothing known of what they import, is lowered: much is
-/// not supported and many types are not known, and still no function
-/// fails to lower and no module breaks a rule. Needs `go` on `PATH`.
-#[test]
-#[ignore = "long: lowers Go's standard library"]
-fn the_standard_library_of_go_is_lowered_without_a_fault() {
-    use rayon::prelude::*;
-    let goroot = std::process::Command::new("go")
-        .args(["env", "GOROOT"])
-        .output()
-        .unwrap();
-    let root =
-        std::path::PathBuf::from(String::from_utf8(goroot.stdout).unwrap().trim()).join("src");
-    let mut dirs = vec![root];
-    let mut packages: Vec<Vec<std::path::PathBuf>> = Vec::new();
-    while let Some(dir) = dirs.pop() {
-        let mut files = Vec::new();
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-            if path.is_dir() && name != "testdata" && name != "vendor" {
-                dirs.push(path);
-            } else if name.ends_with(".go") && !name.ends_with("_test.go") {
-                files.push(path);
-            }
-        }
-        files.sort();
-        if !files.is_empty() {
-            packages.push(files);
-        }
-    }
-    packages.sort();
-    if let Ok(only) = std::env::var("ONLY") {
-        packages.retain(|files| files[0].to_str().unwrap().contains(&only));
-    }
-    let lowered: Vec<(usize, Vec<String>)> = packages
-        .par_iter()
-        .map(|files| {
-            let texts: Vec<(String, String)> = files
-                .iter()
-                .filter_map(|path| {
-                    Some((
-                        path.to_str()?.to_owned(),
-                        std::fs::read_to_string(path).ok()?,
-                    ))
-                })
-                .collect();
-            let texts: Vec<(&str, &str)> = texts
-                .iter()
-                .map(|(name, text)| (&**name, &**text))
-                .collect();
-            checked(&texts, |checked, messages| {
-                if !messages.is_empty() {
-                    return (0, Vec::new());
-                }
-                let (module, reported, _) =
-                    lower_counted(checked, TargetLayout::new(64), usize::MAX);
-                let faults = reported.iter();
-                let faults =
-                    faults.filter(|diagnostic| diagnostic.code != gopp_diag::Code::GirUnsupported);
-                let faults =
-                    faults.map(|diagnostic| format!("{}: {}", texts[0].0, diagnostic.message));
-                (module.funcs.len(), faults.collect())
-            })
-        })
-        .collect();
-    let functions: usize = lowered.iter().map(|(functions, _)| functions).sum();
-    let packages = lowered
-        .iter()
-        .filter(|(functions, _)| *functions > 0)
-        .count();
-    let faults: Vec<&String> = lowered.iter().flat_map(|(_, faults)| faults).collect();
-    println!("{packages} packages, {functions} functions");
-    assert!(
-        faults.is_empty(),
-        "{} faults:\n{:#?}",
-        faults.len(),
-        &faults[..faults.len().min(40)]
-    );
-    assert!(packages > 50, "{packages} packages");
 }

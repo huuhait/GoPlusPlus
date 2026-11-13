@@ -47,11 +47,10 @@ pub(super) fn sort(cx: &mut Cx) {
 /// run of its own.
 fn is_header(cx: &Cx, spec: Spec) -> bool {
     let path = path(cx, spec);
-    cx.gopp
-        && (path.starts_with('<')
-            || HEADER_EXTENSIONS
-                .iter()
-                .any(|extension| path.ends_with(extension)))
+    path.starts_with('<')
+        || HEADER_EXTENSIONS
+            .iter()
+            .any(|extension| path.ends_with(extension))
 }
 
 fn path_literal<'a>(cx: &Cx<'a>, spec: Spec) -> Option<&'a str> {

@@ -29,7 +29,7 @@ pub enum Status {
 
 /// The rows of features that the language no longer has. Nothing is
 /// reported with them, and their numbers are not used again.
-const RETIRED: [&str; 46] = [
+const RETIRED: [&str; 52] = [
     "err_view_for_ref",
     "err_sema_assign",
     "err_sema_builtin",
@@ -82,6 +82,15 @@ const RETIRED: [&str; 46] = [
     // guards (OWN-P10) once, for every type argument, so no instance is
     // refused for it.
     "err_inst_checked_result",
+    // What no file can have any more: a refused method with type
+    // parameters, a check of an embedded field, and a generic function
+    // that must have a body.
+    "err_method_type_params",
+    "err_embedded_field_pointer_iface",
+    "err_embedded_field_pointer",
+    "err_embedded_field_unsafe_pointer",
+    "err_embedded_field_type_param",
+    "err_generic_no_body",
 ];
 
 /// What the row `number` of the registry is; `None` if there is no such
@@ -816,11 +825,6 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Declare a generic function with a name.",
             "f := func[T any](x T) {} // error",
         ),
-        MethodTypeParams => (
-            "A method is declared with type parameters in a Go file. Go has no generic methods.",
-            "Make it a generic function, or move it to a .gopp file.",
-            "func (s Set) Map[T any](f func(int) T) []T // error in a .go file",
-        ),
         InterfaceMethodTypeParams => (
             "A method of an interface has type parameters.",
             "Remove them; an interface can be generic as a whole: `type I[T any] interface{ M(T) }`.",
@@ -1045,26 +1049,6 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "The key type of a map cannot be compared with `==`: it is or holds a slice, a map or a func.",
             "Use a key type that can be compared, such as a string or a struct of comparable fields.",
             "var m map[[]int]string // error\nvar m map[string]string",
-        ),
-        EmbeddedFieldPointerIface => (
-            "An embedded field is a pointer to an interface type.",
-            "Embed the interface itself.",
-            "type T struct{ *io.Reader } // error\ntype T struct{ io.Reader }  // ok",
-        ),
-        EmbeddedFieldPointer => (
-            "An embedded field is a pointer type by itself, not a named type or a pointer to one.",
-            "Give the field a name, or embed the type that is pointed to.",
-            "type P *int\ntype T struct{ P } // error",
-        ),
-        EmbeddedFieldUnsafePointer => (
-            "`unsafe.Pointer` cannot be an embedded field.",
-            "Give the field a name.",
-            "type T struct{ unsafe.Pointer }   // error\ntype T struct{ p unsafe.Pointer } // ok",
-        ),
-        EmbeddedFieldTypeParam => (
-            "A type parameter, or a pointer to one, cannot be an embedded field.",
-            "Give the field a name.",
-            "type T[P any] struct{ P }   // error\ntype T[P any] struct{ v P } // ok",
         ),
         InvalidReceiver => (
             "The receiver of a method is not a type that can have methods: it must be a type declared in this package, or a pointer to one, and not itself a pointer or an interface.",
@@ -1887,13 +1871,6 @@ pub fn explain(code: Code) -> Option<Explanation> {
              type would be whatever the argument is, which no declaration can say.",
             "Declare the type as something made with the type parameter, or use an alias.",
             "type T[P any] P          // error\ntype T[P any] struct{ v P } // ok",
-        ),
-        GenericNoBody => (
-            "A function with type parameters has no body. A function without a body is \
-             defined outside the language, and such a function cannot be made for each type \
-             argument.",
-            "Give the function a body, or remove its type parameters.",
-            "func f[T any](x T)       // error\nfunc f[T any](x T) {}    // ok",
         ),
         GirUnsupported => (
             "The program uses a part of the language that this version of the compiler \

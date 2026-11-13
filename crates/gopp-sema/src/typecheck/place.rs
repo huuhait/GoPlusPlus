@@ -245,7 +245,7 @@ impl<'a> Checker<'a> {
         locals: &[std::option::Option<LocalId>],
         values: &[ExprId],
     ) {
-        if !self.own_rules(cx) || locals.len() != values.len() {
+        if locals.len() != values.len() {
             return;
         }
         for (local, &value) in locals.iter().zip(values) {
@@ -260,7 +260,7 @@ impl<'a> Checker<'a> {
     /// The place `expr` is changed, as `doing` says: not what a `Shared`
     /// holds. Whether something was said.
     pub(super) fn shared_changed(&mut self, cx: &Cx<'a>, expr: ExprId, doing: &str) -> bool {
-        if !self.own_rules(cx) || self.memo.is_none() || !self.held_shared(cx, expr) {
+        if self.memo.is_none() || !self.held_shared(cx, expr) {
             return false;
         }
         let message = format!(
@@ -341,7 +341,7 @@ impl<'a> Checker<'a> {
             &*self.types.get(self.types.underlying(ty)),
             Type::Pointer(_)
         );
-        if part || !is_pointer || !self.own_rules(cx) {
+        if part || !is_pointer {
             self.capture(cx, local, CaptureUse::Write);
         }
     }
@@ -379,7 +379,7 @@ impl<'a> Checker<'a> {
     /// be lost, and one that is not copied is the element, which is read
     /// only (OWN-R3b, RNG-1).
     pub(super) fn changed(&mut self, cx: &Cx<'a>, expr: ExprId, change: Change) {
-        if !self.own_rules(cx) || self.memo.is_none() {
+        if self.memo.is_none() {
             return;
         }
         let Some((local, part)) = self.bound(cx, expr) else {
@@ -528,21 +528,6 @@ impl<'a> Checker<'a> {
             return;
         }
         let expr = self.unparen(cx, expr);
-        // A Go file has the same copies and none of the other rules:
-        // every type that it can write is copied. What a type parameter
-        // is copied as, each instance decides: the place is marked for
-        // them.
-        if !self.own_rules(cx) {
-            let by_param = || {
-                let why = self.types.not_copied(ty, true);
-                matches!(why, Some((_, NotCopied::Param)))
-            };
-            let copied = x.ty == ty && (self.types.given_is_marked(ty, false) || by_param());
-            if copied && self.place_of(cx, expr) != Place::Temporary {
-                self.mark_given(expr, Transfer::Copy, ty);
-            }
-            return;
-        }
         let direct = x.ty == ty;
         // What a pointer to a type with a type table points to may be a
         // child: a copy would be of the parent part only (EXP-15).
@@ -569,7 +554,7 @@ impl<'a> Checker<'a> {
             return self.error_with_fix(Code::PartialValue, span, message, fix);
         }
         let category = self.types.category(ty);
-        if !self.types.given_is_marked(ty, true) {
+        if !self.types.given_is_marked(ty) {
             return;
         }
         // What a pointer or a handle is read as is where it points.
@@ -716,7 +701,7 @@ impl<'a> Checker<'a> {
             };
             self.method_values.insert(expr, holds);
         }
-        if pointer_receiver || !self.own_rules(cx) {
+        if pointer_receiver {
             return;
         }
         let Some(holder) = self.selections.get(&expr).map(|selection| selection.holder) else {
@@ -776,7 +761,7 @@ impl<'a> Checker<'a> {
     /// order: `a, b = b, a`, `xs[i], xs[j] = xs[j], xs[i]`. No bytes move
     /// before every index is evaluated, so no value is copied.
     pub(super) fn is_swap(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) -> bool {
-        if !self.own_rules(cx) || lhs.len() < 2 || lhs.len() != rhs.len() {
+        if lhs.len() < 2 || lhs.len() != rhs.len() {
             return false;
         }
         let all: Vec<ExprId> = lhs.iter().chain(rhs).copied().collect();

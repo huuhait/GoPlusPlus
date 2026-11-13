@@ -7,7 +7,7 @@ use std::sync::Arc;
 use gopp_diag::Sink;
 use gopp_sema::types::{Type, TypeId, Types};
 use gopp_sema::{ObjId, ObjKind, Package, PackageLoader, Unit, check};
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::parser::parse;
 use gopp_testutil::linear::assert_near_linear;
 use lasso::ThreadedRodeo;
@@ -49,7 +49,7 @@ impl World {
     /// The package at `path`, which is one file of Go++.
     fn check(&self, path: &str, text: &str) -> Package {
         let file = format!("{path}.gopp");
-        let source = SourceFile::new(file.into(), text.to_owned(), Dialect::Gopp).unwrap();
+        let source = SourceFile::new(file.into(), text.to_owned()).unwrap();
         let id = self.map.add(source);
         let source = self.map.file(id);
         let file = parse(id, &source, &self.names, &self.sink);

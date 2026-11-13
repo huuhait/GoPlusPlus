@@ -95,10 +95,7 @@ impl<'a> Checker<'a> {
         ty: TypeId,
         elems: &[ExprId],
     ) -> Option<Value> {
-        if !self.in_const
-            || !self.own_rules(cx)
-            || self.types.not_constant(ty, self.names).is_some()
-        {
+        if !self.in_const || self.types.not_constant(ty, self.names).is_some() {
             return None;
         }
         let under = self.types.get(self.types.underlying(ty));
@@ -245,7 +242,7 @@ impl<'a> Checker<'a> {
                 if base.is_value() && self.handle_method(&base, sel.name).is_some() {
                     return Callee::OfHandle;
                 }
-                let base = self.read(cx, base);
+                let base = self.read(base);
                 if !base.is_value() {
                     return Callee::Dynamic(func);
                 }
@@ -310,7 +307,7 @@ impl<'a> Checker<'a> {
             && let ExprKind::Selector { x, .. } = cx.tree.exprs[self.unparen(cx, fun)].kind
         {
             let base = self.value(cx, x);
-            let Mode::Const(value) = self.read(cx, base).mode else {
+            let Mode::Const(value) = self.read(base).mode else {
                 return result;
             };
             values.push(value);

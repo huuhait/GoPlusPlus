@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use gopp_span::Dialect;
+use gopp_span::is_source_path;
 
-/// Every Go and Go++ source file under `docs/spec/examples`, sorted.
+/// Every Go++ source file under `docs/spec/examples`, sorted.
 ///
 /// # Panics
 ///
@@ -17,11 +17,11 @@ pub fn files() -> Vec<PathBuf> {
     for dir in entries(&examples) {
         if dir.is_dir() {
             let sources = entries(&dir).into_iter();
-            files.extend(sources.filter(|path| Dialect::from_path(path).is_some()));
+            files.extend(sources.filter(|path| is_source_path(path)));
         }
     }
     files.sort();
-    assert!(files.len() >= 20, "only {} sample files found", files.len());
+    assert!(files.len() >= 10, "only {} sample files found", files.len());
     files
 }
 

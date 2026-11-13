@@ -257,14 +257,13 @@ impl FuncCx<'_, '_> {
             false => Rvalue::Use(value),
         };
         // An element whose copy is more than its bytes. A new variable
-        // of a Go++ file is only read: it is the element as it is, and
-        // owns nothing (RNG-1). A Go file may write it, and a place that
-        // is assigned to owns what it gets: both have a copy.
-        let go = self.source.dialect() == gopp_span::Dialect::Go;
+        // is only read: it is the element as it is, and owns nothing
+        // (RNG-1). A place that is assigned to owns what it gets: it has
+        // a copy.
         // A variable that a function literal uses has a copy, in a
         // cell.
         let view = matches!(&dest, Dest::New(local, _) if !self.celled(*local));
-        if let (Dest::New(local, _), true, false, false) = (&dest, view, go, self.flat(wanted)) {
+        if let (Dest::New(local, _), true, false) = (&dest, view, self.flat(wanted)) {
             let var = self.declare_view(*local)?;
             return self.store(Place::local(var), value);
         }
@@ -323,7 +322,7 @@ impl FuncCx<'_, '_> {
         // A pointer that is assigned what it points to is written
         // through.
         if self.body.writes_through.contains(&inner) {
-            place = self.deref(place, node.span, &mut mode)?;
+            place = self.deref(place, &mut mode)?;
         }
         // `s = append(s, ...)` and `s = s[i:j]` keep what `s` has.
         let ty = self.b.place_ty(&place);
@@ -373,7 +372,7 @@ impl FuncCx<'_, '_> {
         }
         let mut place = self.place(x, &mut mode)?;
         if self.body.writes_through.contains(&inner) {
-            place = self.deref(place, span, &mut mode)?;
+            place = self.deref(place, &mut mode)?;
         }
         let ty = self.b.place_ty(&place);
         // `s += x` grows the string where it is, if its bytes are its

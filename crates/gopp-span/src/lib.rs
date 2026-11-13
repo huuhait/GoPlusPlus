@@ -21,21 +21,10 @@ pub struct LineCol {
     pub column: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Dialect {
-    Gopp,
-    Go,
-}
-
-impl Dialect {
-    /// The dialect a file extension selects: `.gopp` or `.go`.
-    pub fn from_path(path: &Path) -> Option<Self> {
-        match path.extension()?.to_str()? {
-            "gopp" => Some(Self::Gopp),
-            "go" => Some(Self::Go),
-            _ => None,
-        }
-    }
+/// Whether the path names a Go++ source file: one that ends in `.gopp`.
+pub fn is_source_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension == "gopp")
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,21 +37,20 @@ pub struct FileTooLarge {
 pub struct SourceFile {
     path: PathBuf,
     text: String,
-    dialect: Dialect,
     line_starts: Vec<u32>,
     invalid_utf8: Vec<u32>,
     utf16: bool,
 }
 
 impl SourceFile {
-    pub fn new(path: PathBuf, text: String, dialect: Dialect) -> Result<Self, FileTooLarge> {
-        Self::decoded(path, text, dialect, Vec::new(), false)
+    pub fn new(path: PathBuf, text: String) -> Result<Self, FileTooLarge> {
+        Self::decoded(path, text, Vec::new(), false)
     }
 
     /// Reads a file's bytes as UTF-8. Each invalid sequence becomes one
     /// U+FFFD in [`text`](Self::text), listed in
     /// [`invalid_utf8`](Self::invalid_utf8).
-    pub fn from_bytes(path: PathBuf, bytes: &[u8], dialect: Dialect) -> Result<Self, FileTooLarge> {
+    pub fn from_bytes(path: PathBuf, bytes: &[u8]) -> Result<Self, FileTooLarge> {
         let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
         let mut text = String::with_capacity(bytes.len());
         let mut invalid_utf8 = Vec::new();
@@ -76,13 +64,12 @@ impl SourceFile {
                 text.push(char::REPLACEMENT_CHARACTER);
             }
         }
-        Self::decoded(path, text, dialect, invalid_utf8, utf16)
+        Self::decoded(path, text, invalid_utf8, utf16)
     }
 
     fn decoded(
         path: PathBuf,
         text: String,
-        dialect: Dialect,
         invalid_utf8: Vec<u32>,
         utf16: bool,
     ) -> Result<Self, FileTooLarge> {
@@ -98,7 +85,6 @@ impl SourceFile {
         Ok(Self {
             path,
             text,
-            dialect,
             line_starts,
             invalid_utf8,
             utf16,
@@ -121,10 +107,6 @@ impl SourceFile {
 
     pub fn text(&self) -> &str {
         &self.text
-    }
-
-    pub fn dialect(&self) -> Dialect {
-        self.dialect
     }
 
     pub fn line_col(&self, offset: u32) -> LineCol {
@@ -173,7 +155,7 @@ mod tests {
     use super::*;
 
     fn file(text: &str) -> SourceFile {
-        SourceFile::new("main.gopp".into(), text.to_owned(), Dialect::Gopp).unwrap()
+        SourceFile::new("main.gopp".into(), text.to_owned()).unwrap()
     }
 
     fn line_col(text: &str, offset: usize) -> (u32, u32) {
@@ -220,7 +202,7 @@ mod tests {
     #[test]
     fn invalid_utf8_becomes_listed_replacement_characters() {
         let bytes = b"a\xFFb\xC3(\xE2\x82\xAC\n";
-        let file = SourceFile::from_bytes("main.gopp".into(), bytes, Dialect::Gopp).unwrap();
+        let file = SourceFile::from_bytes("main.gopp".into(), bytes).unwrap();
         assert_eq!(file.text(), "a\u{FFFD}b\u{FFFD}(\u{20AC}\n");
         assert_eq!(file.invalid_utf8(), [1, 5]);
         assert!(!file.is_utf16());
@@ -229,7 +211,7 @@ mod tests {
     #[test]
     fn valid_utf8_is_kept_as_it_is() {
         let text = "x := \"\u{FFFD}\"\n";
-        let file = SourceFile::from_bytes("main.gopp".into(), text.as_bytes(), Dialect::Gopp);
+        let file = SourceFile::from_bytes("main.gopp".into(), text.as_bytes());
         let file = file.unwrap();
         assert_eq!(file.text(), text);
         assert!(file.invalid_utf8().is_empty());
@@ -238,20 +220,17 @@ mod tests {
     #[test]
     fn a_utf16_byte_order_mark_is_noticed() {
         for bytes in [b"\xFF\xFEp\0".as_slice(), b"\xFE\xFF\0p"] {
-            let file = SourceFile::from_bytes("main.gopp".into(), bytes, Dialect::Gopp);
+            let file = SourceFile::from_bytes("main.gopp".into(), bytes);
             assert!(file.unwrap().is_utf16());
         }
     }
 
     #[test]
-    fn dialect_follows_the_extension() {
-        assert_eq!(
-            Dialect::from_path(Path::new("a/main.gopp")),
-            Some(Dialect::Gopp)
-        );
-        assert_eq!(Dialect::from_path(Path::new("main.go")), Some(Dialect::Go));
-        assert_eq!(Dialect::from_path(Path::new("main.c")), None);
-        assert_eq!(Dialect::from_path(Path::new("gopp")), None);
+    fn a_source_file_ends_in_gopp() {
+        assert!(is_source_path(Path::new("a/main.gopp")));
+        assert!(!is_source_path(Path::new("main.go")));
+        assert!(!is_source_path(Path::new("main.c")));
+        assert!(!is_source_path(Path::new("gopp")));
     }
 
     #[test]

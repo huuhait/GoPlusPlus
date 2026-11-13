@@ -17,10 +17,7 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
     let mut programs: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            let kind = path.extension().and_then(|kind| kind.to_str());
-            matches!(kind, Some("go" | "gopp"))
-        })
+        .filter(|path| gopp_span::is_source_path(path))
         .collect();
     programs.sort();
     let failed: Vec<String> = programs

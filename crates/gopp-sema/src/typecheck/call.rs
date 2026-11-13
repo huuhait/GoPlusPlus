@@ -288,7 +288,6 @@ impl<'a> Checker<'a> {
                 | Predeclared::Make
                 | Predeclared::Max
                 | Predeclared::Min
-                | Predeclared::New
                 | Predeclared::Real,
             )) => Called::Computation,
             _ => Called::Function,

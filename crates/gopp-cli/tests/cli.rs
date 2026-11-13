@@ -263,7 +263,7 @@ fn parse_prints_the_tree_on_request() {
 #[test]
 fn parse_reports_syntax_errors_and_fails() {
     let dir = TempDir::new().unwrap();
-    let good = write_source(&dir, "good.go", "package p\n");
+    let good = write_source(&dir, "good.gopp", "package p\n");
     let bad = write_source(&dir, "bad.gopp", "package p\n\nfunc f() { g(1 2) }\n");
     let output = run(gopp().arg("parse").arg(&good).arg(&bad));
     let header = format!(
@@ -299,7 +299,7 @@ fn parse_refuses_files_it_cannot_read() {
     let dir = TempDir::new().unwrap();
     let other = write_source(&dir, "main.c", "int main;\n");
     let output = run(gopp().arg("parse").arg(&other));
-    assert!(stderr(&output).ends_with("main.c: not a .gopp or .go file\n"));
+    assert!(stderr(&output).ends_with("main.c: not a .gopp file\n"));
     assert_eq!(output.status.code(), Some(1));
 
     let missing = dir.path().join("missing.gopp");
@@ -370,7 +370,7 @@ fn parse_batch_gives_each_file_what_parse_gives_it() {
 #[test]
 fn parse_batch_of_good_files_succeeds_and_takes_no_file_arguments() {
     let dir = TempDir::new().unwrap();
-    let good = write_source(&dir, "good.go", "package p\n");
+    let good = write_source(&dir, "good.gopp", "package p\n");
     let list = write_source(&dir, "list", &format!("{}\n", good.display()));
     let batch = run(gopp()
         .args(["parse", "-batch"])
@@ -404,12 +404,12 @@ fn fmt_lists_and_rewrites_only_files_that_change() {
     fs::create_dir(dir.path().join("sub")).unwrap();
     let changed = write_source(&dir, "sub/main.gopp", UNFORMATTED);
     let same = write_source(&dir, "same.gopp", FORMATTED);
-    let plain_go = write_source(&dir, "sub/a.go", "package p\nvar  macro = 1\n");
-    write_source(&dir, "sub/.hidden.go", "package  p\n");
+    let other = write_source(&dir, "sub/a.gopp", "package p\nvar  x = 1\n");
+    write_source(&dir, "sub/.hidden.gopp", "package  p\n");
     write_source(&dir, "notes.txt", "x  y\n");
 
     let output = run(gopp().args(["fmt", "-l"]).arg(dir.path()));
-    let listed = format!("{}\n{}\n", plain_go.display(), changed.display());
+    let listed = format!("{}\n{}\n", other.display(), changed.display());
     assert_eq!(
         (stdout(&output), stderr(&output)),
         (listed.clone(), String::new())
@@ -422,12 +422,12 @@ fn fmt_lists_and_rewrites_only_files_that_change() {
     assert_eq!(stdout(&output), listed);
     assert_eq!(fs::read_to_string(&changed).unwrap(), FORMATTED);
     assert_eq!(
-        fs::read_to_string(&plain_go).unwrap(),
-        "package p\n\nvar macro = 1\n"
+        fs::read_to_string(&other).unwrap(),
+        "package p\n\nvar x = 1\n"
     );
     assert_eq!(fs::metadata(&same).unwrap().modified().unwrap(), before);
     assert_eq!(
-        fs::read_to_string(dir.path().join("sub/.hidden.go")).unwrap(),
+        fs::read_to_string(dir.path().join("sub/.hidden.gopp")).unwrap(),
         "package  p\n"
     );
 
@@ -472,7 +472,7 @@ fn fmt_stdin(flags: &[&str], input: &str) -> Output {
 }
 
 #[test]
-fn fmt_formats_standard_input_as_gopp_unless_told_it_is_go() {
+fn fmt_formats_standard_input() {
     let output = fmt_stdin(&[], UNFORMATTED);
     assert_eq!(stdout(&output), FORMATTED);
     assert_eq!(output.status.code(), Some(0));
@@ -480,10 +480,7 @@ fn fmt_formats_standard_input_as_gopp_unless_told_it_is_go() {
     let listed = fmt_stdin(&["-l"], UNFORMATTED);
     assert_eq!(stdout(&listed), "<standard input>\n");
 
-    // `macro` is a name in Go, and `f!(x)` is not Go.
-    let go = fmt_stdin(&["-go"], "package p\nvar  macro = 1\n");
-    assert_eq!(stdout(&go), "package p\n\nvar macro = 1\n");
-    assert_eq!(fmt_stdin(&["-go"], UNFORMATTED).status.code(), Some(1));
+    // `macro` is a keyword.
     assert_eq!(
         fmt_stdin(&[], "package p\nvar  macro = 1\n").status.code(),
         Some(1)
@@ -607,14 +604,14 @@ fn check_and_build_hold_the_instances_of_a_package_to_their_bounds() {
     let mut text = "package main\n\n".to_owned();
     for at in 0..50 {
         text += &format!(
-            "func g{at}[T any](x T) int {{ return g{}([]T{{x}}) }}\n\n",
+            "func g{at}[T Clone](x T) int {{ return g{}([]T{{x}}) }}\n\n",
             at + 1
         );
     }
-    text += "func g50[T any](x T) int { return 1 }\n\nfunc main() {\n\tprintln(g0(1))\n}\n";
+    text += "func g50[T Clone](x T) int { return 1 }\n\nfunc main() {\n\tprintln(g0(1))\n}\n";
     let dir = TempDir::new().unwrap();
-    let deep = write_source(&dir, "deep.go", &text);
-    let refused = "deep.go:99:35: error[E0449]: cannot instantiate g49: a type argument nests more \
+    let deep = write_source(&dir, "deep.gopp", &text);
+    let refused = "deep.gopp:99:37: error[E0449]: cannot instantiate g49: a type argument nests more \
                    than 48 levels (GEN-5)";
     for command in [
         gopp().arg("check").arg(&deep),
@@ -641,10 +638,6 @@ fn check_takes_a_directory_as_one_package_and_prints_what_it_found() {
         (
             "b.gopp",
             "package shapes\n\nfunc Sum(a, b Vec) int {\n\tc := a + b\n\treturn c.X + Origin.Y\n}\n",
-        ),
-        (
-            "a_test.go",
-            "package shapes\n\nfunc broken() { undefined() }\n",
         ),
     ];
     let package = write_package(&dir, "shapes", &files);
@@ -729,10 +722,9 @@ fn check_prints_the_same_with_one_thread_and_with_many() {
     }
 }
 
-/// The samples that need no header and no macro, each in Go and in Go++.
+/// The samples that need no header and no macro.
 #[test]
-#[ignore = "long: checks the packages of Go's standard library that the samples import"]
-fn check_accepts_the_samples_with_go_s_standard_library() {
+fn check_accepts_the_samples_with_any_number_of_threads() {
     let wanted = ["01-", "02-", "03-", "04-", "05-", "09-", "10-"];
     let files: Vec<PathBuf> = samples::files()
         .into_iter()
@@ -741,7 +733,7 @@ fn check_accepts_the_samples_with_go_s_standard_library() {
             wanted.iter().any(|sample| name.contains(sample))
         })
         .collect();
-    assert_eq!(files.len(), 14);
+    assert_eq!(files.len(), 7);
     let checked = |file: &PathBuf, threads: &str| {
         let mut command = gopp();
         command.args(["check", "-emit=info"]).arg(file);
@@ -964,10 +956,9 @@ fn before_the_trace(written: &str) -> &str {
     &written[..end]
 }
 
-/// Programs of Go that lower today, each with what it writes before
-/// the trace of a failure and the status that it ends with. A long
-/// test compares them with what Go itself makes of them.
-const RUNS: [(&str, &str, i32); 8] = [
+/// Programs that lower today, each with what it writes before
+/// the trace of a failure and the status that it ends with.
+const RUNS: [(&str, &str, i32); 7] = [
     (
         "package main
 
@@ -976,8 +967,8 @@ type point struct{ x, y int }
 func half(x float64) float64 { return x / 2 }
 
 func main() {
-	var p *int
-	var q *point
+	var p Option[*int]
+	var q Option[*point]
 	n := 42
 	var small int8 = -128
 	var big uint64 = 18446744073709551615
@@ -1073,16 +1064,6 @@ func main() { println(1 << count()) }
         "panic: runtime error: negative shift amount\n",
         2,
     ),
-    (
-        "package main
-
-func none() *int { return nil }
-
-func main() { println(*none()) }
-",
-        "panic: runtime error: invalid memory address or nil pointer dereference\n",
-        2,
-    ),
 ];
 
 #[test]
@@ -1090,14 +1071,14 @@ func main() { println(*none()) }
     not(all(target_os = "linux", target_arch = "x86_64")),
     ignore = "links and runs programs for linux/amd64"
 )]
-fn a_program_prints_and_fails_as_go_says() {
+fn a_program_prints_and_fails_as_the_table_says() {
     let dir = TempDir::new().unwrap();
     let all: Vec<(String, Option<i32>)> = std::thread::scope(|scope| {
         let runs = RUNS.iter().enumerate();
         let started: Vec<_> = runs
             .map(|(at, (text, ..))| {
                 let dir = &dir;
-                scope.spawn(move || built_and_run(dir, &format!("run{at}.go"), text))
+                scope.spawn(move || built_and_run(dir, &format!("run{at}.gopp"), text))
             })
             .collect();
         let joined = started.into_iter().map(|run| run.join().unwrap());
@@ -1123,31 +1104,6 @@ fn a_program_prints_and_fails_as_go_says() {
 }
 
 #[test]
-#[ignore = "long: builds and runs the same programs with Go"]
-fn go_prints_and_fails_as_the_table_says() {
-    let dir = TempDir::new().unwrap();
-    for (at, (text, said, status)) in RUNS.iter().enumerate() {
-        let file = write_source(&dir, &format!("run{at}.go"), text);
-        let program = dir.path().join(format!("go{at}"));
-        let mut go = Command::new("go");
-        go.args(["build", "-o"]).arg(&program).arg(&file);
-        go.env("GOCACHE", dir.path().join("gocache"));
-        go.env("GOFLAGS", "-mod=mod").env("GO111MODULE", "off");
-        let built = run(&mut go);
-        assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
-        let ran = run(&mut Command::new(&program));
-        // Go says which signal a nil pointer raised, on a line of its
-        // own; Go++ checks the pointer and has no signal.
-        let written: String = stderr(&ran)
-            .split_inclusive('\n')
-            .filter(|line| !line.starts_with("[signal "))
-            .collect();
-        assert_eq!(before_the_trace(&written), *said, "{text}");
-        assert_eq!(ran.status.code(), Some(*status), "{text}");
-    }
-}
-
-#[test]
 #[cfg_attr(
     not(all(target_os = "linux", target_arch = "x86_64")),
     ignore = "links and runs programs for linux/amd64"
@@ -1159,7 +1115,7 @@ fn a_program_built_with_panic_abort_ends_at_its_first_panic() {
                 \tif n > 1 {\n\t\tpanic(\"too much\")\n\t}\n\treturn n\n}\n\n\
                 func main() {\n\tdefer println(\"deferred in main\")\n\tprintln(work(1))\n\
                 \tprintln(work(2))\n\tprintln(\"after\")\n}\n";
-    let file = write_source(&dir, "stops.go", text);
+    let file = write_source(&dir, "stops.gopp", text);
     let program = dir.path().join("stops");
     let said = |flag: &str| {
         let built = run(gopp().args(["build", flag, "-o"]).arg(&program).arg(&file));

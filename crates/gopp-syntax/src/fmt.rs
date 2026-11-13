@@ -1,10 +1,9 @@
-//! The source formatter: one layout for every `.go` and `.gopp` file.
+//! The source formatter: one layout for every `.gopp` file.
 //!
 //! The layout rules are those of Go's `go/printer` and `text/tabwriter`, so
 //! Go code comes out as `gofmt` writes it. The forms that only Go++ has are
 //! laid out like the nearest Go form.
 
-mod build;
 mod context;
 mod decls;
 mod doc;
@@ -46,7 +45,7 @@ fn format_counted(file: &File, source: &SourceFile, names: &ThreadedRodeo) -> (S
         return (text, steps);
     }
     for _ in 1..MAX_PASSES {
-        let again = SourceFile::new(source.path().to_owned(), text.clone(), source.dialect());
+        let again = SourceFile::new(source.path().to_owned(), text.clone());
         let Ok(again) = again else { break };
         let sink = Sink::new(1);
         let tree = parser::parse(file.id, &again, names, &sink);
@@ -69,7 +68,6 @@ fn format_once(file: &File, source: &SourceFile, names: &ThreadedRodeo) -> (Stri
     let mut printer = printer::Printer::new(&cx, None);
     printer.file();
     printer.finish();
-    build::fix_lines(&mut printer.output, &printer.go_build, &printer.plus_build);
 
     let mut writer = tabwriter::Writer::new();
     writer.write(&printer.output);

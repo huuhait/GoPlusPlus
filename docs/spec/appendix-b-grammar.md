@@ -4,8 +4,6 @@ The whole syntax of Go++ in one place: the grammar of the [Go specification](htt
 
 Notation is Go's EBNF: `|` alternatives, `[ ]` optional, `{ }` repeated, `( )` grouping, `"x"` a token.
 
-In a `.go` file (Go mode) the marked productions do not exist: the file is parsed with Go's grammar, `macro` is an identifier, and `#` and `@` are illegal characters ([LEX-7](02-lexical.md#predeclared-identifiers), [TYP-26](03-types.md#35-inheritance-adr-0023)). The one production that Go has and Go++ removes, `EmbeddedField`, exists only there.
-
 ## B.1 Tokens
 
 Lexical elements are Go's ([chapter 2](02-lexical.md)): identifiers, the literals `int_lit`, `float_lit`, `imaginary_lit`, `rune_lit` and `string_lit`, Go's operators and punctuation, and Go's semicolon insertion.
@@ -92,7 +90,6 @@ StructType      = "struct" "{" { FieldDecl ";" } "}" .
 FieldDecl       = IdentifierList Type [ FieldAttributes ] [ Tag ] .                  /* Go++ 3.1: no EmbeddedField, TYP-25 */
 FieldAttributes = Attribute { Attribute } .                                         /* Go++ MAC-12 */
 Tag             = string_lit .
-EmbeddedField   = [ "*" ] TypeName [ TypeArgs ] .                                   /* Go mode only: FieldDecl = ... | EmbeddedField [ Tag ] */
 
 FunctionType = "func" [ "!" ] Signature .                                           /* Go++ ERR-2 */
 

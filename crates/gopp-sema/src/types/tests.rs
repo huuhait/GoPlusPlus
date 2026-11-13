@@ -1,4 +1,3 @@
-use gopp_span::Dialect;
 use lasso::ThreadedRodeo;
 use rayon::prelude::*;
 
@@ -56,8 +55,8 @@ impl Fixture {
         self.types.display(id, &self.names)
     }
 
-    fn assignable(&self, from: TypeId, to: TypeId, dialect: Dialect) -> bool {
-        self.types.assignable(from, None, to, dialect, &self.names)
+    fn assignable(&self, from: TypeId, to: TypeId) -> bool {
+        self.types.assignable(from, None, to, &self.names)
     }
 }
 
@@ -257,15 +256,13 @@ fn values_are_assignable_as_in_go() {
         (int, Types::INVALID, true),
     ];
     for (from, to, expected) in cases {
-        for dialect in [Dialect::Go, Dialect::Gopp] {
-            let (a, b) = (f.show(from), f.show(to));
-            assert_eq!(f.assignable(from, to, dialect), expected, "{a} to {b}");
-        }
+        let (a, b) = (f.show(from), f.show(to));
+        assert_eq!(f.assignable(from, to), expected, "{a} to {b}");
     }
 }
 
 #[test]
-fn nil_fits_fewer_types_in_a_gopp_file() {
+fn nil_is_a_value_of_fewer_types_than_have_one_in_go() {
     let f = Fixture::new();
     let int = f.basic(Basic::Int);
     let nil = f.basic(Basic::UntypedNil);
@@ -288,14 +285,11 @@ fn nil_fits_fewer_types_in_a_gopp_file() {
         (f.types.strukt(vec![]), false, false),
         (f.types.array(2, int), false, false),
     ];
-    for (to, in_go, in_gopp) in cases {
+    for (to, kind, has) in cases {
         let shown = f.show(to);
-        assert_eq!(f.assignable(nil, to, Dialect::Go), in_go, "{shown} in Go");
-        assert_eq!(
-            f.assignable(nil, to, Dialect::Gopp),
-            in_gopp,
-            "{shown} in Go++"
-        );
+        assert_eq!(f.types.nil_kind(to), kind, "{shown}");
+        assert_eq!(f.assignable(nil, to), kind, "{shown}");
+        assert_eq!(f.types.has_nil(to), has, "{shown}");
     }
 }
 
@@ -304,10 +298,8 @@ fn an_untyped_constant_fits_a_type_that_can_hold_it() {
     let f = Fixture::new();
     let (_, my_byte) = f.declared("Byte", f.basic(Basic::Uint8));
     let with_method = f.interface(vec![f.method("M", &[], &[])], vec![]);
-    let fits = |kind, value: &Value, to| {
-        f.types
-            .assignable(f.basic(kind), Some(value), to, Dialect::Gopp, &f.names)
-    };
+    let fits =
+        |kind, value: &Value, to| f.types.assignable(f.basic(kind), Some(value), to, &f.names);
     let (small, large, half) = (Value::Int64(200), Value::Int64(300), Value::from_f64(0.5));
     assert!(fits(Basic::UntypedInt, &small, f.basic(Basic::Uint8)));
     assert!(fits(Basic::UntypedInt, &small, my_byte));
@@ -336,21 +328,13 @@ fn an_untyped_constant_fits_a_type_that_can_hold_it() {
         &large,
         f.types.option(f.basic(Basic::Uint8))
     ));
-    assert!(f.assignable(
-        f.basic(Basic::Int),
-        f.types.option(f.basic(Basic::Int)),
-        Dialect::Gopp
-    ));
-    assert!(!f.assignable(
-        f.types.option(f.basic(Basic::Int)),
-        f.basic(Basic::Int),
-        Dialect::Gopp
-    ));
+    assert!(f.assignable(f.basic(Basic::Int), f.types.option(f.basic(Basic::Int))));
+    assert!(!f.assignable(f.types.option(f.basic(Basic::Int)), f.basic(Basic::Int)));
     // The result of a comparison is a boolean of no type yet.
     let untyped_bool = f.basic(Basic::UntypedBool);
     let (_, flag) = f.declared("Flag", f.basic(Basic::Bool));
-    assert!(f.assignable(untyped_bool, flag, Dialect::Gopp));
-    assert!(!f.assignable(untyped_bool, f.basic(Basic::Int), Dialect::Gopp));
+    assert!(f.assignable(untyped_bool, flag));
+    assert!(!f.assignable(untyped_bool, f.basic(Basic::Int)));
     assert_eq!(
         f.types.default_type(f.basic(Basic::UntypedRune)),
         f.basic(Basic::Int32)
@@ -405,11 +389,7 @@ fn a_type_implements_an_interface_whose_methods_it_has() {
             expected,
             "{a} as {b}"
         );
-        assert_eq!(
-            f.assignable(from, to, Dialect::Gopp),
-            expected,
-            "{a} to {b}"
-        );
+        assert_eq!(f.assignable(from, to), expected, "{a} to {b}");
     }
 }
 

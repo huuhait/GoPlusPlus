@@ -88,7 +88,7 @@ impl Parser<'_> {
     }
 
     fn stmt_node(&mut self) -> Option<StmtId> {
-        while self.gopp && self.at(T::At) {
+        while self.at(T::At) {
             let attribute = self.attribute();
             let message = "attributes are not allowed on statements";
             self.error_at(Code::AttrOnStmt, attribute.span, message);
@@ -121,7 +121,7 @@ impl Parser<'_> {
             T::LBrack | T::Struct | T::Map | T::Chan | T::Interface => {
                 return Some(self.simple(None));
             }
-            T::Hash if self.gopp => return Some(self.simple(None)),
+            T::Hash => return Some(self.simple(None)),
             T::For => return Some(self.for_stmt()),
             T::Switch => return Some(self.switch_stmt()),
             T::Select => return Some(self.select_stmt()),
@@ -287,7 +287,7 @@ impl Parser<'_> {
                     ..
                 }
             );
-            if !self.gopp || !is_alias {
+            if !is_alias {
                 continue;
             }
             let span = self.exprs[var].span;

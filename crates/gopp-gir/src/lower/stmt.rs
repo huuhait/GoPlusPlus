@@ -302,7 +302,7 @@ impl FuncCx<'_, '_> {
             Type::Array(_, len) => {
                 let limit = self.b.const_int(word, len)?;
                 let source = match named {
-                    true => Walked::Elements(self.ranged_array(x, span, alias.is_some())?),
+                    true => Walked::Elements(self.ranged_array(x, alias.is_some())?),
                     false => Walked::Count,
                 };
                 (source, limit, word)
@@ -322,7 +322,7 @@ impl FuncCx<'_, '_> {
             Type::Slice(_) => {
                 let mut mode = PlaceMode::default();
                 let place = self.place(x, &mut mode)?;
-                let place = self.through(place, span, &mut mode)?;
+                let place = self.through(place, &mut mode)?;
                 let whole = self.b.assign_temp(Rvalue::Use(Operand::Copy(place)))?;
                 let whole = Place::local(whole);
                 let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
@@ -409,14 +409,14 @@ impl FuncCx<'_, '_> {
     /// loop does not see what its body writes. Any other, one behind a
     /// pointer, and one whose elements the loop names with `&` (`live`),
     /// is walked where it is (RNG-6).
-    fn ranged_array(&mut self, x: ExprId, span: SourceSpan, live: bool) -> Built<Place> {
+    fn ranged_array(&mut self, x: ExprId, live: bool) -> Built<Place> {
         let mut mode = PlaceMode::default();
         let place = self.place(x, &mut mode)?;
         let pointer = matches!(self.kind(self.b.place_ty(&place)), Type::Ptr(_));
         let checked = self.body.types.get(&x).map(|typed| typed.ty);
         let trivial = checked.is_some_and(|ty| self.shared.types.category(ty) == Category::Trivial);
         match (pointer, trivial && !live) {
-            (true, _) => self.deref(place, span, &mut mode),
+            (true, _) => self.deref(place, &mut mode),
             (false, true) => {
                 let copy = self.b.assign_temp(Rvalue::Use(Operand::Copy(place)))?;
                 Ok(Place::local(copy))

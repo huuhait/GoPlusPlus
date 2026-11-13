@@ -9,11 +9,10 @@
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::types::{Type as CheckedType, TypeId as CheckedTypeId};
 use gopp_sema::{LocalId as CheckedLocalId, MethodValue, ObjKind, SelectionKind};
-use gopp_span::{Dialect, Span as SourceSpan};
 use gopp_syntax::ast::{ExprId, ExprKind};
 use lasso::Spur;
 
-use super::expr::{Called, Check, Code, PlaceMode, Target};
+use super::expr::{Called, Code, PlaceMode, Target};
 use super::func::{Built, FuncCx};
 use super::glue::{Ends, Glue};
 use super::{CalleeKey, Made, Shared};
@@ -329,12 +328,7 @@ impl FuncCx<'_, '_> {
 
     /// What a call of a function value calls, and the first argument of
     /// the call, its environment. None for what is no function value.
-    pub fn value_called(
-        &mut self,
-        span: SourceSpan,
-        callee: ExprId,
-        spread: bool,
-    ) -> Built<Option<Target>> {
+    pub fn value_called(&mut self, callee: ExprId, spread: bool) -> Built<Option<Target>> {
         let types = self.shared.types;
         let Some(typed) = self.body.types.get(&callee) else {
             return Ok(None);
@@ -363,9 +357,6 @@ impl FuncCx<'_, '_> {
         };
         let code = Operand::Copy(self.b.field(&value, 0)?);
         let code = Operand::Copy(self.slot_of(Rvalue::Use(code))?);
-        if self.source.dialect() == Dialect::Go {
-            self.checked(Check::Nil(code.clone(), span))?;
-        }
         let env = Operand::Copy(self.b.field(&value, 1)?);
         let called = Called {
             code: Code::Known(code),
@@ -492,7 +483,7 @@ impl FuncCx<'_, '_> {
                 let mut mode = PlaceMode::default();
                 let base = self.place(x, &mut mode)?;
                 let value = self.steps(base, path, span, &mut mode)?;
-                let value = self.through(value, span, &mut mode)?;
+                let value = self.through(value, &mut mode)?;
                 let of = self.b.place_ty(&value);
                 if !self.is_iface(of) {
                     return Ok(self.placeholder(span, ty, "a method as a value"));
@@ -868,16 +859,12 @@ impl FuncCx<'_, '_> {
     /// `given`: what the call gives, and its place.
     pub fn call_value(
         &mut self,
-        span: SourceSpan,
         value: &Place,
         code_ty: TypeId,
         mut given: Vec<Operand>,
     ) -> Built<(TypeId, Place)> {
         let code = Operand::Copy(self.b.field(value, 0)?);
         let code = Operand::Copy(self.slot_of(Rvalue::Use(code))?);
-        if self.source.dialect() == Dialect::Go {
-            self.checked(Check::Nil(code.clone(), span))?;
-        }
         let ret = match self.kind(code_ty) {
             Type::Func(sig) => sig.ret,
             _ => TypeInterner::UNIT,

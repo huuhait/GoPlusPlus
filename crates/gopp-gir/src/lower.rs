@@ -298,9 +298,6 @@ pub(crate) struct Method {
     pub receiver: CheckedTypeId,
     /// The type of the method without its receiver.
     pub sig: CheckedTypeId,
-    /// It is declared in a Go++ file, where a value has the methods
-    /// that take its address too (TYP-5).
-    pub gopp: bool,
 }
 
 /// What every run reads and none writes.
@@ -716,12 +713,10 @@ impl<'a> Shared<'a> {
             if let (JobName::Method(named, name), Some(receiver)) = (job.named, job.receiver)
                 && let CheckedType::Named { id, .. } = &*shared.types.get(named)
             {
-                let dialect = shared.files[job.file as usize].1.dialect();
                 let method = Method {
                     symbol: job.symbol.clone(),
                     receiver,
                     sig: job.sig,
-                    gopp: dialect == gopp_span::Dialect::Gopp,
                 };
                 shared.methods.insert((*id, name), method);
             }
@@ -1306,12 +1301,10 @@ impl<'a> Shared<'a> {
                 .map(|found| {
                     let Generic { file, at, .. } = found.of;
                     let generic = &self.package.files[file as usize].bodies[at];
-                    let dialect = self.files[file as usize].1.dialect();
                     let written = gopp_sema::Written {
                         types: self.types,
                         names: self.names,
                         package: self.path,
-                        own_rules: dialect == gopp_span::Dialect::Gopp,
                     };
                     generic.instantiated(written, &found.args)
                 })
@@ -1364,12 +1357,10 @@ impl<'a> Shared<'a> {
                 let Some(receiver) = job.receiver else {
                     continue;
                 };
-                let dialect = self.files[job.file as usize].1.dialect();
                 let method = Method {
                     symbol: job.symbol.clone(),
                     receiver,
                     sig: job.sig,
-                    gopp: dialect == gopp_span::Dialect::Gopp,
                 };
                 self.instance_methods.insert(key, method);
             }

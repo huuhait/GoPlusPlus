@@ -8,7 +8,7 @@ fn arity(builtin: Predeclared) -> Option<(usize, bool)> {
     use Predeclared::*;
     Some(match builtin {
         Append | Make | Max | Min => (1, true),
-        Cap | Clear | Close | Imag | Len | New | Panic | Real => (1, false),
+        Cap | Clear | Close | Imag | Len | Panic | Real => (1, false),
         Move | NewUnique | NewShared | NewWeak => (1, false),
         ComplexFunc | CopyFunc | Delete => (2, false),
         Print | Println => (0, true),
@@ -202,7 +202,7 @@ impl<'a> Checker<'a> {
             mode: Mode::NoValue,
             ty: Types::INVALID,
         };
-        let types_first = matches!(builtin, Make | New);
+        let types_first = builtin == Make;
         // The length of an array is a constant if nothing is called or
         // received to get the array.
         let outer = std::mem::replace(&mut self.called_or_received, false);
@@ -219,7 +219,7 @@ impl<'a> Checker<'a> {
             _ => 0,
         };
         for (_, x) in given.iter_mut().take(read) {
-            *x = self.read(cx, x.clone());
+            *x = self.read(x.clone());
         }
         let (int, any) = (self.types.basic(Basic::Int), self.types.any());
         let first = given.first().cloned();
@@ -338,7 +338,7 @@ impl<'a> Checker<'a> {
                     let text = self.expr_string(cx, at);
                     let doing = format!("cannot clear {text}");
                     let fix = format!("use {text} = {text}[:0], which drops the elements");
-                    self.zero_needed(cx, cx.tree.exprs[at].span, *elem, &doing, &fix);
+                    self.zero_needed(cx.tree.exprs[at].span, *elem, &doing, &fix);
                 }
                 no_value
             }
@@ -377,11 +377,10 @@ impl<'a> Checker<'a> {
                 let (from, y) = given[1].clone();
                 // In a `.gopp` file a slice is a value: what is written
                 // is reached through a pointer.
-                let by_value = self.own_rules(cx)
-                    && matches!(
-                        &*self.types.get(self.types.underlying(x.ty)),
-                        Type::Slice(_)
-                    );
+                let by_value = matches!(
+                    &*self.types.get(self.types.underlying(x.ty)),
+                    Type::Slice(_)
+                );
                 if by_value {
                     let message = format!(
                         "invalid copy: the destination {} is passed as a copy",
@@ -398,7 +397,7 @@ impl<'a> Checker<'a> {
                     }
                     return Operand::UNKNOWN;
                 }
-                let (x, y) = (self.read(cx, x), self.read(cx, y));
+                let (x, y) = (self.read(x), self.read(y));
                 if self.unsettled(x.ty) || self.unsettled(y.ty) {
                     return Operand::value(int);
                 }
@@ -502,10 +501,6 @@ impl<'a> Checker<'a> {
                 }
             },
             (Max | Min, Some(_)) => self.min_or_max(cx, builtin == Max, given),
-            (New, _) => match self.var_type(cx, args[0]) {
-                invalid if invalid == Types::INVALID => Operand::UNKNOWN,
-                ty => Operand::value(self.types.pointer(ty)),
-            },
             (Panic, Some((at, x))) => {
                 match self
                     .assignment(cx, at, x, Some(any), "argument to panic")
@@ -824,7 +819,7 @@ impl<'a> Checker<'a> {
             let shown = self.type_string(ty);
             let doing = format!("cannot make a {shown} with a length");
             let fix = format!("use make({shown}, 0, n) and append the elements");
-            self.zero_needed(cx, cx.tree.exprs[call].span, *elem, &doing, &fix);
+            self.zero_needed(cx.tree.exprs[call].span, *elem, &doing, &fix);
         }
         Operand::value(ty)
     }

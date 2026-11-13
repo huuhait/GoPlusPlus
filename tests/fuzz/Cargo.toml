@@ -24,13 +24,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "parse_go"
-path = "fuzz_targets/parse_go.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "symbol_name"
 path = "fuzz_targets/symbol_name.rs"
 test = false

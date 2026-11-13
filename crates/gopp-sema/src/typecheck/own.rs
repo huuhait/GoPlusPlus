@@ -32,8 +32,8 @@ impl<'a> Checker<'a> {
     /// pointer, a `Unique` or a `Shared` points to. What a `Shared` holds
     /// is only read. An option is read as what it holds only where it is
     /// known to be set, which its name says then (OWN-P10).
-    pub(super) fn read(&self, cx: &Cx<'a>, mut x: Operand) -> Operand {
-        if !self.own_rules(cx) || !x.is_value() {
+    pub(super) fn read(&self, mut x: Operand) -> Operand {
+        if !x.is_value() {
             return x;
         }
         while !self.types.is_unsafe_pointer(x.ty, self.names) {
@@ -72,8 +72,8 @@ impl<'a> Checker<'a> {
 
     /// Whether an operator on a value of the type may be a method of the
     /// type, which is decided with the methods.
-    pub(super) fn may_overload(&self, cx: &Cx<'a>, ty: TypeId) -> bool {
-        self.own_rules(cx) && self.types.declares_methods(ty)
+    pub(super) fn may_overload(&self, ty: TypeId) -> bool {
+        self.types.declares_methods(ty)
     }
 
     /// The types whose values a place of the type `to` takes: its own,
@@ -97,7 +97,7 @@ impl<'a> Checker<'a> {
     /// Whether `nil` is a value of a place of the type `to`.
     pub(super) fn takes_nil(&self, to: TypeId, writes: bool) -> bool {
         self.takes(to, writes).into_iter().any(|to| {
-            self.types.has_nil(to, Dialect::Gopp)
+            self.types.has_nil(to)
                 || self.types.is_unsafe_pointer(to, self.names)
                 || self.types.has_param(to)
         })
@@ -115,7 +115,7 @@ impl<'a> Checker<'a> {
             | Type::Shared(_)
             | Type::Weak(_)
             | Type::Func { .. } => true,
-            Type::Interface { .. } => !self.types.has_nil(ty, Dialect::Gopp),
+            Type::Interface { .. } => !self.types.has_nil(ty),
             Type::Struct(fields) => fields.iter().any(|field| field.required),
             _ => false,
         }
@@ -215,15 +215,8 @@ impl<'a> Checker<'a> {
 
     /// What is done at `span` would make a zero value of the type, which
     /// must have one (ADR-0016). `doing` says what, `fix` what to write.
-    pub(super) fn zero_needed(
-        &mut self,
-        cx: &Cx<'a>,
-        span: Span,
-        ty: TypeId,
-        doing: &str,
-        fix: &str,
-    ) {
-        if !self.own_rules(cx) || self.memo.is_none() {
+    pub(super) fn zero_needed(&mut self, span: Span, ty: TypeId, doing: &str, fix: &str) {
+        if self.memo.is_none() {
             return;
         }
         if let Some(lacking) = self.zero_lacking(ty) {
@@ -313,7 +306,7 @@ impl<'a> Checker<'a> {
         matches!(
             &*self.types.get(self.types.underlying(ty)),
             Type::Map { .. } | Type::Chan { .. } | Type::Interface { .. }
-        ) && self.types.has_nil(ty, Dialect::Gopp)
+        ) && self.types.has_nil(ty)
     }
 
     /// Whether the selector `expr` reaches a field that is never nil
@@ -343,7 +336,7 @@ impl<'a> Checker<'a> {
         ty: TypeId,
         (value, x): (ExprId, &Operand),
     ) {
-        if !self.own_rules(cx) || self.memo.is_none() || !self.kept_set(ty) || !x.is_value() {
+        if self.memo.is_none() || !self.kept_set(ty) || !x.is_value() {
             return;
         }
         let value = self.unparen(cx, value);
@@ -377,7 +370,7 @@ impl<'a> Checker<'a> {
             },
             _ => false,
         };
-        if made || !self.types.has_nil(x.ty, Dialect::Gopp) {
+        if made || !self.types.has_nil(x.ty) {
             return;
         }
         let message = format!(
@@ -402,7 +395,7 @@ impl<'a> Checker<'a> {
         ty: TypeId,
         value: (ExprId, &Operand),
     ) {
-        if self.own_rules(cx) && self.reaches_kept_set(cx, place) {
+        if self.reaches_kept_set(cx, place) {
             self.stored_set(cx, text, ty, value);
         }
     }
@@ -410,7 +403,7 @@ impl<'a> Checker<'a> {
     /// `&x.f` is written at `expr` for a field that is never nil: nothing
     /// may store nil through the pointer, so only `mem.Replace` takes it.
     pub(super) fn address_of_required(&mut self, cx: &Cx<'a>, expr: ExprId, of: ExprId) {
-        if self.own_rules(cx) && self.memo.is_some() && self.reaches_kept_set(cx, of) {
+        if self.memo.is_some() && self.reaches_kept_set(cx, of) {
             self.required_addresses.push(expr);
         }
     }
@@ -492,7 +485,7 @@ impl<'a> Checker<'a> {
         fields: &[Field],
         set: &[bool],
     ) {
-        if !self.own_rules(cx) || self.memo.is_none() {
+        if self.memo.is_none() {
             return;
         }
         let mut missing = Vec::new();
@@ -518,7 +511,7 @@ impl<'a> Checker<'a> {
 
     /// The variables `names` of the type `ty` are declared without
     /// values.
-    pub(super) fn declared_unset(&mut self, cx: &Cx<'a>, names: &[Ident], ty: TypeId) {
+    pub(super) fn declared_unset(&mut self, names: &[Ident], ty: TypeId) {
         let blank = self.blank;
         for name in names.iter().filter(|name| name.name != blank) {
             let text = self.names.resolve(&name.name);
@@ -527,7 +520,7 @@ impl<'a> Checker<'a> {
                 "give {text} a value, or declare it as Option[{}]",
                 self.type_string(ty)
             );
-            self.zero_needed(cx, name.span, ty, &doing, &fix);
+            self.zero_needed(name.span, ty, &doing, &fix);
         }
     }
 
@@ -536,7 +529,7 @@ impl<'a> Checker<'a> {
     /// has nothing to stand for it: only the form with `ok` reads it
     /// (ADR-0016 decision 9).
     pub(super) fn read_alone(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand) {
-        if !self.own_rules(cx) || self.memo.is_none() {
+        if self.memo.is_none() {
             return;
         }
         let expr = self.unparen(cx, expr);
@@ -585,7 +578,7 @@ impl<'a> Checker<'a> {
         let is_option =
             |ty: TypeId| matches!(&*self.types.get(self.types.underlying(ty)), Type::Option(_));
         let may_be_nil = is_option(x.ty);
-        let keeps_nil = is_option(to) || self.types.has_nil(to, Dialect::Gopp);
+        let keeps_nil = is_option(to) || self.types.has_nil(to);
         if may_be_nil && !keeps_nil {
             read.truncate(1);
         }
@@ -632,9 +625,9 @@ impl<'a> Checker<'a> {
             && !self.not_assignable(&Operand::value(self.types.pointer(from)), to)
     }
 
-    /// Whether the operand `x` surely fits no place of the type `to` in a
-    /// `.gopp` file.
-    pub(super) fn unfit_own(&self, x: &Operand, to: TypeId, writes: bool) -> bool {
+    /// Whether the operand `x` surely fits no place of the type `to`;
+    /// `writes` says that the place is on the left of `=`.
+    pub(super) fn unfit(&self, x: &Operand, to: TypeId, writes: bool) -> bool {
         self.fit_own(x, to, writes).is_none()
     }
 
@@ -653,14 +646,14 @@ impl<'a> Checker<'a> {
             &*self.types.get(self.types.underlying(to)),
             Type::Pointer(_)
         ) && !self.types.is_unsafe_pointer(to, self.names);
-        if !self.own_rules(cx) || !is_pointer || self.memo.is_none() {
+        if !is_pointer || self.memo.is_none() {
             return;
         }
         let through = match x {
             None => true,
             Some(x) if x.mode == Mode::Unknown => false,
             Some(x) if x.ty == self.types.basic(Basic::UntypedNil) => !self.takes_nil(to, false),
-            Some(x) => self.unfit_own(x, to, false),
+            Some(x) => self.unfit(x, to, false),
         };
         match through {
             true => {
@@ -681,15 +674,6 @@ impl<'a> Checker<'a> {
             }
             // The pointer itself is assigned.
             false => self.repointed(cx, place),
-        }
-    }
-
-    /// Whether the operand `x` surely fits no place of the type `to`;
-    /// `writes` says that the place is on the left of `=`.
-    pub(super) fn unfit(&self, cx: &Cx<'a>, x: &Operand, to: TypeId, writes: bool) -> bool {
-        match self.own_rules(cx) {
-            true => self.unfit_own(x, to, writes),
-            false => self.not_assignable(x, to),
         }
     }
 }

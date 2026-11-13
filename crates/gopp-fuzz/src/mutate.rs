@@ -1,7 +1,7 @@
 //! Byte and token mutation of existing sources.
 
 use gopp_diag::Sink;
-use gopp_span::{Dialect, FileTooLarge, SourceFile, SourceMap};
+use gopp_span::{FileTooLarge, SourceFile, SourceMap};
 use gopp_syntax::lexer;
 use rand::{Rng, RngExt};
 
@@ -81,9 +81,9 @@ pub struct Seed {
 }
 
 impl Seed {
-    pub fn new(text: String, dialect: Dialect) -> Result<Self, FileTooLarge> {
+    pub fn new(text: String) -> Result<Self, FileTooLarge> {
         let map = SourceMap::new();
-        let id = map.add(SourceFile::new("seed".into(), text, dialect)?);
+        let id = map.add(SourceFile::new("seed".into(), text)?);
         let source = map.file(id);
         let text = source.text();
         let mut pieces = Vec::new();
@@ -164,7 +164,7 @@ mod tests {
         "package p\n\n// doc\nfunc f(x int) int {\n\treturn x + 1 // one\n}\n/* end */";
 
     fn seed(text: &str) -> Seed {
-        Seed::new(text.to_owned(), Dialect::Gopp).unwrap()
+        Seed::new(text.to_owned()).unwrap()
     }
 
     #[test]

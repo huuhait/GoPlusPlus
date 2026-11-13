@@ -1,11 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 
 use gopp_diag::Sink;
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::ast::{ExprId, ExprKind, File};
 use gopp_syntax::parser::parse;
 use gopp_testutil::{linear, samples, stress};
@@ -14,7 +12,7 @@ use lasso::{Spur, ThreadedRodeo};
 use crate::constant::Value;
 use crate::resolve::check_counted;
 use crate::types::Types;
-use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Transfer, Unit, check};
+use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Transfer, Unit};
 
 /// Packages by import path. With `fake_rest`, any other path is a package
 /// about which nothing is known.
@@ -63,8 +61,7 @@ fn check_texts(
     let mut sources = Vec::new();
     let mut files = Vec::new();
     for &(name, text) in texts {
-        let dialect = Dialect::from_path(name.as_ref()).unwrap();
-        let id = map.add(SourceFile::new(name.into(), text.to_owned(), dialect).unwrap());
+        let id = map.add(SourceFile::new(name.into(), text.to_owned()).unwrap());
         let source = map.file(id);
         files.push(parse(id, &source, names, &sink));
         sources.push(source);
@@ -124,25 +121,17 @@ fn every_sample_resolves() {
     }
 }
 
-/// What Go's type checker or this one says about the names of one file:
-/// for the offset of a declaring name its kind, and for the offset of
-/// every other name what it denotes.
+/// The names of one file: for the offset of a declaring name its kind,
+/// and for the offset of every other name what it denotes.
 #[derive(Default)]
 struct Names {
     defs: BTreeMap<u32, String>,
     uses: BTreeMap<u32, String>,
     /// Names that are keys of composite literals.
     keys: BTreeMap<u32, String>,
-    /// For the byte range of an expression with a value: its type in the
-    /// one spelling for identical types, then its value if it is constant.
-    types: HashMap<(u32, u32), Vec<String>>,
-    /// For the byte range of a selector: the kind of what it reaches, the
-    /// indices on the way to it, and whether a pointer is followed.
-    selections: HashMap<(u32, u32), Vec<String>>,
 }
 
-/// The names of each file of `package`, in the notation of
-/// `tests/gotypes`.
+/// The names of each file of `package`.
 fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Names> {
     let index: HashMap<_, _> = files
         .iter()
@@ -212,437 +201,59 @@ fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Nam
     found
 }
 
-/// The value of a constant in full: the bytes of a string, so that no rule
-/// of quoting matters.
-fn exact(value: &crate::constant::Value) -> String {
-    match value {
-        crate::constant::Value::Str(text) => {
-            let hex: String = text.bytes().iter().map(|b| format!("{b:02x}")).collect();
-            format!("bytes {hex}")
-        }
-        value => value.exact_string(),
-    }
-}
-
-/// The packages of Go's standard library that are checked so far, found
-/// through the import map of the package that imports them.
-struct StdLoader<'a> {
-    checked: &'a HashMap<String, Arc<Package>>,
-    import_map: HashMap<String, String>,
-}
-
-impl PackageLoader for StdLoader<'_> {
-    fn load(&self, path: &str) -> Result<Arc<Package>, String> {
-        let path = self.import_map.get(path).map_or(path, String::as_str);
-        let package = self.checked.get(path).ok_or("package not checked yet")?;
-        Ok(Arc::clone(package))
-    }
-}
-
-/// One package as `tests/gotypes` prints it.
-#[derive(Default)]
-struct Listed {
-    path: String,
-    import_map: HashMap<String, String>,
-    files: Vec<(PathBuf, Names)>,
-    /// The variables that each value initializes, in the order in which
-    /// the values are computed.
-    init_order: Vec<String>,
-    /// Each package-level object: its name, its kind, its type in the one
-    /// spelling for identical types, and the value of a constant.
-    objects: Vec<Vec<String>>,
-    /// Built into Go's type checker, which says nothing about its files.
-    builtin: bool,
-}
-
-fn listed_packages(output: &str) -> Vec<Listed> {
-    let mut packages: Vec<Listed> = Vec::new();
-    for line in output.lines() {
-        if let Some(typed) = line.strip_prefix("typ\t") {
-            let mut fields = typed.split('\t');
-            let mut number = || fields.next().unwrap().parse().unwrap();
-            let range = (number(), number());
-            let names = &mut packages.last_mut().unwrap().files.last_mut().unwrap().1;
-            names
-                .types
-                .insert(range, fields.map(str::to_owned).collect());
-            continue;
-        }
-        if let Some(selected) = line.strip_prefix("sel\t") {
-            let mut fields = selected.split('\t');
-            let mut number = || fields.next().unwrap().parse().unwrap();
-            let range = (number(), number());
-            let names = &mut packages.last_mut().unwrap().files.last_mut().unwrap().1;
-            names
-                .selections
-                .insert(range, fields.map(str::to_owned).collect());
-            continue;
-        }
-        if let Some(object) = line.strip_prefix("obj\t") {
-            let fields = object.split('\t').map(str::to_owned).collect();
-            packages.last_mut().unwrap().objects.push(fields);
-            continue;
-        }
-        let mut words = line.split(' ');
-        let record = words.next().unwrap();
-        if record == "package" {
-            packages.push(Listed {
-                path: words.next().unwrap().to_owned(),
-                ..Listed::default()
-            });
-            continue;
-        }
-        let package = packages.last_mut().unwrap();
-        match record {
-            "map" => {
-                let written = words.next().unwrap().to_owned();
-                package
-                    .import_map
-                    .insert(written, words.next().unwrap().to_owned());
-            }
-            "file" => package
-                .files
-                .push((words.next().unwrap().into(), Names::default())),
-            "builtin" => package.builtin = true,
-            "init" => package.init_order.push(words.next().unwrap().to_owned()),
-            "def" | "use" => {
-                let offset = words.next().unwrap().parse().unwrap();
-                let rest = words.collect::<Vec<_>>().join(" ");
-                let names = &mut package.files.last_mut().unwrap().1;
-                let table = if record == "def" {
-                    &mut names.defs
-                } else {
-                    &mut names.uses
-                };
-                table.insert(offset, rest);
-            }
-            _ => panic!("unknown record: {line}"),
-        }
-    }
-    packages
-}
-
-/// The program that prints what Go's type checker resolves names to.
-const GOTYPES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/gotypes/main.go");
-
-/// Every name in the packages of Go's standard library, as built for this
-/// machine without cgo, denotes here what it denotes for Go's type checker,
-/// and nothing is reported. Needs `go` on `PATH`.
-#[test]
-#[ignore = "long: type-checks the Go standard library with Go's checker too"]
-fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
-    let output = Command::new("go")
-        .args(["run", GOTYPES])
-        .env("CGO_ENABLED", "0")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let packages = listed_packages(std::str::from_utf8(&output.stdout).unwrap());
-    assert!(packages.len() > 300, "only {} packages", packages.len());
-
-    let names = ThreadedRodeo::new();
-    let types = Types::new(&names);
-    let mut checked: HashMap<String, Arc<Package>> = HashMap::new();
-    let mut failures = Vec::new();
-    let (mut files_compared, mut names_compared, mut initializers_compared) = (0, 0, 0);
-    let (mut packages_compared, mut same_order) = (0, 0);
-    let mut objects: BTreeMap<(String, bool), usize> = BTreeMap::new();
-    // How many expressions with a value Go has, and how many of them are
-    // compared.
-    let mut expressions = (0usize, 0usize, 0usize);
-    let mut selections = (0usize, 0usize);
-    let mut untyped_examples: Vec<String> = Vec::new();
-    for listed in packages {
-        let map = SourceMap::new();
-        let sink = Sink::new(100);
-        let mut sources = Vec::new();
-        let mut files = Vec::new();
-        for (path, _) in &listed.files {
-            let bytes = fs::read(path).unwrap();
-            let id = map.add(SourceFile::from_bytes(path.clone(), &bytes, Dialect::Go).unwrap());
-            let source = map.file(id);
-            files.push(parse(id, &source, &names, &sink));
-            sources.push(source);
-        }
-        let units: Vec<Unit> = files
-            .iter()
-            .zip(&sources)
-            .map(|(file, source)| Unit { file, source })
-            .collect();
-        let loader = StdLoader {
-            checked: &checked,
-            import_map: listed.import_map,
-        };
-        let package = check(&listed.path, &units, &loader, &names, &types, &sink);
-        for diagnostic in sink.finish() {
-            let place = map.location(diagnostic.span);
-            failures.push(format!("{place}: reported: {}", diagnostic.message));
-        }
-
-        let found = names_of(&package, &files, &names);
-        let init_order: Vec<String> = package
-            .init_order
-            .iter()
-            .map(|initializer| {
-                let name = |&object| names.resolve(&package.object(object).name);
-                initializer
-                    .lhs
-                    .iter()
-                    .map(name)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
-            .collect();
-        let path = listed.path.clone();
-        // The types of the declarations and the values of the constants,
-        // where they are worked out already.
-        for fields in listed.objects.iter().filter(|_| !listed.builtin) {
-            let (name, kind) = (&fields[0], fields[1].as_str());
-            let declared = names.get(name).and_then(|name| package.scope.get(&name));
-            let Some(&object) = declared else {
-                failures.push(format!("{path}.{name}: not declared"));
-                continue;
-            };
-            let object = package.object(object);
-            let ty = match kind {
-                "type" => types.underlying(object.ty),
-                _ => object.ty,
-            };
-            let unknown = ty == Types::INVALID
-                || kind == "const" && object.value == crate::constant::Value::Unknown;
-            *objects.entry((kind.to_owned(), !unknown)).or_insert(0usize) += 1;
-            if unknown {
-                continue;
-            }
-            let mut ours = vec![types.canonical(ty, &names)];
-            if kind == "const" {
-                ours.push(exact(&object.value));
-            }
-            if ours[..] != fields[2..] {
-                let theirs = fields[2..].join(" = ");
-                failures.push(format!(
-                    "{path}.{name}: {} here, for go {theirs}",
-                    ours.join(" = ")
-                ));
-            }
-        }
-        // The type of each expression, where it is worked out here and has
-        // a type of its own already: a constant of no type gets its type
-        // from what is around it, which is not followed yet.
-        for ((info, tree), (file_path, go)) in package.files.iter().zip(&files).zip(&listed.files) {
-            if listed.builtin {
-                break;
-            }
-            // What each selector reaches. Go counts the methods of a type
-            // and says of a method only sometimes whether a pointer is
-            // followed, so a method is compared by the way to its type.
-            selections.0 += go.selections.len();
-            for (&expr, selection) in info.bodies.iter().flat_map(|body| &body.selections) {
-                let span = tree.exprs[expr].span;
-                let place = map.location(span);
-                let Some(theirs) = go.selections.get(&(span.lo, span.hi)) else {
-                    failures.push(format!("{place}: a selection here, for go none"));
-                    continue;
-                };
-                selections.1 += 1;
-                let is_field = selection.kind == crate::SelectionKind::Field;
-                let kind = match selection.kind {
-                    crate::SelectionKind::Field => "field",
-                    crate::SelectionKind::Method => "method",
-                    crate::SelectionKind::MethodExpr => "methodexpr",
-                    crate::SelectionKind::BaseField => "basefield",
-                    crate::SelectionKind::BaseMethod => "basemethod",
-                };
-                let mut way: Vec<&str> = theirs[1].split(',').collect();
-                if !is_field {
-                    way.pop();
-                }
-                let path: Vec<String> = selection.path.iter().map(u32::to_string).collect();
-                let same = kind == theirs[0]
-                    && path == way
-                    && (!is_field || selection.indirect.to_string() == theirs[2]);
-                if !same {
-                    failures.push(format!(
-                        "{place}: {kind} {path:?} {} here, for go {theirs:?}",
-                        selection.indirect
-                    ));
-                }
-            }
-            expressions.0 += go.types.len();
-            for (&expr, typed) in info.bodies.iter().flat_map(|body| &body.types) {
-                let span = tree.exprs[expr].span;
-                if typed.ty == Types::INVALID {
-                    continue;
-                }
-                let Some(theirs) = go.types.get(&(span.lo, span.hi)) else {
-                    continue;
-                };
-                // A value of no type here that has one for Go: the place
-                // that gives it its type is not followed yet.
-                if types.is_untyped(typed.ty) && !theirs[0].starts_with("untyped ") {
-                    expressions.2 += 1;
-                    if untyped_examples.len() < 25 {
-                        untyped_examples.push(format!("{}: {}", map.location(span), theirs[0]));
-                    }
-                    continue;
-                }
-                // The first of two results of `m[k]` is recorded by Go as
-                // the pair.
-                let ours = types.canonical(typed.ty, &names);
-                if theirs[0].starts_with('(') && !ours.starts_with('(') {
-                    continue;
-                }
-                // A part of the type is not worked out yet.
-                if ours.contains("invalid type") {
-                    continue;
-                }
-                expressions.1 += 1;
-                let value = typed.value != crate::constant::Value::Unknown;
-                let same_value = !value || theirs.get(1) == Some(&exact(&typed.value));
-                if ours != theirs[0] || !same_value {
-                    let place = map.location(span);
-                    let (ours_value, theirs) = (exact(&typed.value), theirs.join(" = "));
-                    let _ = file_path;
-                    failures.push(format!(
-                        "{place}: {ours} = {ours_value} here, for go {theirs}"
-                    ));
-                }
-            }
-        }
-        checked.insert(listed.path, Arc::new(package));
-        if listed.builtin {
-            continue;
-        }
-        // The same values are computed. Their order is Go's where no
-        // variable needs another through a method or through the key of a
-        // literal: what a selector and a key denote is not known yet.
-        initializers_compared += init_order.len();
-        same_order += usize::from(init_order == listed.init_order);
-        packages_compared += 1;
-        let sorted = |mut list: Vec<String>| {
-            list.sort();
-            list
-        };
-        if sorted(init_order.clone()) != sorted(listed.init_order.clone()) {
-            failures.push(format!(
-                "{path}: {} values are initialized, for go {}",
-                init_order.len(),
-                listed.init_order.len()
-            ));
-        }
-        for (((path, go), ours), source) in listed.files.iter().zip(&found).zip(&sources) {
-            files_compared += 1;
-            names_compared += go.defs.len() + go.uses.len();
-            let at = |offset: u32| {
-                let place = source.line_col(offset);
-                format!("{}:{}:{}", path.display(), place.line, place.column)
-            };
-            let none = String::from("nothing");
-            for offset in go.defs.keys().chain(ours.defs.keys()) {
-                let (go, ours) = (go.defs.get(offset), ours.defs.get(offset));
-                if go != ours {
-                    let (go, ours) = (go.unwrap_or(&none), ours.unwrap_or(&none));
-                    failures.push(format!("{}: declares {ours}, for go {go}", at(*offset)));
-                }
-            }
-            for (offset, denotes) in &go.uses {
-                // Go's checker knows whether a key is a field.
-                let ours = ours.uses.get(offset).or_else(|| ours.keys.get(offset));
-                if ours != Some(denotes) {
-                    let ours = ours.unwrap_or(&none);
-                    failures.push(format!("{}: is {ours}, for go {denotes}", at(*offset)));
-                }
-            }
-            for (offset, denotes) in &ours.uses {
-                if !go.uses.contains_key(offset) {
-                    failures.push(format!("{}: is {denotes}, for go nothing", at(*offset)));
-                }
-            }
-        }
-    }
-    println!(
-        "{files_compared} files, {names_compared} names, {initializers_compared} initial values; \
-         {same_order} of {packages_compared} packages in Go's order of initialization"
-    );
-    assert_eq!(same_order, packages_compared, "the order differs");
-    assert!(names_compared > 500_000, "only {names_compared} names");
-    println!("objects by kind and whether their type is worked out: {objects:?}");
-    println!("{} of {} selections compared", selections.1, selections.0);
-    assert!(
-        selections.1 * 100 >= selections.0 * 99,
-        "too few selections are worked out"
-    );
-    println!(
-        "{} of {} expressions compared; {} more have no type here yet, as: {untyped_examples:#?}",
-        expressions.1, expressions.0, expressions.2
-    );
-    failures.dedup();
-    let shown: Vec<&str> = failures.iter().take(40).map(String::as_str).collect();
-    assert!(
-        failures.is_empty(),
-        "{} differences\n{}",
-        failures.len(),
-        shown.join("\n")
-    );
-}
-
 #[test]
 fn undefined_and_redeclared_names_are_reported_as_go_reports_them() {
     let cases: &[(&str, &[&str])] = &[
-        ("func f() { _ = x }", &["a.go:2:16: undefined: x"]),
+        ("func f() { _ = x }", &["a.gopp:2:16: undefined: x"]),
         // A name is not in scope before its declaration.
         (
             "func f() { _ = x; x := 1; _ = x }",
-            &["a.go:2:16: undefined: x"],
+            &["a.gopp:2:16: undefined: x"],
         ),
         // A variable whose value is in error is not also reported as unused.
-        ("func f() { x := x }", &["a.go:2:17: undefined: x"]),
-        ("func f() { var x = y }", &["a.go:2:20: undefined: y"]),
+        ("func f() { x := x }", &["a.gopp:2:17: undefined: x"]),
+        ("func f() { var x = y }", &["a.gopp:2:20: undefined: y"]),
         // The type of a parameter does not see the other parameters.
-        ("func f(a int, b a) {}", &["a.go:2:17: undefined: a"]),
+        ("func f(a int, b a) {}", &["a.gopp:2:17: undefined: a"]),
         (
             "var a int\nfunc a() {}",
             &[
-                "a.go:3:6: a redeclared in this block",
-                "    a.go:2:5: other declaration of a",
+                "a.gopp:3:6: a redeclared in this block",
+                "    a.gopp:2:5: other declaration of a",
             ],
         ),
         (
             "func f(a int) (a string) { var a bool }",
             &[
-                "a.go:2:16: a redeclared in this block",
-                "    a.go:2:8: other declaration of a",
-                "a.go:2:32: a redeclared in this block",
-                "    a.go:2:8: other declaration of a",
-                "a.go:2:39: missing return",
+                "a.gopp:2:16: a redeclared in this block",
+                "    a.gopp:2:8: other declaration of a",
+                "a.gopp:2:32: a redeclared in this block",
+                "    a.gopp:2:8: other declaration of a",
+                "a.gopp:2:39: missing return",
             ],
         ),
         (
             "func f[T any](T int) {}",
             &[
-                "a.go:2:15: T redeclared in this block",
-                "    a.go:2:8: other declaration of T",
+                "a.gopp:2:15: T redeclared in this block",
+                "    a.gopp:2:8: other declaration of T",
             ],
         ),
         (
             "func f() { a, b := 1, 2; a, b := b, a }",
-            &["a.go:2:31: no new variables on left side of :="],
+            &["a.gopp:2:31: no new variables on left side of :="],
         ),
         (
             "func f() { a, a := 1, 2; _ = a }",
-            &["a.go:2:15: a repeated on left side of :="],
+            &["a.gopp:2:15: a repeated on left side of :="],
         ),
         (
             "func f() { _ = _ }",
-            &["a.go:2:16: cannot use _ as value or type"],
+            &["a.gopp:2:16: cannot use _ as value or type"],
         ),
         (
             "func f(x any) { switch _ := x.(type) {} }",
-            &["a.go:2:24: no new variable on left side of :="],
+            &["a.gopp:2:24: no new variable on left side of :="],
         ),
         // Methods are no names of the package, a package has any number of
         // `init` functions, and `_` declares nothing.
@@ -659,7 +270,7 @@ fn undefined_and_redeclared_names_are_reported_as_go_reports_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{body}\n");
-        assert_eq!(messages("a.go", &text), *expected, "{body}");
+        assert_eq!(messages("a.gopp", &text), *expected, "{body}");
     }
 }
 
@@ -669,16 +280,15 @@ fn a_variable_that_is_never_read_is_reported() {
         (
             "func f() { x := 1; var y, z int; _ = z }",
             &[
-                "a.go:2:12: declared and not used: x",
-                "a.go:2:24: declared and not used: y",
+                "a.gopp:2:12: declared and not used: x",
+                "a.gopp:2:24: declared and not used: y",
             ],
         ),
-        // An assignment does not read the variable; `+=` and `++` do.
-        (
-            "func f() { x := 1; x = 2; (x) = 3 }",
-            &["a.go:2:12: declared and not used: x"],
-        ),
+        // An assignment may write through a pointer (ADR-0043), so it
+        // counts as a use, as `+=` and `++` do.
+        ("func f() { x := 1; x = 2; (x) = 3 }", &[]),
         ("func f() { x, y := 1, 2; x += 1; y++ }", &[]),
+        ("func f(n int) { p := &n; p = 9 }", &[]),
         // Parameters, results, constants and types need no use.
         (
             "func f(a int) (b int) { const c = 1; type T int; return }",
@@ -687,7 +297,7 @@ fn a_variable_that_is_never_read_is_reported() {
         ("func f() { x := 1; _ = func() int { return x } }", &[]),
         (
             "func f(v any) { switch x := v.(type) { case int: case string: } }",
-            &["a.go:2:24: x declared and not used"],
+            &["a.gopp:2:24: x declared and not used"],
         ),
         (
             "func f(v any) { switch x := v.(type) { case int: case string: _ = x } }",
@@ -696,8 +306,8 @@ fn a_variable_that_is_never_read_is_reported() {
         (
             "func f(xs []int) { for i, x := range xs { } }",
             &[
-                "a.go:2:24: declared and not used: i",
-                "a.go:2:27: declared and not used: x",
+                "a.gopp:2:24: declared and not used: i",
+                "a.gopp:2:27: declared and not used: x",
             ],
         ),
         // The key of a literal may be a variable.
@@ -705,22 +315,15 @@ fn a_variable_that_is_never_read_is_reported() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{body}\n");
-        assert_eq!(messages("a.go", &text), *expected, "{body}");
+        assert_eq!(messages("a.gopp", &text), *expected, "{body}");
     }
-}
-
-#[test]
-fn an_assignment_in_a_gopp_file_counts_as_a_use() {
-    // `p = 9` may write what the pointer `p` points to (ADR-0043).
-    let text = "package p\nfunc f(n int) { p := &n; p = 9 }\n";
-    assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
 }
 
 /// A package `lib` with an exported and an unexported name.
 fn with_lib(names: &ThreadedRodeo) -> Loader {
     let text = "package lib\nfunc Exported() {}\nfunc hidden() {}\nvar Value int\n";
     let mut loader = Loader::default();
-    let lib = check_texts("example.com/lib", &[("lib.go", text)], &loader, names);
+    let lib = check_texts("example.com/lib", &[("lib.gopp", text)], &loader, names);
     assert_eq!(lib.messages, [] as [&str; 0]);
     loader
         .packages
@@ -740,69 +343,69 @@ fn imports_are_checked_as_go_checks_them() {
         ("import _ \"example.com/lib\"", &[]),
         (
             "import \"example.com/lib\"",
-            &["a.go:2:8: \"example.com/lib\" imported and not used"],
+            &["a.gopp:2:8: \"example.com/lib\" imported and not used"],
         ),
         (
             "import l \"example.com/lib\"",
-            &["a.go:2:8: \"example.com/lib\" imported as l and not used"],
+            &["a.gopp:2:8: \"example.com/lib\" imported as l and not used"],
         ),
         (
             "import . \"example.com/lib\"",
-            &["a.go:2:8: \"example.com/lib\" imported and not used"],
+            &["a.gopp:2:8: \"example.com/lib\" imported and not used"],
         ),
         (
             "import \"example.com/lib\"\nvar _ = lib.Missing",
-            &["a.go:3:13: undefined: lib.Missing"],
+            &["a.gopp:3:13: undefined: lib.Missing"],
         ),
         (
             "import \"example.com/lib\"\nvar _ = lib.hidden",
-            &["a.go:3:13: name hidden not exported by package lib"],
+            &["a.gopp:3:13: name hidden not exported by package lib"],
         ),
         // One error for a package that is not found, none for its names.
         (
             "import \"nowhere/x\"\nvar _ = x.Anything",
-            &["a.go:2:8: could not import nowhere/x (package not found)"],
+            &["a.gopp:2:8: could not import nowhere/x (package not found)"],
         ),
         (
             "import \"\"",
-            &["a.go:2:8: invalid import path (empty string)"],
+            &["a.gopp:2:8: invalid import path (empty string)"],
         ),
         (
             "import \"example.com/lib\"\nimport lib \"example.com/lib\"\nvar _ = lib.Value",
             &[
-                "a.go:3:8: lib redeclared in this block",
-                "    a.go:2:8: other declaration of lib",
-                "a.go:3:8: \"example.com/lib\" imported and not used",
+                "a.gopp:3:8: lib redeclared in this block",
+                "    a.gopp:2:8: other declaration of lib",
+                "a.gopp:3:8: \"example.com/lib\" imported and not used",
             ],
         ),
         (
             "import \"example.com/lib\"\nvar lib = 1",
             &[
-                "a.go:2:8: \"example.com/lib\" imported and not used",
-                "a.go:3:5: lib already declared through import of package lib (\"example.com/lib\")",
-                "    a.go:2:8: other declaration of lib",
+                "a.gopp:2:8: \"example.com/lib\" imported and not used",
+                "a.gopp:3:5: lib already declared through import of package lib (\"example.com/lib\")",
+                "    a.gopp:2:8: other declaration of lib",
             ],
         ),
         (
             "import . \"example.com/lib\"\nvar Value = 1",
             &[
-                "a.go:2:8: \"example.com/lib\" imported and not used",
-                "a.go:3:5: Value already declared through dot-import of package lib \
+                "a.gopp:2:8: \"example.com/lib\" imported and not used",
+                "a.gopp:3:5: Value already declared through dot-import of package lib \
                  (\"example.com/lib\")",
-                "    a.go:2:8: other declaration of Value",
+                "    a.gopp:2:8: other declaration of Value",
             ],
         ),
         // A local hides the import.
         (
             "import \"example.com/lib\"\nfunc f(lib struct{ Missing int }) int { return lib.Missing }",
-            &["a.go:2:8: \"example.com/lib\" imported and not used"],
+            &["a.gopp:2:8: \"example.com/lib\" imported and not used"],
         ),
     ];
     let names = ThreadedRodeo::new();
     let loader = with_lib(&names);
     for (body, expected) in cases {
         let text = format!("package p\n{body}\n");
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &names);
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
         assert_eq!(checked.messages, *expected, "{body}");
     }
 }
@@ -813,34 +416,23 @@ fn an_import_belongs_to_its_file_and_a_declaration_to_the_package() {
     let loader = with_lib(&names);
     let files = [
         (
-            "a.go",
+            "a.gopp",
             "package p\nimport \"example.com/lib\"\nvar A = lib.Value + B\n",
         ),
-        ("b.go", "package p\nvar B = 1\nvar _ = lib.Value\n"),
+        ("b.gopp", "package p\nvar B = 1\nvar _ = lib.Value\n"),
     ];
     let checked = check_texts("p", &files, &loader, &names);
-    assert_eq!(checked.messages, ["b.go:3:9: undefined: lib"]);
+    assert_eq!(checked.messages, ["b.gopp:3:9: undefined: lib"]);
 }
 
 // rule: LEX-7, LEX-8
 #[test]
-fn the_universe_of_a_gopp_file_is_not_that_of_a_go_file() {
+fn the_universe_has_the_names_of_gopp_and_no_new() {
     let body = "var a Option[int]\nvar b = NewUnique(1)\nfunc f[T Send](x Shared[T]) { move(x) }\n";
     let text = format!("package p\n{body}");
     assert_eq!(messages("a.gopp", &text), [] as [&str; 0]);
-    assert_eq!(
-        messages("a.go", &text),
-        [
-            "a.go:2:7: undefined: Option",
-            "a.go:3:9: undefined: NewUnique",
-            "a.go:4:10: undefined: Send",
-            "a.go:4:18: undefined: Shared",
-            "a.go:4:31: undefined: move",
-        ]
-    );
 
     let text = "package p\nvar p = new(int)\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
     assert_eq!(
         messages("a.gopp", text),
         [
@@ -1078,7 +670,7 @@ fn the_result_does_not_depend_on_the_number_of_threads() {
             .unwrap();
         pool.install(|| {
             let names = ThreadedRodeo::new();
-            let checked = check_texts("p", &[("a.go", &text)], &Loader::default(), &names);
+            let checked = check_texts("p", &[("a.gopp", &text)], &Loader::default(), &names);
             let found = names_of(&checked.package, &checked.files, &names).remove(0);
             (checked.messages, found.defs, found.uses)
         })
@@ -1208,7 +800,7 @@ fn a_long_chain_of_generic_types_is_checked() {
         .map(|i| format!("type G{i}[P any] struct{{ g G{}[P] }}\n", i + 1))
         .collect();
     let text = format!("package p\n{chain}type G500[P any] struct{{ p P }}\n");
-    assert_eq!(messages("a.go", &text), [] as [&str; 0]);
+    assert_eq!(messages("a.gopp", &text), [] as [&str; 0]);
 }
 
 #[test]
@@ -1216,25 +808,19 @@ fn only_a_function_is_named_init_or_main() {
     let names = ThreadedRodeo::new();
     let text = "package main\nimport init \"example.com/lib\"\ntype main struct{}\n\
                 var init int\nfunc main() {}\n";
-    let found = check_texts("main", &[("a.go", text)], &with_lib(&names), &names).messages;
+    let found = check_texts("main", &[("a.gopp", text)], &with_lib(&names), &names).messages;
     assert_eq!(
         found,
         [
-            "a.go:2:8: cannot import package as init - init must be a func",
-            "a.go:3:6: cannot declare main - must be func",
-            "a.go:4:5: cannot declare init - must be func",
+            "a.gopp:2:8: cannot import package as init - init must be a func",
+            "a.gopp:3:6: cannot declare main - must be func",
+            "a.gopp:4:5: cannot declare init - must be func",
         ]
     );
 }
 
 #[test]
-fn an_import_path_of_a_go_file_has_go_s_characters() {
-    let found = messages("a.go", "package p\nimport _ \"a!b\"\n");
-    assert_eq!(
-        found,
-        ["a.go:2:10: invalid import path (invalid character U+0021 '!')"]
-    );
-    // A `.gopp` file imports headers too.
+fn an_import_path_may_name_a_header() {
     let found = messages("a.gopp", "package p\nimport _ \"<vector>\"\n");
     assert_eq!(
         found,
@@ -1248,7 +834,7 @@ fn a_statement_in_error_is_reported_once() {
         // Nothing of a select clause that does not communicate is looked at.
         (
             "func f() {\n\tselect {\n\tcase x:\n\t\ty := 1\n\t}\n}",
-            &["a.go:4:7: select case must be send or receive (possibly with assignment)"],
+            &["a.gopp:4:7: select case must be send or receive (possibly with assignment)"],
         ),
         (
             "func f(c chan int) {\n\tselect {\n\tcase v := <-c:\n\t\t_ = v\n\tcase c <- 1:\n\t}\n}",
@@ -1256,22 +842,22 @@ fn a_statement_in_error_is_reported_once() {
         ),
         (
             "func f() {\n\tfor i := 0; i < 3; j := 1 {\n\t}\n}",
-            &["a.go:3:21: syntax error: cannot declare in post statement of for loop"],
+            &["a.gopp:3:21: syntax error: cannot declare in post statement of for loop"],
         ),
         // What cannot be ranged over gives its variable no type: the
         // variable is not also unused.
         (
             "func f() {\n\tfor x := range 1.5 {\n\t}\n}",
-            &["a.go:3:17: cannot range over 1.5 (untyped float constant)"],
+            &["a.gopp:3:17: cannot range over 1.5 (untyped float constant)"],
         ),
         (
             "func f(s []int) {\n\tfor _, x := range s {\n\t}\n}",
-            &["a.go:3:9: declared and not used: x"],
+            &["a.gopp:3:9: declared and not used: x"],
         ),
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{body}\n");
-        assert_eq!(messages("a.go", &text), *expected, "{body}");
+        assert_eq!(messages("a.gopp", &text), *expected, "{body}");
     }
 }
 
@@ -1279,10 +865,10 @@ fn a_statement_in_error_is_reported_once() {
 fn a_name_as_the_length_of_an_array_is_a_constant() {
     let text = "package p\nvar v int\nconst c = 2\nvar (\n\ta [n]int\n\tb [v]int\n\td [c]int\n)\n";
     assert_eq!(
-        messages("a.go", text),
+        messages("a.gopp", text),
         [
-            "a.go:5:5: undefined array length n or missing type constraint",
-            "a.go:6:5: invalid array length v",
+            "a.gopp:5:5: undefined array length n or missing type constraint",
+            "a.gopp:6:5: invalid array length v",
         ]
     );
 }
@@ -1291,12 +877,12 @@ fn a_name_as_the_length_of_an_array_is_a_constant() {
 fn a_name_of_a_package_that_differs_in_its_capitals_is_suggested() {
     let names = ThreadedRodeo::new();
     let text = "package p\nimport \"example.com/lib\"\nvar _ = lib.EXPORTED\nvar _ = lib.Other\n";
-    let found = check_texts("p", &[("a.go", text)], &with_lib(&names), &names).messages;
+    let found = check_texts("p", &[("a.gopp", text)], &with_lib(&names), &names).messages;
     assert_eq!(
         found,
         [
-            "a.go:3:13: undefined: lib.EXPORTED (but have Exported)",
-            "a.go:4:13: undefined: lib.Other",
+            "a.gopp:3:13: undefined: lib.EXPORTED (but have Exported)",
+            "a.gopp:4:13: undefined: lib.Other",
         ]
     );
 }
@@ -1307,13 +893,13 @@ fn the_signature_of_a_function_is_not_needed_at_the_start() {
     // the result is no need of `g`.
     let text = "package p\nvar r = newReader()\nfunc newReader() r\n\
                 func g() [len(x)]int\nvar x = [2]int{}\nvar y = g\n";
-    assert_eq!(messages("a.go", text), ["a.go:3:18: r is not a type"]);
+    assert_eq!(messages("a.gopp", text), ["a.gopp:3:18: r is not a type"]);
 }
 
 #[test]
 fn operators_are_checked_as_go_checks_them() {
-    let declared = "var (\n\ta int\n\tb string\n\tt bool\n\tu uint\n\tp *int\n\tf func()\n\t\
-                    s struct{ b []int }\n\ti any\n\ty uint8\n)\nconst c int8 = 100\n\
+    let declared = "var (\n\ta int\n\tb string\n\tt bool\n\tu uint\n\tp = &a\n\tf = h\n\t\
+                    s struct{ b []int }\n\ti any = 0\n\ty uint8\n)\nconst c int8 = 100\n\
                     func g() (int, int)\nfunc h()\n";
     let cases: &[(&str, &[&str])] = &[
         (
@@ -1361,13 +947,11 @@ fn operators_are_checked_as_go_checks_them() {
             "a << b",
             &["16:14: invalid operation: shift count b (variable of type string) must be integer"],
         ),
-        (
-            "p == 1",
-            &["16:14: invalid operation: p == 1 (mismatched types *int and untyped int)"],
-        ),
+        // A pointer is compared as what it points to.
+        ("p == 1", &[]),
         (
             "f == f",
-            &["16:9: invalid operation: f == f (func can only be compared to nil)"],
+            &["16:9: invalid operation: f == f (func values cannot be compared)"],
         ),
         (
             "s == s",
@@ -1396,18 +980,18 @@ fn operators_are_checked_as_go_checks_them() {
         ("a + 1 + a<<u + a/2 - a%3&^a", &[]),
         ("b + \"x\" < b", &[]),
         ("1.0<<3 + 1<<u == a", &[]),
-        ("p == nil || f != nil || i == 1 || i == nil || p != &a", &[]),
+        ("i == 1 || p != &a", &[]),
         ("c*1 - c/3 == -c && !t", &[]),
         ("y + 255 + 'a' + ^y", &[]),
-        ("&struct{ x int }{1} != nil && s.b == nil", &[]),
+        ("s.b == nil", &[]),
         ("float64(a<<u) + 1.5/2 > 0", &[]),
     ];
     for (expr, expected) in cases {
         let text = format!("package p\n{declared}var _ = {expr}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap())
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{expr}");
     }
@@ -1415,14 +999,14 @@ fn operators_are_checked_as_go_checks_them() {
     let text = "package p\nfunc f(s uint) {\n\tvar x float64 = 1 << s\n\tvar y int64 = 1 << s\n\t\
                 _, _ = x, y\n}\n";
     assert_eq!(
-        messages("a.go", text),
-        ["a.go:3:18: invalid operation: shifted operand 1 (type float64) must be integer"]
+        messages("a.gopp", text),
+        ["a.gopp:3:18: invalid operation: shifted operand 1 (type float64) must be integer"]
     );
 }
 
 #[test]
 fn assignments_are_checked_as_go_checks_them() {
-    let declared = "var (\n\ta int\n\tb string\n\tp *int\n\tc chan int\n\ts []int\n\t\
+    let declared = "var (\n\ta int\n\tb string\n\tp = &a\n\tc chan int\n\ts []int\n\t\
                     m map[string]struct{ x int }\n\ti any\n)\n\
                     func two() (int, string)\ntype T struct{}\nfunc (*T) ptr() {}\n";
     let cases: &[(&str, &[&str])] = &[
@@ -1479,7 +1063,10 @@ fn assignments_are_checked_as_go_checks_them() {
         ),
         (
             "const k []int = nil",
-            &["16:10: invalid constant type []int"],
+            &[
+                "16:10: invalid constant type []int: the buffer of a []int is made by the running \
+                 program",
+            ],
         ),
         (
             "const k int8 = 1 << 7",
@@ -1511,11 +1098,11 @@ fn assignments_are_checked_as_go_checks_them() {
         ),
         // What is right next to each of them.
         (
-            "a, b = two()\n\ta, b = 1, \"x\"\n\tm[\"k\"] = struct{ x int }{1}\n\ts[0], *p = 1, 2",
+            "a, b = two()\n\ta, b = 1, \"x\"\n\tm[\"k\"] = struct{ x int }{1}\n\ts[0], p = 1, 2",
             &[],
         ),
         (
-            "c <- 1\n\ti = 1.5\n\ti = nil\n\tp = nil\n\tvar f float32 = 1\n\t_ = f",
+            "c <- 1\n\ti = 1.5\n\ti = nil\n\tvar f float32 = 1\n\t_ = f",
             &[],
         ),
         (
@@ -1536,10 +1123,10 @@ fn assignments_are_checked_as_go_checks_them() {
             "package p\n{declared}func s2b(s string) []byte {{ return []byte(s) }}\n\
              func _() {{\n\t{body}\n}}\n"
         );
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap())
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
@@ -1581,18 +1168,17 @@ fn assignments_are_checked_as_go_checks_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\nfunc f() (int, string) {{\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
     // A function with named results returns them with `return` alone.
     let text = "package p\nfunc f() (n int, err error) {\n\treturn\n}\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
-    // In a `.gopp` file, what a place takes follows other rules, which
-    // are checked on their own: an assignment may write through a pointer.
+    assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
+    // An assignment may write through a pointer.
     let text = "package p\nfunc f(p *int) {\n\tp = 9\n}\n";
     assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
 }
@@ -1600,7 +1186,7 @@ fn assignments_are_checked_as_go_checks_them() {
 #[test]
 fn calls_and_indexes_are_checked_as_go_checks_them() {
     let declared = "var (\n\ta int\n\tb string\n\ts []int\n\tarr [4]int\n\tm map[string]int\n\t\
-                    p *[4]int\n)\nfunc f(x int, y string)\nfunc v(xs ...int)\n\
+                    p = &arr\n)\nfunc f(x int, y string)\nfunc v(xs ...int)\n\
                     func two() (int, string)\ntype G[P any] struct{ p P }\n";
     let cases: &[(&str, &[&str])] = &[
         (
@@ -1703,10 +1289,10 @@ fn calls_and_indexes_are_checked_as_go_checks_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
@@ -1764,9 +1350,9 @@ fn built_in_functions_are_checked_as_go_checks_them() {
             ],
         ),
         (
-            "copy(s, b)",
+            "copy(&s, b)",
             &[
-                "15:7: invalid copy: arguments s (variable of type []int) and b (variable of type \
+                "15:7: invalid copy: arguments &s (variable of type []int) and b (variable of type \
                string) have different element types int and byte",
             ],
         ),
@@ -1798,7 +1384,6 @@ fn built_in_functions_are_checked_as_go_checks_them() {
             "_ = make([]int, 3, 2)",
             &["15:18: invalid argument: length and capacity swapped"],
         ),
-        ("_ = new(a)", &["15:10: a is not a type"]),
         (
             "_ = min(a, f)",
             &[
@@ -1841,7 +1426,7 @@ fn built_in_functions_are_checked_as_go_checks_them() {
         ),
         (
             "s = append(s, 1, 2)\n\ts = append(s, s...)\n\tbs = append(bs, b...)\n\t\
-             _ = copy(s, s) + copy(bs, b)",
+             _ = copy(&s, s) + copy(&bs, b)",
             &[],
         ),
         (
@@ -1849,7 +1434,7 @@ fn built_in_functions_are_checked_as_go_checks_them() {
             &[],
         ),
         (
-            "_, _, _ = make([]int, 2, 3), make(map[string]int), make(chan int, a)\n\t_ = new(int)",
+            "_, _, _ = make([]int, 2, 3), make(map[string]int), make(chan int, a)",
             &[],
         ),
         (
@@ -1864,10 +1449,10 @@ fn built_in_functions_are_checked_as_go_checks_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
@@ -1929,10 +1514,7 @@ fn composite_literals_are_checked_as_go_checks_them() {
         ("map[string]int{nokey: 1}", &["7:21: undefined: nokey"]),
         ("int{}", &["7:6: invalid composite literal type int"]),
         // What is right next to each of them.
-        (
-            "[]any{P{}, P{1, 2}, P{y: 2}, []P{{1, 2}, {x: 1}}, []*P{{1, 2}}}",
-            &[],
-        ),
+        ("[]any{P{}, P{1, 2}, P{y: 2}, []P{{1, 2}, {x: 1}}}", &[]),
         ("map[P]string{{1, 2}: \"a\", {3, 4}: \"b\"}", &[]),
         (
             "[]any{[...]int{5: 1, 2}, map[string]int{b: a, \"k\": 2}, []int{k: 1, 2}}",
@@ -1941,10 +1523,10 @@ fn composite_literals_are_checked_as_go_checks_them() {
     ];
     for (literal, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t_ = {literal}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{literal}");
     }
@@ -1953,8 +1535,8 @@ fn composite_literals_are_checked_as_go_checks_them() {
 #[test]
 fn selectors_and_channels_are_checked_as_go_checks_them() {
     let declared = "type S struct {\n\tx  int\n\tUp int\n}\nfunc (S) val()  {}\nfunc (*S) ptr() {}\n\
-                    type E1 struct{ f int }\ntype E2 struct{ f int }\ntype B struct {\n\tE1\n\tE2\n}\n\
-                    var (\n\ts    S\n\tb    B\n\tp    *S\n\ta    int\n\tsend chan<- int\n\t\
+                    type E1 struct{ f int }\ntype E2 struct{ f int }\ntype B struct {\n\te1 E1\n\te2 E2\n}\n\
+                    var (\n\ts    S\n\tb    B\n\tp    = &s\n\ta    int\n\tsend chan<- int\n\t\
                     recv <-chan int\n\tm    map[string]S\n)\n";
     let cases: &[(&str, &[&str])] = &[
         (
@@ -1975,15 +1557,9 @@ fn selectors_and_channels_are_checked_as_go_checks_them() {
                 "24:8: s.Val undefined (type S has no field or method Val, but does have method val)",
             ],
         ),
-        ("_ = b.f", &["24:8: ambiguous selector b.f"]),
         (
             "_ = a.x",
             &["24:8: a.x undefined (type int has no field or method x)"],
-        ),
-        ("S{}.ptr()", &["24:6: cannot call pointer method ptr on S"]),
-        (
-            "m[\"k\"].ptr()",
-            &["24:9: cannot call pointer method ptr on S"],
         ),
         (
             "_ = *a",
@@ -2015,7 +1591,7 @@ fn selectors_and_channels_are_checked_as_go_checks_them() {
             "s.val()\n\ts.ptr()\n\tp.val()\n\tp.ptr()\n\t(&s).ptr()\n\tS{}.val()",
             &[],
         ),
-        ("_ = s.x + s.Up + b.E1.f + b.E2.f + p.x + *&a", &[]),
+        ("_ = s.x + s.Up + b.e1.f + b.e2.f + p.x + *&a", &[]),
         (
             "_ = <-recv\n\tsend <- 1\n\tf, g := S.val, (*S).ptr\n\t_, _ = f, g",
             &[],
@@ -2023,10 +1599,10 @@ fn selectors_and_channels_are_checked_as_go_checks_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
@@ -2034,21 +1610,22 @@ fn selectors_and_channels_are_checked_as_go_checks_them() {
     // before it, and the receiver may be an alias of a pointer type.
     let text = "package p\nimport \"unsafe\"\ntype T struct{}\ntype P = *T\n\
                 func (T) a([unsafe.Sizeof(T.b)]int) {}\nfunc (T) b()                       {}\n\
-                func (P) c()                       {}\nfunc _() { (&T{}).c() }\n";
+                func (P) c()                       {}\nfunc _(t T) { (&t).c() }\n";
     let names = ThreadedRodeo::new();
     let mut loader = Loader::default();
     let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
-    let stub = check_texts("unsafe", &[("unsafe.go", stub)], &loader, &names);
+    let stub = check_texts("unsafe", &[("unsafe.gopp", stub)], &loader, &names);
     loader
         .packages
         .insert("unsafe".to_owned(), Arc::new(stub.package));
-    let found = check_texts("p", &[("a.go", text)], &loader, &names).messages;
+    let found = check_texts("p", &[("a.gopp", text)], &loader, &names).messages;
     assert_eq!(found, [] as [&str; 0]);
 }
 
 #[test]
 fn what_is_asserted_or_switched_on_is_an_interface_value() {
-    let declared = "type I interface{ m() }\nvar (\n\ta int\n\ti I\n\te any\n)\n";
+    let declared = "type I interface{ m() }; type M int; func (M) m() {}\nvar (\n\ta int\n\ti I = M(0)\n\t\
+                    e any\n)\n";
     let cases: &[(&str, &[&str])] = &[
         (
             "_ = a.(int)",
@@ -2073,10 +1650,7 @@ fn what_is_asserted_or_switched_on_is_an_interface_value() {
             ],
         ),
         // What is right next to each of them.
-        (
-            "_ = i.(I)\n\t_, _ = e.(int)\n\t_ = any(a).(int)\n\t_ = any(p).(P)",
-            &[],
-        ),
+        ("_ = i.(I)\n\t_, _ = e.(int)\n\t_ = any(a).(int)", &[]),
         (
             "switch i.(type) {\n\t}\n\tswitch v := e.(type) {\n\tcase int:\n\t\t_ = v\n\t}",
             &[],
@@ -2084,10 +1658,10 @@ fn what_is_asserted_or_switched_on_is_an_interface_value() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _[P any](p P) {{\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
@@ -2100,10 +1674,10 @@ fn a_function_is_not_generic_for_what_another_one_is() {
     let text = "package p\nfunc g[T any]() {}\nfunc f()        {}\nfunc _() {\n\t_ = f()\n\tf(1)\n\
                 \tg[int]()\n\tf()\n}\n";
     assert_eq!(
-        messages("a.go", text),
+        messages("a.gopp", text),
         [
-            "a.go:5:6: f() (no value) used as value",
-            "a.go:6:4: too many arguments in call to f",
+            "a.gopp:5:6: f() (no value) used as value",
+            "a.gopp:6:4: too many arguments in call to f",
             "    have (number)",
             "    want ()",
         ]
@@ -2121,11 +1695,11 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
                 func Slice(ptr *ArbitraryType, len IntegerType) []ArbitraryType\n\
                 func SliceData(slice []ArbitraryType) *ArbitraryType\n\
                 func String(ptr *byte, len IntegerType) string\nfunc StringData(str string) *byte\n";
-    let stub = check_texts("unsafe", &[("unsafe.go", stub)], &loader, &names);
+    let stub = check_texts("unsafe", &[("unsafe.gopp", stub)], &loader, &names);
     loader
         .packages
         .insert("unsafe".to_owned(), Arc::new(stub.package));
-    let declared = "import \"unsafe\"\ntype S struct {\n\tf int\n\t*E\n}\ntype E struct{ g int }\n\
+    let declared = "import \"unsafe\"\ntype S struct {\n\tf int\n\te E\n}\ntype E struct{ g int }\n\
                     func (S) m() {}\nvar (\n\ts  S\n\tx  int\n\tb  byte\n\tsl []int\n\
                     \tp  unsafe.Pointer\n)\n";
     let cases: &[(&str, &[&str])] = &[
@@ -2140,10 +1714,6 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
         (
             "_ = unsafe.Offsetof(x)",
             &["17:22: invalid argument: x is not a selector expression"],
-        ),
-        (
-            "_ = unsafe.Offsetof(s.g)",
-            &["17:22: invalid argument: field g is embedded via a pointer in S"],
         ),
         (
             "_ = unsafe.Offsetof(s.m)",
@@ -2190,7 +1760,6 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
             "_ = iota",
             &["17:6: cannot use iota outside constant declaration"],
         ),
-        ("_ = new(1)", &["17:10: 1 is not a type"]),
         ("_ = make(x)", &["17:11: x is not a type"]),
         (
             "_ = [...]int(sl)",
@@ -2223,23 +1792,23 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
-        let found = check_texts("p", &[("a.go", &text)], &loader, &names).messages;
+        let found = check_texts("p", &[("a.gopp", &text)], &loader, &names).messages;
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
     assert_eq!(
-        messages("a.go", "package p\ntype T T.x\n"),
-        ["a.go:2:6: invalid recursive type: T refers to itself"]
+        messages("a.gopp", "package p\ntype T T.x\n"),
+        ["a.gopp:2:6: invalid recursive type: T refers to itself"]
     );
     // A size that an `int64` does not count, next to one that it does.
     let text = "package p\nimport \"unsafe\"\ntype E [1 << 30]complex128\nvar a [1 << 30]E\n\
                 var _ = unsafe.Sizeof(a)\nvar b [1 << 20]E\nvar _ = unsafe.Sizeof(b)\n";
     assert_eq!(
-        check_texts("p", &[("a.go", text)], &loader, &names).messages,
-        ["a.go:5:23: a (variable of type [1073741824]E) is too large"]
+        check_texts("p", &[("a.gopp", text)], &loader, &names).messages,
+        ["a.gopp:5:23: a (variable of type [1073741824]E) is too large"]
     );
 }
 
@@ -2303,10 +1872,7 @@ fn statements_that_compute_and_assign_are_checked_as_go_checks_them() {
             "_ = big / small",
             &["19:6: invalid operation: big / small (mismatched types myint and int8)"],
         ),
-        (
-            "var _ [big]int",
-            &["19:9: invalid array length big (constant unknown of int type myint)"],
-        ),
+        ("var _ [big]int", &[]),
         (
             "var _ [-1]int",
             &["19:9: invalid array length -1 (untyped int constant)"],
@@ -2317,7 +1883,7 @@ fn statements_that_compute_and_assign_are_checked_as_go_checks_them() {
         ),
         (
             "var _ [g()]int",
-            &["19:9: array length g() (value of type int) must be constant"],
+            &["19:9: cannot call non-@Const function g in constant expression"],
         ),
         // What is right next to each of them.
         (
@@ -2331,10 +1897,10 @@ fn statements_that_compute_and_assign_are_checked_as_go_checks_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t{locals}\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .filter(|&message| message != overflows)
             .collect();
         assert_eq!(found, *expected, "{body}");
@@ -2390,17 +1956,17 @@ fn tildes_literals_indexes_and_map_keys_are_checked_as_go_checks_them() {
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .filter(|&message| message != key)
             .collect();
         assert_eq!(found, *expected, "{body}");
     }
     assert_eq!(
-        messages("a.go", "package p\ntype M map[M]int\n"),
-        ["a.go:2:12: invalid map key type M"]
+        messages("a.gopp", "package p\ntype M map[M]int\n"),
+        ["a.gopp:2:12: invalid map key type M"]
     );
 }
 
@@ -2474,9 +2040,6 @@ func g(p User, u Unique[User]) {
         "n: Unique[int]",
     ];
     assert_eq!(locals, expected);
-    // In a Go file `&T{…}` is what it is in Go.
-    let text = "package p\ntype T struct{}\nvar _ = &T{}\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 /// What the spec shows as good code: pointers that are read and written
@@ -2561,7 +2124,7 @@ func main() {
 
 // rule: TYP-2, OWN-P5, OWN-P6, OWN-P9
 #[test]
-fn a_place_of_a_gopp_file_takes_what_the_rules_of_gopp_say() {
+fn a_place_takes_what_the_rules_of_gopp_say() {
     assert_eq!(messages("good.gopp", GOOD_GOPP), [] as [&str; 0]);
     let declared = "type User struct{ Name string }\ntype Vec struct{ X, Y int }\n\
                     @Operator func (a Vec) Add(b Vec) Vec { return a }\nfunc take(u User) {}\n\
@@ -2775,7 +2338,7 @@ fn with_packages(names: &ThreadedRodeo, packages: &[(&str, &str)]) -> Loader {
     for &(path, text) in packages {
         // Package unsafe is declared without bodies, as Go declares it.
         let file = match path {
-            "unsafe" => "unsafe.go".to_owned(),
+            "unsafe" => "unsafe.gopp".to_owned(),
             _ => format!("{path}.gopp"),
         };
         let checked = check_texts(path, &[(&file, text)], &loader, names);
@@ -3020,7 +2583,7 @@ func literals(xs, ys []int) {
 
 // rule: OWN-R3
 #[test]
-fn the_last_copy_of_a_variable_is_marked_in_both_dialects() {
+fn the_last_copy_of_a_variable_is_marked() {
     let text = "package p
 
 type T struct {
@@ -3171,15 +2734,6 @@ func literals(xs, ys []int) {
         "107:7 ys: copy",
     ];
     assert_eq!(transfers(&checked), expected);
-    // A Go file has the same copies and the same last uses; nothing is
-    // assigned over in it.
-    let checked = check_texts("p", &[("a.go", text)], &Loader::default(), &names);
-    assert_eq!(checked.messages, [] as [&str; 0]);
-    let plain: Vec<String> = expected
-        .iter()
-        .map(|line| line.replace(", over", ""))
-        .collect();
-    assert_eq!(transfers(&checked), plain);
 }
 
 // rule: PAR-1
@@ -3333,21 +2887,6 @@ func seen(xs []int, ys []int, zs []int, m map[string]int) int {
         "    declare xs *[]int to change the value of the caller, or return xs",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // A Go file has no such rule.
-    let text = "package p
-
-type List []int
-
-func zero(xs []int, m map[string]int) {
-	xs[0] = 0
-	m[\"a\"] = 1
-	delete(m, \"b\")
-	xs = append(xs, 1)
-}
-
-func (l List) Clear() { l[0] = 0 }
-";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: OWN-B2
@@ -3750,19 +3289,6 @@ func f(o Outer, p *Outer, u Unique[Outer], opt Option[int]) {
 	_ = opt.IsNil()
 }
 ";
-    // In a Go file a member is reached through embedded fields.
-    let embedded = "package p
-type Inner struct{ a, b int }
-func (*Inner) ptr() {}
-type Outer struct {
-	x int
-	*Inner
-}
-func f(o Outer) {
-	_ = o.b
-	o.ptr()
-}
-";
     let names = ThreadedRodeo::new();
     let loader = Loader::default();
     let selections = |file: &str, text: &str, body: usize| -> Vec<String> {
@@ -3806,11 +3332,6 @@ func f(o Outer) {
         "Inner.val MethodExpr from p.Inner in p.Inner by []",
     ];
     assert_eq!(selections("a.gopp", text, 4), expected);
-    let expected = [
-        "o.b Field from p.Outer in p.Inner by [1, 1] through a pointer",
-        "o.ptr Method from p.Outer in p.Inner by [1] through a pointer",
-    ];
-    assert_eq!(selections("a.go", embedded, 3), expected);
 }
 
 #[test]
@@ -3855,12 +3376,6 @@ func g(dst, src []int, p *[]int, b []byte, s string) {
          type string) have different element types int and byte",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // In a Go file `copy` takes the slice, and `&s[i:j]` has no address.
-    let text = "package p\nfunc f(dst, src []int) {\n\t_ = copy(dst, src)\n\t_ = &dst[1:]\n}\n";
-    assert_eq!(
-        messages("a.go", text),
-        ["a.go:4:7: invalid operation: cannot take address of dst[1:] (value of type []int)"]
-    );
 }
 
 /// The second function is what is right next to each error of the first.
@@ -3939,31 +3454,24 @@ Back:
 }
 "#;
     let expected = [
-        "a.go:4:2: break not in for, switch, or select statement",
-        "a.go:5:2: continue not in for statement",
-        "a.go:6:2: fallthrough statement out of place",
-        "a.go:7:7: label Missing not declared",
-        "a.go:8:7: goto Inner jumps into block",
-        "a.go:12:1: label Unused declared and not used",
-        "a.go:14:1: label Twice already declared",
-        "    a.go:13:1: other declaration of Twice",
-        "a.go:16:7: goto Over jumps over variable declaration at line 17",
-        "a.go:24:1: label Plain declared and not used",
-        "a.go:27:9: invalid break label Plain",
-        "a.go:28:12: invalid continue label Plain",
-        "a.go:34:12: invalid continue label Sw",
-        "a.go:37:3: cannot fallthrough final case in switch",
-        "a.go:41:3: cannot fallthrough in type switch",
-        "a.go:44:8: label Out not declared",
+        "a.gopp:4:2: break not in for, switch, or select statement",
+        "a.gopp:5:2: continue not in for statement",
+        "a.gopp:6:2: fallthrough statement out of place",
+        "a.gopp:7:7: label Missing not declared",
+        "a.gopp:8:7: goto Inner jumps into block",
+        "a.gopp:12:1: label Unused declared and not used",
+        "a.gopp:14:1: label Twice already declared",
+        "    a.gopp:13:1: other declaration of Twice",
+        "a.gopp:16:7: goto Over jumps over variable declaration at line 17",
+        "a.gopp:24:1: label Plain declared and not used",
+        "a.gopp:27:9: invalid break label Plain",
+        "a.gopp:28:12: invalid continue label Plain",
+        "a.gopp:34:12: invalid continue label Sw",
+        "a.gopp:37:3: cannot fallthrough final case in switch",
+        "a.gopp:41:3: cannot fallthrough in type switch",
+        "a.gopp:44:8: label Out not declared",
     ];
-    assert_eq!(messages("a.go", text), expected);
-    // The same rules hold in a `.gopp` file.
-    let found = messages("a.gopp", text);
-    let expected: Vec<String> = expected
-        .iter()
-        .map(|message| message.replace("a.go:", "a.gopp:"))
-        .collect();
-    assert_eq!(found, expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -4017,10 +3525,10 @@ fn a_function_with_results_ends_in_a_statement_that_does_not_go_on() {
     ];
     for (code, expected) in cases {
         let text = format!("package p\n{code}\n");
-        let found = messages("a.go", &text);
+        let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
-            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .map(|message| message.strip_prefix("a.gopp:").unwrap_or(message))
             .collect();
         assert_eq!(found, *expected, "{code}");
     }
@@ -4124,50 +3632,51 @@ func f(x int, s string, b bool, c chan int, i interface{}, fn func(), sl []int, 
 }
 "#;
     let expected = [
-        "a.go:10:5: non-boolean condition in if statement",
-        "a.go:12:5: non-boolean condition in if statement",
-        "a.go:14:6: non-boolean condition in for statement",
-        "a.go:16:8: non-boolean condition in for statement",
-        "a.go:20:6: expression in go must be function call",
-        "a.go:21:5: go discards result of len(sl) (value of type int)",
-        "a.go:22:5: go requires function call, not conversion int(x) (value of type int)",
-        "a.go:25:9: expression in defer must be function call",
-        "a.go:26:8: defer discards result of len(sl) (value of type int)",
-        "a.go:27:8: defer requires function call, not conversion int(x) (value of type int)",
-        "a.go:32:7: duplicate case 1 (constant of type int) in expression switch",
-        "    a.go:31:7: previous case",
-        "a.go:33:7: duplicate case (1) (constant 1 of type int) in expression switch",
-        "    a.go:31:7: previous case",
-        "a.go:34:10: duplicate case 1 (constant of type int) in expression switch",
-        "    a.go:31:7: previous case",
-        "a.go:35:7: cannot convert \"a\" (untyped string constant) to type int",
-        "a.go:36:7: invalid case s in switch on x (mismatched types string and int)",
-        "a.go:38:7: duplicate case 2 (constant of type int) in expression switch",
-        "    a.go:37:7: previous case",
-        "a.go:42:2: multiple defaults (first at a.go:41:2)",
-        "a.go:46:7: duplicate case \"foo\" (constant of type string) in expression switch",
-        "    a.go:45:7: previous case",
-        "a.go:47:7: cannot convert 1 (untyped int constant) to type string",
-        "a.go:51:7: duplicate case 1 (constant of type int) in expression switch",
-        "    a.go:50:7: previous case",
-        "a.go:55:7: duplicate case byte(1) (constant 1 of type byte) in expression switch",
-        "    a.go:53:7: previous case",
-        "a.go:57:7: invalid case sl in switch on i (slice can only be compared to nil)",
-        "a.go:64:9: cannot switch on t (variable of struct type T) (T is not comparable)",
-        "a.go:70:7: cannot convert 1 (untyped int constant) to type bool",
-        "a.go:72:9: use of untyped nil in switch expression",
-        "a.go:74:9: nop() (no value) used as value",
-        "a.go:78:7: duplicate case 1.5 (constant of type float64) in expression switch",
-        "    a.go:77:7: previous case",
-        "a.go:82:7: duplicate case int in type switch",
-        "    a.go:81:7: previous case",
-        "a.go:84:7: duplicate case nil in type switch",
-        "    a.go:83:7: previous case",
-        "a.go:85:15: duplicate case int in type switch",
-        "    a.go:81:7: previous case",
-        "a.go:89:2: multiple defaults (first at a.go:88:2)",
+        "a.gopp:10:5: non-boolean condition in if statement",
+        "a.gopp:12:5: non-boolean condition in if statement",
+        "a.gopp:14:6: non-boolean condition in for statement",
+        "a.gopp:16:8: non-boolean condition in for statement",
+        "a.gopp:20:6: expression in go must be function call",
+        "a.gopp:21:5: go discards result of len(sl) (value of type int)",
+        "a.gopp:22:5: go requires function call, not conversion int(x) (value of type int)",
+        "a.gopp:25:9: expression in defer must be function call",
+        "a.gopp:26:8: defer discards result of len(sl) (value of type int)",
+        "a.gopp:27:8: defer requires function call, not conversion int(x) (value of type int)",
+        "a.gopp:32:7: duplicate case 1 (constant of type int) in expression switch",
+        "    a.gopp:31:7: previous case",
+        "a.gopp:33:7: duplicate case (1) (constant 1 of type int) in expression switch",
+        "    a.gopp:31:7: previous case",
+        "a.gopp:34:10: duplicate case 1 (constant of type int) in expression switch",
+        "    a.gopp:31:7: previous case",
+        "a.gopp:35:7: cannot convert \"a\" (untyped string constant) to type int",
+        "a.gopp:36:7: invalid case s in switch on x (mismatched types string and int)",
+        "a.gopp:38:7: duplicate case 2 (constant of type int) in expression switch",
+        "    a.gopp:37:7: previous case",
+        "a.gopp:42:2: multiple defaults (first at a.gopp:41:2)",
+        "a.gopp:46:7: duplicate case \"foo\" (constant of type string) in expression switch",
+        "    a.gopp:45:7: previous case",
+        "a.gopp:47:7: cannot convert 1 (untyped int constant) to type string",
+        "a.gopp:51:7: duplicate case 1 (constant of type int) in expression switch",
+        "    a.gopp:50:7: previous case",
+        "a.gopp:55:7: duplicate case byte(1) (constant 1 of type byte) in expression switch",
+        "    a.gopp:53:7: previous case",
+        "a.gopp:57:7: invalid case sl in switch on i (slice can only be compared to nil)",
+        "a.gopp:60:7: invalid case nil in switch on fn (a func() is never nil: use Option[func()])",
+        "a.gopp:64:9: cannot switch on t (variable of struct type T) (T is not comparable)",
+        "a.gopp:70:7: cannot convert 1 (untyped int constant) to type bool",
+        "a.gopp:72:9: use of untyped nil in switch expression",
+        "a.gopp:74:9: nop() (no value) used as value",
+        "a.gopp:78:7: duplicate case 1.5 (constant of type float64) in expression switch",
+        "    a.gopp:77:7: previous case",
+        "a.gopp:82:7: duplicate case int in type switch",
+        "    a.gopp:81:7: previous case",
+        "a.gopp:84:7: duplicate case nil in type switch",
+        "    a.gopp:83:7: previous case",
+        "a.gopp:85:15: duplicate case int in type switch",
+        "    a.gopp:81:7: previous case",
+        "a.gopp:89:2: multiple defaults (first at a.gopp:88:2)",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -4296,30 +3805,30 @@ func f(a [3]int, p *[3]int, s []string, m map[string]bool, c chan int, send chan
 }
 "#;
     let expected = [
-        "a.go:35:9: range over c (variable of type chan int) permits only one iteration variable",
-        "a.go:38:12: cannot range over send (variable of type chan<- int): receive from send-only channel chan<- int",
-        "a.go:50:9: range over x (variable of type int) permits only one iteration variable",
-        "a.go:56:12: cannot range over 1.5 (untyped float constant)",
-        "a.go:58:12: cannot range over fl (variable of type float64)",
-        "a.go:60:12: cannot range over t (variable of type struct{})",
-        "a.go:62:12: expected at most 2 expressions",
-        "a.go:65:12: cannot use 1 << 100 (untyped int constant 1267650600228229401496703205376) as int value in range clause (overflows)",
-        "a.go:70:6: range over seq0 (value of type func(func() bool)) permits no iteration variables",
-        "a.go:78:9: range over seq1 (value of type func(func(int) bool)) permits only one iteration variable",
-        "a.go:85:12: cannot range over seq3 (value of type func(func(int, int, int) bool)): func must be func(yield func(...) bool): yield func has too many parameters",
-        "a.go:87:12: cannot range over bad1 (value of type func(func(int))): func must be func(yield func(...) bool): yield func does not return bool",
-        "a.go:89:12: cannot range over bad2 (value of type func(func(int) MyBool)): func must be func(yield func(...) bool): yield func returns user-defined boolean, not bool",
-        "a.go:91:12: cannot range over bad3 (value of type func(int, int)): func must be func(yield func(...) bool): wrong argument count",
-        "a.go:93:12: cannot range over bad4 (value of type func(func(int) bool) int): func must be func(yield func(...) bool): unexpected results",
-        "a.go:95:12: cannot range over bad5 (value of type func(int)): func must be func(yield func(...) bool): argument is not func",
-        "a.go:105:6: cannot use str2 (value of type int) as string value in assignment",
-        "a.go:107:9: cannot use i (value of type string) as int value in assignment",
-        "a.go:111:6: cannot use iteration variable of type float64",
-        "a.go:113:17: cannot use 300 (untyped int constant) as uint8 value in range clause (overflows)",
-        "a.go:117:16: cannot range over fl (variable of type float64)",
-        "a.go:119:6: cannot assign to 1 (neither addressable nor a map index expression)",
+        "a.gopp:35:9: range over c (variable of type chan int) permits only one iteration variable",
+        "a.gopp:38:12: cannot range over send (variable of type chan<- int): receive from send-only channel chan<- int",
+        "a.gopp:50:9: range over x (variable of type int) permits only one iteration variable",
+        "a.gopp:56:12: cannot range over 1.5 (untyped float constant)",
+        "a.gopp:58:12: cannot range over fl (variable of type float64)",
+        "a.gopp:60:12: cannot range over t (variable of type struct{})",
+        "a.gopp:62:12: expected at most 2 expressions",
+        "a.gopp:65:12: cannot use 1 << 100 (untyped int constant 1267650600228229401496703205376) as int value in range clause (overflows)",
+        "a.gopp:70:6: range over seq0 (value of type func(func() bool)) permits no iteration variables",
+        "a.gopp:78:9: range over seq1 (value of type func(func(int) bool)) permits only one iteration variable",
+        "a.gopp:85:12: cannot range over seq3 (value of type func(func(int, int, int) bool)): func must be func(yield func(...) bool): yield func has too many parameters",
+        "a.gopp:87:12: cannot range over bad1 (value of type func(func(int))): func must be func(yield func(...) bool): yield func does not return bool",
+        "a.gopp:89:12: cannot range over bad2 (value of type func(func(int) MyBool)): func must be func(yield func(...) bool): yield func returns user-defined boolean, not bool",
+        "a.gopp:91:12: cannot range over bad3 (value of type func(int, int)): func must be func(yield func(...) bool): wrong argument count",
+        "a.gopp:93:12: cannot range over bad4 (value of type func(func(int) bool) int): func must be func(yield func(...) bool): unexpected results",
+        "a.gopp:95:12: cannot range over bad5 (value of type func(int)): func must be func(yield func(...) bool): argument is not func",
+        "a.gopp:105:6: cannot use str2 (value of type int) as string value in assignment",
+        "a.gopp:107:9: cannot use i (value of type string) as int value in assignment",
+        "a.gopp:111:6: cannot use iteration variable of type float64",
+        "a.gopp:113:17: cannot use 300 (untyped int constant) as uint8 value in range clause (overflows)",
+        "a.gopp:117:16: cannot range over fl (variable of type float64)",
+        "a.gopp:119:6: cannot assign to 1 (neither addressable nor a map index expression)",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -4397,34 +3906,36 @@ func h(e interface{}, i I, c C, pc *C) {
 func take(c C) {}
 "#;
     let expected = [
-        "a.go:11:8: ambiguous selector t.X",
-        "a.go:12:10: ambiguous selector T{}.X",
-        "a.go:13:6: use of .(type) outside type switch",
-        "a.go:14:10: use of .(type) outside type switch",
-        "a.go:16:8: no new variables on left side of :=",
-        "a.go:18:6: invalid use of len (built-in) in selector expression",
-        "a.go:19:10: invalid use of len (built-in) in selector expression",
-        "a.go:23:3: result parameter a not in scope at return",
-        "    a.go:21:3: inner declaration of var a int",
-        "a.go:29:4: result parameter b not in scope at return",
-        "    a.go:26:3: inner declaration of var b int",
-        "a.go:32:9: not enough return values",
+        "a.gopp:6:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:7:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:11:8: ambiguous selector t.X",
+        "a.gopp:12:10: ambiguous selector T{}.X",
+        "a.gopp:13:6: use of .(type) outside type switch",
+        "a.gopp:14:10: use of .(type) outside type switch",
+        "a.gopp:16:8: no new variables on left side of :=",
+        "a.gopp:18:6: invalid use of len (built-in) in selector expression",
+        "a.gopp:19:10: invalid use of len (built-in) in selector expression",
+        "a.gopp:23:3: result parameter a not in scope at return",
+        "    a.gopp:21:3: inner declaration of var a int",
+        "a.gopp:29:4: result parameter b not in scope at return",
+        "    a.gopp:26:3: inner declaration of var b int",
+        "a.gopp:32:9: not enough return values",
         "    have (int)",
         "    want (int, int)",
-        "a.go:38:16: cannot use t (variable of type int) as bool value in variable declaration",
-        "a.go:41:19: cannot use t (variable of type interface{}) as float32 value in variable declaration: need type assertion",
-        "a.go:44:19: cannot use t (variable of type interface{}) as float32 value in variable declaration: need type assertion",
-        "a.go:55:14: cannot use e (variable of type interface{}) as int value in variable declaration: need type assertion",
-        "a.go:56:12: cannot use i (variable of interface type I) as C value in variable declaration: need type assertion",
-        "a.go:57:13: cannot use i (variable of interface type I) as *C value in variable declaration: need type assertion",
-        "a.go:58:17: cannot use i (variable of interface type I) as string value in variable declaration",
-        "a.go:59:10: cannot convert e (variable of type interface{}) to type int: need type assertion",
-        "a.go:60:8: cannot convert i (variable of interface type I) to type C: need type assertion",
-        "a.go:61:6: cannot use i (variable of interface type I) as C value in assignment: need type assertion",
-        "a.go:67:7: cannot use e (variable of type interface{}) as C value in argument to take: need type assertion",
-        "a.go:68:7: cannot use i (variable of interface type I) as C value in argument to take: need type assertion",
+        "a.gopp:38:16: cannot use t (variable of type int) as bool value in variable declaration",
+        "a.gopp:41:19: cannot use t (variable of type interface{}) as float32 value in variable declaration: need type assertion",
+        "a.gopp:44:19: cannot use t (variable of type interface{}) as float32 value in variable declaration: need type assertion",
+        "a.gopp:55:14: cannot use e (variable of type interface{}) as int value in variable declaration: need type assertion",
+        "a.gopp:56:12: cannot use i (variable of interface type I) as C value in variable declaration: need type assertion",
+        "a.gopp:57:13: cannot use i (variable of interface type I) as *C value in variable declaration: need type assertion",
+        "a.gopp:58:17: cannot use i (variable of interface type I) as string value in variable declaration",
+        "a.gopp:59:10: cannot convert e (variable of type interface{}) to type int: need type assertion",
+        "a.gopp:60:8: cannot convert i (variable of interface type I) to type C: need type assertion",
+        "a.gopp:61:6: cannot use i (variable of interface type I) as C value in assignment: need type assertion",
+        "a.gopp:67:7: cannot use e (variable of type interface{}) as C value in argument to take: need type assertion",
+        "a.gopp:68:7: cannot use i (variable of interface type I) as C value in argument to take: need type assertion",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -4508,55 +4019,59 @@ func f(i I, j J, e any) {
 func g(I) I { return P{} }
 ";
     let expected = [
-        "a.go:42:12: cannot use T{} (value of struct type T) as J value in variable declaration: T does not implement J (missing method n)",
-        "a.go:43:12: cannot use P{} (value of struct type P) as I value in variable declaration: P does not implement I (method m has pointer receiver)",
-        "a.go:44:12: cannot use W{} (value of struct type W) as J value in variable declaration: W does not implement J (wrong type for method n)",
+        "a.gopp:28:16: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:30:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:31:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:36:12: cannot take the address of T{}",
+        "    use NewUnique(T{}) or NewShared(T{})",
+        "a.gopp:36:12: cannot keep &T{} (value of type *T) in a value of type I: an interface value may be given to another goroutine, and a *T borrows what it points to",
+        "    keep it in a Local[I], or hold a Shared",
+        "a.gopp:37:12: cannot take the address of P{}",
+        "    use NewUnique(P{}) or NewShared(P{})",
+        "a.gopp:37:12: cannot keep &P{} (value of type *P) in a value of type I: an interface value may be given to another goroutine, and a *P borrows what it points to",
+        "    keep it in a Local[I], or hold a Shared",
+        "a.gopp:38:12: cannot take the address of P{}",
+        "    use NewUnique(P{}) or NewShared(P{})",
+        "a.gopp:38:12: cannot keep &P{} (value of type *P) in a value of type J: an interface value may be given to another goroutine, and a *P borrows what it points to",
+        "    keep it in a Local[J], or hold a Shared",
+        "a.gopp:42:12: cannot use T{} (value of struct type T) as J value in variable declaration: T does not implement J (missing method n)",
+        "a.gopp:44:12: cannot use W{} (value of struct type W) as J value in variable declaration: W does not implement J (wrong type for method n)",
         "    have n() int",
         "    want n(int) string",
-        "a.go:45:12: cannot use C{} (value of struct type C) as I value in variable declaration: C does not implement I (missing method m)",
+        "a.gopp:45:12: cannot use C{} (value of struct type C) as I value in variable declaration: C does not implement I (missing method m)",
         "    have M()",
         "    want m()",
-        "a.go:46:12: cannot use F{} (value of struct type F) as I value in variable declaration: F does not implement I (F.m is a field, not a method)",
-        "a.go:47:12: cannot use A{} (value of struct type A) as I value in variable declaration: A does not implement I (ambiguous selector A.m)",
-        "a.go:48:12: cannot use 1 (constant of type int) as I value in variable declaration: int does not implement I (missing method m)",
-        "a.go:49:12: cannot use i (variable of interface type I) as J value in variable declaration: I does not implement J (missing method n)",
-        "a.go:50:13: cannot use T{} (value of struct type T) as *I value in variable declaration: T does not implement *I (type *I is pointer to interface, not interface)",
-        "a.go:51:12: cannot use &i (value of type *I) as I value in variable declaration: *I does not implement I (type *I is pointer to interface, not interface)",
-        "a.go:52:12: cannot use i (variable of interface type I) as T value in variable declaration: need type assertion",
-        "a.go:53:12: cannot use i (variable of interface type I) as P value in variable declaration",
-        "a.go:58:6: impossible type assertion: i.(P)",
-        "    P does not implement I (method m has pointer receiver)",
-        "a.go:59:6: impossible type assertion: j.(W)",
+        "a.gopp:46:12: cannot use F{} (value of struct type F) as I value in variable declaration: F does not implement I (F.m is a field, not a method)",
+        "a.gopp:47:12: cannot use A{} (value of struct type A) as I value in variable declaration: A does not implement I (ambiguous selector A.m)",
+        "a.gopp:48:12: cannot use 1 (constant of type int) as I value in variable declaration: int does not implement I (missing method m)",
+        "a.gopp:49:12: cannot use i (variable of interface type I) as J value in variable declaration: I does not implement J (missing method n)",
+        "a.gopp:50:13: cannot use T{} (value of struct type T) as *I value in variable declaration: T does not implement *I (type *I is pointer to interface, not interface)",
+        "a.gopp:52:12: cannot use i (variable of interface type I) as T value in variable declaration: need type assertion",
+        "a.gopp:53:12: cannot use i (variable of interface type I) as P value in variable declaration",
+        "a.gopp:59:6: impossible type assertion: j.(W)",
         "    W does not implement J (wrong type for method n)",
         "    have n() int",
         "    want n(int) string",
-        "a.go:60:6: impossible type assertion: i.(C)",
+        "a.gopp:60:6: impossible type assertion: i.(C)",
         "    C does not implement I (missing method m)",
         "    have M()",
         "    want m()",
-        "a.go:61:8: cannot convert P{} (value of struct type P) to type I: P does not implement I (method m has pointer receiver)",
-        "a.go:62:8: cannot convert i (variable of interface type I) to type J: I does not implement J (missing method n)",
-        "a.go:63:8: cannot convert i (variable of interface type I) to type T: need type assertion",
-        "a.go:65:10: impossible type switch case: P",
-        "    i (variable of interface type I) cannot have dynamic type P (method m has pointer receiver)",
-        "a.go:65:17: impossible type switch case: C",
+        "a.gopp:61:8: cannot convert P{} (value of struct type P) to type I: P does not implement I (method m has pointer receiver)",
+        "a.gopp:62:8: cannot convert i (variable of interface type I) to type J: I does not implement J (missing method n)",
+        "a.gopp:63:8: cannot convert i (variable of interface type I) to type T: need type assertion",
+        "a.gopp:65:17: impossible type switch case: C",
         "    i (variable of interface type I) cannot have dynamic type C (missing method m)",
         "    have M()",
         "    want m()",
-        "a.go:66:10: impossible type switch case: F",
+        "a.gopp:66:10: impossible type switch case: F",
         "    i (variable of interface type I) cannot have dynamic type F (F.m is a field, not a method)",
-        "a.go:69:6: cannot use P{} (value of struct type P) as I value in assignment: P does not implement I (method m has pointer receiver)",
-        "a.go:70:4: cannot use P{} (value of struct type P) as I value in argument to g: P does not implement I (method m has pointer receiver)",
-        "a.go:71:10: cannot use P{} (value of struct type P) as I value in array or slice literal: P does not implement I (method m has pointer receiver)",
-        "a.go:72:11: invalid operation: i == P{} (mismatched types I and P)",
-        "a.go:77:22: cannot use P{} (value of struct type P) as I value in return statement: P does not implement I (method m has pointer receiver)",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: OWN-P5
 #[test]
-fn a_pointer_and_a_handle_implement_what_their_methods_say_in_a_gopp_file() {
+fn a_pointer_and_a_handle_implement_what_their_methods_say() {
     let text = "package p
 
 type I interface{ m() }
@@ -4650,21 +4165,24 @@ type C interface {
 var _ C = x
 ";
     let expected = [
-        "a.go:37:11: cannot use x (variable of interface type AB) as C value in variable \
-         declaration: AB does not implement C (wrong type for method a)",
+        "a.gopp:22:5: cannot declare x without a value: AB has no zero value (a AB is never nil)",
+        "    give x a value, or declare it as Option[AB]",
+        "a.gopp:23:5: cannot declare y without a value: interface{A; B} has no zero value (a interface{A; B} is never nil)",
+        "    give y a value, or declare it as Option[interface{A; B}]",
+        "a.gopp:37:11: cannot use x (variable of interface type AB) as C value in variable declaration: AB does not implement C (wrong type for method a)",
         "    have a() interface{A; B}",
         "    want a() interface{C}",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 /// The work of deciding what implements an interface grows with the
-/// types, their methods and the depth of embedding, not faster.
+/// types, their methods and the interfaces that they embed, not faster.
 #[test]
 fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
     let steps = |text: String| {
         let loader = Loader::default();
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
         assert_eq!(checked.messages, [] as [&str; 0]);
         checked.steps + loader.types.get().unwrap().steps()
     };
@@ -4690,25 +4208,13 @@ fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
             "package p\ntype T struct{{}}\n{methods}type I interface {{\n{wanted}}}\nvar _ I = T{{}}\n"
         )
     };
-    // A type that has its method from a type embedded in a type embedded
-    // in a type, and so on.
-    let nested = |depth: usize| {
-        let all: String = (1..depth)
-            .map(|i| format!("type T{i} struct {{ T{} }}\n", i - 1))
-            .collect();
-        format!(
-            "package p\ntype T0 struct{{}}\nfunc (T0) m() {{}}\n{all}\
-             var _ interface {{ m() }} = T{}{{}}\n",
-            depth - 1
-        )
-    };
     // An interface that embeds an interface that embeds an interface.
     let embedded_interfaces = |depth: usize| {
         let all: String = (1..depth)
             .map(|i| format!("type I{i} interface {{ I{}; m{i}() }}\n", i - 1))
             .collect();
         format!(
-            "package p\ntype I0 interface {{ m0() }}\n{all}var x I{}\nvar _ I0 = x\n",
+            "package p\ntype I0 interface {{ m0() }}\n{all}func f(x I{}) I0 {{ return x }}\n",
             depth - 1
         )
     };
@@ -4716,14 +4222,17 @@ fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
     // interfaces.
     let sibling_interfaces = |count: usize| {
         let all: String = (0..count)
-            .map(|i| format!("type I{i} interface {{ A; B; m{i}() }}\nvar _ A = I{i}(nil)\n"))
+            .map(|i| {
+                format!(
+                    "type I{i} interface {{ A; B; m{i}() }}\nfunc f{i}(x I{i}) A {{ return x }}\n"
+                )
+            })
             .collect();
         format!("package p\ntype A interface {{ a() }}\ntype B interface {{ b() }}\n{all}")
     };
     let sizes = [500, 1_000, 2_000, 4_000];
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(many_methods(n)));
-    linear::assert_near_linear(&sizes, |n| steps(nested(n)));
     linear::assert_near_linear(&sizes, |n| steps(sibling_interfaces(n)));
     // An interface shares the methods of the interfaces that it embeds:
     // the work for a chain of them grows with its length.
@@ -4847,96 +4356,57 @@ type U10 interface {
 }
 ";
     let expected = [
-        "a.go:8:11: method T1.m already declared",
-        "    a.go:7:11: other declaration of method m",
-        "a.go:9:14: field and method with the same name f",
-        "    a.go:4:2: other declaration of f",
-        "a.go:15:12: field and method with the same name int",
-        "    a.go:12:2: other declaration of int",
-        "a.go:21:12: field and method with the same name T2",
-        "    a.go:18:3: other declaration of T2",
-        "a.go:23:12: field and method with the same name f",
-        "    a.go:26:2: other declaration of f",
-        "a.go:33:7: invalid receiver type T5 (pointer or interface type)",
-        "a.go:34:7: invalid receiver type T5 (pointer or interface type)",
-        "a.go:38:7: invalid receiver type ptr (pointer or interface type)",
-        "a.go:39:8: invalid receiver type ptr (pointer or interface type)",
-        "a.go:41:7: cannot define new methods on non-local type int",
-        "a.go:42:7: invalid receiver type []int",
-        "a.go:43:7: cannot define new methods on non-local type error",
-        "a.go:44:8: cannot define new methods on non-local type error",
-        "a.go:45:9: invalid receiver type any",
-        "a.go:53:7: cannot define new methods on non-local type Ai",
-        "a.go:55:11: method T0.m1 already declared",
-        "    a.go:54:11: other declaration of method m1",
-        "a.go:58:7: invalid receiver type A10",
-        "a.go:70:7: cannot define new methods on instantiated type G[int]",
-        "a.go:71:8: cannot define new methods on instantiated type G[int]",
-        "a.go:72:7: receiver declares 2 type parameters, but receiver base type declares 1",
-        "a.go:73:9: receiver type parameter []int must be an identifier",
-        "a.go:75:16: method G.m3 already declared",
-        "    a.go:74:15: other declaration of method m3",
-        "a.go:76:8: invalid receiver type **T0",
-        "a.go:77:8: invalid receiver type *struct{}",
-        "a.go:81:2: duplicate method m",
-        "    a.go:80:2: other declaration of method m",
-        "a.go:86:2: duplicate method m",
-        "    a.go:87:2: other declaration of method m",
-        "a.go:91:2: duplicate method m",
-        "    a.go:90:2: other declaration of method m",
-        "a.go:95:2: duplicate method m",
-        "    a.go:94:2: other declaration of method m",
+        "a.gopp:8:11: method T1.m already declared",
+        "    a.gopp:7:11: other declaration of method m",
+        "a.gopp:9:14: field and method with the same name f",
+        "    a.gopp:4:2: other declaration of f",
+        "a.gopp:12:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:15:12: field and method with the same name int",
+        "    a.gopp:12:2: other declaration of int",
+        "a.gopp:18:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:21:12: field and method with the same name T2",
+        "    a.gopp:18:3: other declaration of T2",
+        "a.gopp:23:12: field and method with the same name f",
+        "    a.gopp:26:2: other declaration of f",
+        "a.gopp:33:7: invalid receiver type T5 (pointer or interface type)",
+        "a.gopp:34:7: invalid receiver type T5 (pointer or interface type)",
+        "a.gopp:38:7: invalid receiver type ptr (pointer or interface type)",
+        "a.gopp:39:8: invalid receiver type ptr (pointer or interface type)",
+        "a.gopp:41:7: cannot define new methods on non-local type int",
+        "a.gopp:42:7: invalid receiver type []int",
+        "a.gopp:43:7: cannot define new methods on non-local type error",
+        "a.gopp:44:8: cannot define new methods on non-local type error",
+        "a.gopp:45:9: invalid receiver type any",
+        "a.gopp:53:7: cannot define new methods on non-local type Ai",
+        "a.gopp:55:11: method T0.m1 already declared",
+        "    a.gopp:54:11: other declaration of method m1",
+        "a.gopp:58:7: invalid receiver type A10",
+        "a.gopp:65:5: cannot keep &x0 (value of type *T0) in a value of type interface{m1(); m2(); m3()}: an interface value may be given to another goroutine, and a *T0 borrows what it points to",
+        "    keep it in a Local[interface{m1(); m2(); m3()}], or hold a Shared",
+        "a.gopp:70:7: cannot define new methods on instantiated type G[int]",
+        "a.gopp:71:8: cannot define new methods on instantiated type G[int]",
+        "a.gopp:72:7: receiver declares 2 type parameters, but receiver base type declares 1",
+        "a.gopp:73:9: receiver type parameter []int must be an identifier",
+        "a.gopp:75:16: method G.m3 already declared",
+        "    a.gopp:74:15: other declaration of method m3",
+        "a.gopp:76:8: invalid receiver type **T0",
+        "a.gopp:77:8: invalid receiver type *struct{}",
+        "a.gopp:81:2: duplicate method m",
+        "    a.gopp:80:2: other declaration of method m",
+        "a.gopp:86:2: duplicate method m",
+        "    a.gopp:87:2: other declaration of method m",
+        "a.gopp:91:2: duplicate method m",
+        "    a.gopp:90:2: other declaration of method m",
+        "a.gopp:95:2: duplicate method m",
+        "    a.gopp:94:2: other declaration of method m",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: TYP-25
 #[test]
-fn embedded_fields_and_the_names_of_fields_are_checked_as_go_checks_them() {
+fn the_names_of_fields_are_checked_and_no_field_is_embedded() {
     let text = "package p
-
-type T1 struct{ X int }
-type T2 struct{ T1 }
-type T3 struct{ T1 }
-type T4 struct {
-	T2
-	T3
-}
-type U3 struct{ T2 }
-type U4 struct{ T2 }
-type U5 struct {
-	U3
-	U4
-}
-type V struct {
-	T1
-	T2
-}
-type W struct {
-	*T2
-	T3
-	Y int
-}
-
-func (T1) m() {}
-
-type I interface{ m() }
-
-func f(t T4, u U5, v V, w W) {
-	_ = v.X
-	_ = w.Y
-	_ = t.T2.X
-	v.m()
-	var _ I = v
-	_ = t.X
-	_ = u.X
-	_ = w.X
-	_ = t.T1
-	_ = u.T2
-	t.m()
-	_ = T4.m
-	var _ I = t
-}
 
 type T struct {
 	x int
@@ -4954,64 +4424,23 @@ func g() {
 	_ = (*T).y
 }
 
-type I1 interface{}
-type I2 interface{}
-type P1 *int
-type P2 *int
-type L[P any] struct{}
-
-type S1 struct {
-	I1
-	*T
-	*I2
-	*error
-	P1
-	*P2
-}
-
 type S2 struct {
-	int8
-	*int16
-	L[int]
 	a, b int
 	_    int
 	_    int
-
-	int8
-	*int16
-	L[int]
-	a string
+	a    string
 }
 ";
     let expected = [
-        "a.go:36:8: ambiguous selector t.X",
-        "a.go:37:8: ambiguous selector u.X",
-        "a.go:38:8: ambiguous selector w.X",
-        "a.go:39:8: ambiguous selector t.T1",
-        "a.go:40:8: ambiguous selector u.T2",
-        "a.go:41:4: ambiguous selector t.m",
-        "a.go:42:9: ambiguous selector T4.m",
-        "a.go:43:12: cannot use t (variable of struct type T4) as I value in variable declaration: T4 does not implement I (ambiguous selector T4.m)",
-        "a.go:55:8: T.a undefined (type T has no field or method a)",
-        "a.go:56:8: T.x undefined (type T has no method x)",
-        "a.go:57:8: invalid method expression T.n (needs pointer receiver (*T).n)",
-        "a.go:58:8: T.y undefined (type T has no method y)",
-        "a.go:59:11: (*T).y undefined (type *T has no method y)",
-        "a.go:71:2: embedded field type cannot be a pointer to an interface",
-        "a.go:72:2: embedded field type cannot be a pointer to an interface",
-        "a.go:73:2: embedded field type cannot be a pointer",
-        "a.go:74:2: embedded field type cannot be a pointer",
-        "a.go:85:2: int8 redeclared",
-        "    a.go:78:2: other declaration of int8",
-        "a.go:86:3: int16 redeclared",
-        "    a.go:79:3: other declaration of int16",
-        "a.go:87:2: L redeclared",
-        "    a.go:80:2: other declaration of L",
-        "a.go:88:2: a redeclared",
-        "    a.go:81:2: other declaration of a",
+        "a.gopp:12:8: T.a undefined (type T has no field or method a)",
+        "a.gopp:13:8: T.x undefined (type T has no method x)",
+        "a.gopp:14:8: invalid method expression T.n (needs pointer receiver (*T).n)",
+        "a.gopp:15:8: T.y undefined (type T has no method y)",
+        "a.gopp:16:11: (*T).y undefined (type *T has no method y)",
+        "a.gopp:23:2: a redeclared",
+        "    a.gopp:20:2: other declaration of a",
     ];
-    assert_eq!(messages("a.go", text), expected);
-    // A `.gopp` file refuses the embedded field itself.
+    assert_eq!(messages("a.gopp", text), expected);
     let text = "package p\ntype I interface{}\ntype S struct {\n\t*I\n\ta int\n\ta string\n}\n";
     let expected = [
         "a.gopp:4:2: struct embedding is not part of Go++: use `@Extends` to inherit from a \
@@ -5079,37 +4508,43 @@ func f(x any, p I2) I1 {
 func g[P I2, Q comparable](p P) {}
 ";
     let expected = [
-        "a.go:15:4: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:16:4: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:17:4: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:18:4: cannot use type comparable outside a type constraint: interface is (or embeds) comparable",
-        "a.go:19:6: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:20:8: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:21:5: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:22:8: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:22:11: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:23:9: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:24:9: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:25:11: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:27:6: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:28:9: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:29:11: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:30:8: cannot use type interface{int} outside a type constraint: interface contains type constraints",
-        "a.go:31:6: cannot use interface I1 in conversion (contains specific type constraints or is comparable)",
-        "a.go:32:6: cannot use interface I2 in conversion (contains specific type constraints or is comparable)",
-        "a.go:37:2: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:38:4: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:39:2: embedded field type cannot be a pointer to an interface",
-        "a.go:39:3: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:42:17: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:42:21: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:43:9: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:45:7: cannot use type I2 outside a type constraint: interface contains type constraints",
-        "a.go:47:8: cannot use type I3 outside a type constraint: interface contains type constraints",
-        "a.go:48:10: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
-        "a.go:49:13: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:15:4: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:16:4: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:17:4: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:18:4: cannot use type comparable outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:19:6: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:20:8: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:21:5: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:22:8: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:22:11: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:23:9: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:24:9: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:25:11: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:27:6: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:28:9: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:29:11: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:30:8: cannot use type interface{int} outside a type constraint: interface contains type constraints",
+        "a.gopp:31:6: cannot use interface I1 in conversion (contains specific type constraints or is comparable)",
+        "a.gopp:32:6: cannot use interface I2 in conversion (contains specific type constraints or is comparable)",
+        "a.gopp:37:2: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:37:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:38:4: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:39:2: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+        "a.gopp:39:3: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:42:17: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:42:21: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:43:9: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:45:7: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:47:8: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.gopp:48:6: undefined: new",
+        "    Go++ has no new: write NewUnique(T{}) for one owner or NewShared(T{}) for several",
+        "a.gopp:49:6: cannot make a []I2 with a length: I2 has no zero value (a I2 is never nil)",
+        "    use make([]I2, 0, n) and append the elements",
+        "a.gopp:49:13: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.gopp:50:9: cannot use nil as I1 value in return statement",
+        "    a I1 is never nil: use Option[I1]",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -5149,27 +4584,27 @@ func _[P interface{ int | string }, Q ~int]()  {}
 func _[P ~MyInt]()                             {}
 ";
     let expected = [
-        "a.go:10:15: invalid use of ~ (underlying type of MyInt is int)",
-        "a.go:11:15: invalid use of ~ (M is an interface)",
-        "a.go:12:21: cannot use p.M in union (p.M contains methods)",
-        "a.go:13:21: cannot use comparable in union",
-        "a.go:14:21: cannot use p.C in union (p.C embeds comparable)",
-        "a.go:16:21: overlapping terms int and int",
-        "a.go:17:21: overlapping terms ~int and int",
-        "a.go:18:22: overlapping terms p.MyInt and ~int",
-        "a.go:19:22: overlapping terms ~int and ~int",
-        "a.go:21:15: invalid use of ~ (comparable is an interface)",
-        "a.go:22:15: invalid use of ~ (any is an interface)",
-        "a.go:25:17: cannot use a type parameter as constraint",
-        "a.go:26:28: term cannot be a type parameter",
-        "a.go:27:29: type in term ~P cannot be a type parameter",
-        "a.go:28:34: term cannot be a type parameter",
-        "a.go:29:35: type in term ~P cannot be a type parameter",
-        "a.go:30:18: type in term ~P cannot be a type parameter",
-        "a.go:31:23: term cannot be a type parameter",
-        "a.go:33:10: invalid use of ~ (underlying type of MyInt is int)",
+        "a.gopp:10:15: invalid use of ~ (underlying type of MyInt is int)",
+        "a.gopp:11:15: invalid use of ~ (M is an interface)",
+        "a.gopp:12:21: cannot use p.M in union (p.M contains methods)",
+        "a.gopp:13:21: cannot use comparable in union",
+        "a.gopp:14:21: cannot use p.C in union (p.C embeds comparable)",
+        "a.gopp:16:21: overlapping terms int and int",
+        "a.gopp:17:21: overlapping terms ~int and int",
+        "a.gopp:18:22: overlapping terms p.MyInt and ~int",
+        "a.gopp:19:22: overlapping terms ~int and ~int",
+        "a.gopp:21:15: invalid use of ~ (comparable is an interface)",
+        "a.gopp:22:15: invalid use of ~ (any is an interface)",
+        "a.gopp:25:17: cannot use a type parameter as constraint",
+        "a.gopp:26:28: term cannot be a type parameter",
+        "a.gopp:27:29: type in term ~P cannot be a type parameter",
+        "a.gopp:28:34: term cannot be a type parameter",
+        "a.gopp:29:35: type in term ~P cannot be a type parameter",
+        "a.gopp:30:18: type in term ~P cannot be a type parameter",
+        "a.gopp:31:23: term cannot be a type parameter",
+        "a.gopp:33:10: invalid use of ~ (underlying type of MyInt is int)",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: GEN-1, GEN-2, GEN-11
@@ -5228,7 +4663,7 @@ type Plain interface{ String() string }
 ";
     let names = ThreadedRodeo::new();
     let loader = Loader::default();
-    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     let types = loader.types.get().unwrap();
     let shown = |name: &str| {
         let object = checked.package.scope[&names.get(name).unwrap()];
@@ -5357,27 +4792,27 @@ func use() {
 }
 ";
     let expected = [
-        "a.go:36:6: string does not satisfy Num (string missing in ~int | ~float64)",
-        "a.go:37:6: MyInt does not satisfy Exact (possibly missing ~ for int in Exact)",
-        "a.go:38:11: []int does not satisfy comparable",
-        "a.go:39:11: S does not satisfy comparable",
-        "a.go:42:6: int does not satisfy Str (missing method String)",
-        "a.go:43:6: MyInt does not satisfy NumStr (missing method String)",
-        "a.go:44:6: cannot satisfy Nothing (empty type set)",
-        "a.go:45:6: func() does not satisfy comparable",
-        "a.go:46:4: not enough type arguments for type M: have 1, want 2",
-        "a.go:47:4: too many type arguments for type M: have 3, want 2",
-        "a.go:48:6: cannot use type Num outside a type constraint: interface contains type constraints",
-        "a.go:50:6: T does not satisfy interface{m() T} (missing method m)",
-        "a.go:59:10: P does not satisfy Exact",
-        "a.go:61:10: P does not satisfy Str (missing method String)",
-        "a.go:69:2: string does not satisfy Num (string missing in ~int | ~float64)",
-        "a.go:70:4: string does not satisfy Num (string missing in ~int | ~float64)",
-        "a.go:72:9: int does not satisfy Str (missing method String)",
-        "a.go:73:14: got 3 type arguments but want 2",
-        "a.go:74:2: []int does not satisfy comparable",
+        "a.gopp:36:6: string does not satisfy Num (string missing in ~int | ~float64)",
+        "a.gopp:37:6: MyInt does not satisfy Exact (possibly missing ~ for int in Exact)",
+        "a.gopp:38:11: []int does not satisfy comparable",
+        "a.gopp:39:11: S does not satisfy comparable",
+        "a.gopp:42:6: int does not satisfy Str (missing method String)",
+        "a.gopp:43:6: MyInt does not satisfy NumStr (missing method String)",
+        "a.gopp:44:6: cannot satisfy Nothing (empty type set)",
+        "a.gopp:45:6: func() does not satisfy comparable",
+        "a.gopp:46:4: not enough type arguments for type M: have 1, want 2",
+        "a.gopp:47:4: too many type arguments for type M: have 3, want 2",
+        "a.gopp:48:6: cannot use type Num outside a type constraint: interface contains type constraints",
+        "a.gopp:50:6: T does not satisfy interface{m() T} (missing method m)",
+        "a.gopp:59:10: P does not satisfy Exact",
+        "a.gopp:61:10: P does not satisfy Str (missing method String)",
+        "a.gopp:69:2: string does not satisfy Num (string missing in ~int | ~float64)",
+        "a.gopp:70:4: string does not satisfy Num (string missing in ~int | ~float64)",
+        "a.gopp:72:9: int does not satisfy Str (missing method String)",
+        "a.gopp:73:14: got 3 type arguments but want 2",
+        "a.gopp:74:2: []int does not satisfy comparable",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -5450,33 +4885,41 @@ func rec[P any](p P, n int) {
 ";
     // Go says where a type parameter is declared inside the message.
     let expected = [
-        "a.go:22:8: in call to f1, type string of s does not match inferred type int for P",
-        "a.go:24:8: in call to f1, mismatched types untyped int and untyped string (cannot infer P)",
-        "a.go:26:5: cannot use 1.5 (untyped float constant) as int value in argument to f1 (truncated)",
-        "a.go:27:2: in call to f1, cannot infer P",
-        "    a.go:6:9: P declared here",
-        "a.go:28:9: cannot use i (variable of type int) as MyInt value in argument to f1",
-        "a.go:29:5: cannot use i (variable of type int) as MyInt value in argument to f1",
-        "a.go:32:6: in call to f2, S (type int) does not satisfy ~[]E",
-        "a.go:34:17: cannot use f2(l) (value of type int) as string value in variable declaration",
-        "a.go:36:9: in call to f3, type List of l does not match map[K]V (cannot infer K and V)",
-        "a.go:37:2: in call to f4, cannot infer Q",
-        "    a.go:9:12: Q declared here",
-        "a.go:39:6: in call to f4[int], cannot infer Q",
-        "    a.go:9:12: Q declared here",
-        "a.go:40:6: in call to f4[string], cannot infer Q",
-        "    a.go:9:12: Q declared here",
-        "a.go:42:8: in call to f5, type string of s does not match inferred type int for P",
-        "a.go:44:2: in call to f5, cannot infer P",
-        "    a.go:10:9: P declared here",
-        "a.go:47:19: in call to f6, type string of s does not match inferred type int for P",
-        "a.go:49:2: in call to f7, P (type int) does not satisfy interface{m() Q} (missing method m)",
-        "a.go:51:2: in call to f8, P (type int) does not satisfy *Q",
-        "a.go:54:2: float64 does not satisfy interface{~int | ~string} (float64 missing in ~int | ~string)",
-        "a.go:57:10: cannot use s (variable of type string) as int value in argument to f1[int]",
-        "a.go:57:13: cannot use s (variable of type string) as int value in argument to f1[int]",
+        "a.gopp:7:52: cannot declare e without a value: E may be a type with no zero value",
+        "    give e a value, or declare it as Option[E]",
+        "a.gopp:9:52: cannot declare q without a value: Q may be a type with no zero value",
+        "    give q a value, or declare it as Option[Q]",
+        "a.gopp:12:52: cannot declare q without a value: Q may be a type with no zero value",
+        "    give q a value, or declare it as Option[Q]",
+        "a.gopp:22:8: in call to f1, type string of s does not match inferred type int for P",
+        "a.gopp:24:8: in call to f1, mismatched types untyped int and untyped string (cannot infer P)",
+        "a.gopp:26:5: cannot use 1.5 (untyped float constant) as int value in argument to f1 (truncated)",
+        "a.gopp:27:2: in call to f1, cannot infer P",
+        "    a.gopp:6:9: P declared here",
+        "a.gopp:28:9: cannot use i (variable of type int) as MyInt value in argument to f1",
+        "a.gopp:29:5: cannot use i (variable of type int) as MyInt value in argument to f1",
+        "a.gopp:32:6: in call to f2, S (type int) does not satisfy ~[]E",
+        "a.gopp:34:17: cannot use f2(l) (value of type int) as string value in variable declaration",
+        "a.gopp:36:9: in call to f3, type List of l does not match map[K]V (cannot infer K and V)",
+        "a.gopp:37:2: in call to f4, cannot infer Q",
+        "    a.gopp:9:12: Q declared here",
+        "a.gopp:39:6: in call to f4[int], cannot infer Q",
+        "    a.gopp:9:12: Q declared here",
+        "a.gopp:40:6: in call to f4[string], cannot infer Q",
+        "    a.gopp:9:12: Q declared here",
+        "a.gopp:42:8: in call to f5, type string of s does not match inferred type int for P",
+        "a.gopp:44:2: in call to f5, cannot infer P",
+        "    a.gopp:10:9: P declared here",
+        "a.gopp:47:19: in call to f6, type string of s does not match inferred type int for P",
+        "a.gopp:49:2: in call to f7, P (type int) does not satisfy interface{m() Q} (missing method m)",
+        "a.gopp:51:2: in call to f8, P (type int) does not satisfy *Q",
+        "a.gopp:54:2: float64 does not satisfy interface{~int | ~string} (float64 missing in ~int | ~string)",
+        "a.gopp:57:10: cannot use s (variable of type string) as int value in argument to f1[int]",
+        "a.gopp:57:13: cannot use s (variable of type string) as int value in argument to f1[int]",
+        "a.gopp:61:6: cannot copy p (variable of type P constrained by any): P is not constrained by Clone",
+        "    use move(p) to give the value, or &p to lend it",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: OWN-P5
@@ -5517,11 +4960,11 @@ func use(l List, pl *List, ps *[]string, n int, pn *int) {
 fn the_steps_of_inference_grow_with_the_input_not_faster() {
     let steps = |text: String| {
         let loader = Loader::default();
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
         assert_eq!(checked.messages, [] as [&str; 0]);
         checked.steps + loader.types.get().unwrap().steps()
     };
-    let header = "package p\nfunc first[S ~[]E, E any](s S) E { return s[0] }\n\
+    let header = "package p\nfunc first[S ~[]E, E Clone](s S) E { return s[0] }\n\
                   func pair[K comparable, V any](k K, v V) map[K]V { return nil }\n";
     // Calls next to each other.
     let calls = |count: usize| {
@@ -5633,42 +5076,40 @@ func chans[C chan int, D Chans, E chan int | chan string, F chan<- int | <-chan 
 }
 ";
     let expected = [
-        "a.go:22:6: invalid operation: operator % not defined on n (variable of type N constrained by Num)",
-        "a.go:23:6: invalid operation: operator + not defined on t (variable of type T constrained by Text)",
-        "a.go:24:6: invalid operation: t == t (incomparable types in type set)",
-        "a.go:25:6: invalid operation: operator + not defined on a (variable of type A constrained by Any)",
-        "a.go:26:6: invalid operation: a == a (incomparable types in type set)",
-        "a.go:27:6: invalid operation: a < a (type parameter A cannot use operator <)",
-        "a.go:28:6: invalid operation: n + s (mismatched types N and S)",
-        "a.go:30:11: invalid operation: n == \"x\" (mismatched types N and untyped string)",
-        "a.go:31:7: invalid operation: operator ! not defined on n (variable of type N constrained by Num)",
-        "a.go:32:6: invalid operation: operator && not defined on n (variable of type N constrained by Num)",
-        "a.go:33:11: invalid operation: n == nil (mismatched types N and untyped nil)",
-        "a.go:38:6: cannot use 1.5 (untyped float constant) as N value in assignment",
-        "a.go:40:6: cannot use 1.5 (untyped float constant) as I value in assignment",
-        "a.go:41:6: cannot use \"s\" (untyped string constant) as N value in assignment",
-        "a.go:43:6: cannot use nil as N value in assignment",
-        "a.go:44:6: cannot use nil as A value in assignment",
-        "a.go:46:6: cannot use i (variable of type I constrained by ~int) as N value in assignment",
-        "a.go:47:6: cannot use i (variable of type I constrained by ~int) as int value in assignment",
-        "a.go:48:6: cannot use n (variable of type N constrained by Num) as int value in assignment",
-        "a.go:49:6: cannot use x (variable of type int) as I value in assignment",
-        "a.go:51:27: cannot use n (variable of type N constrained by Num) as interface{m()} value in variable declaration: cannot assign int (in N) to interface{m()}",
-        "a.go:54:18: cannot use n (variable of type N constrained by Num) as float64 value in variable declaration",
-        "a.go:59:7: invalid operation: pointers of q (variable of type Q constrained by Ptr) must have identical base types",
-        "a.go:60:7: invalid operation: pointers of r (variable of type R constrained by ~*int | ~*string) must have identical base types",
-        "a.go:61:7: invalid operation: cannot indirect n (variable of type N constrained by Num)",
-        "a.go:62:7: invalid operation: cannot indirect a (variable of type A constrained by any)",
-        "a.go:69:4: invalid operation: cannot send to d (variable of type D constrained by Chans): receive-only channel <-chan int",
-        "a.go:70:8: invalid operation: cannot receive from e (variable of type E constrained by chan int | chan string): channels chan int and chan string have different element types",
-        "a.go:71:8: invalid operation: cannot receive from f (variable of type F constrained by chan<- int | <-chan int): send-only channel chan<- int",
-        "a.go:72:8: invalid operation: cannot receive from n (variable of type N constrained by Num): non-channel int",
-        "a.go:73:4: invalid operation: cannot send to a (variable of type A constrained by any): no specific channel type",
-        "a.go:74:6: invalid operation: z == z (empty type set)",
-        "a.go:75:6: invalid operation: operator + not defined on z (variable of type Z constrained by Empty with empty type set)",
-        "a.go:76:4: invalid operation: cannot receive from z (variable of type Z constrained by Empty with empty type set): no specific channel type",
+        "a.gopp:22:6: invalid operation: operator % not defined on n (variable of type N constrained by Num)",
+        "a.gopp:23:6: invalid operation: operator + not defined on t (variable of type T constrained by Text)",
+        "a.gopp:24:6: invalid operation: t == t (incomparable types in type set)",
+        "a.gopp:25:6: invalid operation: operator + not defined on a (variable of type A constrained by Any)",
+        "a.gopp:26:6: invalid operation: a == a (incomparable types in type set)",
+        "a.gopp:27:6: invalid operation: a < a (type parameter A cannot use operator <)",
+        "a.gopp:28:6: invalid operation: n + s (mismatched types N and S)",
+        "a.gopp:30:11: invalid operation: n == \"x\" (mismatched types N and untyped string)",
+        "a.gopp:31:7: invalid operation: operator ! not defined on n (variable of type N constrained by Num)",
+        "a.gopp:32:6: invalid operation: operator && not defined on n (variable of type N constrained by Num)",
+        "a.gopp:33:11: invalid operation: n == nil (mismatched types N and untyped nil)",
+        "a.gopp:38:6: cannot use 1.5 (untyped float constant) as N value in assignment",
+        "a.gopp:40:6: cannot use 1.5 (untyped float constant) as I value in assignment",
+        "a.gopp:41:6: cannot use \"s\" (untyped string constant) as N value in assignment",
+        "a.gopp:46:6: cannot use i (variable of type I constrained by ~int) as N value in assignment",
+        "a.gopp:47:6: cannot use i (variable of type I constrained by ~int) as int value in assignment",
+        "a.gopp:48:6: cannot use n (variable of type N constrained by Num) as int value in assignment",
+        "a.gopp:49:6: cannot use x (variable of type int) as I value in assignment",
+        "a.gopp:51:27: cannot use n (variable of type N constrained by Num) as interface{m()} value in variable declaration: cannot assign int (in N) to interface{m()}",
+        "a.gopp:54:18: cannot use n (variable of type N constrained by Num) as float64 value in variable declaration",
+        "a.gopp:59:7: invalid operation: pointers of q (variable of type Q constrained by Ptr) must have identical base types",
+        "a.gopp:60:7: invalid operation: pointers of r (variable of type R constrained by ~*int | ~*string) must have identical base types",
+        "a.gopp:61:7: invalid operation: cannot indirect n (variable of type N constrained by Num)",
+        "a.gopp:62:7: invalid operation: cannot indirect a (variable of type A constrained by any)",
+        "a.gopp:69:4: invalid operation: cannot send to d (variable of type D constrained by Chans): receive-only channel <-chan int",
+        "a.gopp:70:8: invalid operation: cannot receive from e (variable of type E constrained by chan int | chan string): channels chan int and chan string have different element types",
+        "a.gopp:71:8: invalid operation: cannot receive from f (variable of type F constrained by chan<- int | <-chan int): send-only channel chan<- int",
+        "a.gopp:72:8: invalid operation: cannot receive from n (variable of type N constrained by Num): non-channel int",
+        "a.gopp:73:4: invalid operation: cannot send to a (variable of type A constrained by any): no specific channel type",
+        "a.gopp:74:6: invalid operation: z == z (empty type set)",
+        "a.gopp:75:6: invalid operation: operator + not defined on z (variable of type Z constrained by Empty with empty type set)",
+        "a.gopp:76:4: invalid operation: cannot receive from z (variable of type Z constrained by Empty with empty type set): no specific channel type",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -5773,22 +5214,32 @@ func _() {
     // Go names a result that has a name by it; it is a result variable
     // here.
     let expected = [
-        "a.go:13:17: cannot use generic function f1 without instantiation",
-        "a.go:14:17: type func(int) of v2 does not match func() P (cannot infer P)",
-        "a.go:22:26: inferred type func(int, int) for func(P, P) does not match type func(int, string) of v7",
-        "a.go:24:26: inferred type func(string) []string for func(P) []P does not match type func(string) []int of v9",
-        "a.go:27:23: type func(int) of _ does not match func() P (cannot infer P)",
-        "a.go:35:8: type func() int of v1_ does not match func(P) (cannot infer P)",
-        "a.go:36:7: type func(int) of v2 does not match func() P (cannot infer P)",
-        "a.go:44:7: inferred type func(int, int) for func(P, P) does not match type func(int, string) of v7",
-        "a.go:46:7: inferred type func(string) []string for func(P) []P does not match type func(string) []int of v9",
-        "a.go:50:9: inferred type func(string) []string for func(P) []P does not match type func(string) []int of a[0]",
-        "a.go:61:9: inferred type func(int, int) for func(P, P) does not match type func(int, string) of result variable",
-        "a.go:65:9: inferred type func(string) []string for func(P) []P does not match type func(string) []int of result variable",
-        "a.go:69:40: type func(int) of result variable does not match func() P (cannot infer P)",
-        "a.go:81:5: in call to g1, type func[P any]() P of f2 does not match func(int) (cannot infer P)",
+        "a.gopp:4:32: cannot declare x without a value: P may be a type with no zero value",
+        "    give x a value, or declare it as Option[P]",
+        "a.gopp:5:32: cannot declare x without a value: Q may be a type with no zero value",
+        "    give x a value, or declare it as Option[Q]",
+        "a.gopp:8:32: cannot declare x without a value: P may be a type with no zero value",
+        "    give x a value, or declare it as Option[P]",
+        "a.gopp:13:17: cannot use generic function f1 without instantiation",
+        "a.gopp:14:17: type func(int) of v2 does not match func() P (cannot infer P)",
+        "a.gopp:22:26: inferred type func(int, int) for func(P, P) does not match type func(int, string) of v7",
+        "a.gopp:24:26: inferred type func(string) []string for func(P) []P does not match type func(string) []int of v9",
+        "a.gopp:27:23: type func(int) of _ does not match func() P (cannot infer P)",
+        "a.gopp:33:6: cannot declare v1_ without a value: func() int has no zero value (a func() int is never nil)",
+        "    give v1_ a value, or declare it as Option[func() int]",
+        "a.gopp:35:8: type func() int of v1_ does not match func(P) (cannot infer P)",
+        "a.gopp:36:7: type func(int) of v2 does not match func() P (cannot infer P)",
+        "a.gopp:44:7: inferred type func(int, int) for func(P, P) does not match type func(int, string) of v7",
+        "a.gopp:46:7: inferred type func(string) []string for func(P) []P does not match type func(string) []int of v9",
+        "a.gopp:49:6: cannot declare a without a value: [2]func(string) []int has no zero value (a func(string) []int is never nil)",
+        "    give a a value, or declare it as Option[[2]func(string) []int]",
+        "a.gopp:50:9: inferred type func(string) []string for func(P) []P does not match type func(string) []int of a[0]",
+        "a.gopp:61:9: inferred type func(int, int) for func(P, P) does not match type func(int, string) of result variable",
+        "a.gopp:65:9: inferred type func(string) []string for func(P) []P does not match type func(string) []int of result variable",
+        "a.gopp:69:40: type func(int) of result variable does not match func() P (cannot infer P)",
+        "a.gopp:81:5: in call to g1, type func[P any]() P of f2 does not match func(int) (cannot infer P)",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -5847,26 +5298,28 @@ func ranges[B Bytes, S Seq, N ~int | ~int64, I ~int, C chan int | <-chan int, D 
 }
 ";
     let expected = [
-        "a.go:5:39: overlapping terms map[string]int and map[string]int",
-        "a.go:15:8: cannot use 1 (untyped int constant) as string value in map index",
-        "a.go:16:6: cannot index x (variable of type X constrained by Mixed)",
-        "a.go:17:6: cannot index o (variable of type O constrained by Other)",
-        "a.go:18:6: cannot index a (variable of type A constrained by any)",
-        "a.go:19:6: cannot index n (variable of type N constrained by ~int)",
-        "a.go:21:2: cannot assign to b[0] (neither addressable nor a map index expression)",
-        "a.go:24:12: invalid operation: 3-index slice of string",
-        "a.go:25:6: cannot slice s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
-        "a.go:26:6: cannot slice o (variable of type O constrained by Other): []int and []string have different underlying types",
-        "a.go:27:6: cannot slice a (variable of type A constrained by any): no specific type in A",
-        "a.go:28:6: cannot slice x (variable of type X constrained by Mixed): []int and map[int]int have different underlying types",
-        "a.go:33:12: cannot range over b (variable of type B constrained by Bytes): string and []byte have different underlying types",
-        "a.go:35:20: cannot range over s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
-        "a.go:38:12: cannot range over n (variable of type N constrained by ~int | ~int64): int and int64 have different underlying types",
-        "a.go:46:12: cannot range over d (variable of type D constrained by chan<- int): receive from send-only channel chan<- int",
-        "a.go:48:12: cannot range over a (variable of type A constrained by any): no specific type",
-        "a.go:50:12: cannot range over z (variable of type Z constrained by int | string): int and string have different underlying types",
+        "a.gopp:5:39: overlapping terms map[string]int and map[string]int",
+        "a.gopp:15:8: cannot use 1 (untyped int constant) as string value in map index",
+        "a.gopp:16:6: cannot index x (variable of type X constrained by Mixed)",
+        "a.gopp:17:6: cannot index o (variable of type O constrained by Other)",
+        "a.gopp:18:6: cannot index a (variable of type A constrained by any)",
+        "a.gopp:19:6: cannot index n (variable of type N constrained by ~int)",
+        "a.gopp:21:2: cannot assign to b[0] (neither addressable nor a map index expression)",
+        "a.gopp:22:2: this write to m is lost: m is the function's own copy, and nothing reads it afterwards",
+        "    declare m *M to change the value of the caller, or return m",
+        "a.gopp:24:12: invalid operation: 3-index slice of string",
+        "a.gopp:25:6: cannot slice s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
+        "a.gopp:26:6: cannot slice o (variable of type O constrained by Other): []int and []string have different underlying types",
+        "a.gopp:27:6: cannot slice a (variable of type A constrained by any): no specific type in A",
+        "a.gopp:28:6: cannot slice x (variable of type X constrained by Mixed): []int and map[int]int have different underlying types",
+        "a.gopp:33:12: cannot range over b (variable of type B constrained by Bytes): string and []byte have different underlying types",
+        "a.gopp:35:20: cannot range over s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
+        "a.gopp:38:12: cannot range over n (variable of type N constrained by ~int | ~int64): int and int64 have different underlying types",
+        "a.gopp:46:12: cannot range over d (variable of type D constrained by chan<- int): receive from send-only channel chan<- int",
+        "a.gopp:48:12: cannot range over a (variable of type A constrained by any): no specific type",
+        "a.gopp:50:12: cannot range over z (variable of type Z constrained by int | string): int and string have different underlying types",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -5901,17 +5354,15 @@ func f[P C, Q M, R any, T S](p P, q Q, r R, t T, pp *P, pq *Q) {
 }
 ";
     let expected = [
-        "a.go:19:8: p.f undefined (type P has no field or method f)",
-        "a.go:20:8: q.f undefined (type Q has no field or method f)",
-        "a.go:21:4: r.m undefined (type R has no field or method m)",
-        "a.go:22:8: r.f undefined (type R has no field or method f)",
-        "a.go:23:4: t.m undefined (type T has no field or method m)",
-        "a.go:24:8: t.f undefined (type T has no field or method f)",
-        "a.go:25:5: pp.m undefined (type *P is pointer to type parameter, not type parameter)",
-        "a.go:26:5: pq.m undefined (type *Q is pointer to type parameter, not type parameter)",
-        "a.go:27:9: pp.f undefined (type *P is pointer to type parameter, not type parameter)",
+        "a.gopp:19:8: p.f undefined (type P has no field or method f)",
+        "a.gopp:20:8: q.f undefined (type Q has no field or method f)",
+        "a.gopp:21:4: r.m undefined (type R has no field or method m)",
+        "a.gopp:22:8: r.f undefined (type R has no field or method f)",
+        "a.gopp:23:4: t.m undefined (type T has no field or method m)",
+        "a.gopp:24:8: t.f undefined (type T has no field or method f)",
+        "a.gopp:27:9: pp.f undefined (type P has no field or method f)",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -5993,45 +5444,50 @@ func built[S ~[]int, M ~map[string]int, C ~chan int, R ~<-chan int, B ~string | 
 }
 ";
     let expected = [
-        "a.go:18:8: cannot convert 1.5 (untyped float value) to type N: cannot convert 1.5 (untyped float constant) to type int (in N)",
-        "a.go:20:8: cannot convert 1.5 (untyped float value) to type I: cannot convert 1.5 (untyped float constant) to type int (in I)",
-        "a.go:21:8: cannot convert \"x\" (untyped string value) to type I: cannot convert \"x\" (untyped string constant) to type int (in I)",
-        "a.go:22:8: cannot convert 1 (untyped int value) to type A: A does not contain specific types",
-        "a.go:23:8: cannot convert s (variable of type S constrained by ~string) to type I: cannot convert string (in S) to type int (in I)",
-        "a.go:24:8: cannot convert n (variable of type N constrained by Num) to type S: cannot convert float64 (in N) to type string (in S)",
-        "a.go:25:8: cannot convert x (variable of type int) to type P: cannot convert int to type *int (in P)",
-        "a.go:26:16: cannot convert p (variable of type P constrained by ~*int) to type *string: cannot convert *int (in P) to type *string",
-        "a.go:27:10: cannot convert s (variable of type S constrained by ~string) to type int: cannot convert string (in S) to type int",
-        "a.go:29:8: cannot convert a (variable of type A constrained by any) to type I",
-        "a.go:30:8: cannot convert i (variable of type I constrained by Int) to type A",
-        "a.go:35:10: invalid argument: n (variable of type N constrained by ~int) for built-in len",
-        "a.go:36:10: invalid argument: a (variable of type A constrained by any) for built-in len",
-        "a.go:37:10: invalid argument: m (variable of type M constrained by ~map[string]int) for built-in cap",
-        "a.go:38:10: invalid argument: b (variable of type B constrained by ~string | ~[]byte) for built-in cap",
-        "a.go:42:8: invalid argument: cannot clear b (variable of type B constrained by ~string | ~[]byte): argument must be (or constrained by) map or slice",
-        "a.go:43:8: invalid argument: cannot clear a (variable of type A constrained by any): argument must be (or constrained by) map or slice",
-        "a.go:45:8: invalid operation: cannot close receive-only channel r (variable of type R constrained by ~<-chan int)",
-        "a.go:46:8: invalid operation: cannot close non-channel s (variable of type S constrained by ~[]int)",
-        "a.go:47:8: invalid operation: cannot close non-channel a (variable of type A constrained by any)",
-        "a.go:51:14: invalid copy: argument must be a slice; have b (variable of type B constrained by ~string | ~[]byte)",
-        "a.go:52:11: invalid copy: argument must be a slice; have a (variable of type A constrained by any)",
-        "a.go:54:12: cannot use 1 (untyped int constant) as string value in argument to delete",
-        "a.go:55:9: invalid argument: x (variable of type X constrained by []int | map[int]int) is not a map",
-        "a.go:56:9: invalid argument: maps of y (variable of type Y constrained by map[int]int | map[string]int) must have identical key types",
-        "a.go:57:9: invalid argument: s (variable of type S constrained by ~[]int) is not a map",
-        "a.go:61:6: invalid operation: make(S) expects 2 or 3 arguments; found 1",
-        "a.go:62:11: invalid argument: cannot make X: []int and map[int]int have different underlying types",
-        "a.go:63:11: invalid argument: cannot make N: type must be slice, map, or channel",
-        "a.go:64:11: invalid argument: cannot make A: no specific type",
-        "a.go:68:13: cannot convert 2.5 (untyped float constant) to type N",
-        "a.go:69:10: invalid argument: k (variable of type K constrained by ~complex128) cannot be ordered",
-        "a.go:70:13: invalid argument: mismatched types N (previous argument) and F (type of f)",
-        "a.go:71:10: invalid argument: a (variable of type A constrained by any) cannot be ordered",
-        "a.go:72:11: k (variable of type K constrained by ~complex128) not supported as argument to built-in real for go1.18 (see go.dev/issue/50937)",
-        "a.go:73:14: f (variable of type F constrained by ~float64) not supported as argument to built-in complex for go1.18 (see go.dev/issue/50937)",
-        "a.go:74:11: invalid argument: argument has type N, expected complex type",
+        "a.gopp:18:8: cannot convert 1.5 (untyped float value) to type N: cannot convert 1.5 (untyped float constant) to type int (in N)",
+        "a.gopp:20:8: cannot convert 1.5 (untyped float value) to type I: cannot convert 1.5 (untyped float constant) to type int (in I)",
+        "a.gopp:21:8: cannot convert \"x\" (untyped string value) to type I: cannot convert \"x\" (untyped string constant) to type int (in I)",
+        "a.gopp:22:8: cannot convert 1 (untyped int value) to type A: A does not contain specific types",
+        "a.gopp:23:8: cannot convert s (variable of type S constrained by ~string) to type I: cannot convert string (in S) to type int (in I)",
+        "a.gopp:24:8: cannot convert n (variable of type N constrained by Num) to type S: cannot convert float64 (in N) to type string (in S)",
+        "a.gopp:25:8: cannot convert x (variable of type int) to type P: cannot convert int to type *int (in P)",
+        "a.gopp:26:16: cannot convert p (variable of type P constrained by ~*int) to type *string: cannot convert *int (in P) to type *string",
+        "a.gopp:27:10: cannot convert s (variable of type S constrained by ~string) to type int: cannot convert string (in S) to type int",
+        "a.gopp:29:8: cannot convert a (variable of type A constrained by any) to type I",
+        "a.gopp:30:8: cannot convert i (variable of type I constrained by Int) to type A",
+        "a.gopp:35:10: invalid argument: n (variable of type N constrained by ~int) for built-in len",
+        "a.gopp:36:10: invalid argument: a (variable of type A constrained by any) for built-in len",
+        "a.gopp:37:10: invalid argument: m (variable of type M constrained by ~map[string]int) for built-in cap",
+        "a.gopp:38:10: invalid argument: b (variable of type B constrained by ~string | ~[]byte) for built-in cap",
+        "a.gopp:40:2: this write to m is lost: m is the function's own copy, and nothing reads it afterwards",
+        "    declare m *M to change the value of the caller, or return m",
+        "a.gopp:42:8: invalid argument: cannot clear b (variable of type B constrained by ~string | ~[]byte): argument must be (or constrained by) map or slice",
+        "a.gopp:43:8: invalid argument: cannot clear a (variable of type A constrained by any): argument must be (or constrained by) map or slice",
+        "a.gopp:45:8: invalid operation: cannot close receive-only channel r (variable of type R constrained by ~<-chan int)",
+        "a.gopp:46:8: invalid operation: cannot close non-channel s (variable of type S constrained by ~[]int)",
+        "a.gopp:47:8: invalid operation: cannot close non-channel a (variable of type A constrained by any)",
+        "a.gopp:50:11: invalid copy: the destination []byte{} (value of type []byte) is passed as a copy",
+        "a.gopp:51:14: invalid copy: argument must be a slice; have b (variable of type B constrained by ~string | ~[]byte)",
+        "a.gopp:52:11: invalid copy: argument must be a slice; have a (variable of type A constrained by any)",
+        "a.gopp:54:12: cannot use 1 (untyped int constant) as string value in argument to delete",
+        "a.gopp:55:9: invalid argument: x (variable of type X constrained by []int | map[int]int) is not a map",
+        "a.gopp:56:9: invalid argument: maps of y (variable of type Y constrained by map[int]int | map[string]int) must have identical key types",
+        "a.gopp:57:2: this write to s is lost: s is the function's own copy, and nothing reads it afterwards",
+        "    declare s *S to change the value of the caller, or return s",
+        "a.gopp:57:9: invalid argument: s (variable of type S constrained by ~[]int) is not a map",
+        "a.gopp:61:6: invalid operation: make(S) expects 2 or 3 arguments; found 1",
+        "a.gopp:62:11: invalid argument: cannot make X: []int and map[int]int have different underlying types",
+        "a.gopp:63:11: invalid argument: cannot make N: type must be slice, map, or channel",
+        "a.gopp:64:11: invalid argument: cannot make A: no specific type",
+        "a.gopp:68:13: cannot convert 2.5 (untyped float constant) to type N",
+        "a.gopp:69:10: invalid argument: k (variable of type K constrained by ~complex128) cannot be ordered",
+        "a.gopp:70:13: invalid argument: mismatched types N (previous argument) and F (type of f)",
+        "a.gopp:71:10: invalid argument: a (variable of type A constrained by any) cannot be ordered",
+        "a.gopp:72:11: k (variable of type K constrained by ~complex128) not supported as argument to built-in real for go1.18 (see go.dev/issue/50937)",
+        "a.gopp:73:14: f (variable of type F constrained by ~float64) not supported as argument to built-in complex for go1.18 (see go.dev/issue/50937)",
+        "a.gopp:74:11: invalid argument: argument has type N, expected complex type",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -6047,7 +5503,7 @@ type Pair[K comparable, V any] struct {
 type Index[V any] = map[string]Pair[string, V]
 type Set[K comparable] = map[K]bool
 ";
-    let checked = check_texts("example.com/lib", &[("lib.go", lib)], &loader, &names);
+    let checked = check_texts("example.com/lib", &[("lib.gopp", lib)], &loader, &names);
     assert_eq!(checked.messages, [] as [&str; 0]);
     loader
         .packages
@@ -6108,29 +5564,34 @@ func (*Far) m()    {}
 
 type Self[P any] = *Self[P]
 ";
-    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     assert_eq!(
         checked.messages,
         [
-            "a.go:35:13: cannot use 1 (untyped int constant) as P value in assignment",
-            "a.go:36:12: string does not satisfy ~int (string missing in ~int)",
-            "a.go:37:8: cannot use generic type Node[Q any] without instantiation",
-            "a.go:38:7: invalid recursive type: Loop refers to itself",
-            "a.go:41:7: cannot use generic type List[P any] without instantiation",
-            "a.go:42:9: cannot use generic type List without instantiation",
-            "a.go:43:7: too many type arguments for type List: have 2, want 1",
-            "a.go:44:7: not enough type arguments for type Table: have 1, want 2",
-            "a.go:45:18: string does not satisfy ~int (string missing in ~int)",
-            "a.go:46:21: cannot use \"x\" (untyped string constant) as Int[string] value in variable \
-             declaration",
-            "a.go:47:16: cannot use first(a) (value of type int) as string value in variable \
-             declaration",
-            "a.go:48:15: func() does not satisfy comparable",
-            "a.go:49:7: cannot use generic type lib.Set[K comparable] without instantiation",
-            "a.go:51:7: cannot define new methods on generic alias type Same[P any]",
-            "a.go:52:7: cannot define new methods on instantiated type Plain[int]",
-            "a.go:53:8: cannot define new methods on instantiated type Plain[int]",
-            "a.go:55:6: invalid recursive type: Self refers to itself",
+            "a.gopp:21:41: cannot copy x[0] (variable of type P constrained by any) out of its place: P is not constrained by Clone",
+            "    use &x[0] or mem.Replace(&x[0], v)",
+            "a.gopp:24:17: struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name",
+            "a.gopp:32:6: cannot declare n without a value: Node[P] has no zero value (a *Node[P] is never nil)",
+            "    give n a value, or declare it as Option[Node[P]]",
+            "a.gopp:33:13: cannot copy p (variable of type P constrained by any): P is not constrained by Clone",
+            "    use move(p) to give the value, or &p to lend it",
+            "a.gopp:35:13: cannot use 1 (untyped int constant) as P value in assignment",
+            "a.gopp:36:12: string does not satisfy ~int (string missing in ~int)",
+            "a.gopp:37:8: cannot use generic type Node[Q any] without instantiation",
+            "a.gopp:38:7: invalid recursive type: Loop refers to itself",
+            "a.gopp:41:7: cannot use generic type List[P any] without instantiation",
+            "a.gopp:42:9: cannot use generic type List without instantiation",
+            "a.gopp:43:7: too many type arguments for type List: have 2, want 1",
+            "a.gopp:44:7: not enough type arguments for type Table: have 1, want 2",
+            "a.gopp:45:18: string does not satisfy ~int (string missing in ~int)",
+            "a.gopp:46:21: cannot use \"x\" (untyped string constant) as Int[string] value in variable declaration",
+            "a.gopp:47:16: cannot use first(a) (value of type int) as string value in variable declaration",
+            "a.gopp:48:15: func() does not satisfy comparable",
+            "a.gopp:49:7: cannot use generic type lib.Set[K comparable] without instantiation",
+            "a.gopp:51:7: cannot define new methods on generic alias type Same[P any]",
+            "a.gopp:52:7: cannot define new methods on instantiated type Plain[int]",
+            "a.gopp:53:8: cannot define new methods on instantiated type Plain[int]",
+            "a.gopp:55:6: invalid recursive type: Self refers to itself",
         ]
     );
 }
@@ -6652,9 +6113,6 @@ func channel(ch chan File, f File) {
         "    use move(f) to give the value, or &f to lend it",
     ];
     assert_eq!(checked.messages, expected);
-    // In a Go file a value is what it is in Go.
-    let text = "package p\ntype File struct{}\nfunc (f *File) drop() {}\nfunc f(a File) File { b := a; return b }\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: OWN-R3, OWN-R4, PAR-9
@@ -6764,7 +6222,7 @@ func use(h *Holder, xs []int, d Doc, fs []File, f File, n int, name string) (Doc
 
 // rule: OWN-R3
 #[test]
-fn a_go_file_copies_what_it_gives_and_has_none_of_the_other_rules() {
+fn slices_maps_and_strings_are_copied_where_they_are_given() {
     let text = "package p
 
 type Table struct {
@@ -6793,7 +6251,7 @@ func use(t Table, n int, text string) ([]int, map[string]int) {
 ";
     let checked = check_texts(
         "p",
-        &[("a.go", text)],
+        &[("a.gopp", text)],
         &Loader::default(),
         &ThreadedRodeo::new(),
     );
@@ -7008,9 +6466,6 @@ func views(files []File, byName map[string]File) {
         "    declare the variable in the range clause, with := and &",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // In a Go file the variable is Go's.
-    let text = "package p\ntype Doc struct{ N int }\nfunc f(docs []Doc) { for _, d := range docs { d.N = 1; _ = &d } }\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: OWN-R4, OWN-R10
@@ -7305,10 +6760,6 @@ func uses(xs []int, g Greeter, p, q *Greeter, m map[string]int) (err error) {
         "81:7: xs write, g address, p read, q write, m write, total address, x read, local read",
     ];
     assert_eq!(closures(&checked, &names), expected);
-    // A Go file has the same captures.
-    let text = "package p\nfunc f(p *int) { n := 0; _ = func() { n++; p = &n; *p = 1 } }\n";
-    let checked = check_texts("p", &[("a.go", text)], &Loader::default(), &names);
-    assert_eq!(closures(&checked, &names), ["2:30: p write, n address"]);
 }
 
 // rule: CLO-5a
@@ -7379,10 +6830,6 @@ func values(f File) {
         "    use move(f) to give the value, or &f to lend it",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // In a Go file a func is compared to nil.
-    let text = "package p\nfunc f(g, h func()) { _ = g == nil; _ = g == h }\n";
-    let expected = ["a.go:2:41: invalid operation: g == h (func can only be compared to nil)"];
-    assert_eq!(messages("a.go", text), expected);
 }
 
 #[test]
@@ -8028,9 +7475,6 @@ func generic[T any, N ~int | ~string](n int) {
         "    use make([]T, 0, n) and append the elements",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // A Go file has Go's zero values.
-    let text = "package p\ntype T struct{ p *T; f func() }\nvar x T\nfunc f(m map[int]T) (r T) { var y [2]T; _ = y; return m[0] }\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: TYP-15
@@ -8593,9 +8037,6 @@ func bad(o Option[int], s *Server, m map[string]User, p Option[*Tree]) int {
     lines.sort_unstable();
     lines.dedup();
     assert_eq!(lines, [23, 28, 31, 34, 37, 40, 42, 46, 49, 89]);
-    // A Go file has no options, and its values are Go's.
-    let text = "package p\ntype T struct{ p *T }\nfunc f(m map[int]*T) *T { v, ok := m[0]; _ = ok; return v.p }\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 #[test]
@@ -8802,9 +8243,6 @@ Again:
         "    make the channel first: g = make(...)",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // In a Go file nil is Go's.
-    let text = "package p\nfunc g() map[string]int { return nil }\nfunc f(p *int, s interface{ M() }) { _ = p == nil; _ = s == nil; p = nil; g()[\"a\"] = 1; var ch chan int; close(ch) }\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 /// The labels of each variable of a package, by its name: `x: Send Sync`.
@@ -9225,10 +8663,6 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
     }
     lines.sort_unstable();
     assert_eq!(lines, [34, 34, 34, 34, 34, 35]);
-    // A Go file keeps Go's interfaces.
-    let text =
-        "package p\ntype T struct{}\nfunc (t *T) drop() {}\nvar x any = &T{}\nvar y any = T{}\n";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: TYP-16, TYP-17, TYP-18, TYP-19, TYP-20, TYP-21, EXP-13, EXP-15, GEN-12
@@ -9572,10 +9006,9 @@ fn with_unsafe_text(file: &str, text: &str) -> Vec<String> {
 
 // rule: GEN-5
 #[test]
-fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it() {
-    // The cases of Go's own test of this check.
+fn a_generic_that_would_need_instances_without_end_is_refused() {
     let goods = [
-        "func F[T any](x T) { F(x) }",
+        "func F[T any](x T) { F(move(x)) }",
         "func F[T, U, V any]() { F[U, V, T](); F[V, T, U]() }",
         "type Ring[A, B, C any] struct { L *Ring[B, C, A]; R *Ring[C, A, B] }",
         "func F[T any]() { type U[T any] [unsafe.Sizeof(F[*T])]byte }",
@@ -9584,7 +9017,7 @@ fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it()
         "func F[T any]() { type A = int; F[A]() }",
     ];
     for good in goods {
-        assert_eq!(with_unsafe("a.go", good), [] as [&str; 0], "{good}");
+        assert_eq!(with_unsafe("a.gopp", good), [] as [&str; 0], "{good}");
     }
     let bads = [
         "func F[T any](x T) { F(&x) }",
@@ -9609,7 +9042,7 @@ fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it()
         "func F[T any]() { type A = *T; F[A]() }",
     ];
     for bad in bads {
-        let found = with_unsafe("a.go", bad);
+        let found = with_unsafe("a.gopp", bad);
         let first = found.first().map(String::as_str).unwrap_or_default();
         assert!(
             first.ends_with(": instantiation cycle:"),
@@ -9620,15 +9053,15 @@ fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it()
     // A type that holds such an instance of itself by value is refused
     // for that.
     assert_eq!(
-        with_unsafe("a.go", "type A[T any] struct { _ A[*T] }"),
-        ["a.go:2:26: invalid recursive type: A refers to itself"]
+        with_unsafe("a.gopp", "type A[T any] struct { _ A[*T] }"),
+        ["a.gopp:2:26: invalid recursive type: A refers to itself"]
     );
 
     // The cycle is told at the first type parameter on it, with what
     // each one is instantiated as.
     let text = "package p
 type Box[A any] struct{ value A }
-func Nest[A any](b Box[A], n int) any {
+func Nest[A interface{ Clone; Send }](b Box[A], n int) any {
 	if n == 0 {
 		return b
 	}
@@ -9636,20 +9069,20 @@ func Nest[A any](b Box[A], n int) any {
 }
 ";
     let expected = [
-        "a.go:3:11: instantiation cycle:",
-        "    a.go:7:9: A instantiated as Box[A]",
+        "a.gopp:3:11: instantiation cycle:",
+        "    a.gopp:7:9: A instantiated as Box[A]",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
     let text = "package p
 func f[A, B any]() { g[B, *A]() }
 func g[C, D any]() { f[D, C]() }
 ";
     let expected = [
-        "a.go:2:8: instantiation cycle:",
-        "    a.go:3:24: A instantiated as D",
-        "    a.go:2:27: D instantiated as *A",
+        "a.gopp:2:8: instantiation cycle:",
+        "    a.gopp:3:24: A instantiated as D",
+        "    a.gopp:2:27: D instantiated as *A",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 
     // Every type on a cycle is known before a body follows its
     // instances, not only those of the cycle that is told.
@@ -9692,11 +9125,11 @@ func F[T any]() {
 }
 ";
     let expected = [
-        "a.go:2:8: instantiation cycle:",
-        "    a.go:4:4: T instantiated as *U",
-        "    a.go:3:7: U implicitly parameterized by T",
+        "a.gopp:2:8: instantiation cycle:",
+        "    a.gopp:4:4: T instantiated as *U",
+        "    a.gopp:3:7: U implicitly parameterized by T",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
     let text = "package p
 type G[P any] struct{}
 
@@ -9709,15 +9142,10 @@ func (g G[P]) M() {
 }
 ";
     let expected = [
-        "a.go:2:8: instantiation cycle:",
-        "    a.go:7:11: P instantiated as L",
-        "    a.go:6:8: L implicitly parameterized by P",
+        "a.gopp:2:8: instantiation cycle:",
+        "    a.gopp:7:11: P instantiated as L",
+        "    a.gopp:6:8: L implicitly parameterized by P",
     ];
-    assert_eq!(messages("a.go", text), expected);
-    let expected: Vec<String> = expected
-        .iter()
-        .map(|line| line.replace("a.go", "a.gopp"))
-        .collect();
     assert_eq!(messages("a.gopp", text), expected);
     let text = "package p
 func H[A, B any]() {
@@ -9726,12 +9154,12 @@ func H[A, B any]() {
 }
 ";
     let expected = [
-        "a.go:2:8: instantiation cycle:",
-        "    a.go:4:4: A instantiated as B",
-        "    a.go:4:7: B instantiated as L",
-        "    a.go:3:7: L implicitly parameterized by A",
+        "a.gopp:2:8: instantiation cycle:",
+        "    a.gopp:4:4: A instantiated as B",
+        "    a.gopp:4:7: B instantiated as L",
+        "    a.gopp:3:7: L implicitly parameterized by A",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
     // A local type that goes nowhere else, and one of a function without
     // type parameters, make no cycle.
     let text = "package p
@@ -9748,14 +9176,14 @@ func plain() {
 	var _ Box[Box[L]]
 }
 ";
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+    assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
 
     // A package with another error is not told of its cycle.
     let text = "package p\nfunc f[T any]() { f[*T]() }\nvar x int = \"\"\n";
     let expected = [
-        "a.go:3:13: cannot use \"\" (untyped string constant) as int value in variable declaration",
+        "a.gopp:3:13: cannot use \"\" (untyped string constant) as int value in variable declaration",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: GEN-13
@@ -9770,12 +9198,6 @@ func (x G[T]) Next() Option[*G[*T]] { return nil }
         "    a.gopp:3:32: T instantiated as *T",
     ];
     assert_eq!(messages("a.gopp", cycle), expected);
-    // Go follows no instance that only a signature names.
-    let go = "package p
-type G[T any] struct{ v T }
-func (x G[T]) Next() *G[*T] { return nil }
-";
-    assert_eq!(messages("a.go", go), [] as [&str; 0]);
 
     // The same instance, the parameters in another order and another
     // type need no new instance; a type parameter of the method is not
@@ -9832,7 +9254,7 @@ func (l List[T]) Deep[U any]() {
 fn the_steps_of_instantiation_cycles_grow_with_the_input_not_faster() {
     let steps = |text: String| {
         let loader = Loader::default();
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
         assert_eq!(checked.messages, [] as [&str; 0]);
         checked.steps + loader.types.get().unwrap().steps()
     };
@@ -10049,12 +9471,6 @@ type G[T any] struct{ items []T }
 func (g G[T]) Add(o G[T]) G[T] { return g }
 ";
     assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
-    // In a Go file a method is only a method.
-    let text = "package p\ntype V struct{}\nfunc (a V) Add(b V) V { return a }\nvar v V\n\
-                var _ = v.Add(v)\nvar _ = v + v\n";
-    let expected =
-        ["a.go:6:9: invalid operation: operator + not defined on v (variable of struct type V)"];
-    assert_eq!(messages("a.go", text), expected);
 }
 
 // rule: EXP-17
@@ -10619,12 +10035,6 @@ func use(v Vec2, xs []int, n Named, t Table) {
         "    want Add(T) T",
     ];
     assert_eq!(messages("a.gopp", &format!("{declared}{bad}")), expected);
-
-    // A method of a constraint of a Go file is only a method.
-    let go = "package p\nfunc Sum[T interface{ Add(T) T }](a T) T { return a.Add(a) }\n\
-              var _ = Sum(1)\n";
-    let expected = ["a.go:3:9: int does not satisfy interface{Add(int) int} (missing method Add)"];
-    assert_eq!(messages("a.go", go), expected);
 }
 
 // rule: EXP-18
@@ -10931,14 +10341,6 @@ func use() {
         "a.gopp:39:13: invalid argument: index 4 out of bounds [0:4]",
     ];
     assert_eq!(messages("a.gopp", bad), expected);
-
-    // A Go file has the constants of Go.
-    let go = "package p\ntype V struct{ x int }\nconst A = V{1}\nconst B [2]int = [2]int{}\n";
-    let expected = [
-        "a.go:3:11: V{…} (value of struct type V) is not constant",
-        "a.go:4:9: invalid constant type [2]int",
-    ];
-    assert_eq!(messages("a.go", go), expected);
 }
 
 /// Runs the functions `double`, `Twice`, `table` and `fail`, and the
@@ -11744,36 +11146,33 @@ func dup[P int | float64 | complex128]() {
 	_ = map[P]int{1: 1, 1.0: 2, 1 + 0i: 3, 2: 4}
 }
 ";
-    let found = with_unsafe_text("a.go", text);
+    let found = with_unsafe_text("a.gopp", text);
     let expected = [
-        "a.go:8:2: extra init expr at the declaration that is repeated",
-        "a.go:11:17: cannot use a type parameter as RHS in type declaration",
-        "a.go:14:13: invalid recursive type",
-        "a.go:15:17: invalid recursive type",
-        "a.go:16:34: invalid recursive type",
-        "a.go:22:8: cannot use type I outside a type constraint: interface contains type \
-         constraints",
-        "a.go:23:10: cannot use type I outside a type constraint: interface contains type \
-         constraints",
-        "a.go:24:10: cannot use type comparable outside a type constraint: interface is (or \
-         embeds) comparable",
-        "a.go:24:24: cannot use type C outside a type constraint: interface is (or embeds) \
-         comparable",
-        "a.go:25:6: generic function is missing function body",
-        "a.go:28:19: invalid map key type T (missing comparable constraint)",
-        "a.go:33:23: term cannot be a type parameter",
-        "a.go:34:30: type in term ~P cannot be a type parameter",
-        "a.go:37:10: invalid constant type P",
-        "a.go:41:13: invalid operation: nil == nil (operator == not defined on untyped nil)",
-        "a.go:42:13: invalid operation: nil != nil (operator != not defined on untyped nil)",
-        "a.go:43:6: cannot index uses (value of type func([]int))",
-        "a.go:44:6: cannot index len (built-in)",
-        "a.go:45:7: invalid operation: cannot indirect len (built-in)",
-        "a.go:47:6: cannot index f (variable of type func() []int)",
-        "a.go:49:8: middle index required in 3-index slice",
-        "a.go:49:9: final index required in 3-index slice",
-        "a.go:53:22: duplicate key 1 in map literal",
-        "a.go:53:30: duplicate key (1 + 0i) in map literal",
+        "a.gopp:8:2: extra init expr at the declaration that is repeated",
+        "a.gopp:11:17: cannot use a type parameter as RHS in type declaration",
+        "a.gopp:14:13: invalid recursive type",
+        "a.gopp:15:17: invalid recursive type",
+        "a.gopp:16:34: invalid recursive type",
+        "a.gopp:22:8: cannot use type I outside a type constraint: interface contains type constraints",
+        "a.gopp:23:10: cannot use type I outside a type constraint: interface contains type constraints",
+        "a.gopp:24:10: cannot use type comparable outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:24:24: cannot use type C outside a type constraint: interface is (or embeds) comparable",
+        "a.gopp:28:19: invalid map key type T (missing comparable constraint)",
+        "a.gopp:33:23: term cannot be a type parameter",
+        "a.gopp:34:30: type in term ~P cannot be a type parameter",
+        "a.gopp:37:10: invalid constant type P: P is a type parameter",
+        "a.gopp:41:13: invalid operation: nil == nil (operator == not defined on untyped nil)",
+        "a.gopp:42:13: invalid operation: nil != nil (operator != not defined on untyped nil)",
+        "a.gopp:43:6: cannot index uses (value of type func([]int))",
+        "a.gopp:44:6: cannot index len (built-in)",
+        "a.gopp:45:7: invalid operation: cannot indirect len (built-in)",
+        "a.gopp:46:6: cannot declare f without a value: func() []int has no zero value (a func() []int is never nil)",
+        "    give f a value, or declare it as Option[func() []int]",
+        "a.gopp:47:6: cannot index f (variable of type func() []int)",
+        "a.gopp:49:8: middle index required in 3-index slice",
+        "a.gopp:49:9: final index required in 3-index slice",
+        "a.gopp:53:22: duplicate key 1 in map literal",
+        "a.gopp:53:30: duplicate key (1 + 0i) in map literal",
     ];
     assert_eq!(found, expected);
 }
@@ -11851,13 +11250,13 @@ fn a_type_built_by_generic_calls_is_written_out_in_part() {
             .map(|i| format!("\ta{i} := dup(a{})\n", i - 1))
             .collect();
         format!(
-            "package p\nfunc dup[T any](x T) struct{{ a, b T }} {{ return struct{{ a, b T }}{{x, x}} }}\n\
+            "package p\nfunc dup[T Clone](x T) struct{{ a, b T }} {{ return struct{{ a, b T }}{{x, x}} }}\n\
              func _() {{\n\ta0 := 1\n{calls}\t_ = a{count} == a{count}\n{last}}}\n"
         )
     };
     let check = |text: String| {
         let loader = Loader::default();
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
         let steps = checked.steps + loader.types.get().unwrap().steps();
         (checked.messages, steps)
     };
@@ -11869,8 +11268,9 @@ fn a_type_built_by_generic_calls_is_written_out_in_part() {
         panic!("{} messages", messages.len());
     };
     assert!(
-        message
-            .starts_with("a.go:46:14: cannot use a40 (variable of type struct{a struct{a struct{a")
+        message.starts_with(
+            "a.gopp:46:14: cannot use a40 (variable of type struct{a struct{a struct{a"
+        )
     );
     assert!(message.ends_with("b …}; b …}) as int value in variable declaration"));
     assert!(message.len() < 100_000, "{} bytes", message.len());
@@ -11919,24 +11319,22 @@ func _(p Pair) {
 }
 ";
     let expected = [
-        "a.go:10:7: invalid receiver type A10",
-        "a.go:11:7: cannot define new methods on non-local type Ai",
-        "a.go:17:6: invalid operation: b + \"foo\" (mismatched types A and untyped string)",
-        "a.go:20:18: cannot use e (variable of type interface{}) as float32 value in variable \
-         declaration: need type assertion",
-        "a.go:21:18: cannot use t (variable of interface type any) as float32 value in variable \
-         declaration: need type assertion",
-        "a.go:23:17: cannot use by (variable of type byte) as string value in variable declaration",
-        "a.go:25:17: cannot use u8 (variable of type uint8) as string value in variable declaration",
-        "a.go:26:17: cannot use \"x\"[0] (value of type byte) as string value in variable declaration",
-        "a.go:28:18: cannot use r (variable of type rune) as string value in variable declaration",
-        "a.go:31:17: cannot use x (variable of type rune) as string value in variable declaration",
-        "a.go:33:17: cannot use bs (variable of type []byte) as string value in variable declaration",
-        "a.go:34:14: cannot use p (variable of struct type Pair) as int value in variable declaration",
-        "a.go:35:8: p.c undefined (type Pair has no field or method c)",
-        "a.go:36:13: cannot use \"x\" (untyped string constant) as Ai value in variable declaration",
+        "a.gopp:10:7: invalid receiver type A10",
+        "a.gopp:11:7: cannot define new methods on non-local type Ai",
+        "a.gopp:17:6: invalid operation: b + \"foo\" (mismatched types A and untyped string)",
+        "a.gopp:20:18: cannot use e (variable of type interface{}) as float32 value in variable declaration: need type assertion",
+        "a.gopp:21:18: cannot use t (variable of interface type any) as float32 value in variable declaration: need type assertion",
+        "a.gopp:23:17: cannot use by (variable of type byte) as string value in variable declaration",
+        "a.gopp:25:17: cannot use u8 (variable of type uint8) as string value in variable declaration",
+        "a.gopp:26:17: cannot use \"x\"[0] (constant 120 of type byte) as string value in variable declaration",
+        "a.gopp:28:18: cannot use r (variable of type rune) as string value in variable declaration",
+        "a.gopp:31:17: cannot use x (variable of type rune) as string value in variable declaration",
+        "a.gopp:33:17: cannot use bs (variable of type []byte) as string value in variable declaration",
+        "a.gopp:34:14: cannot use p (variable of struct type Pair) as int value in variable declaration",
+        "a.gopp:35:8: p.c undefined (type Pair has no field or method c)",
+        "a.gopp:36:13: cannot use \"x\" (untyped string constant) as Ai value in variable declaration",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 /// Types that are nested, or hold declared types that hold others, a
@@ -11949,7 +11347,7 @@ fn deep_types(depth: usize, first: &str, next: &dyn Fn(usize) -> String, last: &
          var v, w T\nvar _ = unsafe.Sizeof(v)\nvar _ any = v\nvar _ = any(v).(T)\n\
          func id[P any](x P) P {{ return x }}\nvar _ = id(v)\n\
          func _() {{ var u T = v; _ = u; _ = []T{{v}}; _ = &v; _ = func(x T) T {{ return x }}(w) }}\n\
-         type W struct{{ T }}\nvar _ = W{{}}\n\
+         type W struct{{ t T }}\nvar _ = W{{}}\n\
          var _ int = v\nvar _ interface{{ none() }} = v\nvar _ = v.nothing\n"
     )
 }
@@ -12010,13 +11408,6 @@ fn a_deep_type_does_not_overflow_the_stack() {
             &|i| format!("type S{i}[P any] = struct{{ s S{}[P] }}\n", i - 1),
             "[int]",
         ) + compared,
-        deep_types(
-            DEPTH,
-            "type S0 struct{ x int }\nfunc (S0) m() {}",
-            &|i| format!("type S{i} struct{{ S{} }}\n", i - 1),
-            "",
-        ) + compared
-            + "var _ = v.x\nfunc _() { v.m() }\n",
     ];
     // On a stack that a walk as deep as the types would overflow.
     let checking = std::thread::Builder::new().stack_size(192 * 1024);
@@ -12025,9 +11416,13 @@ fn a_deep_type_does_not_overflow_the_stack() {
             let names = ThreadedRodeo::new();
             let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
             let loader = with_packages(&names, &[("unsafe", stub)]);
-            let checked = check_texts("p", &[("a.go", &text)], &loader, &names);
-            let messages = checked.messages.len();
-            assert!((2..=4).contains(&messages), "{:?}", checked.messages);
+            let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
+            // The last of the errors that every shape has.
+            let messages = checked.messages;
+            assert!(
+                messages.iter().any(|m| m.contains("v.nothing undefined")),
+                "{messages:?}"
+            );
         }
     });
     checked.unwrap().join().unwrap();
@@ -12046,12 +11441,12 @@ func _() {
 }
 ";
     let expected = [
-        "a.go:5:2: in call to f, cannot infer P",
-        "    a.go:2:8: P declared here",
-        "a.go:6:2: in call to g, cannot infer P",
-        "    a.go:3:8: P declared here",
+        "a.gopp:5:2: in call to f, cannot infer P",
+        "    a.gopp:2:8: P declared here",
+        "a.gopp:6:2: in call to g, cannot infer P",
+        "    a.gopp:3:8: P declared here",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 /// A type that holds the one before it twice is as large as two to the
@@ -12062,7 +11457,7 @@ fn a_type_that_stands_in_many_places_is_walked_once() {
         let names = ThreadedRodeo::new();
         let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
         let loader = with_packages(&names, &[("unsafe", stub)]);
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &names);
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
         assert_eq!(checked.messages, [] as [&str; 0]);
         checked.steps + loader.types.get().unwrap().steps()
     };
@@ -12078,7 +11473,7 @@ fn a_type_that_stands_in_many_places_is_walked_once() {
         format!(
             "{types}var v, w A{count}\nvar _ = v == w\nvar _ = map[A{count}]int{{}}\n\
              var _ = unsafe.Sizeof(v)\nvar _ = any(v).(A{count})\n\
-             type T struct{{ A{count} }}\nvar _ = T{{}}.a.b\nvar _ = [2]A{count}{{v, w}}\n\
+             type T struct{{ t A{count} }}\nvar _ = T{{}}.t.a.b\nvar _ = [2]A{count}{{v, w}}\n\
              func f[P any](x struct{{ a, b P }}) {{}}\nfunc g[P comparable](x P) {{}}\n\
              func _() {{ f(v); g(v) }}\n\
              var _ = struct{{ a, b A{} `x:\"y\"` }}(v)\n",
@@ -12113,7 +11508,7 @@ fn a_type_that_stands_in_many_places_is_walked_once() {
     assert!(most < 100_000, "{most} steps");
     // A type argument is found through such aliases, as deep as
     // unification goes.
-    let call = "func f[P any](x C40[P]) C38[P] { return x.a.b }\nvar _ C38[int] = f(c)\n";
+    let call = "func f[P Clone](x C40[P]) C38[P] { return x.a.b }\nvar _ C38[int] = f(c)\n";
     let found = steps(generic_aliases(40) + call);
     assert!(found < 100_000, "{found} steps");
 }
@@ -12126,7 +11521,7 @@ fn a_type_that_stands_in_many_places_is_walked_once() {
 fn the_steps_of_generic_aliases_grow_with_the_input_not_faster() {
     let steps = |text: String| {
         let loader = Loader::default();
-        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
         assert_eq!(checked.messages, [] as [&str; 0]);
         checked.steps + loader.types.get().unwrap().steps()
     };
@@ -12149,12 +11544,14 @@ fn the_steps_of_generic_aliases_grow_with_the_input_not_faster() {
             .map(|i| {
                 let before = i - 1;
                 format!(
-                    "type T{i}[Q any] struct {{ next *T{i}[Q]; before *T{before}[Q] }}\n\
-                     type A{i}[Q any] = *T{i}[Q]\nvar v{i} A{i}[P]\n_ = v{i}.before.next\n"
+                    "type T{i}[Q any] struct {{ next Option[*T{i}[Q]]; before Option[*T{before}[Q]] }}\n\
+                     type A{i}[Q any] = Option[*T{i}[Q]]\nvar v{i} A{i}[P]\n_ = v{i}\n"
                 )
             })
             .collect();
-        format!("package p\nfunc f[P any]() {{\ntype T0[Q any] struct{{ next *T0[Q] }}\n{all}}}\n")
+        format!(
+            "package p\nfunc f[P any]() {{\ntype T0[Q any] struct{{ next Option[*T0[Q]] }}\n{all}}}\n"
+        )
     };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
@@ -12217,10 +11614,6 @@ func parse!(s Set) int {
         "a.gopp:32:6: cannot use generic function s.Map without instantiation",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // A `.go` file has no generic methods.
-    let text = "package p\ntype S struct{}\nfunc (S) m[P any](P) {}\n";
-    let expected = ["a.go:3:11: syntax error: method must have no type parameters"];
-    assert_eq!(messages("a.go", text), expected);
 }
 
 #[test]
@@ -12249,7 +11642,7 @@ func generic[P any](p []P) P { return first(p) }
 ";
     let names = ThreadedRodeo::new();
     let loader = Loader::default();
-    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     let types = loader.types.get().unwrap();
     let tree = &checked.files[0];
     let bodies = checked.package.files[0].bodies.iter();
@@ -12322,19 +11715,19 @@ func plain(n int, s struct{ x int }) {
 }
 ";
     let expected = [
-        "a.go:10:6: invalid composite literal type X (no common underlying type)",
-        "a.go:11:6: invalid composite literal type A (no common underlying type)",
-        "a.go:12:6: invalid composite literal type N",
-        "a.go:14:10: invalid composite literal element type X (no common underlying type)",
-        "a.go:15:8: cannot use \"x\" (untyped string constant) as int value in array or slice literal",
-        "a.go:16:8: unknown field g in struct literal of type Q",
-        "a.go:22:4: cannot use \"x\" (untyped string constant) as int value in argument to f",
-        "a.go:23:2: invalid operation: cannot call g (variable of type G constrained by func() | func(int)): func() and func(int) have different underlying types",
-        "a.go:24:2: invalid operation: cannot call a (variable of type A constrained by any): no specific type",
-        "a.go:28:2: invalid operation: cannot call n (variable of type int): int is not a function",
-        "a.go:29:2: invalid operation: cannot call s.x (variable of type int): int is not a function",
+        "a.gopp:10:6: invalid composite literal type X (no common underlying type)",
+        "a.gopp:11:6: invalid composite literal type A (no common underlying type)",
+        "a.gopp:12:6: invalid composite literal type N",
+        "a.gopp:14:10: invalid composite literal element type X (no common underlying type)",
+        "a.gopp:15:8: cannot use \"x\" (untyped string constant) as int value in array or slice literal",
+        "a.gopp:16:8: unknown field g in struct literal of type Q",
+        "a.gopp:22:4: cannot use \"x\" (untyped string constant) as int value in argument to f",
+        "a.gopp:23:2: invalid operation: cannot call g (variable of type G constrained by func() | func(int)): func() and func(int) have different underlying types",
+        "a.gopp:24:2: invalid operation: cannot call a (variable of type A constrained by any): no specific type",
+        "a.gopp:28:2: invalid operation: cannot call n (variable of type int): int is not a function",
+        "a.gopp:29:2: invalid operation: cannot call s.x (variable of type int): int is not a function",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 #[test]
@@ -12362,16 +11755,20 @@ func _() {
 }
 ";
     let expected = [
-        "a.go:16:17: cannot use apply(ident, 1) (value of type int) as string value in variable declaration",
-        "a.go:17:2: in call to both, cannot infer P",
-        "    a.go:5:11: P declared here",
-        "a.go:18:19: in call to both, type func(string) string of ident[string] does not match inferred type func(int) int for func(P) P",
-        "a.go:19:6: in call to apply, cannot infer P",
-        "    a.go:3:12: P declared here",
-        "a.go:20:6: in call to text, cannot infer P",
-        "    a.go:6:11: P declared here",
+        "a.gopp:3:56: cannot copy p (variable of type P constrained by any): P is not constrained by Clone",
+        "    use move(p) to give the value, or &p to lend it",
+        "a.gopp:6:51: cannot declare p without a value: P may be a type with no zero value",
+        "    give p a value, or declare it as Option[P]",
+        "a.gopp:16:17: cannot use apply(ident, 1) (value of type int) as string value in variable declaration",
+        "a.gopp:17:2: in call to both, cannot infer P",
+        "    a.gopp:5:11: P declared here",
+        "a.gopp:18:19: in call to both, type func(string) string of ident[string] does not match inferred type func(int) int for func(P) P",
+        "a.gopp:19:6: in call to apply, cannot infer P",
+        "    a.gopp:3:12: P declared here",
+        "a.gopp:20:6: in call to text, cannot infer P",
+        "    a.gopp:6:11: P declared here",
     ];
-    assert_eq!(messages("a.go", text), expected);
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: RNG-8
@@ -12416,8 +11813,6 @@ func f(xs []int, m map[string]int) {
         "    a.gopp:14:6: loop variable i declared here",
     ];
     assert_eq!(messages("a.gopp", text), expected);
-    // Go lets a name be declared again.
-    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: RNG-1a, RNG-6a
@@ -12562,7 +11957,8 @@ func f(v any) int {
 	return 5
 }
 ";
-    for name in ["a.go", "a.gopp"] {
+    {
+        let name = "a.gopp";
         let names = ThreadedRodeo::new();
         let loader = Loader::default();
         let checked = check_texts("p", &[(name, text)], &loader, &names);
@@ -12646,7 +12042,8 @@ func f(b Both, s Shape, shapes []Shape, byName map[string]any) (Shape, any, Same
 	return b, b, s
 }
 ";
-    for name in ["a.go", "a.gopp"] {
+    {
+        let name = "a.gopp";
         let names = ThreadedRodeo::new();
         let loader = Loader::default();
         let checked = check_texts("p", &[(name, text)], &loader, &names);
@@ -12744,14 +12141,12 @@ var global I = T{}
 
 func use(i I, rest ...any) {}
 
-func f(t T, p *T, i I, c chan I, m map[any]I) I {
+func f(t T, i I, c chan I, m *map[any]I) I {
 	var a I = t
-	a = p
 	a = i
-	a = nil
 	use(t, 1, \"s\", i, nil)
 	c <- t
-	m[2.5] = p
+	m[2.5] = t
 	_ = []I{t, i}
 	_ = struct{ i I }{t}
 	_ = I(t)
@@ -12764,24 +12159,23 @@ func f(t T, p *T, i I, c chan I, m map[any]I) I {
     let expected = [
         "8: T{}: T to I",
         "13: t: T to I",
-        "14: p: *T to I",
+        "15: t: T to I",
+        "15: 1: int to any",
+        "15: \"s\": string to any",
+        "16: t: T to I",
+        "17: 2.5: float64 to any",
         "17: t: T to I",
-        "17: 1: int to any",
-        "17: \"s\": string to any",
         "18: t: T to I",
-        "19: 2.5: float64 to any",
-        "19: p: *T to I",
-        "20: t: T to I",
-        "21: t: T to I",
-        "23: a: T to I",
-        "26: t: T to I",
+        "19: t: T to I",
+        "21: a: T to I",
+        "24: t: T to I",
     ];
-    assert_eq!(iface_conversions("a.go", text), expected);
+    assert_eq!(iface_conversions("a.gopp", text), expected);
 }
 
 // rule: OWN-P5, OWN-P6
 #[test]
-fn a_gopp_body_records_what_of_a_pointer_or_a_handle_is_put_into_an_interface() {
+fn a_body_records_what_of_a_pointer_or_a_handle_is_put_into_an_interface() {
     let text = "package p
 
 type I interface{ m() }
@@ -12821,7 +12215,7 @@ func f(t T, pt *T, pp *P, u Unique[P], s Shared[T], o Option[I]) {
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
-    let checked = check_texts("p", &[("a.go", text)], &Loader::default(), &names);
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
     let package = &checked.package;
     let step = |initializer: &crate::Initializer| {
         let name = |&object| names.resolve(&package.object(object).name);
@@ -12871,19 +12265,14 @@ fn variables_are_initialized_after_what_they_need() {
             "const k = 2\nvar a = k\nvar f = func() int { return b }\nvar b = 1",
             &["a", "b", "f"],
         ),
-        // What a method needs, what names the method needs: called, as a
-        // value, as a function of its receiver, through an embedded field.
+        // What a method needs, what names the method needs: called, or
+        // as a function of its receiver.
         (
             "type T struct{}\nfunc (T) m() int { return b }\nvar a = T{}.m()\nvar b = 1",
             &["b", "a"],
         ),
         (
             "type T struct{}\nfunc (*T) m() int { return b }\nvar a = (*T).m\nvar b = 1",
-            &["b", "a"],
-        ),
-        (
-            "type T struct{}\nfunc (T) m() int { return b }\ntype E struct{ T }\n\
-             var a = E{}.m\nvar b = 1",
             &["b", "a"],
         ),
         // Which method a call through an interface runs is not known.
@@ -12905,53 +12294,53 @@ fn variables_that_need_each_other_are_an_error() {
     let cases: &[(&str, &[&str])] = &[
         (
             "var x = x",
-            &["a.go:2:5: initialization cycle: x refers to itself"],
+            &["a.gopp:2:5: initialization cycle: x refers to itself"],
         ),
         (
             "var a = b\nvar b = a",
             &[
-                "a.go:2:5: initialization cycle for a",
-                "    a.go:2:5: a refers to b",
-                "    a.go:3:5: b refers to a",
+                "a.gopp:2:5: initialization cycle for a",
+                "    a.gopp:2:5: a refers to b",
+                "    a.gopp:3:5: b refers to a",
             ],
         ),
         (
             "var x = f()\nfunc f() int { return g() }\nfunc g() int { return x }",
             &[
-                "a.go:2:5: initialization cycle for x",
-                "    a.go:2:5: x refers to f",
-                "    a.go:3:6: f refers to g",
-                "    a.go:4:6: g refers to x",
+                "a.gopp:2:5: initialization cycle for x",
+                "    a.gopp:2:5: x refers to f",
+                "    a.gopp:3:6: f refers to g",
+                "    a.gopp:4:6: g refers to x",
             ],
         ),
         (
             "const a = b\nconst b = a",
             &[
-                "a.go:2:7: initialization cycle for a",
-                "    a.go:2:7: a refers to b",
-                "    a.go:3:7: b refers to a",
+                "a.gopp:2:7: initialization cycle for a",
+                "    a.gopp:2:7: a refers to b",
+                "    a.gopp:3:7: b refers to a",
             ],
         ),
         // A constant that repeats the value above it needs what that needs.
         (
             "const (\n\ta = c + iota\n\tb\n\tc\n)",
-            &["a.go:5:2: initialization cycle: c refers to itself"],
+            &["a.gopp:5:2: initialization cycle: c refers to itself"],
         ),
         (
             "type T struct{}\nfunc (T) m() int { return x }\nvar x = T{}.m()",
             &[
-                "a.go:4:5: initialization cycle for x",
-                "    a.go:4:5: x refers to m",
-                "    a.go:3:10: m refers to x",
+                "a.gopp:4:5: initialization cycle for x",
+                "    a.gopp:4:5: x refers to m",
+                "    a.gopp:3:10: m refers to x",
             ],
         ),
         (
             "type T struct{}\nfunc (T) m() { _ = y }\nvar x = T.m\nvar y = x",
             &[
-                "a.go:4:5: initialization cycle for x",
-                "    a.go:4:5: x refers to m",
-                "    a.go:3:10: m refers to y",
-                "    a.go:5:5: y refers to x",
+                "a.gopp:4:5: initialization cycle for x",
+                "    a.gopp:4:5: x refers to m",
+                "    a.gopp:3:10: m refers to y",
+                "    a.gopp:5:5: y refers to x",
             ],
         ),
     ];
@@ -12966,7 +12355,13 @@ fn init_and_main_are_plain_functions() {
     let check = |package: &str, body: &str| {
         let text = format!("package {package}\n{body}\n");
         let loader = Loader::default();
-        check_texts(package, &[("a.go", &text)], &loader, &ThreadedRodeo::new()).messages
+        check_texts(
+            package,
+            &[("a.gopp", &text)],
+            &loader,
+            &ThreadedRodeo::new(),
+        )
+        .messages
     };
     assert_eq!(
         check("main", "func init() {}\nfunc init() {}\nfunc main() {}"),
@@ -12979,22 +12374,22 @@ fn init_and_main_are_plain_functions() {
     assert_eq!(
         check("main", "func init(x int) {}\nfunc main() int { return 0 }"),
         [
-            "a.go:2:6: func init must have no arguments and no return values",
-            "a.go:3:6: func main must have no arguments and no return values",
+            "a.gopp:2:6: func init must have no arguments and no return values",
+            "a.gopp:3:6: func main must have no arguments and no return values",
         ]
     );
     assert_eq!(
         check("main", "func init[T any]() {}\nfunc init()"),
         [
-            "a.go:2:11: func init must have no type parameters",
-            "a.go:3:6: func init must have a body",
+            "a.gopp:2:11: func init must have no type parameters",
+            "a.gopp:3:6: func init must have a body",
         ]
     );
     assert_eq!(
         check("main", "var init = 1\ntype main int"),
         [
-            "a.go:2:5: cannot declare init - must be func",
-            "a.go:3:6: cannot declare main - must be func",
+            "a.gopp:2:5: cannot declare init - must be func",
+            "a.gopp:3:6: cannot declare main - must be func",
         ]
     );
 }
@@ -13127,32 +12522,32 @@ func Map[T, U any](xs []T, f func(T) U) []U
 
 #[test]
 fn the_size_of_a_type_that_holds_itself_is_not_asked_forever() {
-    let text = "package p\nimport \"unsafe\"\ntype T struct{ T }\nvar t T\n\
+    let text = "package p\nimport \"unsafe\"\ntype T struct{ t T }\nvar t T\n\
                 const size = unsafe.Sizeof(t)\nvar same = t == t\n";
     let names = ThreadedRodeo::new();
     let mut loader = Loader::default();
     let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
-    let stub = check_texts("unsafe", &[("unsafe.go", stub)], &loader, &names);
+    let stub = check_texts("unsafe", &[("unsafe.gopp", stub)], &loader, &names);
     loader
         .packages
         .insert("unsafe".to_owned(), Arc::new(stub.package));
-    let found = check_texts("p", &[("a.go", text)], &loader, &names).messages;
+    let found = check_texts("p", &[("a.gopp", text)], &loader, &names).messages;
     assert_eq!(
         found,
-        ["a.go:3:6: invalid recursive type: T refers to itself"]
+        ["a.gopp:3:6: invalid recursive type: T refers to itself"]
     );
 }
 
 #[test]
 fn a_name_that_is_no_type_is_refused_as_one() {
     let text = "package p\nconst limit = 3\nvar x limit\nvar y len\nfunc f(a g) {}\nfunc g() {}\n";
-    let (_, messages) = declared("a.go", text);
+    let (_, messages) = declared("a.gopp", text);
     assert_eq!(
         messages,
         [
-            "a.go:3:7: limit is not a type",
-            "a.go:4:7: len is not a type",
-            "a.go:5:10: g is not a type",
+            "a.gopp:3:7: limit is not a type",
+            "a.gopp:4:7: len is not a type",
+            "a.gopp:5:10: g is not a type",
         ]
     );
 }
@@ -13375,7 +12770,7 @@ func f(c Celsius, xs []int32, m map[uint8]string, ch chan complex64) (float32, u
 ";
     let names = ThreadedRodeo::new();
     let loader = Loader::default();
-    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     let types = loader.types.get().unwrap();
     let tree = &checked.files[0];
     let body = &checked.package.files[0].bodies[2];
@@ -13420,336 +12815,6 @@ func f(c Celsius, xs []int32, m map[uint8]string, ch chan complex64) (float32, u
     assert_eq!(lines, expected);
 }
 
-/// The packages of Go's standard library, as built for this machine without
-/// cgo, checked here. Needs `go` on `PATH`.
-fn standard_library(names: &ThreadedRodeo, types: &Types) -> HashMap<String, Arc<Package>> {
-    let format = "{{.ImportPath}}\t{{.Dir}}\t{{join .GoFiles \",\"}}\t\
-                  {{range $from, $to := .ImportMap}}{{$from}}={{$to}},{{end}}";
-    let output = Command::new("go")
-        .args(["list", "-deps", "-f", format, "std"])
-        .env("CGO_ENABLED", "0")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let mut checked: HashMap<String, Arc<Package>> = HashMap::new();
-    for line in std::str::from_utf8(&output.stdout).unwrap().lines() {
-        let fields: Vec<&str> = line.split('\t').collect();
-        let (path, dir) = (fields[0], PathBuf::from(fields[1]));
-        let import_map = fields[3]
-            .split_terminator(',')
-            .filter_map(|pair| pair.split_once('='))
-            .map(|(from, to)| (from.to_owned(), to.to_owned()))
-            .collect();
-        let map = SourceMap::new();
-        let sink = Sink::new(100);
-        let mut sources = Vec::new();
-        let mut files = Vec::new();
-        for name in fields[2].split_terminator(',') {
-            let file = dir.join(name);
-            let bytes = fs::read(&file).unwrap();
-            let id = map.add(SourceFile::from_bytes(file, &bytes, Dialect::Go).unwrap());
-            let source = map.file(id);
-            files.push(parse(id, &source, names, &sink));
-            sources.push(source);
-        }
-        let units: Vec<Unit> = files
-            .iter()
-            .zip(&sources)
-            .map(|(file, source)| Unit { file, source })
-            .collect();
-        let loader = StdLoader {
-            checked: &checked,
-            import_map,
-        };
-        let package = check(path, &units, &loader, names, types, &sink);
-        checked.insert(path.to_owned(), Arc::new(package));
-    }
-    checked
-}
-
-/// The program that compares reported errors with the errors that Go's test
-/// files expect.
-const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerrors/main.go");
-
-/// How many of the errors that the test files of Go's type checker expect
-/// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2694;
-
-/// The errors that Go's test files expect and that are not reported
-/// here, each where Go expects it, by why. One that is reported is taken
-/// out of the list; no other is missing.
-const NOT_REPORTED: &[(&str, &[&str])] = &[
-    (
-        "the functions assert and trace exist only in the tests of Go's type checker",
-        &[
-            "check/builtins0.go:1031:9",
-            "check/builtins0.go:1032:13",
-            "check/builtins0.go:1033:9",
-            "check/builtins0.go:1034:9",
-            "check/builtins0.go:1036:2",
-            "check/builtins0.go:1040:10",
-            "check/builtins0.go:1046:9",
-            "check/builtins0.go:1047:9",
-            "check/builtins0.go:1048:9",
-            "check/builtins0.go:1059:9",
-        ],
-    ),
-    (
-        "the error is reported, with a function type written without the names of its \
-         parameters",
-        &[
-            "fixedbugs/issue46583.go:25:7",
-            "fixedbugs/issue46583.go:27:7",
-            "fixedbugs/issue59740.go:24:25",
-            "fixedbugs/issue60933.go:34:10",
-            "fixedbugs/issue60933.go:35:12",
-        ],
-    ),
-    (
-        "the error is reported, without where the type parameter that is named like a type is \
-         declared",
-        &[
-            "fixedbugs/issue58611.go:13:6",
-            "fixedbugs/issue58611.go:25:15",
-            "fixedbugs/issue58611.go:26:9",
-            "fixedbugs/issue58611.go:26:61",
-        ],
-    ),
-    (
-        "Go's parser says it; this parser reads the form otherwise",
-        &[
-            "check/blank.go:5:9",
-            "check/expr3.go:191:13",
-            "examples/types.go:117:10",
-            "fixedbugs/issue43087.go:27:2",
-            "fixedbugs/issue43124.go:7:13",
-            "fixedbugs/issue43124.go:15:8",
-            "fixedbugs/issue48082.go:7:8",
-        ],
-    ),
-    (
-        "it follows another error of the declaration, which is reported; nothing more is said \
-         of what is in error",
-        &[
-            "check/cycles2.go:68:14",
-            "check/cycles4.go:118:24",
-            "check/cycles5a.go:189:11",
-            "fixedbugs/issue39634.go:30:61",
-            "fixedbugs/issue39634.go:46:11",
-            "fixedbugs/issue39634.go:46:73",
-            "fixedbugs/issue39634.go:46:137",
-            "fixedbugs/issue39634.go:46:195",
-            "fixedbugs/issue39634.go:46:259",
-            "fixedbugs/issue39634.go:73:25",
-            "fixedbugs/issue39634.go:73:25",
-            "fixedbugs/issue39634.go:94:14",
-            "fixedbugs/issue52915.go:23:11",
-            "fixedbugs/issue59890.go:7:12",
-            "fixedbugs/issue59890.go:13:16",
-            "fixedbugs/issue65344.go:10:14",
-        ],
-    ),
-    (
-        "not checked yet",
-        &[
-            // A constant that needs itself through a function literal.
-            "check/constdecl.go:96:7",
-            // A negative index in a literal of an array without a length.
-            "check/expr3.go:261:17",
-            // A call that gives too few values to another call.
-            "check/expr3.go:508:38",
-            "check/typeinference.go:15:6",
-            "check/typeinference.go:26:6",
-            "check/typeinference.go:27:6",
-            // More than 100 terms through the unions that a union embeds.
-            "check/unions.go:61:9",
-            "check/unions.go:65:9",
-            "examples/methods.go:42:37",
-            // A product of constants that is too large.
-            "fixedbugs/issue20583.go:13:17",
-            "fixedbugs/issue46461a.go:21:6",
-            "fixedbugs/issue48582.go:20:2",
-            "fixedbugs/issue48582.go:28:3",
-            "fixedbugs/issue48951.go:20:31",
-            "fixedbugs/issue50929.go:20:4",
-            "fixedbugs/issue50929.go:58:9",
-            "fixedbugs/issue50929.go:63:7",
-            "fixedbugs/issue51232.go:27:9",
-            // An integer literal of more than 512 bits.
-            "fixedbugs/issue54280.go:7:11",
-            "spec/range.go:168:12",
-        ],
-    ),
-];
-
-/// The test files of Go's type checker say where Go reports which error.
-/// Nothing is reported here that they do not expect; what they expect and
-/// is not reported yet is counted. Needs `go` on `PATH`.
-#[test]
-#[ignore = "long: checks Go's standard library and the test files of Go's type checker"]
-fn errors_are_reported_where_go_s_test_files_expect_them() {
-    let names = ThreadedRodeo::new();
-    let types = Types::new(&names);
-    let loader = Loader {
-        packages: standard_library(&names, &types),
-        ..Loader::default()
-    };
-    let goroot = Command::new("go").args(["env", "GOROOT"]).output().unwrap();
-    let goroot = String::from_utf8(goroot.stdout).unwrap();
-    let testdata = PathBuf::from(goroot.trim()).join("src/internal/types/testdata");
-
-    let sorted = |dir: &std::path::Path| {
-        let mut entries: Vec<PathBuf> = fs::read_dir(dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        entries.sort();
-        entries
-    };
-    let mut input = String::new();
-    let mut packages = 0;
-    for dir in ["check", "examples", "fixedbugs", "spec"] {
-        for entry in sorted(&testdata.join(dir)) {
-            // A directory is one package.
-            let paths = match entry.is_dir() {
-                true => sorted(&entry),
-                false => vec![entry.clone()],
-            };
-            let texts: Vec<Vec<u8>> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
-            // The first line may set what the file is checked with: an
-            // older version of Go, or a switch that is off by default.
-            let first = texts[0].split(|&byte| byte == b'\n').next().unwrap();
-            let flags = String::from_utf8_lossy(first);
-            let flags = flags.strip_prefix("//").map_or("", str::trim);
-            let other_language = ["-lang=", "-gotypesalias=0", "-goexperiment", "-fakeImportC"]
-                .iter()
-                .any(|flag| flags.starts_with('-') && flags.contains(flag));
-            if other_language {
-                continue;
-            }
-            packages += 1;
-            let map = SourceMap::new();
-            let sink = Sink::new(10_000);
-            let mut sources = Vec::new();
-            let mut files = Vec::new();
-            for (path, text) in paths.iter().zip(&texts) {
-                input += &format!("file\t{}\n", path.display());
-                let id = map.add(SourceFile::from_bytes(path.clone(), text, Dialect::Go).unwrap());
-                let source = map.file(id);
-                files.push(parse(id, &source, &names, &sink));
-                sources.push(source);
-            }
-            let units: Vec<Unit> = files
-                .iter()
-                .zip(&sources)
-                .map(|(file, source)| Unit { file, source })
-                .collect();
-            let name = entry.file_stem().unwrap().to_str().unwrap();
-            check(name, &units, &loader, &names, &types, &sink);
-            for diagnostic in sink.finish() {
-                // `assert` and `trace` only exist in Go's own test run.
-                if ["undefined: assert", "undefined: trace"].contains(&&*diagnostic.message) {
-                    continue;
-                }
-                let source = map.file(diagnostic.span.file);
-                let place = source.line_col(diagnostic.span.lo);
-                // As Go prints an error: what belongs to it on lines of
-                // its own, after a tab.
-                let mut message = diagnostic.message.clone();
-                for note in &diagnostic.notes {
-                    message += "\n\t";
-                    message += &note.message;
-                }
-                let escaped = message
-                    .replace('\\', "\\\\")
-                    .replace('\n', "\\n")
-                    .replace('\t', "\\t");
-                input += &format!(
-                    "err\t{}\t{}\t{}\t{escaped}\n",
-                    source.path().display(),
-                    place.line,
-                    place.column,
-                );
-            }
-        }
-    }
-
-    let mut compare = Command::new("go")
-        .args(["run", GOERRORS])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    // The program reads all of its input before it prints.
-    std::io::Write::write_all(&mut compare.stdin.take().unwrap(), input.as_bytes()).unwrap();
-    let output = compare.wait_with_output().unwrap();
-    assert!(output.status.success());
-    let report = String::from_utf8(output.stdout).unwrap();
-    // A function type is written here without the names of its
-    // parameters.
-    let known = [
-        "fixedbugs/issue46583.go:24:7: cannot use T1.m (value of type func(T1, int))",
-        "fixedbugs/issue46583.go:25:7: cannot use T2.m (value of type func(T2, int))",
-        "fixedbugs/issue46583.go:26:7: cannot use T3.m (value of type func(T3, int))",
-        "fixedbugs/issue46583.go:27:7: cannot use T4.m (value of type func(T4, int))",
-        "fixedbugs/issue59740.go:24:25: in call to cons, type func(T, List[T]) T of nil[T]",
-        "fixedbugs/issue60933.go:34:10: in call to g, type interface{Write([]byte) (int, error)}",
-        "fixedbugs/issue60933.go:35:12: in call to g, type *os.File of file does not match",
-        // A type parameter that is named like the type next to it is not
-        // told apart by where it is declared.
-        "fixedbugs/issue58611.go:13:6: cannot use 0 (untyped int constant) as int value",
-        "fixedbugs/issue58611.go:25:15: cannot use keys (variable of type []string) as []string",
-        "fixedbugs/issue58611.go:26:61: cannot use keys (variable of type []string) as []string",
-    ];
-    let mut ok = 0;
-    let mut missing = Vec::new();
-    let mut wrong = Vec::new();
-    for line in report.lines() {
-        match line.split_once(' ').unwrap() {
-            ("ok", count) => ok = count.parse().unwrap(),
-            ("missing", expected) => {
-                let place = expected.split(": ERROR").next().unwrap_or(expected);
-                let place = place
-                    .split_once("testdata/")
-                    .map_or(place, |(_, rest)| rest);
-                missing.push(place.to_owned());
-            }
-            _ if known.iter().any(|known| line.contains(known)) => {}
-            _ => wrong.push(line),
-        }
-    }
-    if let Ok(path) = std::env::var("GOPP_ERRORS_REPORT") {
-        fs::write(path, &report).unwrap();
-    }
-    println!(
-        "{packages} packages: {ok} expected errors reported, {} not yet",
-        missing.len()
-    );
-    let shown: Vec<&str> = wrong.iter().take(40).copied().collect();
-    assert!(
-        wrong.is_empty(),
-        "{} errors that Go does not report there\n{}",
-        wrong.len(),
-        shown.join("\n")
-    );
-    assert!(
-        ok >= EXPECTED_ERRORS_REPORTED,
-        "only {ok} expected errors reported"
-    );
-    // Every error that is not reported is known, with why.
-    let mut explained: Vec<&str> = NOT_REPORTED
-        .iter()
-        .flat_map(|(_, places)| places.iter().copied())
-        .collect();
-    explained.sort_unstable();
-    missing.sort_unstable();
-    assert_eq!(missing, explained);
-}
-
 #[test]
 fn a_method_of_a_generic_type_is_checked_with_the_constraints_of_the_type() {
     let text = "package p
@@ -13774,12 +12839,9 @@ func (h *Holder[S, C]) wrong() string {
 	return h.item.Missing() + h.count.String()
 }
 ";
-    // A Go++ file keeps a value in an interface only if its type says
-    // that it is copied and may be given to another goroutine.
-    let held = [
-        ("a.go", "Stringer"),
-        ("a.gopp", "interface{ Stringer; Clone; Send }"),
-    ];
+    // A value is kept in an interface only if its type says that it is
+    // copied and may be given to another goroutine.
+    let held = [("a.gopp", "interface{ Stringer; Clone; Send }")];
     for (name, held) in held {
         let text = &text.replace("HELD", held);
         // The type parameters of the receiver have other names in the

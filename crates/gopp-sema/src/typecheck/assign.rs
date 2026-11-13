@@ -50,13 +50,12 @@ impl<'a> Checker<'a> {
                 return x;
             }
         }
-        // In a `.gopp` file a place takes more than its own type, and an
-        // assignment may write through a pointer.
-        let own = self.own_rules(cx);
-        let writes = own && context == "assignment";
+        // A place takes more than its own type, and an assignment may
+        // write through a pointer.
+        let writes = context == "assignment";
         let place = to;
         let to = match to {
-            Some(to) if own && x.ty == self.types.basic(Basic::UntypedNil) => {
+            Some(to) if x.ty == self.types.basic(Basic::UntypedNil) => {
                 if self.takes_nil(to, writes) {
                     return x;
                 }
@@ -72,7 +71,7 @@ impl<'a> Checker<'a> {
                 }
                 return Operand::UNKNOWN;
             }
-            Some(to) if own && self.is_untyped(x.ty) => Some(self.own_target(to, writes)),
+            Some(to) if self.is_untyped(x.ty) => Some(self.own_target(to, writes)),
             to => to,
         };
         if x.mode == Mode::Value && matches!(&*self.types.get(x.ty), Type::Tuple(_)) {
@@ -109,7 +108,7 @@ impl<'a> Checker<'a> {
                     let message = format!(
                         "cannot use {} as {} value in {context}{why}",
                         self.describe(cx, expr, &x),
-                        self.type_string(place.filter(|_| own).unwrap_or(target))
+                        self.type_string(place.unwrap_or(target))
                     );
                     self.error(Code::CannotAssign, span, message);
                     return Operand::UNKNOWN;
@@ -127,9 +126,9 @@ impl<'a> Checker<'a> {
             }
         }
         if let Some(to) = to
-            && self.unfit(cx, &x, to, writes)
+            && self.unfit(&x, to, writes)
         {
-            if own && self.hierarchy_unfit(cx, expr, &x, to) {
+            if self.hierarchy_unfit(cx, expr, &x, to) {
                 return Operand::UNKNOWN;
             }
             let message = format!(
@@ -139,10 +138,7 @@ impl<'a> Checker<'a> {
             );
             // A `@Convert` method is called where the conversion is
             // written (EXP-25).
-            if self
-                .convert_method(cx, self.read(cx, x.clone()).ty, to)
-                .is_some()
-            {
+            if self.convert_method(self.read(x.clone()).ty, to).is_some() {
                 let written = format!("{}({})", self.type_string(to), self.expr_string(cx, expr));
                 let fix = (Code::NoteOpFix, format!("write {written}"));
                 self.error_with_fix(Code::CannotAssign, span, message, fix);
@@ -156,21 +152,18 @@ impl<'a> Checker<'a> {
         }
         // What an interface does not take is said once.
         let refused = to.is_some_and(|to| {
-            let how = self.gives(context).filter(|_| own);
+            let how = self.gives(context);
             self.note_interface(cx, expr, &x, to, writes, how)
         });
-        // A Go file gives its values the same way: a new owner gets a
-        // copy (ADR-0041).
         if !refused && let Some(how) = self.gives(context) {
             match x.mode {
                 Mode::Variable | Mode::MapIndex => {
                     // The value is of the type that the operand is read as.
-                    let read = to.filter(|_| own);
-                    let read = read.and_then(|to| self.fit_own(&x, to, writes));
+                    let read = to.and_then(|to| self.fit_own(&x, to, writes));
                     let ty = read.map_or(x.ty, |(from, _)| from);
                     self.given(cx, expr, &x, ty, how);
                 }
-                Mode::Value if own => {
+                Mode::Value => {
                     self.slice_given(cx, expr, &x, how);
                     self.lent_from_temporary(cx, expr, &x, to);
                 }
@@ -178,13 +171,6 @@ impl<'a> Checker<'a> {
             }
         }
         x
-    }
-
-    /// Whether the rules of a `.gopp` file hold: a pointer is used like
-    /// what it points to, a value is its own option, a pointer is never
-    /// nil, and an operator may be a method.
-    pub(super) fn own_rules(&self, cx: &Cx<'a>) -> bool {
-        cx.dialect == Dialect::Gopp
     }
 
     /// The one value of `expr`, assigned as `assignment` says.
@@ -401,7 +387,7 @@ impl<'a> Checker<'a> {
         // One of several results is assigned as it is: it has a type.
         if one_of_several {
             return match to {
-                Some(to) if self.unfit(cx, &x, to, false) => {
+                Some(to) if self.unfit(&x, to, false) => {
                     let message = format!(
                         "cannot use {} as {} value in {context}",
                         self.describe(cx, expr, &x),
@@ -438,7 +424,7 @@ impl<'a> Checker<'a> {
             && self.operators.contains_key(&inner)
         {
             let held = self.value(cx, *of);
-            let held = self.read(cx, held);
+            let held = self.read(held);
             x = self
                 .operator_index(cx, inner, *of, &held, indices)
                 .unwrap_or(x);
@@ -450,28 +436,26 @@ impl<'a> Checker<'a> {
         }
         let span = cx.tree.exprs[lhs].span;
         let text = self.expr_string(cx, lhs);
-        // In a `.gopp` file a pointer is written through without a star,
-        // also one that is no variable itself.
-        if self.own_rules(cx) {
-            if let ExprKind::Unary {
-                op: UnaryOp::Star,
-                x: pointer,
-            } = cx.tree.exprs[inner].kind
-            {
-                let message = format!("cannot assign to {text}: a pointer is written without *");
-                let fix = format!("use {}", self.expr_string(cx, pointer));
-                let fix = (Code::NoteOwnFixNoStar, fix);
-                self.error_with_fix(Code::OwnStarOnLeft, span, message, fix);
-                return Some(Types::INVALID);
-            }
-            if self.shared_changed(cx, lhs, "assign to") {
-                return Some(Types::INVALID);
-            }
-            if self.read(cx, x.clone()).ty != x.ty {
-                self.wrote(cx, lhs);
-                self.flow_written(cx, lhs);
-                return Some(x.ty);
-            }
+        // A pointer is written through without a star, also one that is
+        // no variable itself.
+        if let ExprKind::Unary {
+            op: UnaryOp::Star,
+            x: pointer,
+        } = cx.tree.exprs[inner].kind
+        {
+            let message = format!("cannot assign to {text}: a pointer is written without *");
+            let fix = format!("use {}", self.expr_string(cx, pointer));
+            let fix = (Code::NoteOwnFixNoStar, fix);
+            self.error_with_fix(Code::OwnStarOnLeft, span, message, fix);
+            return Some(Types::INVALID);
+        }
+        if self.shared_changed(cx, lhs, "assign to") {
+            return Some(Types::INVALID);
+        }
+        if self.read(x.clone()).ty != x.ty {
+            self.wrote(cx, lhs);
+            self.flow_written(cx, lhs);
+            return Some(x.ty);
         }
         if matches!(x.mode, Mode::Variable | Mode::MapIndex) {
             self.changed(cx, lhs, place::Change::Assigned);
@@ -509,7 +493,7 @@ impl<'a> Checker<'a> {
     /// `lhs = rhs`.
     pub(super) fn assign_vars(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) {
         // A use of the one place in its new value is assigned over.
-        if let ([place], true) = (lhs, self.own_rules(cx))
+        if let [place] = lhs
             && self.is_plain_place(cx, *place)
         {
             self.target = Some(self.expr_string(cx, *place));
@@ -595,7 +579,7 @@ impl<'a> Checker<'a> {
             let to = self.lhs_var(cx, place);
             if let Some(to) = to
                 && value.mode != Mode::Unknown
-                && !self.unfit(cx, &value, to, true)
+                && !self.unfit(&value, to, true)
             {
                 self.note_part_interface(cx, (rhs[0], at), &value, to);
             }
@@ -606,7 +590,7 @@ impl<'a> Checker<'a> {
             }
             if let Some(to) = to
                 && value.mode != Mode::Unknown
-                && self.unfit(cx, &value, to, true)
+                && self.unfit(&value, to, true)
             {
                 let message = format!(
                     "cannot use {} as {} value in assignment",
@@ -616,7 +600,7 @@ impl<'a> Checker<'a> {
                 self.error(Code::CannotAssign, cx.tree.exprs[rhs[0]].span, message);
             }
         }
-        self.flow_guards(cx, &places, &types);
+        self.flow_guards(&places, &types);
     }
 
     /// A declaration of `names` with the values `values` has as many
@@ -669,7 +653,7 @@ impl<'a> Checker<'a> {
         match values {
             [] => {
                 if let Some(declared) = declared {
-                    self.declared_unset(cx, names, declared);
+                    self.declared_unset(names, declared);
                     self.flow_declared_nil(cx, names);
                 }
                 vec![or_declared(Types::INVALID); count]
@@ -715,8 +699,7 @@ impl<'a> Checker<'a> {
         declared: Option<TypeId>,
         expr: ExprId,
     ) -> Operand {
-        let own = self.own_rules(cx);
-        let outer = std::mem::replace(&mut self.in_const, own);
+        let outer = std::mem::replace(&mut self.in_const, true);
         let x = self.value(cx, expr);
         self.in_const = outer;
         // A constant that is declared with a type has that type whatever
@@ -730,7 +713,6 @@ impl<'a> Checker<'a> {
         }
         // An option that is nil is a constant (EXP-31).
         if let Some(ty) = declared
-            && self.own_rules(cx)
             && x.ty == self.types.basic(Basic::UntypedNil)
             && matches!(&*self.types.get(self.types.underlying(ty)), Type::Option(_))
         {
@@ -750,7 +732,7 @@ impl<'a> Checker<'a> {
             return unknown;
         };
         // A constant that is made of others is held as it is.
-        if self.basic_of(ty).is_none() && self.own_rules(cx) {
+        if self.basic_of(ty).is_none() {
             return Operand::constant(ty, value);
         }
         match self.converted(&value, ty) {
@@ -767,7 +749,7 @@ impl<'a> Checker<'a> {
             return ty;
         }
         // In a `.gopp` file a constant may be made of others (EXP-31).
-        if under != Types::INVALID && self.own_rules(cx) {
+        if under != Types::INVALID {
             return match self.not_constant_type(cx, expr, ty) {
                 true => Types::INVALID,
                 false => ty,

@@ -133,8 +133,7 @@ impl<'a> Checker<'a> {
             return;
         }
         // No interface value holds what cannot be copied (TYP-9).
-        if self.own_rules(cx)
-            && let Some((part, why)) = self.types.not_copied(ty, true)
+        if let Some((part, why)) = self.types.not_copied(ty, true)
             && !self.open(part)
         {
             let message = format!(
@@ -146,7 +145,7 @@ impl<'a> Checker<'a> {
             let span = cx.tree.exprs[at].span;
             return self.error(Code::OwnBoxNeedsOwnership, span, message);
         }
-        if self.own_rules(cx) && self.owned_by_interface(ty, x.ty) {
+        if self.owned_by_interface(ty, x.ty) {
             return;
         }
         let Some(cause) = self.lacking_cause(ty, x.ty) else {
@@ -201,10 +200,7 @@ impl<'a> Checker<'a> {
             return false;
         }
         let place = to;
-        let fit = match self.own_rules(cx) {
-            true => self.fit_own(x, to, writes),
-            false => Some((x.ty, to)),
-        };
+        let fit = self.fit_own(x, to, writes);
         let into = fit.and_then(|(from, to)| self.types.into_interface(from, to, self.names));
         match into.filter(|&(_, from, _)| !self.open(from)) {
             Some((IntoInterface::Changed, from, to)) => {
@@ -213,7 +209,7 @@ impl<'a> Checker<'a> {
             }
             Some((IntoInterface::Put, from, to)) => {
                 self.iface_conversions.insert(expr, (from, to));
-                self.own_rules(cx) && self.boxed(cx, (expr, x), (from, to), place, how)
+                self.boxed(cx, (expr, x), (from, to), place, how)
             }
             None => false,
         }
@@ -238,7 +234,7 @@ impl<'a> Checker<'a> {
         };
         self.part_conversions
             .insert((expr, at as u32), (from, into));
-        if how == IntoInterface::Put && self.own_rules(cx) {
+        if how == IntoInterface::Put {
             self.boxed(cx, (expr, x), (from, into), to, None);
         }
     }

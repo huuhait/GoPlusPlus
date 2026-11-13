@@ -142,9 +142,9 @@ pub enum TokenKind {
     Semi,
     #[token(":")]
     Colon,
-    #[token("#", lexer::gopp_only)]
+    #[token("#")]
     Hash,
-    #[token("@", lexer::gopp_only)]
+    #[token("@")]
     At,
 
     Break,
@@ -181,7 +181,7 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    /// The keyword spelled `word`, if any. `macro` is one only in Go++ files.
+    /// The keyword spelled `word`, if any.
     pub(crate) fn keyword(word: &str) -> Option<Self> {
         Some(match word {
             "break" => Self::Break,

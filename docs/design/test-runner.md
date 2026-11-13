@@ -109,7 +109,7 @@ Because C libraries hold opaque internal state (`rand`, `strtok`, `setlocale`, `
 
 ## The run tests (`tests/run`)
 
-A program of the suite is a `.gopp` or a `.go` file in `tests/run`. Beside it, `NAME.out` has what it writes, the standard error stream in the standard output in the order of the writes (`merge_output`); a first line `// exit: N` in the program says the status that it ends with, 0 without one. The offsets of a trace are written `+0x?`. `crates/gopp-cli/tests/run.rs` gives every program to one `gopp test-run` and compares each result; `GOPP_RUN_UPDATE=1` writes the `.out` files anew. The suite uses the fast way by default and real executables with `GOPP_FAST_RUN=0`.
+A program of the suite is a `.gopp` file in `tests/run`. Beside it, `NAME.out` has what it writes, the standard error stream in the standard output in the order of the writes (`merge_output`); a first line `// exit: N` in the program says the status that it ends with, 0 without one. The offsets of a trace are written `+0x?`. `crates/gopp-cli/tests/run.rs` gives every program to one `gopp test-run` and compares each result; `GOPP_RUN_UPDATE=1` writes the `.out` files anew. The suite uses the fast way by default and real executables with `GOPP_FAST_RUN=0`.
 
 ## Tests and times
 

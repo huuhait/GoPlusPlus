@@ -12,7 +12,7 @@ impl<'a> Checker<'a> {
     /// The condition of an `if` or a `for` statement is a boolean.
     pub(super) fn condition(&mut self, cx: &Cx<'a>, cond: ExprId, statement: &str) {
         let x = self.value(cx, cond);
-        let x = self.read(cx, x);
+        let x = self.read(x);
         if x.mode != Mode::Unknown && !self.all_boolean(x.ty) {
             let message = format!("non-boolean condition in {statement} statement");
             self.error(Code::NonBooleanCondition, cx.tree.exprs[cond].span, message);
@@ -62,12 +62,12 @@ impl<'a> Checker<'a> {
         };
         let x = self.value(cx, tag);
         let x = self.assignment(cx, tag, x, None, "switch expression");
-        let x = self.read(cx, x);
+        let x = self.read(x);
         let compared = x.mode == Mode::Unknown
             || self.types.comparable(x.ty)
-            || self.types.has_nil(x.ty, Dialect::Go)
+            || self.types.nil_kind(x.ty)
             || self.types.has_param(x.ty)
-            || !self.operator_methods(cx, x.ty, "Eq").is_empty();
+            || !self.operator_methods(x.ty, "Eq").is_empty();
         if !compared {
             let message = format!(
                 "cannot switch on {} ({} is not comparable)",
@@ -100,7 +100,7 @@ impl<'a> Checker<'a> {
         }
         // The case is compared with the tag as `tag == case` is.
         if let Some(tag) = tag {
-            let read = self.read(cx, v.clone());
+            let read = self.read(v.clone());
             if self.operator_case(cx, (tag, x), (case, &read)) {
                 return;
             }
@@ -108,12 +108,12 @@ impl<'a> Checker<'a> {
         if !self.convert_untyped(cx, case, &mut v, x.ty, true) {
             return;
         }
-        let v = self.read(cx, v);
+        let v = self.read(v);
         let span = cx.tree.exprs[case].span;
         if v.ty == Types::INVALID || x.ty == Types::INVALID {
             return;
         }
-        if let Some((_, cause, code)) = self.uncomparable(cx, BinaryOp::Eq, &v, x) {
+        if let Some((_, cause, code)) = self.uncomparable(BinaryOp::Eq, &v, x) {
             let message = format!(
                 "invalid case {} in switch on {} ({cause})",
                 self.expr_string(cx, case),
@@ -260,7 +260,7 @@ impl<'a> Checker<'a> {
     pub(super) fn range_clause(&mut self, cx: &Cx<'a>, lhs: &[ExprId], define: bool, of: ExprId) {
         let tree = cx.tree;
         let x = self.value(cx, of);
-        let x = self.read(cx, x);
+        let x = self.read(x);
         let x = self.operator_iter(cx, of, x);
         let span = |expr: ExprId| tree.exprs[expr].span;
         let mut given = None;
@@ -325,7 +325,7 @@ impl<'a> Checker<'a> {
                     let assigned =
                         self.assignment(cx, target, Operand::value(ty), Some(to), "assignment");
                     self.note_write(cx, target, to, Some(&assigned));
-                    if holds && self.own_rules(cx) {
+                    if holds {
                         self.range_copies(cx, of, &x, target, ty);
                     }
                     continue;

@@ -58,8 +58,8 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         }
         // A `@Convert` method of the type gives the value.
-        let read = self.read(cx, x.clone());
-        if self.operator_convert(cx, call, &read, target) {
+        let read = self.read(x.clone());
+        if self.operator_convert(call, &read, target) {
             return Operand::value(target);
         }
         let span = cx.tree.exprs[arg].span;

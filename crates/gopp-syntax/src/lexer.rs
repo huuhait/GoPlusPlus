@@ -7,7 +7,7 @@ mod string;
 use std::mem;
 
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::{Dialect, FileId, SourceFile, Span};
+use gopp_span::{FileId, SourceFile, Span};
 use logos::{Filter, Lexer, Logos};
 
 use crate::constraint::go_build_text;
@@ -24,7 +24,6 @@ pub struct Lexed {
 /// What the token callbacks share while one file is scanned.
 pub struct Scan {
     file: FileId,
-    dialect: Dialect,
     invalid_utf8: Vec<u32>,
     /// Go's rule: the last token on a line decides whether the line end is a `;`.
     insert_semi: bool,
@@ -95,7 +94,6 @@ pub fn lex(file: FileId, source: &SourceFile, sink: &Sink) -> Lexed {
 
     let mut scan = Scan {
         file,
-        dialect: source.dialect(),
         invalid_utf8: source.invalid_utf8().to_vec(),
         insert_semi: false,
         past_header: false,
@@ -183,11 +181,7 @@ fn bump_identifier(lexer: &mut Lexer<TokenKind>) {
 
 pub(crate) fn word(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     bump_identifier(lexer);
-    match TokenKind::keyword(lexer.slice()) {
-        Some(TokenKind::Macro) if lexer.extras.dialect == Dialect::Go => TokenKind::Ident,
-        Some(keyword) => keyword,
-        None => TokenKind::Ident,
-    }
+    TokenKind::keyword(lexer.slice()).unwrap_or(TokenKind::Ident)
 }
 
 pub(crate) fn non_ascii(lexer: &mut Lexer<TokenKind>) -> Filter<TokenKind> {
@@ -227,19 +221,6 @@ pub(crate) fn illegal(lexer: &mut Lexer<TokenKind>) -> TokenKind {
         report_illegal(lexer);
     }
     TokenKind::Skipped
-}
-
-/// `#` or `@`.
-pub(crate) fn gopp_only(lexer: &mut Lexer<TokenKind>) -> TokenKind {
-    if lexer.extras.dialect == Dialect::Go {
-        report_illegal(lexer);
-        return TokenKind::Skipped;
-    }
-    if lexer.slice() == "#" {
-        TokenKind::Hash
-    } else {
-        TokenKind::At
-    }
 }
 
 pub(crate) fn number(lexer: &mut Lexer<TokenKind>) -> TokenKind {
@@ -291,10 +272,9 @@ pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
         lo: lexer.span().start as u32,
         hi: lexer.span().end as u32,
     };
-    // In a `.gopp` file Go's build line would be a comment like any other,
-    // and the file would be built for every system.
-    if scan.dialect == Dialect::Gopp
-        && !scan.past_header
+    // Go's build line would be a comment like any other, and the file
+    // would be built for every system.
+    if !scan.past_header
         && let Some(condition) = go_build_text(comment)
     {
         let message = format!(

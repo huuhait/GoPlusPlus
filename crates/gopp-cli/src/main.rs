@@ -58,10 +58,7 @@ enum Command {
         /// Write the result to the file when its layout is not canonical
         #[arg(short)]
         w: bool,
-        /// Read standard input as plain Go, not as Go++
-        #[arg(long)]
-        go: bool,
-        /// Files, and directories to format every .go and .gopp file under;
+        /// Files, and directories to format every .gopp file under;
         /// with none, standard input is formatted to standard output
         paths: Vec<PathBuf>,
     },
@@ -229,13 +226,13 @@ fn run() -> ExitCode {
             emit, batch: true, ..
         } => parse::run_batch(emit),
         Command::Parse { emit, files, .. } => parse::run(&files, emit),
-        Command::Fmt { l, d, w, go, paths } => {
+        Command::Fmt { l, d, w, paths } => {
             let mode = fmt::Mode {
                 list: l,
                 diff: d,
                 write: w,
             };
-            fmt::run(&paths, mode, go)
+            fmt::run(&paths, mode)
         }
         Command::Check { json, emit, paths } => check::run(&paths, json, emit.is_some()),
         Command::Build {

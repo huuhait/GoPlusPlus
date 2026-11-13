@@ -180,8 +180,8 @@ impl Parser<'_> {
     }
 
     /// A comma-separated list of types that may end in a comma; without
-    /// `strict` the first may be any expression, and in a Go++ file every
-    /// one: `m[i, j+1]` is an index list (EXP-22). Says whether a comma
+    /// `strict` each may be any expression: `m[i, j+1]` is an index list
+    /// (EXP-22). Says whether a comma
     /// was seen.
     pub(super) fn type_list(&mut self, strict: bool) -> (Vec<ExprId>, bool) {
         self.expr_level += 1;
@@ -189,7 +189,7 @@ impl Parser<'_> {
         let mut comma = false;
         while self.got(T::Comma) {
             comma = true;
-            if !strict && self.gopp {
+            if !strict {
                 if self.at(T::RBrack) {
                     break;
                 }
@@ -231,7 +231,6 @@ impl Parser<'_> {
             let code = match context {
                 "function type" => Some(Code::FuncTypeTypeParams),
                 "interface method" => Some(Code::InterfaceMethodTypeParams),
-                "method" if !self.gopp => Some(Code::MethodTypeParams),
                 _ => None,
             };
             if let Some(code) = code {
@@ -246,7 +245,7 @@ impl Parser<'_> {
                 type_params = self.type_param_list(None, None);
             }
         }
-        let fails = self.gopp && self.got(T::Bang);
+        let fails = self.got(T::Bang);
         self.want(T::LParen);
         let params = self.param_list(T::RParen);
         let results = self.func_result();
@@ -588,14 +587,14 @@ impl Parser<'_> {
                 return None;
             }
         };
-        if names.is_empty() && self.gopp {
+        if names.is_empty() {
             let span = self.span_from(lo);
             let message = "struct embedding is not part of Go++: use `@Extends` to inherit from \
                            a struct, or give the field a name";
             self.error_at(Code::StructEmbedding, span, message);
         }
         let mut attrs = Vec::new();
-        while self.gopp && self.at(T::At) {
+        while self.at(T::At) {
             let attr = self.attribute();
             if is_build(&attr, self.text) {
                 let message = "@Build is for a file or a top level declaration, not for a field";
@@ -633,7 +632,7 @@ impl Parser<'_> {
         let name = self.ident();
         let ty = match self.kind() {
             T::LParen => return self.method_elem(name),
-            T::Bang if self.gopp && self.peek(1) == T::LParen => return self.method_elem(name),
+            T::Bang if self.peek(1) == T::LParen => return self.method_elem(name),
             T::LBrack => {
                 // A generic method `m[T C](x T)` (an error) or an embedded
                 // instantiated type `T[P1, P2]`.

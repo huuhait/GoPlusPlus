@@ -115,14 +115,9 @@ impl Types {
 
     /// Whether a place whose value is given to a new owner as a value
     /// of the type is marked with how it is given (`Body::var_modes`):
-    /// a value that is copied by its bytes has no mark, and a Go file
-    /// (`own_rules` not set) marks only what is copied.
-    pub fn given_is_marked(&self, ty: TypeId, own_rules: bool) -> bool {
-        match self.category(ty) {
-            Category::Trivial => false,
-            Category::Copyable => true,
-            Category::NoCopy => own_rules,
-        }
+    /// a value that is copied by its bytes has no mark.
+    pub fn given_is_marked(&self, ty: TypeId) -> bool {
+        self.category(ty) != Category::Trivial
     }
 
     /// Whether a value of the type holds something that is ended with

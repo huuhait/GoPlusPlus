@@ -31,7 +31,7 @@ mod place;
 mod stmt;
 
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::{Dialect, Span};
+use gopp_span::Span;
 use gopp_syntax::ast::{self, *};
 use lasso::{Spur, ThreadedRodeo};
 use rayon::prelude::*;
@@ -59,7 +59,6 @@ struct Cx<'a> {
     body: &'a Body,
     source: &'a gopp_span::SourceFile,
     text: &'a str,
-    dialect: Dialect,
     /// The index of the constant in its group, inside a constant
     /// declaration.
     iota: Option<i64>,
@@ -341,8 +340,6 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
-    /// While the signature of a method is worked out.
-    in_method_sig: bool,
     /// What runs the `@Const` functions, if the driver gave one.
     evaluator: Option<&'a dyn crate::consteval::ConstEvaluator>,
     /// While the value of a constant is worked out.
@@ -424,9 +421,6 @@ struct Checker<'a> {
     /// written, with where they are written: the names of its methods are
     /// checked once every type is known.
     interfaces: Vec<Vec<(Result<Method, TypeId>, Span)>>,
-    /// The type of each embedded field that was written, with where: what
-    /// may be embedded is checked once every type is known.
-    embedded_fields: Vec<(TypeId, Span)>,
     /// The interface types that were written for variables, with where:
     /// that none is a constraint is checked once every type is known.
     var_types: Vec<(TypeId, Span)>,
@@ -630,7 +624,6 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
-        in_method_sig: false,
         evaluator,
         in_const: false,
         const_fn: None,
@@ -669,7 +662,6 @@ pub fn declarations(
         iface_changes: FxHashMap::default(),
         part_conversions: FxHashMap::default(),
         interfaces: Vec::new(),
-        embedded_fields: Vec::new(),
         var_types: Vec::new(),
         unions: Vec::new(),
         instances: Vec::new(),
@@ -1095,7 +1087,6 @@ impl<'a> Checker<'a> {
             body: decl.body,
             source: decl.unit.source,
             text: decl.unit.source.text(),
-            dialect: decl.unit.source.dialect(),
             iota,
             params: FxHashMap::default(),
         }
@@ -1136,9 +1127,7 @@ impl<'a> Checker<'a> {
         let incomplete = self.incomplete;
         let outer = std::mem::replace(&mut self.in_type_params, true);
         for (param, &ty) in type_params.iter().zip(params) {
-            if cx.dialect == Dialect::Gopp {
-                self.types.set_elements(ty);
-            }
+            self.types.set_elements(ty);
             let mut constraint = self.typ(cx, param.bound);
             if matches!(&*self.types.get(constraint), Type::Param(_)) {
                 let message = "cannot use a type parameter as constraint".to_owned();
@@ -1312,9 +1301,6 @@ impl<'a> Checker<'a> {
         self.to_validate.clear();
         for written in std::mem::take(&mut self.interfaces) {
             self.interface_methods(&written);
-        }
-        for (ty, span) in std::mem::take(&mut self.embedded_fields) {
-            self.embedded_field(ty, span);
         }
         for (ty, span) in std::mem::take(&mut self.var_types) {
             self.no_constraint(ty, span);
@@ -1917,9 +1903,9 @@ impl<'a> Checker<'a> {
         if self.types.is_interface(ty) || matches!(&*self.types.get(ty), Type::Marker(_)) {
             self.var_types.push((ty, cx.tree.exprs[expr].span));
         }
-        // In a `.gopp` file a value is of no abstract type, and a type
-        // parameter that a declaration holds by value takes none.
-        if cx.dialect == Dialect::Gopp && !matches!(&*self.types.get(ty), Type::Basic(_)) {
+        // A value is of no abstract type, and a type parameter that a
+        // declaration holds by value takes none.
+        if !matches!(&*self.types.get(ty), Type::Basic(_)) {
             self.value_types
                 .push((ty, cx.tree.exprs[expr].span, self.memo.is_some()));
         }
@@ -2109,10 +2095,6 @@ impl<'a> Checker<'a> {
                             .map(|name| (name.name, name.span))
                             .collect(),
                     };
-                    // A `.gopp` file has no embedded fields at all.
-                    if embedded && cx.dialect == Dialect::Go {
-                        self.embedded_fields.push((ty, tree.exprs[field.ty].span));
-                    }
                     for (name, span) in names {
                         self.field_once(&mut declared, name, span);
                         all.push(Field {
@@ -2294,9 +2276,6 @@ impl<'a> Checker<'a> {
                 args,
                 spans: spans.collect(),
                 at,
-                // Go follows no instance that only the signature of a
-                // method names (GEN-13).
-                skip_cycle: cx.dialect == Dialect::Go && self.in_method_sig,
             });
             return instance;
         }
@@ -2397,8 +2376,7 @@ impl<'a> Checker<'a> {
             }
             // The length of an array is a constant expression (EXP-32).
             _ => {
-                let own = self.own_rules(cx);
-                let outer = std::mem::replace(&mut self.in_const, own);
+                let outer = std::mem::replace(&mut self.in_const, true);
                 let x = self.value(cx, expr);
                 self.in_const = outer;
                 x
@@ -2407,7 +2385,7 @@ impl<'a> Checker<'a> {
         let what = match &x.mode {
             Mode::Unknown => return None,
             // What a `@Const` function gives is known where it is run.
-            Mode::Const(Value::Unknown) if self.own_rules(cx) => return None,
+            Mode::Const(Value::Unknown) => return None,
             Mode::Const(value) => {
                 let integer = self.is_integer(x.ty);
                 if integer || self.is_untyped(x.ty) {
@@ -2585,7 +2563,7 @@ impl<'a> Checker<'a> {
         } else if !self.types.is_interface(x.ty) {
             // A pointer to a type with a type table says what it points
             // to (EXP-15).
-            match self.pointee_with_table(cx, &x) {
+            match self.pointee_with_table(&x) {
                 Some(true) => return Some(x),
                 Some(false) => {
                     let message = format!(
@@ -2746,19 +2724,18 @@ impl<'a> Checker<'a> {
         }
         // In a `.gopp` file a field or a method is reached through every
         // kind of pointer.
-        if self.own_rules(cx)
-            && x.is_value()
+        if x.is_value()
             && let Some(method) = self.handle_method(&x, sel.name)
         {
             return method;
         }
         let recv = x.ty;
-        let x = self.read(cx, x);
+        let x = self.read(x);
         let found = self
             .types
             .lookup(x.ty, sel.name, self.path, self.names, false);
         let folded = match (&x.mode, &found) {
-            (Mode::Const(held), Ok(found)) if self.own_rules(cx) && !found.indirect => {
+            (Mode::Const(held), Ok(found)) if !found.indirect => {
                 Some(self.constant_field(held, &found.path))
             }
             _ => None,
@@ -2773,7 +2750,7 @@ impl<'a> Checker<'a> {
                 };
                 // The method that ends a value runs by itself (OWN-R7).
                 let method = matches!(found.member, Member::Method { .. });
-                if method && self.own_rules(cx) && self.names.resolve(&sel.name) == "drop" {
+                if method && self.names.resolve(&sel.name) == "drop" {
                     let message = format!(
                         "cannot use {}: drop runs when a value ends, and is not called",
                         self.expr_string(cx, expr)
@@ -2818,23 +2795,12 @@ impl<'a> Checker<'a> {
                 }
             }
             (
-                mode,
+                _,
                 Some(Member::Method {
                     sig,
                     pointer_receiver,
                 }),
             ) if x.is_value() => {
-                // A method that needs the address of its receiver is
-                // called on what has one.
-                if pointer_receiver && *mode != Mode::Variable && !self.own_rules(cx) {
-                    let message = format!(
-                        "cannot call pointer method {} on {}",
-                        self.names.resolve(&sel.name),
-                        self.type_string(x.ty)
-                    );
-                    self.error(Code::MethodExprPointerReceiver, sel.span, message);
-                    return Operand::UNKNOWN;
-                }
                 self.method_selected(cx, (expr, sel.name), base, &x, pointer_receiver);
                 Operand::value(sig)
             }
@@ -3111,16 +3077,13 @@ impl<'a> Checker<'a> {
         };
         self.callee = outer;
         self.method_values.remove(&called);
-        let callee = match self.own_rules(cx) {
-            true => self.operator_by_name(cx, expr, called, callee, args),
-            false => callee,
-        };
+        let callee = self.operator_by_name(cx, expr, called, callee, args);
         let callee = self.instantiated(cx, fun, callee);
-        // In a `.gopp` file a function is called through a pointer; an
-        // option that is known to be set is the function already.
+        // A function is called through a pointer; an option that is known
+        // to be set is the function already.
         let callee = match &*self.types.get(self.types.underlying(callee.ty)) {
             Type::Pointer(_) | Type::Unique(_) | Type::Shared(_) | Type::Local(_) => {
-                self.read(cx, callee)
+                self.read(callee)
             }
             _ => callee,
         };
@@ -3218,7 +3181,7 @@ impl<'a> Checker<'a> {
                 self.taken(cx, (expr, args), fun, &called);
                 self.foreign_arguments(cx, fun, args);
                 self.pure_call(cx, fun);
-                match self.in_const && self.own_rules(cx) {
+                match self.in_const {
                     true => self.constant_call(cx, expr, fun, args, called),
                     false => called,
                 }
@@ -3507,9 +3470,7 @@ impl<'a> Checker<'a> {
         self.shifted.clear();
         self.memo = Some(FxHashMap::default());
         self.current.clear();
-        if self.own_rules(&cx) {
-            self.decl_attributes(&cx, &tree.decl_nodes[decl]);
-        }
+        self.decl_attributes(&cx, &tree.decl_nodes[decl]);
         match &tree.decl_nodes[decl].kind {
             DeclKind::Func {
                 receiver,
@@ -3574,13 +3535,11 @@ impl<'a> Checker<'a> {
                 // The body of a `@Const` function is held to what a
                 // constant expression may do (EXP-33).
                 let marks = self.marks(&cx, &tree.decl_nodes[decl].attrs);
-                let is_const = self.own_rules(&cx) && marks.has(crate::types::Marks::CONST);
+                let is_const = marks.has(crate::types::Marks::CONST);
                 self.const_fn = is_const.then_some(name.name);
                 self.around.extend(&own);
-                self.in_method_sig = receiver.is_some();
                 self.signature_locals(&cx, *ty);
                 let sig = self.typ(&cx, *ty);
-                self.in_method_sig = false;
                 self.function_body(&cx, *ty, sig, block);
                 self.const_fn = None;
                 self.around.clear();
@@ -3596,18 +3555,10 @@ impl<'a> Checker<'a> {
                 ty,
                 body: None,
                 ..
-            } => {
-                // In a Go++ file the packages that the compiler provides
-                // are declared so.
-                if !type_params.is_empty() && cx.dialect == Dialect::Go {
-                    let message = "generic function is missing function body".to_owned();
-                    self.error(Code::GenericNoBody, name.span, message);
-                }
-                if !self.by_span.contains_key(&name.span) {
-                    self.declare_params(&mut cx, type_params);
-                    self.signature_locals(&cx, *ty);
-                    self.typ(&cx, *ty);
-                }
+            } if !self.by_span.contains_key(&name.span) => {
+                self.declare_params(&mut cx, type_params);
+                self.signature_locals(&cx, *ty);
+                self.typ(&cx, *ty);
             }
             // The value of a constant is worked out with its
             // declaration; variables are walked here too, for the
@@ -3616,7 +3567,7 @@ impl<'a> Checker<'a> {
                 let declared = ty.map(|ty| self.var_type(&cx, ty));
                 self.arity(&cx, names, values, None);
                 if let (Some(declared), true) = (declared, values.is_empty()) {
-                    self.declared_unset(&cx, names, declared);
+                    self.declared_unset(names, declared);
                 }
                 let objects = |this: &Self, names: &[Ident]| -> Vec<usize> {
                     let object = |name: &Ident| this.by_span.get(&name.span).copied();
@@ -3738,9 +3689,7 @@ impl<'a> Checker<'a> {
         let results = match &*self.types.get(sig) {
             Type::Func { results, .. } => {
                 let unset = match &results[..] {
-                    [rest @ .., last]
-                        if !fails && *last == self.types.error() && self.own_rules(cx) =>
-                    {
+                    [rest @ .., last] if !fails && *last == self.types.error() => {
                         self.steps += rest.len() as u64;
                         rest.iter().copied().find(|&ty| self.may_lack_zero(ty))
                     }
@@ -3888,13 +3837,7 @@ impl<'a> Checker<'a> {
                 };
                 let text = self.names.resolve(&name.name);
                 let doing = format!("cannot name the result {text}");
-                self.zero_needed(
-                    cx,
-                    name.span,
-                    ty,
-                    &doing,
-                    "declare the result without a name",
-                );
+                self.zero_needed(name.span, ty, &doing, "declare the result without a name");
             }
         }
     }
@@ -3954,7 +3897,7 @@ impl<'a> Checker<'a> {
             }
             StmtKind::IncDec { x, inc } => {
                 let operand = self.value(cx, *x);
-                let operand = self.read(cx, operand);
+                let operand = self.read(operand);
                 if operand.mode == Mode::Unknown {
                     return;
                 }

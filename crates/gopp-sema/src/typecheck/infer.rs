@@ -504,13 +504,10 @@ impl<'a> Checker<'a> {
             read,
             place: None,
         };
-        let found = match self.own_rules(cx) {
-            true => self
-                .infer(cx, at, &generic, &wanted, args, how(true, false))
-                .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(true, true)))
-                .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(false, false))),
-            false => self.infer(cx, at, &generic, &wanted, args, how(false, false)),
-        }?;
+        let found = self
+            .infer(cx, at, &generic, &wanted, args, how(true, false))
+            .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(true, true)))
+            .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(false, false)))?;
         let instance = self.types.substitute(generic.sig, &generic.params, &found);
         self.note_instance(fun, &found[..own], instance);
         self.instances.push(Instance {
@@ -518,7 +515,6 @@ impl<'a> Checker<'a> {
             args: found,
             spans: generic.written.iter().map(|&(_, span)| span).collect(),
             at: call,
-            skip_cycle: false,
         });
         Some(instance)
     }
@@ -575,7 +571,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let ty = match read {
-                true => self.read(cx, x.clone()).ty,
+                true => self.read(x.clone()).ty,
                 false => x.ty,
             };
             // What an argument that does not fit found stays found, for
@@ -904,7 +900,6 @@ impl<'a> Checker<'a> {
             args: found,
             spans: generic.written.iter().map(|&(_, span)| span).collect(),
             at: span,
-            skip_cycle: false,
         });
         if let Some(memo) = &mut self.memo {
             memo.insert(expr, Operand::value(instance));

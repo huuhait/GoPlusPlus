@@ -14,9 +14,6 @@ impl<'a> Checker<'a> {
     /// Reads the `@Extends` attributes of the declaration of `named`: its
     /// parents, in their order, written with its type parameters.
     pub(super) fn inherit(&mut self, cx: &Cx<'a>, named: NamedId, attrs: &'a [Attribute]) {
-        if cx.dialect != Dialect::Gopp {
-            return;
-        }
         let mut parents = Vec::new();
         for attr in attrs {
             if !self.marked(cx, attr, "Extends") {
@@ -67,10 +64,8 @@ impl<'a> Checker<'a> {
                         attrs,
                         ..
                     },
-                unit,
                 ..
             }) = self.decls[object]
-                && unit.source.dialect() == Dialect::Gopp
             {
                 types.push((self.ty[object], self.package.objects[object].span, attrs));
             }
@@ -100,10 +95,7 @@ impl<'a> Checker<'a> {
                 self.hierarchy(ty, span, attrs);
             }
         }
-        for unit in units
-            .iter()
-            .filter(|unit| unit.source.dialect() == Dialect::Gopp)
-        {
+        for unit in units {
             self.overrides(*unit);
         }
     }
@@ -765,10 +757,7 @@ impl<'a> Checker<'a> {
 
     /// Whether the pointer or the handle `x` points to a declared type
     /// with a type table; `None` if it is no such pointer.
-    pub(super) fn pointee_with_table(&self, cx: &Cx<'a>, x: &Operand) -> std::option::Option<bool> {
-        if !self.own_rules(cx) {
-            return None;
-        }
+    pub(super) fn pointee_with_table(&self, x: &Operand) -> std::option::Option<bool> {
         let pointee = match &*self.types.get(self.types.underlying(x.ty)) {
             Type::Pointer(elem) | Type::Unique(elem) | Type::Shared(elem) => *elem,
             _ => return None,
@@ -808,7 +797,7 @@ impl<'a> Checker<'a> {
     /// A literal of an abstract type is no value, unless it is the part
     /// of a child that a literal of the child sets (TYP-19).
     pub(super) fn literal_of_abstract(&mut self, cx: &Cx<'a>, expr: ExprId, base: TypeId) {
-        if !self.own_rules(cx) || self.parent_part || !self.types.is_abstract(base, self.names) {
+        if self.parent_part || !self.types.is_abstract(base, self.names) {
             return;
         }
         let message = format!(
@@ -852,7 +841,7 @@ impl<'a> Checker<'a> {
     /// and names nothing in a type without parents (TYP-20).
     pub(super) fn base_alone(&mut self, cx: &Cx<'a>, expr: ExprId) {
         let is_base = matches!(cx.tree.exprs[expr].kind, ExprKind::Name(name) if self.names.resolve(&name) == "base");
-        let Some(receiver) = self.receiver_of.filter(|_| is_base && self.own_rules(cx)) else {
+        let Some(receiver) = self.receiver_of.filter(|_| is_base) else {
             return;
         };
         let span = cx.tree.exprs[expr].span;
@@ -877,7 +866,7 @@ impl<'a> Checker<'a> {
         let Some(receiver) = self.receiver_of else {
             return;
         };
-        if !self.own_rules(cx) || self.types.parents(receiver).is_empty() {
+        if self.types.parents(receiver).is_empty() {
             return;
         }
         for local in &cx.body.locals {
@@ -909,7 +898,7 @@ impl<'a> Checker<'a> {
         }
         let is_base = matches!(tree.exprs[of].kind, ExprKind::Name(name) if self.names.resolve(&name) == "base")
             && !cx.body.uses.contains_key(&of);
-        let receiver = self.receiver_of.filter(|_| is_base && self.own_rules(cx))?;
+        let receiver = self.receiver_of.filter(|_| is_base)?;
         let mut parents = self.types.parents(receiver);
         // In the body the type parameters of the type have other names.
         if let Type::Named { id, .. } = &*self.types.get(receiver) {

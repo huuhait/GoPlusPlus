@@ -3,7 +3,7 @@
 use std::fmt;
 
 use gopp_diag::{Diagnostic, Sink, render_json, render_text};
-use gopp_span::{Dialect, FileId, SourceFile, SourceMap, Span};
+use gopp_span::{FileId, SourceFile, SourceMap, Span};
 use gopp_syntax::ast::{dump, dump_json, dump_shape};
 use gopp_syntax::fmt::format;
 use gopp_syntax::parser::parse;
@@ -29,12 +29,7 @@ pub type Verdict = Result<(), Finding>;
 
 /// Lexes, parses and dumps `data` as a Go++ file.
 pub fn parse_gopp(data: &[u8]) -> Verdict {
-    front_end(data, Dialect::Gopp)
-}
-
-/// Lexes, parses and dumps `data` as a Go file.
-pub fn parse_go(data: &[u8]) -> Verdict {
-    front_end(data, Dialect::Go)
+    front_end(data)
 }
 
 /// How much of a symbol is written out as Go++ text.
@@ -60,8 +55,8 @@ pub fn symbol_name(data: &[u8]) -> Verdict {
     Ok(())
 }
 
-fn front_end(data: &[u8], dialect: Dialect) -> Verdict {
-    let Some(first) = run(data, dialect) else {
+fn front_end(data: &[u8]) -> Verdict {
+    let Some(first) = run(data) else {
         return Ok(());
     };
     if !first.dump.starts_with("File ") {
@@ -73,19 +68,19 @@ fn front_end(data: &[u8], dialect: Dialect) -> Verdict {
         render_json(diagnostic, &first.map);
     }
     let same = |second: Run| second.dump == first.dump && second.diagnostics == first.diagnostics;
-    if !run(data, dialect).is_some_and(same) {
+    if !run(data).is_some_and(same) {
         return finding("determinism", "two runs gave different results");
     }
-    check_format(&first, dialect)
+    check_format(&first)
 }
 
 /// A file without a diagnostic is formatted: the result must parse to the
 /// same tree, and formatting it again must change nothing.
-fn check_format(first: &Run, dialect: Dialect) -> Verdict {
+fn check_format(first: &Run) -> Verdict {
     let Some(formatted) = &first.formatted else {
         return Ok(());
     };
-    let Some(second) = run(formatted.as_bytes(), dialect) else {
+    let Some(second) = run(formatted.as_bytes()) else {
         return finding("format", "the formatted text is too large");
     };
     if let Some(diagnostic) = second.diagnostics.first() {
@@ -114,9 +109,9 @@ struct Run {
 }
 
 /// `None` for an input over the size limit of a source file.
-fn run(data: &[u8], dialect: Dialect) -> Option<Run> {
+fn run(data: &[u8]) -> Option<Run> {
     let map = SourceMap::new();
-    let id = map.add(SourceFile::from_bytes("fuzz".into(), data, dialect).ok()?);
+    let id = map.add(SourceFile::from_bytes("fuzz".into(), data).ok()?);
     let source = map.file(id);
     let names = ThreadedRodeo::new();
     let sink = Sink::new(MAX_DIAGNOSTICS);
@@ -186,7 +181,7 @@ mod tests {
 
     fn checked(spans: &[(u32, u32)], text: &str) -> Verdict {
         let map = SourceMap::new();
-        let source = SourceFile::new("t.gopp".into(), text.to_owned(), Dialect::Gopp).unwrap();
+        let source = SourceFile::new("t.gopp".into(), text.to_owned()).unwrap();
         let file = map.add(source);
         let diagnostics: Vec<_> = spans
             .iter()
@@ -202,7 +197,6 @@ mod tests {
             Ok(())
         );
         assert_eq!(parse_gopp(b"package p\nfunc ( { ] \xff \0 'x"), Ok(()));
-        assert_eq!(parse_go(b"package p\n@A\nfunc f() {}\n"), Ok(()));
         assert_eq!(parse_gopp(b""), Ok(()));
     }
 

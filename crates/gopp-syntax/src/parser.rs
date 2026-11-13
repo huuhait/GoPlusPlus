@@ -12,7 +12,7 @@ mod types;
 use std::cell::Cell;
 
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::{Dialect, FileId, SourceFile, Span};
+use gopp_span::{FileId, SourceFile, Span};
 use la_arena::Arena;
 use lasso::ThreadedRodeo;
 
@@ -39,7 +39,6 @@ fn parse_counted(
         id,
         source,
         text: source.text(),
-        gopp: source.dialect() == Dialect::Gopp,
         tokens: lexed.tokens,
         pos: 0,
         names,
@@ -72,7 +71,6 @@ struct Parser<'a> {
     id: FileId,
     source: &'a SourceFile,
     text: &'a str,
-    gopp: bool,
     tokens: Vec<Token>,
     pos: usize,
     names: &'a ThreadedRodeo,

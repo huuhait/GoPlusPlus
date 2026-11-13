@@ -1,7 +1,0 @@
-panic: interface conversion: interface is nil, not main.Namer
-
-goroutine 1 [running]:
-main.namer()
-	+0x?
-main.main()
-	+0x?

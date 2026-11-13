@@ -4,7 +4,7 @@ use gopp_diag::Sink;
 use gopp_gir::{Checked, Module, lower_package};
 use gopp_sema::types::Types;
 use gopp_sema::{Package, PackageLoader, Unit, check};
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::ast::File;
 use gopp_syntax::parser::parse;
 use gopp_target::TargetSpec;
@@ -35,8 +35,7 @@ fn module(name: &str, text: &str) -> Module {
     let map = SourceMap::new();
     let sink = Sink::new(1000);
     let names = ThreadedRodeo::new();
-    let dialect = Dialect::from_path(name.as_ref()).unwrap();
-    let id = map.add(SourceFile::new(name.into(), text.to_owned(), dialect).unwrap());
+    let id = map.add(SourceFile::new(name.into(), text.to_owned()).unwrap());
     let source = map.file(id);
     let file: File = parse(id, &source, &names, &sink);
     let units = [Unit {
@@ -289,7 +288,7 @@ func main() {
 
 #[test]
 fn the_descriptor_of_a_type_is_static_data_that_names_its_glue() {
-    let unit = unit("a.go", INTERFACES);
+    let unit = unit("a.gopp", INTERFACES);
     // A descriptor is declared before the functions, which name it,
     // and said after their prototypes, which it names.
     let declared = unit.find("__attribute__((weak)) const T").unwrap();
@@ -411,12 +410,7 @@ fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
         })
         .collect();
     cases.par_iter().for_each(|&(program, target, opt)| {
-        // A Go file holds a pointer in an interface value.
-        let name = match program == INTERFACES {
-            true => "a.go",
-            false => "a.gopp",
-        };
-        let unit = emit_c23(&module(name, program), &options(Entry::Main)).unwrap();
+        let unit = emit_c23(&module("a.gopp", program), &options(Entry::Main)).unwrap();
         let driver = strict(&toolchain, target, opt);
         let mut objects = Vec::new();
         for _ in 0..2 {

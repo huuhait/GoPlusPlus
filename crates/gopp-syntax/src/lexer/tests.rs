@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use proptest::prelude::*;
 
 use super::{Lexed, lex};
@@ -11,18 +11,18 @@ use crate::token::TokenKind::{self, *};
 /// `String` here is the token kind.
 type Text = std::string::String;
 
-fn lex_bytes(bytes: &[u8], dialect: Dialect) -> (SourceFile, Lexed, Vec<Diagnostic>) {
-    let source = SourceFile::from_bytes("test.gopp".into(), bytes, dialect).unwrap();
+fn lex_bytes(bytes: &[u8]) -> (SourceFile, Lexed, Vec<Diagnostic>) {
+    let source = SourceFile::from_bytes("test.gopp".into(), bytes).unwrap();
     let map = SourceMap::new();
-    let file = map.add(SourceFile::new("test.gopp".into(), Text::new(), dialect).unwrap());
+    let file = map.add(SourceFile::new("test.gopp".into(), Text::new()).unwrap());
     let sink = Sink::new(1000);
     let lexed = lex(file, &source, &sink);
     (source, lexed, sink.finish())
 }
 
 /// Kinds and texts of the tokens of `text`, without the final `Eof`.
-fn tokens_in(text: &str, dialect: Dialect) -> Vec<(TokenKind, Text)> {
-    let (source, lexed, diagnostics) = lex_bytes(text.as_bytes(), dialect);
+fn tokens_in(text: &str) -> Vec<(TokenKind, Text)> {
+    let (source, lexed, diagnostics) = lex_bytes(text.as_bytes());
     assert_eq!(diagnostics, [], "{text:?}");
     let (eof, tokens) = lexed.tokens.split_last().unwrap();
     assert_eq!(eof.kind, Eof);
@@ -37,13 +37,13 @@ fn tokens_in(text: &str, dialect: Dialect) -> Vec<(TokenKind, Text)> {
 }
 
 fn kinds(text: &str) -> Vec<TokenKind> {
-    let tokens = tokens_in(text, Dialect::Gopp);
+    let tokens = tokens_in(text);
     tokens.into_iter().map(|(kind, _)| kind).collect()
 }
 
 /// The one diagnostic of `text`: its code, start offset and message.
 fn error_in(text: &str) -> (Code, u32, Text) {
-    let (_, _, diagnostics) = lex_bytes(text.as_bytes(), Dialect::Gopp);
+    let (_, _, diagnostics) = lex_bytes(text.as_bytes());
     assert_eq!(diagnostics.len(), 1, "{text:?}: {diagnostics:?}");
     let diagnostic = &diagnostics[0];
     (
@@ -108,7 +108,7 @@ fn every_operator_and_delimiter_is_one_token() {
         ("@", At),
     ];
     for (text, kind) in table {
-        let tokens = tokens_in(&format!("{text} x"), Dialect::Gopp);
+        let tokens = tokens_in(&format!("{text} x"));
         assert_eq!(tokens[0], (kind, text.to_owned()));
         assert_eq!(tokens[1].0, Ident, "{text}");
     }
@@ -154,23 +154,13 @@ fn every_keyword_is_its_own_kind() {
 }
 
 #[test]
-fn macro_is_a_keyword_only_in_gopp_files() {
-    assert_eq!(tokens_in("macro := 1", Dialect::Go)[0].0, Ident);
-    assert_eq!(tokens_in("macro F", Dialect::Gopp)[0].0, Macro);
+fn macro_is_a_keyword() {
+    assert_eq!(tokens_in("macro F")[0].0, Macro);
 }
 
 #[test]
 fn contextual_words_are_identifiers() {
     assert_eq!(kinds("extends base {"), [Ident, Ident, LBrace]);
-}
-
-#[test]
-fn hash_and_at_are_illegal_in_go_files() {
-    for text in ["#", "@"] {
-        let (_, lexed, diagnostics) = lex_bytes(text.as_bytes(), Dialect::Go);
-        assert_eq!(lexed.tokens.len(), 1);
-        assert_eq!(diagnostics[0].code, Code::LexIllegalChar);
-    }
 }
 
 #[test]
@@ -218,7 +208,7 @@ fn a_line_end_inserts_a_semicolon_after_go_s_tokens() {
         "a[0]",
         "T{}",
     ] {
-        let tokens = tokens_in(&format!("{text}\ny"), Dialect::Gopp);
+        let tokens = tokens_in(&format!("{text}\ny"));
         let semi = &tokens[tokens.len() - 3];
         assert_eq!(*semi, (Semi, "\n".to_owned()), "{text}");
     }
@@ -252,10 +242,7 @@ fn an_attribute_line_ends_with_a_semicolon() {
 
 #[test]
 fn the_end_of_the_file_ends_the_last_line() {
-    assert_eq!(
-        tokens_in("x", Dialect::Gopp),
-        [(Ident, "x".into()), (Semi, "".into())]
-    );
+    assert_eq!(tokens_in("x"), [(Ident, "x".into()), (Semi, "".into())]);
     assert_eq!(kinds("x // c"), [Ident, Semi]);
     assert_eq!(kinds("x +"), [Ident, Plus]);
     assert_eq!(kinds(""), []);
@@ -269,14 +256,14 @@ fn comments_end_a_line_only_with_a_line_end_in_them() {
     assert_eq!(kinds("x // c\ny"), [Ident, Semi, Ident, Semi]);
     assert_eq!(kinds("( /* a\nb */ y"), [LParen, Ident, Semi]);
     assert_eq!(kinds("x /* a\nb */\n y"), [Ident, Semi, Ident, Semi]);
-    let tokens = tokens_in("x /* a\nb */ y", Dialect::Gopp);
+    let tokens = tokens_in("x /* a\nb */ y");
     assert_eq!(tokens[1], (Semi, Text::new()));
 }
 
 #[test]
 fn comments_are_kept_in_order() {
     let text = "// first\nx /* block */ y //gopp:x\n/* // no */";
-    let (source, lexed, diagnostics) = lex_bytes(text.as_bytes(), Dialect::Gopp);
+    let (source, lexed, diagnostics) = lex_bytes(text.as_bytes());
     assert_eq!(diagnostics, []);
     let comments: Vec<_> = lexed
         .comments
@@ -290,9 +277,9 @@ fn comments_are_kept_in_order() {
 }
 
 #[test]
-fn a_build_comment_above_the_package_clause_of_a_gopp_file_is_an_error() {
-    let messages = |text: &str, dialect| {
-        let (_, _, diagnostics) = lex_bytes(text.as_bytes(), dialect);
+fn a_build_comment_above_the_package_clause_is_an_error() {
+    let messages = |text: &str| {
+        let (_, _, diagnostics) = lex_bytes(text.as_bytes());
         let message = |d: &Diagnostic| {
             assert_eq!(d.code, Code::BadBuildConstraint);
             (d.span.lo, d.message.clone())
@@ -303,26 +290,22 @@ fn a_build_comment_above_the_package_clause_of_a_gopp_file_is_an_error() {
         format!("the build condition of a .gopp file is an attribute: write `@Build({condition})`")
     };
     assert_eq!(
-        messages(
-            "// c\n//go:build linux && !arm64\n\npackage p\n",
-            Dialect::Gopp
-        ),
+        messages("// c\n//go:build linux && !arm64\n\npackage p\n"),
         [(5, told("linux && !arm64"))]
     );
     for fine in [
         "package p\n//go:build linux\n",
         "// go:build linux\n//go:builder\n/* //go:build linux */\npackage p\n",
     ] {
-        assert_eq!(messages(fine, Dialect::Gopp), [], "{fine}");
+        assert_eq!(messages(fine), [], "{fine}");
     }
-    assert_eq!(messages("//go:build linux\npackage p\n", Dialect::Go), []);
 }
 
 #[test]
 fn compiler_flag_directives_belong_in_gopp_mod() {
     for name in ["cflags", "cxxstd", "ldflags"] {
         let text = format!("package p\n//gopp:{name} -O2 -DX  \n");
-        let (_, _, diagnostics) = lex_bytes(text.as_bytes(), Dialect::Gopp);
+        let (_, _, diagnostics) = lex_bytes(text.as_bytes());
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = &diagnostics[0];
         assert_eq!(diagnostic.code, Code::GoppDirectiveInSource);
@@ -343,11 +326,7 @@ fn compiler_flag_directives_belong_in_gopp_mod() {
 #[test]
 fn identifiers_follow_unicode() {
     for text in ["x", "_", "_x9", "αβγ", "日本語", "x١", "café", "a\u{0301}"] {
-        assert_eq!(
-            tokens_in(text, Dialect::Gopp)[0],
-            (Ident, text.to_owned()),
-            "{text}"
-        );
+        assert_eq!(tokens_in(text)[0], (Ident, text.to_owned()), "{text}");
     }
     assert_eq!(kinds("x.y"), [Ident, Dot, Ident, Semi]);
 }
@@ -402,7 +381,7 @@ fn well_formed_numbers() {
     ];
     for (text, kind) in table {
         assert_eq!(
-            tokens_in(text, Dialect::Gopp),
+            tokens_in(text),
             [(kind, text.to_owned()), (Semi, Text::new())]
         );
     }
@@ -565,7 +544,7 @@ fn malformed_numbers() {
     ];
     for (text, code, offset, message) in table {
         assert_eq!(error_in(text), (code, offset, message.to_owned()), "{text}");
-        let (_, lexed, _) = lex_bytes(text.as_bytes(), Dialect::Gopp);
+        let (_, lexed, _) = lex_bytes(text.as_bytes());
         assert!(lexed.tokens[0].bad, "{text}");
     }
 }
@@ -600,7 +579,7 @@ fn well_formed_runes_and_strings() {
     ];
     for (text, kind) in table {
         assert_eq!(
-            tokens_in(text, Dialect::Gopp),
+            tokens_in(text),
             [(kind, text.to_owned()), (Semi, Text::new())]
         );
     }
@@ -709,14 +688,14 @@ fn malformed_runes_and_strings() {
             (code, offset, message.to_owned()),
             "{text:?}"
         );
-        let (_, lexed, _) = lex_bytes(text.as_bytes(), Dialect::Gopp);
+        let (_, lexed, _) = lex_bytes(text.as_bytes());
         assert!(lexed.tokens[0].bad, "{text:?}");
     }
 }
 
 #[test]
 fn lexing_goes_on_after_a_bad_literal() {
-    let (_, lexed, diagnostics) = lex_bytes(b"x := \"abc\ny := 0b12\nz", Dialect::Gopp);
+    let (_, lexed, diagnostics) = lex_bytes(b"x := \"abc\ny := 0b12\nz");
     let kinds: Vec<_> = lexed.tokens.iter().map(|t| t.kind).collect();
     assert_eq!(
         kinds,
@@ -761,7 +740,7 @@ fn characters_no_token_starts_with() {
             error_in(&source),
             (Code::LexIllegalChar, 2, message.to_owned())
         );
-        let (_, lexed, _) = lex_bytes(source.as_bytes(), Dialect::Gopp);
+        let (_, lexed, _) = lex_bytes(source.as_bytes());
         assert_eq!(lexed.tokens.len(), 4, "{text:?}");
     }
 }
@@ -813,7 +792,7 @@ fn a_byte_order_mark_is_legal_only_at_the_start() {
 
 #[test]
 fn invalid_utf8_is_reported_once_per_sequence() {
-    let (_, lexed, diagnostics) = lex_bytes(b"x \xFF y \"\xC3\" // \xE2\x82\n", Dialect::Gopp);
+    let (_, lexed, diagnostics) = lex_bytes(b"x \xFF y \"\xC3\" // \xE2\x82\n");
     let found: Vec<_> = diagnostics.iter().map(|d| (d.code, d.span.lo)).collect();
     assert_eq!(
         found,
@@ -830,7 +809,7 @@ fn invalid_utf8_is_reported_once_per_sequence() {
 
 #[test]
 fn a_utf16_file_is_one_error() {
-    let (_, lexed, diagnostics) = lex_bytes(b"\xFF\xFEp\0a\0c\0k\0", Dialect::Gopp);
+    let (_, lexed, diagnostics) = lex_bytes(b"\xFF\xFEp\0a\0c\0k\0");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, Code::LexUtf16);
     assert_eq!(
@@ -861,16 +840,16 @@ fn every_sample_lexes_without_a_diagnostic() {
         }
         for file in fs::read_dir(dir).unwrap() {
             let path = file.unwrap().path();
-            let Some(dialect) = Dialect::from_path(&path) else {
+            if !gopp_span::is_source_path(&path) {
                 continue;
-            };
-            let (_, lexed, diagnostics) = lex_bytes(&fs::read(&path).unwrap(), dialect);
+            }
+            let (_, lexed, diagnostics) = lex_bytes(&fs::read(&path).unwrap());
             assert_eq!(diagnostics, [], "{}", path.display());
             assert!(lexed.tokens.len() > 10, "{}", path.display());
             checked += 1;
         }
     }
-    assert!(checked >= 20, "only {checked} sample files found");
+    assert!(checked >= 10, "only {checked} sample files found");
 }
 
 /// Bytes that reach every scanner: quotes, escapes, comment marks, digits,
@@ -903,7 +882,7 @@ fn source_bytes() -> impl Strategy<Value = Vec<u8>> {
 proptest! {
     #[test]
     fn any_bytes_lex_into_ordered_tokens_that_cover_the_text(bytes in source_bytes()) {
-        let (source, lexed, diagnostics) = lex_bytes(&bytes, Dialect::Gopp);
+        let (source, lexed, diagnostics) = lex_bytes(&bytes);
         let text = source.text();
         prop_assume!(!source.is_utf16());
 
@@ -940,7 +919,7 @@ fn a_long_run_of_skipped_text_is_lexed_in_a_loop() {
         "/* c */ ".repeat(count),
     ];
     for run in skipped {
-        let (_, lexed, diagnostics) = lex_bytes(format!("x{run}y").as_bytes(), Dialect::Gopp);
+        let (_, lexed, diagnostics) = lex_bytes(format!("x{run}y").as_bytes());
         assert_eq!(diagnostics, []);
         let kinds: Vec<TokenKind> = lexed.tokens.iter().map(|token| token.kind).collect();
         assert!(
@@ -948,7 +927,7 @@ fn a_long_run_of_skipped_text_is_lexed_in_a_loop() {
             "{kinds:?}"
         );
     }
-    let (_, lexed, diagnostics) = lex_bytes("$".repeat(count).as_bytes(), Dialect::Gopp);
+    let (_, lexed, diagnostics) = lex_bytes("$".repeat(count).as_bytes());
     assert_eq!(lexed.tokens.len(), 1);
     assert_eq!(diagnostics.len(), 1001);
 }

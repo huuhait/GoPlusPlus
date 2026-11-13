@@ -1,6 +1,5 @@
 //! `gopp build`.
 
-use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -21,7 +20,7 @@ use gopp_syntax::ast::File;
 use gopp_target::{Os, TargetSpec};
 use lasso::ThreadedRodeo;
 
-use crate::check::{Imports, grouped, parse_package, standard_library};
+use crate::check::{Imports, grouped, parse_package};
 use crate::parse::MAX_DIAGNOSTICS;
 use crate::{EXIT_ERRORS, EmitBuilt};
 
@@ -99,11 +98,7 @@ pub(crate) fn lowered(
         Err(message) => return stopped(&message),
     };
     let types = Types::new(&names);
-    let standard = standard_library(std::slice::from_ref(&parsed), &names, &types);
-    let loader = Imports {
-        standard: &standard.checked,
-        import_map: HashMap::new(),
-    };
+    let loader = Imports;
     let units: Vec<Unit> = parsed
         .files
         .iter()

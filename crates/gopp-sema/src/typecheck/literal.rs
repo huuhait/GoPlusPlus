@@ -77,7 +77,7 @@ impl<'a> Checker<'a> {
             )
         });
         match &*under {
-            Type::Struct(_) if self.own_rules(cx) && !self.types.parents(base).is_empty() => {
+            Type::Struct(_) if !self.types.parents(base).is_empty() => {
                 self.inherited_literal(cx, expr, base, elems);
             }
             Type::Struct(fields) => self.struct_elements(cx, expr, base, fields, elems, strict),
@@ -352,13 +352,7 @@ impl<'a> Checker<'a> {
         // An element that the literal leaves out is a zero value.
         if (seen.len() as u64) < length.unwrap_or(end) {
             let doing = "cannot leave out elements of the literal";
-            self.zero_needed(
-                cx,
-                tree.exprs[expr].span,
-                elem,
-                doing,
-                "write every element",
-            );
+            self.zero_needed(tree.exprs[expr].span, elem, doing, "write every element");
         }
     }
 

@@ -17,8 +17,6 @@ pub struct Written<'a> {
     pub names: &'a ThreadedRodeo,
     /// The path of its package.
     pub package: Spur,
-    /// It is in a Go++ file.
-    pub own_rules: bool,
 }
 
 impl Body {
@@ -31,7 +29,6 @@ impl Body {
             types,
             names,
             package,
-            own_rules,
         } = written;
         let from = &self.type_params[..];
         // A type that the body declares is a type of its own in each
@@ -197,12 +194,12 @@ impl Body {
                 && text != "Clone"
                 && !marks.has(Marks::OPERATOR)
                 && !marks.has(Marks::CONVERT)
-                && types.given_is_marked(holder, true)
+                && types.given_is_marked(holder)
         };
         let var_modes: FxHashMap<_, _> = (self.var_modes.iter())
             .filter(|&(expr, _)| {
                 match (self.given_types.get(expr), self.receiver_marks.get(expr)) {
-                    (Some(&given), _) => types.given_is_marked(ty(given), own_rules),
+                    (Some(&given), _) => types.given_is_marked(ty(given)),
                     (None, Some(selector)) => receiver_copied(selector),
                     (None, None) => true,
                 }

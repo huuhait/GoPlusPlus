@@ -1,9 +1,7 @@
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_span::{SourceFile, SourceMap};
 use gopp_testutil::{linear, samples, stress};
 use lasso::ThreadedRodeo;
 use proptest::prelude::*;
@@ -25,9 +23,9 @@ impl Parsed {
     }
 }
 
-fn parse_bytes(bytes: &[u8], dialect: Dialect) -> Parsed {
+fn parse_bytes(bytes: &[u8]) -> Parsed {
     let map = SourceMap::new();
-    let id = map.add(SourceFile::from_bytes("test.gopp".into(), bytes, dialect).unwrap());
+    let id = map.add(SourceFile::from_bytes("test.gopp".into(), bytes).unwrap());
     let source = map.file(id);
     let names = ThreadedRodeo::new();
     let sink = Sink::new(1000);
@@ -40,7 +38,7 @@ fn parse_bytes(bytes: &[u8], dialect: Dialect) -> Parsed {
 }
 
 fn parse_gopp(text: &str) -> Parsed {
-    parse_bytes(text.as_bytes(), Dialect::Gopp)
+    parse_bytes(text.as_bytes())
 }
 
 /// The tree of a source that must parse without a diagnostic.
@@ -53,8 +51,7 @@ fn tree(text: &str) -> String {
 #[test]
 fn every_sample_parses_without_a_diagnostic() {
     for path in samples::files() {
-        let dialect = Dialect::from_path(&path).unwrap();
-        let parsed = parse_bytes(&fs::read(&path).unwrap(), dialect);
+        let parsed = parse_bytes(&fs::read(&path).unwrap());
         let messages: Vec<_> = parsed
             .diagnostics
             .iter()
@@ -79,197 +76,6 @@ fn a_group_without_declarations_parses() {
         "File package=p\n  Func f @48..59\n    FuncType @48..56\n    Block @57..59\n";
     assert_eq!(tree(source), only_function);
     assert!(tree("package p\n\nvar ()").starts_with("File "));
-}
-
-/// The `.go` files under `dir`. `testdata` directories hold files that are
-/// invalid on purpose.
-fn go_files_under(dir: &Path, testdata: bool, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            if testdata || path.file_name().is_some_and(|name| name != "testdata") {
-                go_files_under(&path, testdata, files);
-            }
-        } else if path.extension().is_some_and(|extension| extension == "go") {
-            files.push(path);
-        }
-    }
-}
-
-fn go_root() -> PathBuf {
-    let output = Command::new("go").args(["env", "GOROOT"]).output().unwrap();
-    let goroot = String::from_utf8(output.stdout).unwrap();
-    Path::new(goroot.trim()).join("src")
-}
-
-/// The program that prints the tree of Go's own parser.
-const GOAST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goast/main.go");
-
-/// FNV-1a, as Go's `hash/fnv` computes it.
-fn fnv64(bytes: &[u8]) -> u64 {
-    let hash = |hash: u64, &byte: &u8| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, hash)
-}
-
-/// The dump without the text of literals: the byte range says the same,
-/// and the other side does not have to spell the text as Rust does.
-fn without_literal_text(dump: &str) -> String {
-    let mut out = String::with_capacity(dump.len());
-    for line in dump.lines() {
-        let literal = line.find("BasicLit ").filter(|&at| {
-            let indent = line[..at].trim_start();
-            indent.is_empty() || indent.starts_with("[+") && indent.ends_with("] ")
-        });
-        match (literal, line.rfind(" @")) {
-            (Some(at), Some(span)) => {
-                let kind_end = at + "BasicLit ".len();
-                let kind = line[kind_end..].split(' ').next().unwrap_or("");
-                out.push_str(&line[..kind_end]);
-                out.push_str(kind);
-                out.push_str(&line[span..]);
-            }
-            _ => out.push_str(line),
-        }
-        out.push('\n');
-    }
-    out
-}
-
-/// Files whose tree differs from that of Go's parser because the two read
-/// the text differently, and this parser follows Go's compiler:
-/// `[P(*struct{})]` after a type name starts a type parameter list.
-const READ_AS_THE_COMPILER_DOES: &[&str] = &["internal/types/testdata/fixedbugs/issue49482.go"];
-
-/// "Everything not mentioned works as in Go", for syntax: each `.go` file
-/// under GOROOT that both parsers accept has the same tree here as in Go's
-/// `go/parser`, node for node and byte range for byte range. Needs `go` on
-/// `PATH`.
-#[test]
-#[ignore = "long: parses the Go standard library with Go's parser too"]
-fn the_tree_of_a_go_file_is_the_tree_of_go_s_parser() {
-    let mut files = Vec::new();
-    go_files_under(&go_root(), true, &mut files);
-    files.sort();
-    assert!(files.len() > 7000, "only {} files", files.len());
-
-    let mut ours = Vec::new();
-    for path in &files {
-        let parsed = parse_bytes(&fs::read(path).unwrap(), Dialect::Go);
-        if parsed.diagnostics.is_empty() {
-            let hash = fnv64(without_literal_text(&parsed.dump).as_bytes());
-            ours.push((path, format!("{hash:016x}")));
-        }
-    }
-
-    let list: String = ours
-        .iter()
-        .map(|(path, _)| format!("{}\n", path.display()))
-        .collect();
-    let list_path = std::env::temp_dir().join(format!("gopp-goast-{}", std::process::id()));
-    fs::write(&list_path, list).unwrap();
-    let output = Command::new("go")
-        .args(["run", GOAST, "-hash"])
-        .stdin(fs::File::open(&list_path).unwrap())
-        .output()
-        .unwrap();
-    fs::remove_file(&list_path).unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let theirs = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(theirs.lines().count(), ours.len());
-
-    let known = |path: &Path| {
-        READ_AS_THE_COMPILER_DOES
-            .iter()
-            .any(|known| path.ends_with(known))
-    };
-    let mut compared = 0;
-    let mut differences = Vec::new();
-    for ((path, hash), line) in ours.iter().zip(theirs.lines()) {
-        let (their_hash, their_path) = line.split_once(' ').unwrap();
-        assert_eq!(Path::new(their_path), path.as_path());
-        // Go's parser refuses some files that Go's compiler accepts.
-        if their_hash == "error" || known(path) {
-            continue;
-        }
-        compared += 1;
-        if their_hash != hash {
-            differences.push(path.as_path());
-        }
-    }
-    println!(
-        "{} files, {} parsed here, {compared} compared, {} differ",
-        files.len(),
-        ours.len(),
-        differences.len()
-    );
-    assert!(compared > 7000, "only {compared} files compared");
-
-    let mut report = String::new();
-    for path in differences.iter().take(20) {
-        let parsed = parse_bytes(&fs::read(path).unwrap(), Dialect::Go);
-        let here = without_literal_text(&parsed.dump);
-        let output = Command::new("go")
-            .args(["run", GOAST, "-dump"])
-            .arg(path)
-            .output()
-            .unwrap();
-        let there = String::from_utf8_lossy(&output.stdout).into_owned();
-        let first = here.lines().zip(there.lines()).find(|(a, b)| a != b);
-        let (a, b) = first.unwrap_or(("(one tree is longer)", ""));
-        report.push_str(&format!(
-            "{}\n  here: {}\n  go:   {}\n",
-            path.display(),
-            a.trim(),
-            b.trim()
-        ));
-    }
-    assert!(
-        differences.is_empty(),
-        "{} of {compared} trees differ\n{report}",
-        differences.len()
-    );
-}
-
-/// Everything Go's own parser accepts must parse here too. Needs `go` on
-/// `PATH`, for the location of its standard library.
-#[test]
-#[ignore = "long: parses the whole Go standard library"]
-fn the_go_standard_library_parses_without_a_diagnostic() {
-    let mut files = Vec::new();
-    go_files_under(&go_root(), false, &mut files);
-    files.sort();
-    assert!(
-        files.len() > 5000,
-        "only {} files under GOROOT",
-        files.len()
-    );
-
-    let mut failures = Vec::new();
-    for path in &files {
-        let parsed = parse_bytes(&fs::read(path).unwrap(), Dialect::Go);
-        if let Some(first) = parsed.diagnostics.first() {
-            failures.push(format!(
-                "{} @{}: {} {}",
-                path.display(),
-                first.span.lo,
-                first.code,
-                first.message
-            ));
-        } else if parsed.has_bad_node() {
-            failures.push(format!("{}: Bad node without a diagnostic", path.display()));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{} of {} files failed:\n{}",
-        failures.len(),
-        files.len(),
-        failures[..failures.len().min(40)].join("\n")
-    );
 }
 
 #[test]
@@ -419,7 +225,7 @@ L:
 
 /// Code, 1-based line and column, and message of every diagnostic.
 fn errors_in(text: &str) -> Vec<String> {
-    let source = SourceFile::new("t".into(), text.to_owned(), Dialect::Gopp).unwrap();
+    let source = SourceFile::new("t".into(), text.to_owned()).unwrap();
     let diagnostics = parse_gopp(text).diagnostics;
     diagnostics
         .iter()
@@ -543,52 +349,14 @@ fn build_conditions() {
     ));
 }
 
-fn parse_go(text: &str) -> Parsed {
-    parse_bytes(text.as_bytes(), Dialect::Go)
-}
-
 // rule: EXP-22
 #[test]
-fn an_index_list_holds_expressions_in_a_gopp_file() {
+fn an_index_list_holds_expressions() {
     let text = "package p\nfunc f() {\n\tm[0, i+1] = m[i, j] + g[int, []string](x)[k, 2]\n\
                 \t_ = h[a, <-chan int, func(int) bool, *T,]\n}\n";
     let parsed = parse_gopp(text);
     assert_eq!(parsed.diagnostics, []);
     assert!(!parsed.has_bad_node(), "{}", parsed.dump);
-    // Go takes types after the first.
-    let go = parse_go("package p\nfunc f() { _ = m[i, 1] }\n");
-    let codes: Vec<Code> = go.diagnostics.iter().map(|found| found.code).collect();
-    assert_eq!(codes, [Code::ExpectedFound]);
-}
-
-#[test]
-fn go_files_have_no_gopp_syntax() {
-    let names = "package p
-
-type extends struct {
-	sync.Mutex
-	*base
-}
-
-func macro(extends, base int) int { return extends + base }
-";
-    let parsed = parse_go(names);
-    assert_eq!(parsed.diagnostics, []);
-    assert!(parsed.dump.contains("Field  @"), "{}", parsed.dump);
-
-    for (text, code) in [
-        ("package p\nfunc f() { g!(x) }\n", Code::Expected),
-        ("package p\nfunc f!() {}\n", Code::ExpectedFound),
-        ("package p\n@Inline\nfunc f() {}\n", Code::LexIllegalChar),
-        ("package p\nfunc f() { #Assert(x) }\n", Code::LexIllegalChar),
-        (
-            "package p\nfunc (r R) m[T any]() {}\n",
-            Code::MethodTypeParams,
-        ),
-    ] {
-        let diagnostics = parse_go(text).diagnostics;
-        assert_eq!(diagnostics.first().map(|d| d.code), Some(code), "{text}");
-    }
 }
 
 #[test]
@@ -716,8 +484,7 @@ fn assert_json_is_the_tree(parsed: &Parsed) {
 #[test]
 fn the_json_tree_has_the_nodes_of_the_text_tree() {
     for path in samples::files() {
-        let dialect = Dialect::from_path(&path).unwrap();
-        assert_json_is_the_tree(&parse_bytes(&fs::read(&path).unwrap(), dialect));
+        assert_json_is_the_tree(&parse_bytes(&fs::read(&path).unwrap()));
     }
     let escapes = "package p\nvar s = \"q\\\"b\\\\\" + `tab\there` + '\\n'\n@A(\"x\")\nfunc f() { g(1 2) \x01 }\n";
     for source in ["", "package", escapes] {
@@ -736,7 +503,7 @@ fn a_long_chain_is_one_json_line() {
 
 fn parse_steps(text: &str) -> u64 {
     let map = SourceMap::new();
-    let id = map.add(SourceFile::new("test.gopp".into(), text.to_owned(), Dialect::Gopp).unwrap());
+    let id = map.add(SourceFile::new("test.gopp".into(), text.to_owned()).unwrap());
     parse_counted(id, &map.file(id), &ThreadedRodeo::new(), &Sink::new(10)).1
 }
 
@@ -763,10 +530,9 @@ fn token_looks_grow_with_the_input_not_faster() {
 /// Parses the prefixes of every sample whose length is a multiple of `stride`.
 fn parse_sample_prefixes(stride: usize) {
     for path in samples::files() {
-        let dialect = Dialect::from_path(&path).unwrap();
         let bytes = fs::read(&path).unwrap();
         for end in (0..bytes.len()).step_by(stride) {
-            let parsed = parse_bytes(&bytes[..end], dialect);
+            let parsed = parse_bytes(&bytes[..end]);
             assert!(
                 parsed.dump.starts_with("File "),
                 "{} at {end}",

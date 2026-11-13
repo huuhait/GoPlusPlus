@@ -270,7 +270,7 @@ impl FuncCx<'_, '_> {
         let place = self.place(x, mode)?;
         match self.is_map(self.b.place_ty(&place)) {
             true => Ok(place),
-            false => self.deref(place, self.tree.exprs[x].span, mode),
+            false => self.deref(place, mode),
         }
     }
 

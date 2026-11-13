@@ -14,13 +14,12 @@ StructType = "struct" "{" { FieldDecl ";" } "}" .
 FieldDecl  = IdentifierList Type [ FieldAttributes ] [ Tag ] .              /* no EmbeddedField, TYP-25 */
 ```
 
-A struct type has no embedded fields in `.gopp` files ([TYP-25](#35-inheritance-adr-0023)). Inheritance adds no syntax of its own: a type names each parent with the attribute `@Extends` before its declaration ([TYP-16](#35-inheritance-adr-0023), [ADR-0034](../adr/0034-extends-attribute.md)). Interface types can still embed interfaces and constraints.
+A struct type has no embedded fields ([TYP-25](#35-inheritance-adr-0023)). Inheritance adds no syntax of its own: a type names each parent with the attribute `@Extends` before its declaration ([TYP-16](#35-inheritance-adr-0023), [ADR-0034](../adr/0034-extends-attribute.md)). Interface types can still embed interfaces and constraints.
 
 **TYP-27.** *Named operator methods (`@Operator`)* ([ADR-0024](../adr/0024-operator-overloading.md)). Operator overloading uses normal Go identifier method names (`Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `Cmp`, `Index`, `SetIndex`, `Iter`, …) marked with the built-in `@Operator` attribute ([MAC-8](13-macros-surface.md#132-rules)); `MethodName` in `MethodDecl` and `MethodElem` stays a normal Go `identifier`. Full operator signatures and resolution rules are in [6.10](06-expressions.md#610-operator-methods-adr-0024).
 - **Overload sets.** Several `@Operator` methods on one type may share the same operator method name when their parameter lists differ (`@Operator func (a Vec2) Mul(b Vec2) Vec2` and `@Operator @Right func (a Vec2) Mul(s float64) Vec2`, [EXP-17](06-expressions.md#610-operator-methods-adr-0024)). Ordinary methods without `@Operator` keep unique names, as in Go, and never overload operators.
 - **Constraints and interfaces.** Constraint interfaces list operator methods using normal Go method syntax (`interface{ Add(T) T; Cmp(T) int }`, [GEN-13](10-generics.md#102-rules)). An interface that lists two overloaded signatures of the same method name (`interface{ Mul(T) T; Mul(float64) T }`) is a constraint-only interface in v1; an interface with unique method names (`interface{ Add(int) int }`) is a normal Go interface too.
 - **Not allowed on an `@Operator` method:** type parameters of its own, and `!` ([EXP-30](06-expressions.md#610-operator-methods-adr-0024)). Type parameters of the receiver type are fine: `@Operator func (a Vec[T]) Add(b Vec[T]) Vec[T]`.
-- **Go mode.** In `.go` files `@Operator` does not exist.
 
 Other notes on type syntax:
 
@@ -173,7 +172,7 @@ type Bad struct{ Note Option[string] @Required }   // error E0363: Option[T] and
 
 ## 3.5 Inheritance (ADR-0023)
 
-Go's struct embedding is removed in `.gopp` files ([TYP-25](#35-inheritance-adr-0023)). The replacement is the attribute `@Extends`: one or more struct parents without diamonds, explicit method marks, disambiguated `base` calls, and dynamic dispatch only where a method is marked virtual. Marks are built-in attributes ([MAC-8](13-macros-surface.md#132-rules)). Pointer conversions are in [EXP-13](06-expressions.md#69-upcasts-and-downcasts-adr-0023).
+Go's struct embedding is removed ([TYP-25](#35-inheritance-adr-0023)). The replacement is the attribute `@Extends`: one or more struct parents without diamonds, explicit method marks, disambiguated `base` calls, and dynamic dispatch only where a method is marked virtual. Marks are built-in attributes ([MAC-8](13-macros-surface.md#132-rules)). Pointer conversions are in [EXP-13](06-expressions.md#69-upcasts-and-downcasts-adr-0023).
 
 **TYP-16.** *Syntax.* A type names each of its parents with the built-in attribute `@Extends(Parent)` before its declaration ([MAC-8](13-macros-surface.md#132-rules), [ADR-0034](../adr/0034-extends-attribute.md)):
 ```go
@@ -239,9 +238,7 @@ type Card struct {
 - generics: an interface with `@Extends(Parent)` is a constraint, and several `@Extends` on it require all the parents ([GEN-12](10-generics.md#102-rules), ADR-0023 decision 15, ADR-0034); inside the body `*T` converts to `*Parent` (when `Parent` has a table) and the parent's methods and fields are available;
 - C++ parent: [TYP-28](#35-inheritance-adr-0023).
 
-**TYP-25.** *No struct embedding.* In a `.gopp` file an embedded field (an anonymous field of a struct type: `struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error. The fix-it says: use `@Extends` to inherit from a struct (`@Extends(Payment)` before `type Card struct { … }`), or a named field for plain composition (`Lock Mutex[State]`, `Log Logger`). Promoted fields and methods go away with embedding: the method set of a struct never includes methods of its named fields. Interface embedding stays (`interface{ io.Reader; io.Writer }`, a constraint in a constraint interface): it composes type sets and is not inheritance.
-
-**TYP-26.** *Go mode.* A `.go` file has no attributes, so it has no `@Extends` and no method marks; `base` is not special there, and struct embedding works as in Go.
+**TYP-25.** *No struct embedding.* An embedded field (an anonymous field of a struct type: `struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error. The fix-it says: use `@Extends` to inherit from a struct (`@Extends(Payment)` before `type Card struct { … }`), or a named field for plain composition (`Lock Mutex[State]`, `Log Logger`). Promoted fields and methods go away with embedding: the method set of a struct never includes methods of its named fields. Interface embedding stays (`interface{ io.Reader; io.Writer }`, a constraint in a constraint interface): it composes type sets and is not inheritance.
 
 **TYP-28.** *Extending a C++ class* (ADR-0023 decision 14; task P08.16).
 ```go

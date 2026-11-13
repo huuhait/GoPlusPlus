@@ -117,10 +117,10 @@ impl FuncCx<'_, '_> {
 
     /// The header of the slice that the expression names, read where it
     /// is: the elements are those of the slice itself.
-    fn header(&mut self, expr: ExprId, span: SourceSpan) -> Built<Place> {
+    fn header(&mut self, expr: ExprId) -> Built<Place> {
         let mut mode = PlaceMode::default();
         let place = self.place(expr, &mut mode)?;
-        let place = self.through(place, span, &mut mode)?;
+        let place = self.through(place, &mut mode)?;
         self.slot_of(Rvalue::Use(Operand::Copy(place)))
     }
 
@@ -427,7 +427,7 @@ impl FuncCx<'_, '_> {
             let [from] = more else {
                 return Ok(Rvalue::Use(Operand::Copy(own)));
             };
-            let from = self.header(*from, span)?;
+            let from = self.header(*from)?;
             // Where the elements that come start, and how many come: for
             // elements whose copy is more than their bytes.
             // What is appended may be of a type that is not known,
@@ -473,18 +473,18 @@ impl FuncCx<'_, '_> {
         Ok(Rvalue::Use(Operand::Copy(own)))
     }
 
-    /// `copy(&to, from)`, and `copy(to, from)` of a Go file: as many
-    /// elements as both have are written to those of `to` itself.
+    /// `copy(&to, from)`: as many elements as both have are written to
+    /// those of `to` itself.
     pub fn copy_into(&mut self, span: SourceSpan, ty: TypeId, args: &[ExprId]) -> Built<Rvalue> {
         let [args_to, from] = args else {
             return Ok(Rvalue::Use(self.zero(ty)));
         };
         let args_to = *args_to;
-        let to = self.header(args_to, span)?;
+        let to = self.header(args_to)?;
         let Type::Slice(of) = self.kind(self.b.place_ty(&to)) else {
             return Ok(Rvalue::Use(self.zero(ty)));
         };
-        let from = self.header(*from, span)?;
+        let from = self.header(*from)?;
         let [size, _] = self.element_facts(of)?;
         let bytes = self.bytes_ty();
         let word = self.b.operand_ty(&size);
@@ -521,7 +521,7 @@ impl FuncCx<'_, '_> {
 
     /// `clear(s)`: every element is zero again.
     pub fn clear_slice(&mut self, span: SourceSpan, x: ExprId) -> Built<bool> {
-        let of = self.header(x, span)?;
+        let of = self.header(x)?;
         let Type::Slice(elem) = self.kind(self.b.place_ty(&of)) else {
             return Ok(false);
         };
@@ -546,10 +546,10 @@ impl FuncCx<'_, '_> {
     }
 
     /// `cap(x)` as a number of the type.
-    pub fn cap(&mut self, span: SourceSpan, ty: TypeId, x: ExprId) -> Built<Option<Rvalue>> {
+    pub fn cap(&mut self, ty: TypeId, x: ExprId) -> Built<Option<Rvalue>> {
         let mut mode = PlaceMode::default();
         let place = self.place(x, &mut mode)?;
-        let place = self.through(place, span, &mut mode)?;
+        let place = self.through(place, &mut mode)?;
         let word = super::Memo::word(self.shared, self.b.types(), false);
         let cap = match self.kind(self.b.place_ty(&place)) {
             Type::Slice(_) => Operand::Copy(self.b.field(&place, 2)?),
@@ -608,7 +608,7 @@ impl FuncCx<'_, '_> {
         let span = self.tree.exprs[expr].span;
         let mut mode = PlaceMode::default();
         let base = self.place(x, &mut mode)?;
-        let base = self.through(base, span, &mut mode)?;
+        let base = self.through(base, &mut mode)?;
         let word = super::Memo::word(self.shared, self.b.types(), false);
         // The elements, how many there are and how many fit.
         let (whole, of, len, cap) = match self.kind(self.b.place_ty(&base)) {

@@ -146,7 +146,6 @@ pub fn render_json(diagnostic: &Diagnostic, sources: &SourceMap) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gopp_span::Dialect;
 
     use super::*;
 
@@ -162,7 +161,7 @@ mod tests {
     fn sample() -> (SourceMap, Diagnostic) {
         let sources = SourceMap::new();
         let text = "package main\n\n//gopp:cflags -O2\nvar π = 1 $ 2\n";
-        let file = SourceFile::new("main.gopp".into(), text.to_owned(), Dialect::Gopp).unwrap();
+        let file = SourceFile::new("main.gopp".into(), text.to_owned()).unwrap();
         let file = sources.add(file);
         let diagnostic = Diagnostic::new(
             Code::GoppDirectiveInSource,

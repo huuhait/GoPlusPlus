@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use gopp_diag::{Code, Diagnostic, Sink};
-use gopp_span::{Dialect, SourceFile, Span};
+use gopp_span::{SourceFile, Span};
 use gopp_syntax::ast::*;
 use gopp_syntax::constraint::is_build;
 use gopp_syntax::with_stack;
@@ -290,21 +290,6 @@ impl Collector<'_> {
             self.sink.push(diagnostic);
             return;
         };
-        // Go's rule for a path; a `.gopp` file also imports headers, as
-        // `"<vector>"`.
-        const ILLEGAL: &str = "!\"#$%&'()*,:;<=>?[\\]^{|}`\u{FFFD}";
-        let illegal = |c: char| c.is_control() || c.is_whitespace() || ILLEGAL.contains(c);
-        let go = unit.source.dialect() == Dialect::Go;
-        if let Some(c) = import_path.chars().find(|&c| go && illegal(c)) {
-            let shown = match c.is_control() {
-                true => format!("U+{:04X}", c as u32),
-                false => format!("U+{:04X} '{c}'", c as u32),
-            };
-            let message = format!("invalid import path (invalid character {shown})");
-            let diagnostic = Diagnostic::new(Code::BadImportPath, literal.span, message);
-            self.sink.push(diagnostic);
-            return;
-        }
         if let Some(name) = name.filter(|name| self.names.resolve(&name.name) == "init") {
             let message = "cannot import package as init - init must be a func";
             let diagnostic = Diagnostic::new(Code::InitSignature, name.span, message);
@@ -434,7 +419,6 @@ impl Context<'_> {
             cx: self,
             file: unit.file,
             text: unit.source.text(),
-            dialect: unit.source.dialect(),
             file_scope: &self.package.files[file].scope,
             body: Body::default(),
             visible: FxHashMap::default(),
@@ -464,7 +448,6 @@ struct Resolver<'a> {
     cx: &'a Context<'a>,
     file: &'a File,
     text: &'a str,
-    dialect: Dialect,
     file_scope: &'a FxHashMap<Spur, Ref>,
     body: Body,
     /// The innermost local of each name that is in scope.
@@ -586,7 +569,7 @@ impl<'a> Resolver<'a> {
     /// `declared`: those that are in scope now.
     fn loop_body(&mut self, declared: std::ops::Range<usize>, body: &Block) {
         let mut own: Vec<(Spur, Span)> = Vec::new();
-        for index in declared.filter(|_| self.dialect == Dialect::Gopp) {
+        for index in declared {
             let local = &self.body.locals[index];
             let in_scope = self.visible.get(&local.name).map(|binding| binding.local);
             if in_scope == Some(LocalId(index as u32)) {
@@ -633,7 +616,7 @@ impl<'a> Resolver<'a> {
         if let Some(&object) = self.cx.package.scope.get(&name) {
             return Some(Ref::Object(object));
         }
-        let predeclared = self.cx.universe.lookup(self.dialect, name);
+        let predeclared = self.cx.universe.lookup(name);
         predeclared.map(Ref::Universe)
     }
 
@@ -656,13 +639,13 @@ impl<'a> Resolver<'a> {
             return;
         }
         let text = self.name_text(name);
-        // In a method of a `.gopp` file `base` names the parents of the
-        // type, if it has any, which its declaration says.
-        if text == "base" && self.in_method && self.dialect == Dialect::Gopp {
+        // In a method `base` names the parents of the type, if it has
+        // any, which its declaration says.
+        if text == "base" && self.in_method {
             return;
         }
         let mut diagnostic = Diagnostic::new(Code::Undefined, span, format!("undefined: {text}"));
-        if text == "new" && self.dialect == Dialect::Gopp {
+        if text == "new" {
             let note = "Go++ has no new: write NewUnique(T{}) for one owner or NewShared(T{}) \
                         for several";
             diagnostic = diagnostic.with_note(Code::NoteOwnNewRemoved, None, note);
@@ -1436,10 +1419,10 @@ impl<'a> Resolver<'a> {
         }
         match file.exprs[inner].kind {
             ExprKind::Name(name) if name == self.cx.blank => {}
-            // In a `.gopp` file an assignment to a pointer writes what it
-            // points to, which reads the pointer. Only the types tell the
-            // two apart, so there the assignment counts as a use.
-            ExprKind::Name(name) => self.name(inner, name, self.dialect == Dialect::Gopp),
+            // An assignment to a pointer writes what it points to, which
+            // reads the pointer. Only the types tell the two apart, so
+            // the assignment counts as a use.
+            ExprKind::Name(name) => self.name(inner, name, true),
             _ => self.expr(target),
         }
     }

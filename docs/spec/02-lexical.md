@@ -67,8 +67,6 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 - Like Go's predeclared names, these can be redeclared in any scope, package level included (`type Option int` is accepted). The declaration hides the predeclared name in its scope. Do not do it.
 - `Send` and `Sync` are constraints only ([GEN-11](10-generics.md), [CON-12](12-concurrency.md)): bare `Send` or `Sync` in a type position (`var x Send`) or with type arguments is a compile error. `Local[T]` is a predeclared generic type for `func` and `interface` types only (`Local[func()]`, `Local[any]`, [CON-12](12-concurrency.md)), opting out of `Send`/`Sync` for single-goroutine callbacks and interfaces.
-- In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `Local`, `Send`, `Sync`, `Copy`, `Clone`, `move`, `NewUnique`, `NewShared` and `NewWeak` are ordinary names there (`Option[int]` is "undefined: Option").
-- In Go mode `base` is an ordinary name too ([TYP-26](03-types.md#35-inheritance-adr-0023)).
 - The macro names live in their own namespace (they are only used after `#` or `@`).
 
 **LEX-8.** Go's `new` is not predeclared. Using it is a compile error "undefined: new" with a fix-it that suggests `NewUnique(T{})` or `NewShared(T{})`.
@@ -79,7 +77,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 ### Directive comments
 
-**LEX-11.** A `.gopp` file has no directive comments. Which files and declarations a build takes is said with the attribute `@Build` ([FOR-11](14-foreign-surface.md)); Go's `//go:build` comment above the `package` clause of a `.gopp` file is a compile error that shows the attribute to write. A `.go` file keeps Go's `//go:build` line. The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md). A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error. The error carries a note with the `gopp.mod` line to add (`cflags …`); it has no fix-it, because a fix-it cannot move text into another file and deleting the line would lose the flags.
+**LEX-11.** A `.gopp` file has no directive comments. Which files and declarations a build takes is said with the attribute `@Build` ([FOR-11](14-foreign-surface.md)); Go's `//go:build` comment above the `package` clause of a `.gopp` file is a compile error that shows the attribute to write. The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md). A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error. The error carries a note with the `gopp.mod` line to add (`cflags …`); it has no fix-it, because a fix-it cannot move text into another file and deleting the line would lose the flags.
 
 ### Contextual words
 

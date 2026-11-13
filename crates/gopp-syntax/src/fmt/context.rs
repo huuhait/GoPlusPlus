@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use gopp_diag::Sink;
-use gopp_span::{Dialect, SourceFile};
+use gopp_span::SourceFile;
 use lasso::ThreadedRodeo;
 
 use super::printer::Pos;
@@ -59,7 +59,6 @@ pub(super) struct Cx<'a> {
     pub file: &'a File,
     pub text: &'a str,
     pub names: &'a ThreadedRodeo,
-    pub gopp: bool,
     pub tokens: Vec<Token>,
     /// Where each line starts.
     pub lines: Vec<u32>,
@@ -89,7 +88,6 @@ impl<'a> Cx<'a> {
             file,
             text,
             names,
-            gopp: source.dialect() == Dialect::Gopp,
             tokens: lexed.tokens,
             lines: std::iter::once(0).chain(line_starts).collect(),
             comments: comments.collect(),

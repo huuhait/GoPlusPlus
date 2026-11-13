@@ -476,8 +476,7 @@ impl FuncCx<'_, '_> {
         let checked = typed.ty;
         let mut mode = PlaceMode::default();
         let value = self.place(x, &mut mode)?;
-        let span = self.tree.exprs[x].span;
-        let value = self.through(value, span, &mut mode)?;
+        let value = self.through(value, &mut mode)?;
         if !self.is_iface(self.b.place_ty(&value)) {
             return Ok(Err("a value in an interface of this kind"));
         }
@@ -1019,10 +1018,10 @@ impl<'a> FuncCx<'a, '_> {
             else {
                 continue;
             };
-            // A value of a type of a Go file has the methods that take
-            // a value only.
-            let gopp = (shared.method(found.holder, name)).is_some_and(|method| method.gopp);
-            if pointer_receiver && !pointer && !gopp {
+            // A value has the methods that take its address too (TYP-5),
+            // of the types that are lowered here.
+            let lowered = shared.method(found.holder, name).is_some();
+            if pointer_receiver && !pointer && !lowered {
                 continue;
             }
             let method = gopp_sema::types::Method {
@@ -1157,9 +1156,8 @@ impl<'a> FuncCx<'a, '_> {
         Ok(self.glue(Glue::Drop, ty)?.map(Ends::Glue))
     }
 
-    /// Goes on only if the pointer in the place is not nil: a pointer
-    /// that an interface value holds or a struct embeds may be nil in
-    /// a Go file.
+    /// Goes on only if the pointer in the place is not nil: the first
+    /// word of an interface value that may be nil, or what it holds.
     pub fn not_nil(&mut self, pointer: &Place) -> Built {
         let null = self.zero(self.b.place_ty(pointer));
         let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(pointer.clone()), null);
@@ -1432,13 +1430,13 @@ impl<'a> FuncCx<'a, '_> {
         };
         let base = self.place(x, &mut mode)?;
         let value = self.steps(base, path, span, &mut mode)?;
-        let value = self.through(value, span, &mut mode)?;
+        let value = self.through(value, &mut mode)?;
         if !self.is_iface(self.b.place_ty(&value)) {
             return Ok(Err("a method of an interface of this kind"));
         }
         let word = self.b.field(&value, 1)?;
         let word = self.record(word)?;
-        let nilable = types.has_nil(iface, self.source.dialect());
+        let nilable = types.has_nil(iface);
         let called = Called {
             code: Code::Slot(value, slot as u32, code, nilable),
             views: sig.params.len() - declared,

@@ -1453,7 +1453,7 @@ impl FuncCx<'_, '_> {
                 self.b.goto(after)?;
                 self.b.switch_to(after);
                 if let Some(value) = slots.first() {
-                    let (ret, result) = self.call_value(pending.span, value, *code_ty, given)?;
+                    let (ret, result) = self.call_value(value, *code_ty, given)?;
                     if let Some(marked) = &pending.marked {
                         self.deferred_error(pending.span, marked, &result, error_at)?;
                     } else if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT)

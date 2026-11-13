@@ -364,7 +364,7 @@ fn calls_with_many_parameters_and_results_pass_what_was_given_at_every_level() {
     const FUNCTIONS: usize = 32;
     let toolchain = HostToolchain::discover().unwrap();
     let unit = emit_c23(
-        &module("a.go", &many_parameters(FUNCTIONS)),
+        &module("a.gopp", &many_parameters(FUNCTIONS)),
         &options(Entry::Main),
     );
     let unit = unit.unwrap();
@@ -405,7 +405,7 @@ fn calls_with_many_parameters_and_results_pass_what_was_given_at_every_level() {
     // The same unit is one of the other system too.
     let windows = TargetSpec::named("windows/amd64").unwrap();
     let unit = emit_c23(
-        &module("a.go", &many_parameters(FUNCTIONS)),
+        &module("a.gopp", &many_parameters(FUNCTIONS)),
         &options_for(windows, Entry::Main),
     );
     assembly(&toolchain, &unit.unwrap(), "windows/amd64", OptLevel::O2);

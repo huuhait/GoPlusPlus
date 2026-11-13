@@ -97,7 +97,7 @@ impl<'a> Checker<'a> {
             }
             return Operand::UNKNOWN;
         }
-        let x = self.read(cx, x);
+        let x = self.read(x);
         if let Some(element) = self.operator_index(cx, expr, of, &x, indices) {
             return element;
         }
@@ -138,7 +138,6 @@ impl<'a> Checker<'a> {
                     args,
                     spans: spans.collect(),
                     at: cx.tree.exprs[expr].span,
-                    skip_cycle: false,
                 });
                 return Operand::value(instance);
             }
@@ -174,7 +173,7 @@ impl<'a> Checker<'a> {
         // An element of a constant at a constant index is a constant
         // (EXP-31).
         match (&x.mode, at) {
-            (Mode::Const(held), Some(at)) if self.own_rules(cx) => {
+            (Mode::Const(held), Some(at)) => {
                 Operand::constant(element.ty, self.constant_element(held, at))
             }
             _ => element,
@@ -329,7 +328,7 @@ impl<'a> Checker<'a> {
         full: bool,
     ) -> Operand {
         let x = self.value(cx, of);
-        let x = self.read(cx, x);
+        let x = self.read(x);
         self.sliced(cx, of);
         let span = cx.tree.exprs[of].span;
         let sliced = match x.mode == Mode::Unknown || self.open(x.ty) {

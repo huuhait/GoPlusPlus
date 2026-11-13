@@ -2,8 +2,8 @@
 //! `gopp test-run`, and what it writes and how it ends is compared with
 //! what its files say.
 //!
-//! A program is a `.gopp` or a `.go` file. Its `.out` file beside it
-//! has what it writes, the standard error stream in the standard output
+//! A program is a `.gopp` file. Its `.out` file beside it has what it
+//! writes, the standard error stream in the standard output
 //! in the order of the writes; a first line `// exit: N` says the
 //! status that it ends with, which is 0 without one. The offsets of a
 //! trace are written `+0x?`. `GOPP_RUN_UPDATE=1` writes the `.out`
@@ -61,10 +61,7 @@ fn every_program_of_tests_run_does_what_its_files_say() {
     let mut programs: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|ext| ext == "gopp" || ext == "go")
-        })
+        .filter(|path| path.extension().is_some_and(|ext| ext == "gopp"))
         .collect();
     programs.sort();
     assert!(programs.len() >= 8);

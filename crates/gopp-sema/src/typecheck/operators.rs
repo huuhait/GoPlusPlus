@@ -544,8 +544,8 @@ impl<'a> Checker<'a> {
     /// The `@Operator` methods of the name that a value of the type has.
     /// A type parameter has the methods of the name that its constraint
     /// lists (GEN-13).
-    pub(super) fn operator_methods(&self, cx: &Cx<'a>, ty: TypeId, name: &str) -> Vec<Operator> {
-        if !self.own_rules(cx) || self.is_untyped(ty) {
+    pub(super) fn operator_methods(&self, ty: TypeId, name: &str) -> Vec<Operator> {
+        if self.is_untyped(ty) {
             return Vec::new();
         }
         let Some(name) = self.names.get(name) else {
@@ -698,7 +698,6 @@ impl<'a> Checker<'a> {
     /// where it is, for what is said of it.
     fn operator_choice(
         &mut self,
-        cx: &Cx<'a>,
         op: BinaryOp,
         (x, y): (&Operand, &Operand),
         (at, written): (Span, &str),
@@ -706,7 +705,7 @@ impl<'a> Checker<'a> {
         let Some(name) = binary_method(op) else {
             return Choice::Builtin;
         };
-        if !self.own_rules(cx) || x.ty == Types::INVALID || y.ty == Types::INVALID {
+        if x.ty == Types::INVALID || y.ty == Types::INVALID {
             return Choice::Builtin;
         }
         // `nil` is compared as Go compares it.
@@ -715,8 +714,8 @@ impl<'a> Checker<'a> {
             return Choice::Builtin;
         }
         let both_orders = COMMUTATIVE.contains(&name);
-        let all_left = self.operator_methods(cx, x.ty, name);
-        let all_right = self.operator_methods(cx, y.ty, name);
+        let all_left = self.operator_methods(x.ty, name);
+        let all_right = self.operator_methods(y.ty, name);
         if all_left.is_empty() && all_right.is_empty() {
             return Choice::Builtin;
         }
@@ -746,7 +745,7 @@ impl<'a> Checker<'a> {
             (Ok(None), Ok(Some(at))) => Choice::Method(of_right[at].clone(), true),
             (Ok(None), Ok(None)) if builtin && !hidden => Choice::Builtin,
             (Ok(None), Ok(None)) => {
-                self.no_operator(cx, (at, written), op, (x, y));
+                self.no_operator((at, written), op, (x, y));
                 Choice::Refused
             }
             _ => {
@@ -780,7 +779,7 @@ impl<'a> Checker<'a> {
             ),
         };
         let at = self.span(cx, whole.unwrap_or(left));
-        let (method, swapped) = match self.operator_choice(cx, op, (x, y), (at, &written)) {
+        let (method, swapped) = match self.operator_choice(op, (x, y), (at, &written)) {
             Choice::Builtin => return Overload::Builtin,
             Choice::Refused => return Overload::Refused,
             Choice::Method(method, swapped) => (method, swapped),
@@ -848,7 +847,7 @@ impl<'a> Checker<'a> {
             self.expr_string(cx, case)
         );
         let at = self.span(cx, case);
-        match self.operator_choice(cx, BinaryOp::Eq, (x, v), (at, &written)) {
+        match self.operator_choice(BinaryOp::Eq, (x, v), (at, &written)) {
             Choice::Builtin => false,
             Choice::Refused => true,
             Choice::Method(method, swapped) => {
@@ -875,8 +874,8 @@ impl<'a> Checker<'a> {
         indices: &[ExprId],
     ) -> Option<Operand> {
         let store = self.lookup_target == Some(expr);
-        let reading = self.operator_methods(cx, x.ty, "Index");
-        let storing = self.operator_methods(cx, x.ty, "SetIndex");
+        let reading = self.operator_methods(x.ty, "Index");
+        let storing = self.operator_methods(x.ty, "SetIndex");
         if reading.is_empty() && storing.is_empty() {
             return None;
         }
@@ -966,7 +965,7 @@ impl<'a> Checker<'a> {
     /// whose type has an `@Operator` `Iter` method, what the method
     /// gives (RNG-6b).
     pub(super) fn operator_iter(&mut self, cx: &Cx<'a>, of: ExprId, x: Operand) -> Operand {
-        let methods = self.operator_methods(cx, x.ty, "Iter");
+        let methods = self.operator_methods(x.ty, "Iter");
         let Some(method) = methods.first() else {
             return x;
         };
@@ -986,14 +985,8 @@ impl<'a> Checker<'a> {
 
     /// `T(x)` in a `.gopp` file: the `@Convert` method of the type of
     /// `x` that gives a `T`, if it has one (EXP-25).
-    pub(super) fn operator_convert(
-        &mut self,
-        cx: &Cx<'a>,
-        call: ExprId,
-        x: &Operand,
-        target: TypeId,
-    ) -> bool {
-        let Some(method) = self.convert_method(cx, x.ty, target) else {
+    pub(super) fn operator_convert(&mut self, call: ExprId, x: &Operand, target: TypeId) -> bool {
+        let Some(method) = self.convert_method(x.ty, target) else {
             return false;
         };
         self.operators.insert(call, method);
@@ -1001,13 +994,8 @@ impl<'a> Checker<'a> {
     }
 
     /// The `@Convert` method of the type `from` that gives a `to`.
-    pub(super) fn convert_method(
-        &self,
-        cx: &Cx<'a>,
-        from: TypeId,
-        to: TypeId,
-    ) -> Option<OperatorUse> {
-        if !self.own_rules(cx) || self.is_untyped(from) {
+    pub(super) fn convert_method(&self, from: TypeId, to: TypeId) -> Option<OperatorUse> {
+        if self.is_untyped(from) {
             return None;
         }
         let methods = self.types.marked_methods(from, Marks::CONVERT);
@@ -1042,7 +1030,7 @@ impl<'a> Checker<'a> {
             return Overload::Builtin;
         }
         let name = format!("{binary}Assign");
-        let methods = self.operator_methods(cx, x.ty, &name);
+        let methods = self.operator_methods(x.ty, &name);
         if methods.is_empty() {
             return Overload::Builtin;
         }
@@ -1089,7 +1077,6 @@ impl<'a> Checker<'a> {
     /// operator with the type of the right one.
     pub(super) fn no_operator(
         &mut self,
-        cx: &Cx<'a>,
         (at, written): (Span, &str),
         op: BinaryOp,
         (x, y): (&Operand, &Operand),
@@ -1099,8 +1086,8 @@ impl<'a> Checker<'a> {
         // A constant is named by the type that it has as a value.
         let shown = |ty: TypeId| self.type_string(self.types.default_type(ty));
         let (left, right) = (shown(x.ty), shown(y.ty));
-        let of_left = self.operator_methods(cx, x.ty, name);
-        let of_right = self.operator_methods(cx, y.ty, name);
+        let of_left = self.operator_methods(x.ty, name);
+        let of_right = self.operator_methods(y.ty, name);
         // Only the type on the right has the operator: its methods take
         // it as the left operand.
         if of_left.is_empty() && !of_right.is_empty() {
@@ -1146,7 +1133,7 @@ impl<'a> Checker<'a> {
             UnaryOp::Xor => "BitNot",
             _ => return Overload::Builtin,
         };
-        let methods = self.operator_methods(cx, x.ty, name);
+        let methods = self.operator_methods(x.ty, name);
         let Some(method) = methods.first() else {
             return Overload::Builtin;
         };

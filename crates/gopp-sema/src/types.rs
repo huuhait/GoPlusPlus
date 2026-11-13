@@ -13,7 +13,6 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use gopp_span::Dialect;
 use lasso::{Spur, ThreadedRodeo};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -540,8 +539,8 @@ struct Inner {
     /// For a type parameter that stands for another in one place, the
     /// one that was declared.
     param_origins: FxHashMap<TypeId, TypeId>,
-    /// The type parameters that are declared in Go++ files: a method of
-    /// their constraint may be met as an operator element (GEN-13).
+    /// The type parameters that a declaration writes: a method of their
+    /// constraint may be met as an operator element (GEN-13).
     element_params: FxHashSet<TypeId>,
     /// By the first type parameter that a method with type parameters of
     /// its own got for one receiver: what the receiver names its type
@@ -2117,7 +2116,7 @@ impl Types {
     pub fn has_own_nil(&self, ty: TypeId, names: &ThreadedRodeo) -> bool {
         self.underlying(ty) != Types::INVALID
             && !matches!(&*self.get(ty), Type::Param(_))
-            && (self.has_nil(ty, Dialect::Gopp) || self.is_unsafe_pointer(ty, names))
+            && (self.has_nil(ty) || self.is_unsafe_pointer(ty, names))
     }
 
     /// Whether the type is an option, or is declared as one.
@@ -2173,7 +2172,7 @@ impl Types {
             .unwrap_or(param)
     }
 
-    /// The type parameter is declared in a Go++ file.
+    /// The type parameter is one that a declaration writes.
     pub fn set_elements(&self, param: TypeId) {
         self.write(|inner| inner.element_params.insert(param));
     }
@@ -2513,19 +2512,33 @@ impl Types {
         }
     }
 
-    /// Whether `nil` is a value of the type. In a `.gopp` file a pointer,
-    /// a func and an interface with methods are never nil (TYP-2).
-    pub fn has_nil(&self, id: TypeId, dialect: Dialect) -> bool {
-        let go = dialect == Dialect::Go;
+    /// Whether `nil` is a value of the type. A pointer, a func and an
+    /// interface with methods are never nil (TYP-2).
+    pub fn has_nil(&self, id: TypeId) -> bool {
         match &*self.get(self.underlying(id)) {
-            Type::Slice(_) | Type::Map { .. } | Type::Chan { .. } | Type::Option(_) => true,
-            Type::Basic(Basic::UntypedNil) | Type::Invalid => true,
-            Type::Pointer(_) | Type::Func { .. } => go,
+            Type::Pointer(_) | Type::Func { .. } => false,
             Type::Interface { methods, embedded } => {
-                go || id == self.error || (methods.is_empty() && embedded.is_empty())
+                id == self.error || (methods.is_empty() && embedded.is_empty())
             }
-            _ => false,
+            _ => self.nil_kind(id),
         }
+    }
+
+    /// Whether the type is of a kind that has a nil in Go: also a pointer,
+    /// a func and an interface with methods, which are never nil here.
+    pub fn nil_kind(&self, id: TypeId) -> bool {
+        matches!(
+            &*self.get(self.underlying(id)),
+            Type::Slice(_)
+                | Type::Map { .. }
+                | Type::Chan { .. }
+                | Type::Option(_)
+                | Type::Basic(Basic::UntypedNil)
+                | Type::Invalid
+                | Type::Pointer(_)
+                | Type::Func { .. }
+                | Type::Interface { .. }
+        )
     }
 
     /// The first method of the interface `iface`, in the order of the
@@ -2696,14 +2709,14 @@ impl Types {
     }
 
     /// Whether a value of the type `from` may be assigned to a place of
-    /// the type `to` in a file of `dialect`. For a constant, `value` is
-    /// its value: an untyped constant must fit the type.
+    /// the type `to`. For a constant, `value` is its value: an untyped
+    /// constant must fit the type. `nil` counts as a value of every kind
+    /// that has one in Go ([`nil_kind`](Self::nil_kind)).
     pub fn assignable(
         &self,
         from: TypeId,
         value: Option<&Value>,
         to: TypeId,
-        dialect: Dialect,
         names: &ThreadedRodeo,
     ) -> bool {
         if from == Self::INVALID || to == Self::INVALID || self.identical(from, to) {
@@ -2714,7 +2727,7 @@ impl Types {
         if let Type::Basic(kind) = &*from_type
             && kind.is_untyped()
         {
-            return self.untyped_assignable(*kind, value, to, dialect);
+            return self.untyped_assignable(*kind, value, to);
         }
         // Identical underlying types, and one side is not a declared type.
         let one_unnamed = !self.is_named(from) || !self.is_named(to);
@@ -2732,22 +2745,16 @@ impl Types {
                 Type::Chan { elem: b, .. },
             ) => one_unnamed && a == b,
             // A value is its own option (TYP-2).
-            (_, Type::Option(elem)) => self.assignable(from, value, *elem, dialect, names),
+            (_, Type::Option(elem)) => self.assignable(from, value, *elem, names),
             _ => false,
         }
     }
 
     /// Whether an untyped value of the kind `kind` may be assigned to a
     /// place of the type `to`.
-    fn untyped_assignable(
-        &self,
-        kind: Basic,
-        value: Option<&Value>,
-        to: TypeId,
-        dialect: Dialect,
-    ) -> bool {
+    fn untyped_assignable(&self, kind: Basic, value: Option<&Value>, to: TypeId) -> bool {
         if kind == Basic::UntypedNil {
-            return self.has_nil(to, dialect);
+            return self.nil_kind(to);
         }
         match &*self.get(self.underlying(to)) {
             Type::Basic(target) => match value {
@@ -2772,7 +2779,7 @@ impl Types {
             // A value in an interface has a type: only the empty
             // interface takes one that has none yet.
             Type::Interface { methods, embedded } => methods.is_empty() && embedded.is_empty(),
-            Type::Option(elem) => self.untyped_assignable(kind, value, *elem, dialect),
+            Type::Option(elem) => self.untyped_assignable(kind, value, *elem),
             _ => false,
         }
     }

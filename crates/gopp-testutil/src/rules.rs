@@ -70,7 +70,7 @@ pub fn named(roots: &[PathBuf]) -> BTreeMap<String, Vec<PathBuf>> {
         let is_source = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| ["rs", "go", "gopp"].contains(&extension));
+            .is_some_and(|extension| ["rs", "gopp"].contains(&extension));
         if !is_source {
             continue;
         }
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn every_rule_that_a_test_names_is_in_the_specification() {
         let found = of_workspace();
-        assert!(found.defined >= 291, "only {} rules found", found.defined);
+        assert!(found.defined >= 289, "only {} rules found", found.defined);
         assert_eq!(found.unknown, []);
     }
 
