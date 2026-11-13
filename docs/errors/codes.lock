@@ -514,3 +514,4 @@ E0508 note_captured_here
 E0509 err_own_borrowed_assign
 E0510 err_own_borrow_outlives
 E0511 note_borrowed_here
+E0512 err_own_pointer_on_heap

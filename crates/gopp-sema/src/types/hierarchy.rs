@@ -208,12 +208,59 @@ impl Types {
         names
     }
 
+    /// Whether a value of the type holds a pointer where it is: a
+    /// pointer, a `Local`, which may be made of one, or a struct, an
+    /// array, an option or a tuple with one. What a slice, a map, a channel or a handle leads to is on the
+    /// heap, where no pointer is kept (OWN-B5).
+    pub fn holds_pointer(&self, ty: TypeId) -> bool {
+        self.points(ty, &mut (FxHashSet::default(), 0))
+    }
+
+    /// `holds_pointer`, with the types that are being looked into and
+    /// how often one of them was met again: a type that holds itself is
+    /// refused elsewhere, and is taken to hold nothing more here. "No"
+    /// is kept only when no type was met again below, so what is kept
+    /// for a type is the same whoever asks first.
+    fn points(&self, ty: TypeId, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
+        if let Some(known) = self.read(|inner| inner.pointing.get(&ty).copied()) {
+            return known;
+        }
+        if !seen.0.insert(ty) {
+            seen.1 += 1;
+            return false;
+        }
+        let before = seen.1;
+        self.steps
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut any = |parts: &[TypeId]| {
+            parts
+                .iter()
+                .any(|&part| super::deep(|| self.points(part, seen)))
+        };
+        let found = match &*self.get(self.underlying(ty)) {
+            Type::Pointer(_) | Type::Local(_) => true,
+            Type::Struct(fields) => {
+                let own: Vec<TypeId> = fields.iter().map(|field| field.ty).collect();
+                any(&own) || any(&self.parents(ty))
+            }
+            Type::Array { elem, .. } | Type::Option(elem) => any(&[*elem]),
+            Type::Tuple(parts) => any(parts),
+            _ => false,
+        };
+        seen.0.remove(&ty);
+        if found || seen.1 == before {
+            self.write(|inner| inner.pointing.insert(ty, found));
+        }
+        found
+    }
+
     /// Forgets what was worked out of hierarchies: the methods of a type
     /// are declared after its parents are known.
     pub fn forget_hierarchy(&self) {
         self.write(|inner| {
             inner.tables.clear();
             inner.abstracts.clear();
+            inner.pointing.clear();
             inner.open_abstracts.clear();
         });
     }

@@ -523,6 +523,7 @@ impl<'a> Checker<'a> {
                         let assigned = self.assignment(cx, value, x, Some(to), "assignment");
                         self.note_write(cx, place, to, Some(&assigned));
                         self.field_stored(cx, place, &text, to, (value, &assigned));
+                        self.kept_by_package(cx, place, to, Some(value));
                         self.flow_assigned_nil(cx, place, value);
                     }
                     (Some(_), None) => {
@@ -574,6 +575,7 @@ impl<'a> Checker<'a> {
                 self.note_write(cx, place, to, Some(&value));
                 let text = self.expr_string(cx, place);
                 self.field_stored(cx, place, &text, to, (rhs[0], &value));
+                self.kept_by_package(cx, place, to, None);
             }
             if let Some(to) = to
                 && value.mode != Mode::Unknown

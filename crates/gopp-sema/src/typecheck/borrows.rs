@@ -133,41 +133,10 @@ fn lies(change: &[Step], loan: &[Step]) -> Lies {
 }
 
 impl<'a> Walk<'a> {
-    /// Whether a value of the type may hold a pointer: a pointer, or a
-    /// struct, an array or an option with one. What is on the heap
-    /// holds none (OWN-B5).
-    fn may_point(&mut self, ty: TypeId) -> bool {
-        let Some(places) = self.places else {
-            return false;
-        };
-        if let Some(&known) = self.pointing.get(&ty) {
-            return known;
-        }
-        let types = places.types;
-        let mut seen = FxHashSet::default();
-        let mut rest = vec![ty];
-        let mut found = false;
-        while let Some(next) = rest.pop() {
-            self.found.steps += 1;
-            if !seen.insert(next) {
-                continue;
-            }
-            match &*types.get(types.underlying(next)) {
-                Type::Pointer(_) => {
-                    found = true;
-                    break;
-                }
-                Type::Struct(fields) => {
-                    rest.extend(fields.iter().map(|field| field.ty));
-                    rest.extend(types.parents(next));
-                }
-                Type::Array { elem, .. } | Type::Option(elem) => rest.push(*elem),
-                Type::Tuple(parts) => rest.extend(parts.iter()),
-                _ => {}
-            }
-        }
-        self.pointing.insert(ty, found);
-        found
+    /// Whether a value of the type may hold a pointer (OWN-B5).
+    fn may_point(&self, ty: TypeId) -> bool {
+        self.places
+            .is_some_and(|places| places.types.holds_pointer(ty))
     }
 
     fn type_of(&self, expr: ExprId) -> Option<TypeId> {

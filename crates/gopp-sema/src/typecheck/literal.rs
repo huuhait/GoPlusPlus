@@ -85,8 +85,18 @@ impl<'a> Checker<'a> {
                 let length = Some(*len).filter(|_| !grows);
                 self.indexed_elements(cx, (expr, elems), *elem, length, strict);
             }
-            Type::Slice(elem) => self.indexed_elements(cx, (expr, elems), *elem, None, strict),
-            Type::Map { key, value } => self.map_elements(cx, elems, (*key, *value), strict),
+            // The elements of a slice and the entries of a map are on
+            // the heap (OWN-B5).
+            Type::Slice(elem) => {
+                self.on_the_heap(*elem, cx.tree.exprs[expr].span, "a slice");
+                self.indexed_elements(cx, (expr, elems), *elem, None, strict);
+            }
+            Type::Map { key, value } => {
+                let at = cx.tree.exprs[expr].span;
+                let _ =
+                    self.on_the_heap(*key, at, "a map") || self.on_the_heap(*value, at, "a map");
+                self.map_elements(cx, elems, (*key, *value), strict);
+            }
             _ => {
                 for &element in elems {
                     match cx.tree.exprs[element].kind {

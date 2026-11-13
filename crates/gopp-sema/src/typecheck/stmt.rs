@@ -325,6 +325,7 @@ impl<'a> Checker<'a> {
                     let assigned =
                         self.assignment(cx, target, Operand::value(ty), Some(to), "assignment");
                     self.note_write(cx, target, to, Some(&assigned));
+                    self.kept_by_package(cx, target, to, None);
                     if holds {
                         self.range_copies(cx, of, &x, target, ty);
                     }

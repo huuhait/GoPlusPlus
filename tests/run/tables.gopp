@@ -55,7 +55,7 @@ func shapes() {
 	var s *Shape = &zero
 	var q *Square = &tile
 	println(s.Kind(), s.Area(), q.Kind(), q.Describe())
-	all := []*Shape{&sq, &tile, &zero}
+	all := [3]*Shape{&sq, &tile, &zero}
 	total := 0
 	for _, each := range all {
 		total += each.Area()

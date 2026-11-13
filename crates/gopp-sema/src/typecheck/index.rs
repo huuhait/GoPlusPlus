@@ -327,6 +327,7 @@ impl<'a> Checker<'a> {
         bounds: [Option<ExprId>; 3],
         full: bool,
     ) -> Operand {
+        let view = self.viewed.take() == Some(expr);
         let x = self.value(cx, of);
         let x = self.read(x);
         self.sliced(cx, of);
@@ -387,6 +388,13 @@ impl<'a> Checker<'a> {
         };
         if sliced == Types::INVALID {
             return Operand::UNKNOWN;
+        }
+        // A part of an array as a value is a slice of its own, on the
+        // heap (OWN-S2, OWN-B5).
+        if let (false, Type::Slice(elem)) = (view, &*self.types.get(sliced))
+            && !matches!(&*under, Type::Slice(_))
+        {
+            self.on_the_heap(*elem, cx.tree.exprs[expr].span, "a slice");
         }
         // The values of the bounds that are known: what is left out is 0
         // at the start and the length at the end.

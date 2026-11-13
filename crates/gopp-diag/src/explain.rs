@@ -524,6 +524,17 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Keep one of them.",
             "@Inline\n@NoInline\nfunc f() {} // error",
         ),
+        OwnPointerOnHeap => (
+            "A pointer, or a struct or an array that holds one, is put where it may outlive \
+             what it points to: into a slice, a map or a channel that is made, into a \
+             `Unique` or a `Shared`, or into a variable of the package. A pointer lives in \
+             the variables, the parameters and the results of functions, where the compiler \
+             follows it.",
+            "Let the heap own the value with a `Unique`, a `Shared` or a `Weak`, or keep the \
+             pointers in an array.",
+            "nodes := []*Node{&a, &b}  // error\nnodes := [2]*Node{&a, &b} // \
+             ok\nowned := []Unique[Node]{NewUnique(a)} // ok",
+        ),
         OwnBorrowedAppend => (
             "A slice is grown or cleared while a pointer into its elements is still used: \
              `&xs[i]`, a view `&xs[i:j]`, or a variable of a `range` clause written with \

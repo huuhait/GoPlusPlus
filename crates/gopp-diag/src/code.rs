@@ -367,6 +367,7 @@ codes! {
     509 OwnBorrowedAssign "err_own_borrowed_assign",
     510 OwnBorrowOutlives "err_own_borrow_outlives",
     511 NoteBorrowedHere "note_borrowed_here",
+    512 OwnPointerOnHeap "err_own_pointer_on_heap",
 }
 
 impl Code {

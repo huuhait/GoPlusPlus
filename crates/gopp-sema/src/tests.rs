@@ -725,7 +725,11 @@ fn a_type_may_not_hold_a_value_of_itself() {
         // func or an interface, nothing is held.
         (
             "type T struct {\n\ta *T\n\tb []T\n\tc map[string]T\n\td chan T\n\te func(T) T\n\t\
-             f interface{ M(T) }\n\tg Option[*T]\n\th Unique[T]\n\ti Shared[T]\n}",
+             f interface{ M(T) }\n\tg Option[*T]\n}",
+            &[],
+        ),
+        (
+            "type T struct {\n\tb []T\n\th Unique[T]\n\ti Shared[T]\n}",
             &[],
         ),
         ("type L[E any] struct{ next *L[E]; v E }\ntype B *B", &[]),
@@ -5969,6 +5973,169 @@ fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
 }
 
+// rule: OWN-B5
+#[test]
+fn what_holds_a_pointer_is_not_kept_on_the_heap_or_by_the_package() {
+    // The variables of the package hold pointers into variables of
+    // packages only; `heap` puts what holds a pointer where it may
+    // outlive what it points to; `stack` keeps the same in variables.
+    let text = "package p
+
+type Node struct {
+	name string
+	next Option[*Node]
+}
+
+type Point struct{ x, y int }
+
+var origin = Point{1, 2}
+
+var first = &origin
+
+var where *int = &origin.x
+
+var grid [2]Point
+
+var corner = &grid[1]
+
+var list []Point
+
+var inside = &list[0]
+
+var late Option[*Point]
+
+func made(p *Point) *Point { return p }
+
+var called = made(&origin)
+
+func heap(p *Point, n Node) {
+	a := []*Point{p}
+	b := make([]*Point, 0)
+	c := map[string]*Point{}
+	d := make(chan *Point)
+	e := NewUnique(n)
+	f := NewShared(Node{})
+	var g []Node
+	g = append(g, n)
+	var h Option[Unique[Node]]
+	late = p
+	late = &origin
+	late = first
+	first, late = made(p), nil
+	var ok bool
+	first, ok = pair(p)
+	ps := [2]*Point{p, p}
+	for _, first = range ps {
+	}
+	i := ps[:]
+	var li Local[any] = p
+	j := []Local[any]{li}
+	k := NewShared(li)
+	_, _, _, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, f, g, h, ok, i, j, k
+}
+
+func stack(p *Point, n Node) {
+	a := [2]*Point{p, p}
+	b := []Point{*p}
+	c := map[string]Point{\"p\": *p}
+	d := NewUnique(*p)
+	e := [1]Node{n}
+	f := Node{next: &n}
+	g := []Unique[Point]{NewUnique(*p)}
+	var h Option[*Point] = p
+	ps := [2]*Point{p, p}
+	i := &ps[:]
+	numbers := [4]int{}
+	j := numbers[1:3]
+	var k Local[any] = p
+	_, _, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, f, g, h, i, j, k
+}
+
+func pair(p *Point) (*Point, bool) { return p, true }
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let said: Vec<&str> = (checked.messages.iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| message.split(": a pointer in it").next().unwrap_or(message))
+        .collect();
+    let expected = [
+        "a.gopp:22:14: cannot keep a *Point in a variable of the package",
+        "a.gopp:28:14: cannot keep a *Point in a variable of the package",
+        "a.gopp:31:7: cannot keep a *Point in a slice",
+        "a.gopp:32:12: cannot keep a *Point in a slice that is made",
+        "a.gopp:33:7: cannot keep a *Point in a map",
+        "a.gopp:34:12: cannot keep a *Point in a channel",
+        "a.gopp:35:17: cannot keep a Node in NewUnique",
+        "a.gopp:36:17: cannot keep a Node in NewShared",
+        "a.gopp:38:6: cannot keep a Node in a slice that grows",
+        "a.gopp:39:15: invalid type Unique[Node]: a Node holds a pointer, and what holds one is \
+         not kept on the heap",
+        "a.gopp:40:9: cannot keep a Option[*Point] in a variable of the package",
+        "a.gopp:43:16: cannot keep a *Point in a variable of the package",
+        "a.gopp:45:2: cannot keep a *Point in a variable of the package",
+        "a.gopp:47:9: cannot keep a *Point in a variable of the package",
+        "a.gopp:49:7: cannot keep a *Point in a slice",
+        "a.gopp:51:7: cannot keep a Local[any] in a slice",
+        "a.gopp:52:17: cannot keep a Local[any] in NewShared",
+    ];
+    assert_eq!(said, expected);
+}
+
+// rule: OWN-B5
+#[test]
+fn the_steps_of_where_pointers_are_kept_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let types = |count: usize| {
+        let rest: String = (1..count)
+            .map(|i| format!("type T{i} struct{{ a T{}; n int }}\n", i - 1))
+            .collect();
+        format!("package p\ntype T0 struct {{\n\tp Option[*int]\n\tn int\n}}\n{rest}")
+    };
+    // Each type holds the one before it, and the first a pointer. A
+    // variable of each is assigned: from the first type to the last,
+    // and from the last to the first.
+    let chain = |count: usize, down: bool| {
+        let variables: String = (0..count).map(|i| format!("var g{i} T{i}\n")).collect();
+        let order: Vec<usize> = match down {
+            true => (0..count).rev().collect(),
+            false => (0..count).collect(),
+        };
+        let assigned: String = (order.iter())
+            .map(|i| format!("\tg{i} = T{i}{{}}\n"))
+            .collect();
+        format!("{}{variables}func f() {{\n{assigned}}}\n", types(count))
+    };
+    // One place and one address, each as deep as there are types.
+    let deep = |count: usize| {
+        let way = ".a".repeat(count - 1);
+        format!(
+            "{}var top, other T{}\nfunc f() {{\n\ttop{way}.p = &other{way}.n\n}}\n",
+            types(count),
+            count - 1
+        )
+    };
+    // One value with many pointers, each into a variable of the package.
+    let wide = |count: usize| {
+        let variables: String = (0..count).map(|i| format!("var v{i} int\n")).collect();
+        let values: String = (0..count).map(|i| format!("&v{i}, ")).collect();
+        format!(
+            "package p\n{variables}var all [{count}]Option[*int]\nfunc f() {{\n\tall = \
+             [{count}]Option[*int]{{{values}}}\n}}\n"
+        )
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
+    linear::assert_near_linear(&sizes, |n| steps(deep(n)));
+    linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+}
+
 // rule: TYP-24, OWN-R6
 #[test]
 fn a_type_with_parents_is_copied_with_the_parts_of_its_parents() {
@@ -6786,6 +6953,9 @@ func views(files []File, byName map[string]File) {
 }
 ";
     let expected = [
+        "a.gopp:12:8: invalid type Unique[Doc]: a Doc holds a pointer, and what holds one is not kept on the heap",
+        "a.gopp:26:9: cannot keep a Doc in a slice that grows: a pointer in it may outlive what it points to",
+        "    let the heap own the value with a Unique, a Shared or a Weak, or keep the pointers in an array",
         "a.gopp:63:3: cannot assign to d.Title: d is a copy of an element, and the change would be \
          lost",
         "    write &d in the range clause to name the element itself",
@@ -8113,12 +8283,23 @@ func shareds(s Shared[Node], w Weak[Node], o Option[Shared[Node]]) {
 ";
     let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
     let expected = [
+        "a.gopp:16:13: invalid type Unique[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
+        "a.gopp:16:47: cannot keep a Node in NewUnique: a pointer in it may outlive what it points to",
+        "    let the heap own the value with a Unique, a Shared or a Weak, or keep the pointers in an array",
+        "a.gopp:17:14: invalid type Shared[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
+        "a.gopp:17:47: cannot keep a Node in NewShared: a pointer in it may outlive what it points to",
+        "    let the heap own the value with a Unique, a Shared or a Weak, or keep the pointers in an array",
+        "a.gopp:49:16: invalid type Unique[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
+        "a.gopp:49:39: invalid type Unique[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
         "a.gopp:61:8: cannot use open() as *Node value: the Unique[Node] is a temporary that ends \
          with the statement",
         "    store it in a variable first",
         "a.gopp:62:18: cannot use open() as *Node value: the Unique[Node] is a temporary that ends \
          with the statement",
         "    store it in a variable first",
+        "a.gopp:66:16: invalid type Shared[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
+        "a.gopp:66:32: invalid type Weak[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
+        "a.gopp:66:53: invalid type Shared[Node]: a Node holds a pointer, and what holds one is not kept on the heap",
         "a.gopp:79:2: cannot assign to s.Name: what a Shared holds is only read through it",
         "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
         "a.gopp:80:2: cannot assign to s.Kids[0]: what a Shared holds is only read through it",
@@ -8685,7 +8866,7 @@ type Tree struct {
 	name string
 }
 type Ring struct {
-	next Option[Unique[Ring]]
+	next Option[*Ring]
 	back *Ring
 }
 type Reader interface{ Read() int }
@@ -8728,8 +8909,8 @@ var (
 
 	sharedReader Shared[Reader]
 	sharedSafe   Shared[Safe]
-	sharedRing   Shared[Ring]
-	uniqueRing   Unique[Ring]
+	sharedHolder Shared[Holder]
+	uniqueHolder Unique[Holder]
 	pointers     []*Point
 	byPointer    map[string]*Point
 	optPointer   Option[*Point]
@@ -8765,8 +8946,8 @@ var (
         "localAny:",
         "sharedReader:",
         "sharedSafe: Send Sync",
-        "sharedRing:",
-        "uniqueRing:",
+        "sharedHolder:",
+        "uniqueHolder: Send",
         "pointers:",
         "byPointer:",
         "optPointer:",
@@ -8788,7 +8969,7 @@ type Tree struct {
 	name string
 }
 type Ring struct {
-	next Option[Unique[Ring]]
+	next Option[*Ring]
 	back *Ring
 }
 type I interface{ M() }
@@ -8821,7 +9002,7 @@ func conv(f func(), lf Local[func()], i I, li Local[I], p Plain) {
 	i = li
 }
 
-func labels(n Node, pn *Node, t Tree, r Ring, s Shared[Node], sp Shared[Ring], w Weak[Tree], i I, sf Safe, e error, x any, lf Local[func()], ch chan *Node, m map[string][]int, mp map[string]*Node, u Unique[Node], o Option[Tree], f func()) {
+func labels(n Node, pn *Node, t Tree, r Ring, s Shared[Node], sp Shared[I], w Weak[Tree], i I, sf Safe, e error, x any, lf Local[func()], ch chan *Node, m map[string][]int, mp map[string]*Node, u Unique[Node], o Option[Tree], f func()) {
 	spawn(n)
 	spawn(t)
 	spawn(s)
@@ -8866,7 +9047,7 @@ func labels(n Node, pn *Node, t Tree, r Ring, s Shared[Node], sp Shared[Ring], w
          does not implement I (missing method M)",
         "a.gopp:64:2: *Node does not satisfy Send (a *Node borrows what it points to)",
         "a.gopp:65:2: Ring does not satisfy Send (a *Ring borrows what it points to)",
-        "a.gopp:66:2: Shared[Ring] does not satisfy Send (what a Shared[Ring] holds is not Sync)",
+        "a.gopp:66:2: Shared[I] does not satisfy Send (what a Shared[I] holds is not Sync)",
         "a.gopp:67:2: Local[func()] does not satisfy Send (a Local[func()] stays with one \
          goroutine)",
         "a.gopp:68:2: map[string]*Node does not satisfy Send (a *Node borrows what it points to)",
@@ -9501,8 +9682,8 @@ type Kid[P any] struct{ more []Kid[*P] }
 type Root[P any] struct{ v P }
 
 func f(x T[int], y A[int], k Kid[int]) {
-	ch := make(chan *A[int])
-	go func() { ch <- &y }()
+	ch := make(chan A[int])
+	go func() { ch <- y }()
 	w, kk := x, k
 	_, _ = w, kk
 }
@@ -10432,6 +10613,8 @@ func use(v Vec2, xs []int, n Named, t Table) {
          (wrong type for method Add)",
         "    have Add(Vec2) Vec2",
         "    want Add(T) T",
+        "a.gopp:67:10: cannot keep a *Vec2 in a slice: a pointer in it may outlive what it points to",
+        "    let the heap own the value with a Unique, a Shared or a Weak, or keep the pointers in an array",
     ];
     assert_eq!(messages("a.gopp", &format!("{declared}{bad}")), expected);
 }
@@ -11408,7 +11591,7 @@ var g{i} = f{before}(V{{{i}}}, V{{1}}, nil)
 func f{i}(a, b V, xs []int) int {{
 	type L{i} struct {{
 		n    int
-		next Option[*L{i}]
+		next Option[Weak[L{i}]]
 	}}
 	type Pairs = map[string][{len}]L{i}
 	c := a + b
@@ -12890,7 +13073,7 @@ const Twice = Boiling * 2
 
 type Node struct {
 	Name  string `json:\"name\"`
-	next  Option[*Node]
+	next  Option[Weak[Node]]
 	owner Shared[Node]
 	Size  int @Required
 }
@@ -12928,7 +13111,7 @@ func Map[T, U any](xs []T, f func(T) U) []U
         "Map: func([]T, func(T) U) []U",
         "Mask: uint8 = 240",
         "Name: untyped string = \"gopp\"",
-        "Node: p.Node (struct{Name string \"json:\\\"name\\\"\"; next Option[*p.Node]; owner \
+        "Node: p.Node (struct{Name string \"json:\\\"name\\\"\"; next Option[Weak[p.Node]]; owner \
          Shared[p.Node]; Size int @Required})",
         "Open: func(string, ...int) (Unique[p.Node], error)",
         "Reader: p.Reader (interface{Close(); Read(*[]byte) (int, error)})",

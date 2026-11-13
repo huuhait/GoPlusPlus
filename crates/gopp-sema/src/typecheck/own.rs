@@ -253,6 +253,152 @@ impl<'a> Checker<'a> {
         self.error(Code::InvalidHandleType, cx.tree.exprs[expr].span, message);
     }
 
+    /// Whether the name is a variable of a package.
+    fn package_var(&self, cx: &Cx<'a>, name: ExprId) -> bool {
+        match cx.body.uses.get(&name) {
+            Some(Ref::Object(object)) => {
+                matches!(self.package.objects[object.0 as usize].kind, ObjKind::Var)
+            }
+            Some(Ref::Member { import, member }) => {
+                match &self.package.objects[import.0 as usize].kind {
+                    ObjKind::Import { package, .. } => package
+                        .objects
+                        .get(member.0 as usize)
+                        .is_some_and(|object| matches!(object.kind, ObjKind::Var)),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the place is a variable of a package or a part of one.
+    /// With `inline`, only a part that is where the variable is: a
+    /// field, an element of an array, what a pointer in it points to;
+    /// not an element of a slice or a map or what a handle holds, which
+    /// may be replaced.
+    fn in_package(&self, cx: &Cx<'a>, mut place: ExprId, inline: bool) -> bool {
+        let typed = |this: &Self, expr: ExprId| {
+            let known = this.memo.as_ref().and_then(|memo| memo.get(&expr));
+            known.map(|operand| this.types.get(this.types.underlying(operand.ty)))
+        };
+        loop {
+            place = self.unparen(cx, place);
+            let of = match cx.tree.exprs[place].kind {
+                ExprKind::Name(_) => return self.package_var(cx, place),
+                ExprKind::Selector { x, .. } => {
+                    if cx.body.uses.contains_key(&place) {
+                        return self.package_var(cx, place);
+                    }
+                    x
+                }
+                ExprKind::Index { x, .. } | ExprKind::Slice { x, .. } => x,
+                ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => x,
+                _ => return false,
+            };
+            let moves = matches!(
+                typed(self, self.unparen(cx, of)).as_deref(),
+                Some(Type::Slice(_) | Type::Map { .. } | Type::Unique(_) | Type::Shared(_))
+            );
+            if inline && moves {
+                return false;
+            }
+            place = of;
+        }
+    }
+
+    /// Whether every pointer in the value of the expression points into
+    /// a variable of a package, which lives as long as the program:
+    /// the address of one or of a part of it, what such a variable
+    /// holds, nil, and what holds no pointer.
+    pub(super) fn points_to_packages(&mut self, cx: &Cx<'a>, expr: ExprId) -> bool {
+        let mut rest = vec![expr];
+        while let Some(next) = rest.pop() {
+            self.steps += 1;
+            let next = self.unparen(cx, next);
+            let known = self.memo.as_ref().and_then(|memo| memo.get(&next));
+            let ty = known.map(|operand| operand.ty);
+            if ty.is_some_and(|ty| !self.types.holds_pointer(ty)) {
+                continue;
+            }
+            match &cx.tree.exprs[next].kind {
+                ExprKind::Unary {
+                    op: UnaryOp::Addr,
+                    x,
+                } => {
+                    if !self.in_package(cx, *x, true) {
+                        return false;
+                    }
+                }
+                ExprKind::CompositeLit { elems, .. } => rest.extend(elems.iter()),
+                ExprKind::KeyValue { value, .. } => rest.push(*value),
+                // A conversion gives what it is given.
+                ExprKind::Call { fun, args, .. }
+                    if args.len() == 1
+                        && self.memo.as_ref().is_some_and(|memo| {
+                            let callee = memo.get(&self.unparen(cx, *fun));
+                            callee.is_some_and(|callee| callee.mode == Mode::Type)
+                        }) =>
+                {
+                    rest.push(args[0]);
+                }
+                ExprKind::Name(_)
+                    if cx.body.uses.get(&next) == Some(&Ref::Universe(Predeclared::Nil)) => {}
+                _ => {
+                    if !self.in_package(cx, next, false) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// The place gets the value: a variable of a package, or a part of
+    /// one, holds no pointer that may end before the program does
+    /// (OWN-B5). `value` is `None` for what a call gives.
+    pub(super) fn kept_by_package(
+        &mut self,
+        cx: &Cx<'a>,
+        place: ExprId,
+        to: TypeId,
+        value: std::option::Option<ExprId>,
+    ) {
+        if !self.in_package(cx, place, false) || !self.types.holds_pointer(to) {
+            return;
+        }
+        if value.is_some_and(|value| self.points_to_packages(cx, value)) {
+            return;
+        }
+        let at = value.unwrap_or(place);
+        self.on_the_heap(to, cx.tree.exprs[at].span, "a variable of the package");
+    }
+
+    /// A value of the type is put on the heap, into `what`: refused if
+    /// it holds a pointer, which the compiler follows only in the
+    /// variables of functions (OWN-B5). Whether it was refused.
+    pub(super) fn on_the_heap(&mut self, ty: TypeId, span: Span, what: &str) -> bool {
+        if self.types.has_param(ty) || !self.types.holds_pointer(ty) {
+            return false;
+        }
+        let message = format!(
+            "cannot keep a {} in {what}: a pointer in it may outlive what it points to",
+            self.type_string(ty)
+        );
+        let fix = "let the heap own the value with a Unique, a Shared or a Weak, or keep the \
+                   pointers in an array";
+        self.error_with_fix(
+            Code::OwnPointerOnHeap,
+            span,
+            message,
+            (Code::NoteOwnFixHeapPointer, fix.to_owned()),
+        );
+        true
+    }
+
     /// Whether the type has nil of its own, so that an option of it says
     /// nothing more (OWN-P9).
     pub(super) fn has_own_nil(&self, ty: TypeId) -> bool {

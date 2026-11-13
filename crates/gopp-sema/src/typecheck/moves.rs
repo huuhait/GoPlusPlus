@@ -274,7 +274,6 @@ pub(super) struct Walk<'a> {
     /// What says what a place is, for a body that may make loans; and
     /// what the walk has found of them (`borrows.rs`).
     pub places: Option<&'a borrows::Places<'a>>,
-    pub pointing: FxHashMap<TypeId, bool>,
     pub sources: Vec<borrows::Source>,
     pub changes: Vec<borrows::Change>,
     /// The variables that the statements around declare, each
@@ -327,7 +326,6 @@ pub(super) fn of(
         literals: Vec::new(),
         found: Found::default(),
         places,
-        pointing: FxHashMap::default(),
         sources: Vec::new(),
         changes: Vec::new(),
         frames: Vec::new(),

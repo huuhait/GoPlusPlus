@@ -623,7 +623,11 @@ impl<'a> Checker<'a> {
             // The address is that of the variable, whatever is known of
             // it, and what gets the address may assign it.
             UnaryOp::Addr => {
-                let outer = self.unnarrowed.replace(self.unparen(cx, inner));
+                let of = self.unparen(cx, inner);
+                let outer = self.unnarrowed.replace(of);
+                if matches!(cx.tree.exprs[of].kind, ExprKind::Slice { .. }) {
+                    self.viewed = Some(of);
+                }
                 let x = self.value(cx, inner);
                 self.unnarrowed = outer;
                 self.flow_written(cx, inner);

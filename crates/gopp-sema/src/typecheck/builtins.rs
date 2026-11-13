@@ -257,6 +257,8 @@ impl<'a> Checker<'a> {
                         return Operand::UNKNOWN;
                     }
                 };
+                // What `append` adds to is on the heap (OWN-B5).
+                self.on_the_heap(elem, cx.tree.exprs[call].span, "a slice that grows");
                 let params = [x.ty, self.types.slice(elem)];
                 self.arguments(cx, call, fun, (&params, true), args, spread);
                 Operand::value(x.ty)
@@ -676,8 +678,10 @@ impl<'a> Checker<'a> {
             self.error(Code::UseOfUntypedNil, cx.tree.exprs[at].span, message);
             return Operand::UNKNOWN;
         }
-        // A pointer that borrows does not live on the heap, which is said
-        // where borrows are checked.
+        // What holds a pointer does not live on the heap.
+        if self.on_the_heap(x.ty, cx.tree.exprs[at].span, name) {
+            return Operand::UNKNOWN;
+        }
         let handle = self.types.handle(make, x.ty);
         handle.map_or(Operand::UNKNOWN, Operand::value)
     }
@@ -751,6 +755,17 @@ impl<'a> Checker<'a> {
     fn make(&mut self, cx: &Cx<'a>, call: ExprId, args: &[ExprId]) -> Operand {
         let ty = self.var_type(cx, args[0]);
         let sizes = &args[1..];
+        // What is made is on the heap (OWN-B5).
+        let at = cx.tree.exprs[args[0]].span;
+        match &*self.types.get(self.types.underlying(ty)) {
+            Type::Slice(elem) => drop(self.on_the_heap(*elem, at, "a slice that is made")),
+            Type::Map { key, value } => {
+                let _ =
+                    self.on_the_heap(*key, at, "a map") || self.on_the_heap(*value, at, "a map");
+            }
+            Type::Chan { elem, .. } => drop(self.on_the_heap(*elem, at, "a channel")),
+            _ => {}
+        }
         if self.unsettled(ty) {
             for &size in sizes {
                 self.operand(cx, size);

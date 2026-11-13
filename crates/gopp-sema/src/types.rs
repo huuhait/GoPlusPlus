@@ -561,6 +561,9 @@ struct Inner {
     /// whether it is abstract.
     tables: FxHashMap<TypeId, bool>,
     abstracts: FxHashMap<TypeId, bool>,
+    /// Whether a value of each type that was asked holds a pointer
+    /// where it is.
+    pointing: FxHashMap<TypeId, bool>,
     open_abstracts: FxHashMap<TypeId, Arc<Vec<(TypeId, Method)>>>,
     /// For a type that was asked: whether it is `Send` and `Sync`.
     labels: FxHashMap<TypeId, Labels>,

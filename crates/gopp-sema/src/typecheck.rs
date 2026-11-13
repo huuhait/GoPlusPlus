@@ -408,6 +408,9 @@ struct Checker<'a> {
     target: Option<String>,
     /// While the values of a swap are assigned.
     swapping: bool,
+    /// The slice expression that `&` is written before: a view of the
+    /// elements, and no slice of its own.
+    viewed: Option<ExprId>,
     /// While a body is walked: the expressions whose values are put into
     /// an interface, each with its type and the interface type.
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
@@ -495,6 +498,10 @@ struct Checker<'a> {
     /// and whether in a body: that the type has no nil of its own is
     /// checked once every type is known.
     options: Vec<(TypeId, Span, bool)>,
+    /// What each `Unique`, `Shared` and `Weak` type that is written
+    /// holds, with where it is written and how: it may hold no pointer,
+    /// which is known once every type is (OWN-B5).
+    heaped: Vec<(TypeId, Span, String)>,
     /// The type of each field that was written with `@Required`, with
     /// where the attribute is: what it may be on is checked once every
     /// type is known.
@@ -657,11 +664,13 @@ pub fn declarations(
         required_fields: Vec::new(),
         value_types: Vec::new(),
         options: Vec::new(),
+        heaped: Vec::new(),
         required_addresses: Vec::new(),
         read_only: FxHashSet::default(),
         operands: place::Operands::Kept,
         target: None,
         swapping: false,
+        viewed: None,
         iface_conversions: FxHashMap::default(),
         case_types: FxHashMap::default(),
         iface_changes: FxHashMap::default(),
@@ -1322,6 +1331,16 @@ impl<'a> Checker<'a> {
         }
         for (of, span, in_body) in std::mem::take(&mut self.options) {
             self.option_of(of, span, in_body);
+        }
+        for (held, span, written) in std::mem::take(&mut self.heaped) {
+            if !self.types.has_param(held) && self.types.holds_pointer(held) {
+                let message = format!(
+                    "invalid type {written}: a {} holds a pointer, and what holds one is not kept \
+                     on the heap",
+                    self.type_string(held)
+                );
+                self.error(Code::InvalidHandleType, span, message);
+            }
         }
         for (ty, span) in std::mem::take(&mut self.required_fields) {
             self.required_field(ty, span);
@@ -2231,7 +2250,14 @@ impl<'a> Checker<'a> {
                         Some(self.types.option(arg))
                     }
                     _ => match self.types.handle(make, arg) {
-                        Ok(made) => Some(made),
+                        Ok(made) => {
+                            if !matches!(make(arg), Type::Local(_)) {
+                                let at = cx.tree.exprs[expr].span;
+                                let written = self.expr_string(cx, expr);
+                                self.heaped.push((arg, at, written));
+                            }
+                            Some(made)
+                        }
                         Err(bad) => {
                             self.bad_handle(cx, expr, arg, bad);
                             None
@@ -3594,6 +3620,28 @@ impl<'a> Checker<'a> {
                             true => drop(self.operand(&cx, value)),
                             false => drop(self.var_decl(&cx, declared_here, declared, &[value])),
                         }
+                    }
+                }
+                // A variable of the package lives as long as the
+                // program: so does what its pointers point to (OWN-B5).
+                let one_each = values.len() == names.len();
+                for (position, name) in names.iter().enumerate() {
+                    // What `_` gets is kept nowhere.
+                    if name.name == self.blank {
+                        continue;
+                    }
+                    let object = self.by_span.get(&name.span).copied();
+                    let Some(ty) = object.and_then(|object| self.ty.get(object).copied()) else {
+                        continue;
+                    };
+                    let value = values.get(position).copied().filter(|_| one_each);
+                    let stays = match value {
+                        Some(value) => self.points_to_packages(&cx, value),
+                        None => values.is_empty(),
+                    };
+                    if !stays {
+                        let at = value.map_or(name.span, |value| tree.exprs[value].span);
+                        self.on_the_heap(ty, at, "a variable of the package");
                     }
                 }
             }

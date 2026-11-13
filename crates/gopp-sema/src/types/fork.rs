@@ -62,6 +62,7 @@ impl Inner {
             categories: self.categories.clone(),
             tables: self.tables.clone(),
             abstracts: self.abstracts.clone(),
+            pointing: self.pointing.clone(),
             open_abstracts: open_abstracts
                 .map(|(&ty, open)| (ty, Arc::new((**open).clone())))
                 .collect(),
