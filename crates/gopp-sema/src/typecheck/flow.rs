@@ -333,7 +333,10 @@ impl<'a> Checker<'a> {
     pub(super) fn flow_written(&mut self, cx: &Cx<'a>, expr: ExprId) {
         if let Some(local) = self.flow_local(cx, expr) {
             let at = cx.tree.exprs[expr].span.lo;
-            self.flow_assigned(local, at);
+            match &mut self.written_later {
+                Some(later) => later.push((local, at)),
+                None => self.flow_assigned(local, at),
+            }
         }
     }
 

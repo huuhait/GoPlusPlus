@@ -533,21 +533,32 @@ impl<'a> Checker<'a> {
                 self.swaps.extend(places);
             }
             for (&place, &value) in lhs.iter().zip(rhs) {
-                match self.lhs_var(cx, place) {
-                    Some(invalid) if invalid == Types::INVALID => {
-                        self.operand(cx, value);
-                    }
-                    None => {
-                        self.assign(cx, value, None, "assignment to _ identifier");
-                    }
-                    Some(to) => {
-                        let x = self.value(cx, value);
+                // The value is worked out with what is known of the
+                // variable before it is assigned.
+                self.written_later = Some(Vec::new());
+                let to = self.lhs_var(cx, place);
+                let written = self.written_later.take().unwrap_or_default();
+                let x = match to {
+                    Some(to) if to != Types::INVALID => Some((to, self.value(cx, value))),
+                    _ => None,
+                };
+                for (local, at) in written {
+                    self.flow_assigned(local, at);
+                }
+                match (to, x) {
+                    (Some(to), Some((_, x))) => {
                         let text = self.expr_string(cx, place);
                         self.assigned_to = Some(text.clone());
                         let assigned = self.assignment(cx, value, x, Some(to), "assignment");
                         self.note_write(cx, place, to, Some(&assigned));
                         self.field_stored(cx, place, &text, to, (value, &assigned));
                         self.flow_assigned_nil(cx, place, value);
+                    }
+                    (Some(_), None) => {
+                        self.operand(cx, value);
+                    }
+                    (None, _) => {
+                        self.assign(cx, value, None, "assignment to _ identifier");
                     }
                 }
             }

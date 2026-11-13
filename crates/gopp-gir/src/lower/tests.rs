@@ -3845,6 +3845,104 @@ func main() {
 }
 
 #[test]
+fn a_unique_owns_a_value_on_the_heap() {
+    let text = "package main
+
+type Point struct{ x, y int }
+
+type Line struct {
+	name string
+	end  Unique[Point]
+}
+
+func made(x int) Unique[Point] { return NewUnique(Point{x: x, y: x}) }
+
+func read(p *Point) int { return p.x + p.y }
+
+func lent() int {
+	p := made(1)
+	p.x = 5
+	return read(p)
+}
+
+func copied() int {
+	p := made(2)
+	q := p
+	q.y = 9
+	return p.y + q.y
+}
+
+func moved() Unique[Point] {
+	p := made(3)
+	q := move(p)
+	return q
+}
+
+func held(name string) Line { return Line{name: name, end: made(4)} }
+
+func main() {
+	l := held(\"l\")
+	println(lent(), copied(), moved().x, l.end.y)
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |name: &str| {
+        let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+    // The handle is a pointer to a box with the symbol of its type,
+    // which no pointer of the source points to.
+    let handle = "*_GPTiIu6UniqueN4mainE5PointE";
+    assert!(
+        body("4made").contains(&format!(") -> {handle} ")),
+        "{}",
+        body("4made")
+    );
+    // `NewUnique` makes the one box. A handle that a pointer
+    // parameter is lent is the address of the value: nothing is made,
+    // and the handle ends with its variable, where a panic leaves the
+    // function too.
+    assert_eq!(calls(body("4made"), "_gopp_iface_box"), 1);
+    let lent = body("4lent");
+    assert_eq!(calls(lent, "_gopp_iface_box"), 0, "{lent}");
+    assert!(lent.contains("ptr_to_ptr("), "{lent}");
+    assert_eq!(calls(lent, "_GPTdIu6UniqueN4mainE5PointE"), 2, "{lent}");
+    // A copy is a box of its own, by the glue of the type; both end.
+    let copied = body("6copied");
+    assert_eq!(calls(copied, "_GPTcIu6UniqueN4mainE5PointE"), 1, "{copied}");
+    // What is moved is given as it is: no copy, and nothing ends
+    // where the value went on.
+    let moved = body("5moved");
+    assert_eq!(calls(moved, "_GPTcIu6UniqueN4mainE5PointE"), 0, "{moved}");
+    // The glue: the value ends and then its box; a copy has a box of
+    // its own.
+    let glue = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let dropped = glue("_GPTdIu6UniqueN4mainE5PointE");
+    assert_eq!(calls(dropped, "_gopp_box_free"), 1, "{dropped}");
+    let cloned = glue("_GPTcIu6UniqueN4mainE5PointE");
+    assert_eq!(calls(cloned, "_gopp_iface_box"), 1, "{cloned}");
+    insta::assert_snapshot!(format!("{lent}\n}}\n{dropped}\n}}\n{cloned}\n}}"));
+    // The other handles are not lowered yet.
+    let (_, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main\n\nfunc main() {\n\ts := NewShared(1)\n\t_ = s\n}\n",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        ["a.gopp:4:7: not supported yet: the built-in function NewShared"]
+    );
+}
+
+#[test]
 fn a_map_of_the_package_is_read_where_no_other_map_was_met() {
     let text = "package main
 
@@ -4441,6 +4539,42 @@ fn the_steps_grow_with_the_instances_of_generic_functions() {
         steps_of(&format!(
             "{}\n{all}",
             function(&format!("\tx += h{}(x)\n", n - 1))
+        ))
+    });
+}
+
+/// `Unique` handles: many of one type, a handle of a handle of a
+/// handle, and a chain of types that each own the next.
+#[test]
+fn the_steps_grow_with_the_values_that_a_unique_owns() {
+    let sizes = [100, 200, 400, 800];
+    let point = "type Point struct{ x, y int }\n";
+    assert_near_linear(&sizes, |n| {
+        let made: String = (0..n)
+            .map(|at| format!("\tp{at} := NewUnique(Point{{x: x}})\n\tx += p{at}.y\n"))
+            .collect();
+        steps_of(&format!("{}\n{point}", function(&made)))
+    });
+    assert_near_linear(&[25, 50, 100, 200], |n| {
+        let deep = format!("{}Point{}", "Unique[".repeat(n), "]".repeat(n));
+        let value = format!("{}Point{{x: x}}{}", "NewUnique(".repeat(n), ")".repeat(n));
+        steps_of(&format!(
+            "{}\n{point}",
+            function(&format!("\tvar deep {deep} = {value}\n\t_ = deep\n"))
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (0..n)
+            .map(|at| {
+                format!(
+                    "type T{at} struct {{\n\tn int\n\tnext Option[Unique[T{}]]\n}}\n\n",
+                    at + 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "{}\n{chain}type T{n} struct{{ n int }}\n",
+            function("\thead := NewUnique(T0{n: x})\n\tx += head.n\n")
         ))
     });
 }

@@ -32,6 +32,10 @@ enum Cloned {
     Elements(u64, TypeId, CheckedTypeId),
     /// What an option holds, if it is set.
     Held(CheckedTypeId),
+    /// A `Unique`: a box of its own with a copy of the value, of this
+    /// type, which is copied by its own glue if its copy is more than
+    /// its bytes; it ends with its value, and then its box.
+    Unique(TypeId, Option<CheckedTypeId>),
     /// A string: its bytes are counted once more, or once less.
     Text,
     /// A struct of a type with a `drop` method. Its copy is what its
@@ -117,7 +121,10 @@ impl FuncCx<'_, '_> {
         let rule = types.copy_rule(ty);
         match (kind, rule) {
             (_, Some(CopyRule::SameBytes)) => return Ok(Cloned::Text),
-            (Glue::Clone, Some(CopyRule::Elements | CopyRule::Parts | CopyRule::Method)) => {}
+            (
+                Glue::Clone,
+                Some(CopyRule::Elements | CopyRule::Parts | CopyRule::Method | CopyRule::Pointee),
+            ) => {}
             (Glue::Clone, None) => return Err("a copy of a value that cannot be copied"),
             (Glue::Clone, _) => return Err("a value of a type that is not copied by its parts"),
             // A value that cannot be copied ends as its parts do.
@@ -142,6 +149,15 @@ impl FuncCx<'_, '_> {
                 Cloned::Fields(parts)
             }
             CheckedType::Array { len, elem } => Cloned::Elements(*len, lower(self, *elem)?, *elem),
+            CheckedType::Unique(of) => {
+                let value = lower(self, *of)?;
+                Cloned::Unique(value, (!self.flat(value)).then_some(*of))
+            }
+            // An option of what is nil when it is all zero is that
+            // value itself.
+            CheckedType::Option(held) if lower(self, *held)? == lower(self, ty)? => {
+                return self.cloned(kind, *held);
+            }
             CheckedType::Option(held) => Cloned::Held(*held),
             _ if kind == Glue::Drop => return Err("the end of a value of this type"),
             _ => return Err("a copy of a value of this type"),
@@ -190,7 +206,7 @@ impl FuncCx<'_, '_> {
         };
         Ok(Ok(match how {
             Cloned::Text => Vec::new(),
-            Cloned::Slice(_, each) => each.into_iter().collect(),
+            Cloned::Slice(_, each) | Cloned::Unique(_, each) => each.into_iter().collect(),
             Cloned::Map => match self.map_of_type(ty) {
                 Ok(_) => Vec::new(),
                 Err(what) => return Ok(Err(what)),
@@ -488,7 +504,7 @@ impl FuncCx<'_, '_> {
         let word = self.b.types().int(64, false);
         // The glue of the parts that this one calls.
         let part = match &how {
-            Cloned::Slice(_, each) => *each,
+            Cloned::Slice(_, each) | Cloned::Unique(_, each) => *each,
             Cloned::Map | Cloned::Fields(_) | Cloned::Text | Cloned::Method(_) => None,
             Cloned::Elements(_, _, part) | Cloned::Held(part) => Some(*part),
         };
@@ -578,6 +594,51 @@ impl FuncCx<'_, '_> {
                     let count = self.b.const_int(word, count)?;
                     self.each(first, count, of, glue)?;
                 }
+            }
+            Cloned::Unique(of, _) => {
+                let [held, done] = [(); 2].map(|()| self.b.new_block());
+                let bytes = self.bytes_ty();
+                let handle = Operand::Copy(value.clone());
+                let boxed = Rvalue::Cast(CastKind::PtrToPtr, handle.clone(), bytes);
+                let boxed = Operand::Copy(Place::local(self.b.assign_temp(boxed)?));
+                // A handle that gave its value up is nil.
+                let null = self.zero(self.b.operand_ty(&handle));
+                let set = self
+                    .b
+                    .assign_temp(Rvalue::Binary(crate::BinOp::Ne, handle, null))?;
+                self.b
+                    .switch(Operand::Copy(Place::local(set)), vec![(0, done)], held)?;
+                self.b.switch_to(held);
+                match ends {
+                    // The value ends, then its box.
+                    true => {
+                        if let Some(glue) = of_part {
+                            self.call_glue(glue, boxed.clone())?;
+                        }
+                        self.runtime_call("_gopp_box_free", &[bytes], vec![boxed])?;
+                    }
+                    // A box of its own with the bytes, which the glue
+                    // of the value makes a copy of its own.
+                    false => {
+                        let layout = self.b.types().layout(of, shared.layout);
+                        let size = self
+                            .b
+                            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+                        let made = self.runtime(
+                            "_gopp_iface_box",
+                            &[bytes, word],
+                            bytes,
+                            vec![boxed, size],
+                        )?;
+                        let copy = Rvalue::Cast(CastKind::PtrToPtr, made.clone(), lowered);
+                        self.b.assign(value, copy)?;
+                        if let Some(glue) = of_part {
+                            self.call_glue(glue, made)?;
+                        }
+                    }
+                }
+                self.b.goto(done)?;
+                self.b.switch_to(done);
             }
             Cloned::Held(_) => {
                 let [held, done] = [(); 2].map(|()| self.b.new_block());

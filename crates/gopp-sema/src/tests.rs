@@ -13902,3 +13902,43 @@ func use!() int {
         ]
     );
 }
+
+#[test]
+fn a_variable_is_known_set_until_its_new_value_is_worked_out() {
+    let text = "package p
+
+type Node struct {
+	value int
+	next  Option[*Node]
+}
+
+func sum(head Option[*Node]) int {
+	total := 0
+	n := head
+	for n != nil {
+		total += n.value
+		n = n.next
+	}
+	return total
+}
+
+func after(head Option[*Node]) int {
+	n := head
+	if n != nil {
+		n = n.next
+		return n.value
+	}
+	return 0
+}
+";
+    // The value on the right of `n = n.next` reads the `n` that is
+    // known to be set (OWN-P10); after the assignment nothing is known
+    // of it.
+    assert_eq!(
+        messages("a.gopp", text),
+        [
+            "a.gopp:22:12: n.value undefined (type Option[*Node] has no field or method value)",
+            "    n may be nil: put it in a variable and test that against nil first",
+        ]
+    );
+}

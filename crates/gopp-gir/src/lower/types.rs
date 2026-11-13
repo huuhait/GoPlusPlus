@@ -99,10 +99,24 @@ impl Memo<'_> {
                 Basic::String => types.intern(Type::String),
                 _ => return Err("a value without a type"),
             },
-            CheckedType::Pointer(to)
-            | CheckedType::Unique(to)
-            | CheckedType::Shared(to)
-            | CheckedType::Weak(to) => {
+            // The one owner of a value on the heap: a pointer to a box
+            // that holds the value first, so the address of the box is
+            // that of the value. The box has the symbol of the type,
+            // which no pointer of the source points to: the handle is
+            // told from a `*T` by its type.
+            CheckedType::Unique(to) => {
+                let value = self.lower_type(shared, types, *to)?;
+                let name = symbol_of(&mut self.namer, Entity::TypeInfo(ty))
+                    .map_err(|_| "a type that has no symbol")?;
+                let (boxed, new) = types.struct_named(&name);
+                if let (true, Type::Struct(id)) = (new, types.get(boxed).clone()) {
+                    let _ = types.set_fields(id, &[("value", value)]);
+                }
+                let handle = types.ptr(boxed);
+                self.uniques.insert(handle, value);
+                handle
+            }
+            CheckedType::Pointer(to) | CheckedType::Shared(to) | CheckedType::Weak(to) => {
                 let to = self.lower_type(shared, types, *to)?;
                 types.ptr(to)
             }

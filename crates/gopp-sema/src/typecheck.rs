@@ -444,6 +444,10 @@ struct Checker<'a> {
     /// What the value that is assigned next is given to, as a message
     /// names it.
     assigned_to: Option<String>,
+    /// While the place of an assignment is checked: the variables that
+    /// it writes, each with where. What was known of them holds until
+    /// the value on the right is worked out (`n = n.next`).
+    written_later: Option<Vec<(LocalId, u32)>>,
     /// While a body is walked: the generic functions and types that it
     /// names, each with its type arguments.
     instantiated: FxHashMap<ExprId, crate::object::Instance>,
@@ -672,6 +676,7 @@ pub fn declarations(
         param_spans: FxHashMap::default(),
         partial: FxHashMap::default(),
         assigned_to: None,
+        written_later: None,
         instantiated: FxHashMap::default(),
         body_params: Vec::new(),
         given_types: FxHashMap::default(),

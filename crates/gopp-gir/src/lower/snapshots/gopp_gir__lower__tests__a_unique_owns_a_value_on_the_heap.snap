@@ -1,0 +1,77 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "format!(\"{lent}\\n}}\\n{dropped}\\n}}\\n{cloned}\\n}}\")"
+---
+
+fn _GPF4mainE4lent() -> i64 [go, external] {
+  let _0: i64
+  let _1: *_GPTiIu6UniqueN4mainE5PointE
+  let _2: *_GPTiIu6UniqueN4mainE5PointE "p"
+  let _3: *_GPTiN4mainE5Point
+  let _4: i64
+  let _5: **_GPTiIu6UniqueN4mainE5PointE
+  let _6: *u8
+  let _7: ()
+  let _8: **_GPTiIu6UniqueN4mainE5PointE
+  let _9: *u8
+  let _10: ()
+  bb0:
+    _1 = call const fn @_GPF4mainE4made(const 1: i64) -> [return: bb1, unwind: continue]  ; a.gopp:15:7
+  bb1:
+    storage_live(_2)  ; a.gopp:15:2
+    _2 = copy _1  ; a.gopp:15:2
+    (*_2).0.0 = const 5: i64  ; a.gopp:16:2
+    _3 = ptr_to_ptr(copy _2) as *_GPTiN4mainE5Point  ; a.gopp:17:2
+    _4 = call const fn @_GPF4mainE4read(copy _3) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:17:9
+  bb2: [cleanup]
+    _5 = &mut _2  ; a.gopp:17:9
+    _6 = ptr_to_ptr(copy _5) as *u8  ; a.gopp:17:9
+    _7 = call const fn @_GPTdIu6UniqueN4mainE5PointE(copy _6) -> [return: bb3, unwind: terminate]  ; a.gopp:17:9
+  bb3: [cleanup]
+    resume  ; a.gopp:17:9
+  bb4:
+    _0 = copy _4  ; a.gopp:17:2
+    _8 = &mut _2  ; a.gopp:17:2
+    _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:17:2
+    _10 = call const fn @_GPTdIu6UniqueN4mainE5PointE(copy _9) -> [return: bb5, unwind: terminate]  ; a.gopp:17:2
+  bb5:
+    storage_dead(_2)  ; a.gopp:17:2
+    return  ; a.gopp:17:2
+}
+
+fn _GPTdIu6UniqueN4mainE5PointE(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: **_GPTiIu6UniqueN4mainE5PointE
+  let _3: *u8
+  let _4: bool
+  let _5: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as **_GPTiIu6UniqueN4mainE5PointE
+    _3 = ptr_to_ptr(copy (*_2)) as *u8
+    _4 = ne(copy (*_2), const zero: *_GPTiIu6UniqueN4mainE5PointE)
+    switch copy _4 [0: bb2, otherwise: bb1]
+  bb1:
+    _5 = call const fn @_gopp_box_free(copy _3) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
+fn _GPTcIu6UniqueN4mainE5PointE(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: **_GPTiIu6UniqueN4mainE5PointE
+  let _3: *u8
+  let _4: bool
+  let _5: *u8
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as **_GPTiIu6UniqueN4mainE5PointE
+    _3 = ptr_to_ptr(copy (*_2)) as *u8
+    _4 = ne(copy (*_2), const zero: *_GPTiIu6UniqueN4mainE5PointE)
+    switch copy _4 [0: bb3, otherwise: bb1]
+  bb1:
+    _5 = call const fn @_gopp_iface_box(copy _3, const 16: u64) -> [return: bb2, unwind: continue]
+  bb2:
+    (*_2) = ptr_to_ptr(copy _5) as *_GPTiIu6UniqueN4mainE5PointE
+    goto bb3
+  bb3:
+    return
+}

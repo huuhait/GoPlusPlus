@@ -267,6 +267,17 @@ impl<'a> FuncCx<'a, '_> {
         if own == ty || (ty == unit && self.b.rvalue_ty(&value).is_ok()) {
             return self.given(expr, ty, value);
         }
+        // A `Unique` in a place where a pointer fits is the address of
+        // the value that it owns, and stays its owner (OWN-P6).
+        let owned = self.memo.uniques.get(&own).copied();
+        let lent = match (owned, self.kind(ty)) {
+            (Some(of), Type::Ptr(to)) => to == of,
+            _ => false,
+        };
+        if lent {
+            let handle = self.operand_of(value)?;
+            return Ok(Rvalue::Cast(CastKind::PtrToPtr, handle, ty));
+        }
         if own != unit && ty != unit {
             let span = self.tree.exprs[expr].span;
             self.unsupported(span, "a value whose type is not known");
@@ -740,7 +751,13 @@ impl<'a> FuncCx<'a, '_> {
         if self.source.dialect() == Dialect::Go {
             self.check(Check::Nil(Operand::Copy(place.clone()), span), mode)?;
         }
-        self.b.deref(&place)
+        // A `Unique` leads to its box, which holds the value first.
+        let unique = self.memo.uniques.contains_key(&self.b.place_ty(&place));
+        let behind = self.b.deref(&place)?;
+        match unique {
+            true => self.b.field(&behind, 0),
+            false => Ok(behind),
+        }
     }
 
     /// Makes the check now, or keeps it for the assignment.
@@ -1045,6 +1062,10 @@ impl<'a> FuncCx<'a, '_> {
     /// What a pointer of the type leads to; the type itself if it is
     /// no pointer.
     pub fn pointee(&mut self, ty: TypeId) -> TypeId {
+        // A `Unique` leads to the value that it owns.
+        if let Some(&value) = self.memo.uniques.get(&ty) {
+            return value;
+        }
         match self.kind(ty) {
             Type::Ptr(to) => to,
             _ => ty,
@@ -1780,6 +1801,25 @@ impl<'a> FuncCx<'a, '_> {
         Ok(())
     }
 
+    /// `NewUnique(v)` (OWN-P2): the value is worked out for a new
+    /// owner, which is a box of its own on the heap; the handle of the
+    /// type `ty` has the address of the box.
+    fn new_unique(&mut self, ty: TypeId, value: ExprId) -> Built<Rvalue> {
+        let of = self.pointee(ty);
+        let given = self.rvalue_as(value, of)?;
+        let given = self.taken(value, of, given)?;
+        let slot = self.slot_of(given)?;
+        let word = self.b.types().int(64, false);
+        let layout = self.b.types().layout(of, self.shared.layout);
+        let size = self
+            .b
+            .const_int(word, layout.map_or(0, |layout| layout.size))?;
+        let bytes = self.bytes_ty();
+        let from = self.record(slot)?;
+        let made = self.runtime("_gopp_iface_box", &[bytes, word], bytes, vec![from, size])?;
+        Ok(Rvalue::Cast(CastKind::PtrToPtr, made, ty))
+    }
+
     /// The instance of a generic function of the package that the
     /// expression names with type arguments, written or inferred.
     pub(super) fn instance_named(&self, expr: ExprId) -> Option<CalleeKey> {
@@ -2467,6 +2507,10 @@ impl<'a> FuncCx<'a, '_> {
             (Predeclared::Recover, [], _) => return self.recover(expr, ty),
             // The variable gives its value up where it is named.
             (Predeclared::Move, [of], _) => return self.rvalue_as(*of, ty),
+            (Predeclared::NewUnique, [value], _) if self.memo.uniques.contains_key(&ty) => {
+                let made = self.new_unique(ty, *value)?;
+                return self.fresh(expr, ty, made);
+            }
             (Predeclared::Clear, [of], _) if self.clear_slice(span, *of)? => {
                 return Ok(Rvalue::Use(self.zero(ty)));
             }

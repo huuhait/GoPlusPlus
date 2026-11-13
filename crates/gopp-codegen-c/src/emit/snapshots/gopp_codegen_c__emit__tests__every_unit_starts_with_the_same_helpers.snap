@@ -211,6 +211,7 @@ void _gopp_cell_release(uint8_t *cell, void (*drop)(uint8_t *value));
 void _gopp_extend(uint8_t *list, uint8_t *kept, uint8_t *cell, void (*drop)(uint8_t *value));
 void _gopp_extended_end(uint8_t *list);
 uint8_t * _gopp_iface_box(const void *value, uint64_t size);
+void _gopp_box_free(uint8_t *box);
 void _gopp_iface_clone(uint8_t *value);
 void _gopp_iface_drop(uint8_t *value);
 bool _gopp_iface_eq(uint8_t *a, uint8_t *b);

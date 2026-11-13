@@ -29,6 +29,9 @@ uint8_t *_gopp_iface_box(const void *value, uint64_t size) {
   return box;
 }
 
+// The box is freed: what was in it has ended.
+void _gopp_box_free(uint8_t *box) { free(box); }
+
 // The interface value at the address becomes a copy of its own: a box
 // of its own with a copy of the value, by the rule of its type.
 void _gopp_iface_clone(uint8_t *value) {

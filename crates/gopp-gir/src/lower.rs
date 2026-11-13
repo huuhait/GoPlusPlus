@@ -497,6 +497,10 @@ pub(crate) struct Memo<'a> {
     /// The structs of the module whose types have a `drop` method: a
     /// value of one ends by a call of it, whatever its fields are.
     pub dropped: rustc_hash::FxHashSet<TypeId>,
+    /// The types of the `Unique` handles of the module, each with the
+    /// type of what it owns: a pointer to a box of its own, which holds
+    /// the value first.
+    pub uniques: FxHashMap<TypeId, TypeId>,
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
     /// The global of each variable that the run has named.
@@ -534,6 +538,7 @@ impl<'a> Memo<'a> {
             glues: Vec::new(),
             open: Vec::new(),
             dropped: rustc_hash::FxHashSet::default(),
+            uniques: FxHashMap::default(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
             global_keys: FxHashMap::default(),

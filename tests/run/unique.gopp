@@ -1,0 +1,152 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func open(fd int) File {
+	opened++
+	return File{fd: fd}
+}
+
+type Node struct {
+	value int
+	next  Option[Unique[Node]]
+}
+
+// The list takes its old head as the rest of the new one.
+func push(head Option[Unique[Node]], value int) Unique[Node] {
+	return NewUnique(Node{value: value, next: move(head)})
+}
+
+func sum(head Option[*Node]) int {
+	total := 0
+	n := head
+	for n != nil {
+		total += n.value
+		n = n.next
+	}
+	return total
+}
+
+type Tree struct {
+	left, right Option[Unique[Tree]]
+	key         int
+	name        string
+}
+
+// A new leaf is put where the way down ends: the tree is changed where
+// it is, through pointers into it.
+func insert(t *Tree, key int, name string) {
+	if key < t.key {
+		var left Option[*Tree] = t.left
+		if left == nil {
+			t.left = NewUnique(Tree{key: key, name: name})
+			return
+		}
+		insert(left, key, name)
+		return
+	}
+	var right Option[*Tree] = t.right
+	if right == nil {
+		t.right = NewUnique(Tree{key: key, name: name})
+		return
+	}
+	insert(right, key, name)
+}
+
+func walk(t Option[*Tree], visit func(*Tree)) {
+	if t == nil {
+		return
+	}
+	walk(t.left, visit)
+	visit(t)
+	walk(t.right, visit)
+}
+
+type Point struct{ x, y int }
+
+func scale(p *Point, by int) {
+	p.x *= by
+	p.y *= by
+}
+
+func take(p Unique[Point]) int { return p.x + p.y }
+
+func made(x int) Unique[Point] { return NewUnique(Point{x: x, y: x + 1}) }
+
+type Holder struct {
+	label string
+	held  Unique[File]
+	rest  []Unique[Point]
+}
+
+func counts(note string) { println(note, opened, closed) }
+
+func caught(run func()) (what string) {
+	defer func() {
+		if r := recover(); r != nil {
+			what = r.(string)
+		}
+	}()
+	run()
+	return "nothing"
+}
+
+func lists() {
+	var head Option[Unique[Node]]
+	for i := 1; i <= 4; i++ {
+		head = push(move(head), i)
+	}
+	if head != nil {
+		println(sum(head), head.value)
+	}
+
+	root := NewUnique(Tree{key: 5, name: "e"})
+	names := []string{"b", "g", "a", "c"}
+	for i, key := range []int{2, 7, 1, 3} {
+		insert(root, key, names[i])
+	}
+	order := ""
+	walk(root, func(t *Tree) { order += t.name })
+	println(order, root.key)
+}
+
+func points() {
+	p := made(3)
+	scale(p, 2)
+	q := p
+	q.x = 100
+	println(p.x, p.y, q.x, q.y, p == q, take(move(q)))
+	r := move(p)
+	r.y++
+	println(r.x, r.y)
+}
+
+func files() {
+	one := NewUnique(open(1))
+	h := Holder{label: "h", held: NewUnique(open(2)), rest: []Unique[Point]{made(1), made(2)}}
+	h.rest = append(h.rest, made(5))
+	h.held.fd = 20
+	println(one.fd, h.held.fd, len(h.rest), h.rest[2].y, h.label)
+	println(caught(func() {
+		kept := NewUnique(open(3))
+		if kept.fd == 3 {
+			panic("stopped with a box")
+		}
+	}))
+	counts("in files")
+}
+
+func main() {
+	lists()
+	points()
+	files()
+	counts("after files")
+}
