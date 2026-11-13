@@ -41,6 +41,10 @@ func (c *Counter) Add[T Number](x T) int {
 
 func (c Counter) Scaled[T Number](by T) T { return T(c.n) * by }
 
+func (c Counter) Count() int { return c.n }
+
+type Counted interface{ Count() int }
+
 func through[T Clone, U Clone](l *List[T], f func(T) U) int {
 	mapped := l.Map(f)
 	return mapped.Len()
@@ -65,4 +69,6 @@ func main() {
 	println(words.Sizes(func(s string) int { return len(s) }), through(&l, digits), through(&words, func(s string) bool { return s == "7" }))
 	var c Counter
 	println(c.Add(2), c.Add(2.5), c.Add[int](1), c.Scaled(2), c.Scaled(0.5))
+	var held Counted = c
+	println(held.Count())
 }

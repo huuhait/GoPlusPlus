@@ -60,13 +60,13 @@ impl FuncCx<'_, '_> {
         // What the code is named after, and the type of the function.
         let named = match key {
             CalleeKey::Object(object) => {
-                let package = shared.package;
+                let package = self.home();
                 Some((
                     Entity::FuncValue(package, object),
                     package.object(object).ty,
                 ))
             }
-            CalleeKey::Member(import, member) => match &shared.package.object(import).kind {
+            CalleeKey::Member(import, member) => match &self.home().object(import).kind {
                 ObjKind::Import { package, .. } => Some((
                     Entity::FuncValue(package, member),
                     package.object(member).ty,

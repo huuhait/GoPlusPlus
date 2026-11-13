@@ -172,8 +172,7 @@ impl<'a> FuncCx<'a, '_> {
         import: gopp_sema::ObjId,
         member: gopp_sema::ObjId,
     ) -> Option<(&'a Package, &'a gopp_sema::Object)> {
-        let shared = self.shared;
-        let ObjKind::Import { package, .. } = &shared.package.object(import).kind else {
+        let ObjKind::Import { package, .. } = &self.home().object(import).kind else {
             return None;
         };
         let object = package.objects.get(member.0 as usize)?;
@@ -182,6 +181,13 @@ impl<'a> FuncCx<'a, '_> {
 }
 
 impl<'a> FuncCx<'a, '_> {
+    /// The package of the function that is lowered: what its body names
+    /// is there. It is another than the package of the module for an
+    /// instance of generic code of a package that is imported.
+    pub fn home(&self) -> &'a Package {
+        self.shared.home(self.file)
+    }
+
     // ---- types and constants
 
     /// The type of the value of the expression; the empty type for
@@ -526,7 +532,7 @@ impl<'a> FuncCx<'a, '_> {
                 LocalKind::Const => "a constant of several parts",
                 _ => "this name",
             },
-            Some(Ref::Object(object)) => match self.shared.package.object(*object).kind {
+            Some(Ref::Object(object)) => match self.home().object(*object).kind {
                 ObjKind::Var => {
                     let place = self.place(expr, &mut PlaceMode::default())?;
                     return Ok(Rvalue::Use(Operand::Copy(place)));
@@ -611,7 +617,7 @@ impl<'a> FuncCx<'a, '_> {
                     };
                 }
                 Some(Ref::Object(object)) => {
-                    let package = self.shared.package;
+                    let package = self.home();
                     if let ObjKind::Var = package.object(*object).kind {
                         let key = CalleeKey::Object(*object);
                         return self.global(key, package, *object, span);
@@ -684,7 +690,8 @@ impl<'a> FuncCx<'a, '_> {
         span: SourceSpan,
     ) -> Built<Place> {
         let ty = self.lower(package.object(object).ty, span);
-        let known = match self.memo.global_keys.get(&key) {
+        let home = self.shared.package_of(self.file);
+        let known = match self.memo.global_keys.get(&(home, key)) {
             Some(&id) => Some(id),
             None => self.declare_global(key, package, object, ty, span),
         };
@@ -736,7 +743,8 @@ impl<'a> FuncCx<'a, '_> {
                 id
             }
         };
-        self.memo.global_keys.insert(key, id);
+        let home = self.shared.package_of(self.file);
+        self.memo.global_keys.insert((home, key), id);
         Some(id)
     }
 
@@ -1817,7 +1825,7 @@ impl<'a> FuncCx<'a, '_> {
     pub(super) fn instance_named(&self, expr: ExprId) -> Option<CalleeKey> {
         let instance = self.body.instances.get(&expr)?;
         let shared = self.shared;
-        let (used, _) = shared.generic_named(self.tree, self.body, expr)?;
+        let (used, _) = shared.generic_named(self.file, self.body, expr)?;
         let job = shared.instance(used, &instance.args)?;
         Some(CalleeKey::Instance(job))
     }
@@ -1847,7 +1855,7 @@ impl<'a> FuncCx<'a, '_> {
         // A method with type arguments of its own is called on its
         // receiver.
         if instance.is_some()
-            && let Some((_, Some(selector))) = self.shared.generic_named(self.tree, body, callee)
+            && let Some((_, Some(selector))) = self.shared.generic_named(self.file, body, callee)
             && let ExprKind::Selector { x, .. } = self.tree.exprs[selector].kind
             && let Some(selection) = body.selections.get(&selector)
         {
@@ -2374,18 +2382,20 @@ impl<'a> FuncCx<'a, '_> {
     /// is asked once in a run, and the function is declared in the
     /// module of the run then.
     pub(super) fn callee(&mut self, key: CalleeKey) -> Built<Result<Callee, &'static str>> {
-        if let Some(known) = self.memo.callees.get(&key) {
+        let of = self.shared.package_of(self.file);
+        if let Some(known) = self.memo.callees.get(&(of, key)) {
             return Ok(known.clone());
         }
         let shared = self.shared;
         let extern_c = gopp_sema::types::Marks::EXTERN;
         let in_c = match key {
-            CalleeKey::Object(object) => shared.package.object(object).marks.has(extern_c),
+            CalleeKey::Object(object) => self.home().object(object).marks.has(extern_c),
             CalleeKey::Member(import, member) => self
                 .member(import, member)
                 .is_some_and(|(_, object)| object.marks.has(extern_c)),
             _ => false,
         };
+        let home = self.home();
         let namer = &mut self.memo.namer;
         let mut function = |package: &Package, id: gopp_sema::ObjId| {
             let object = package.objects.get(id.0 as usize)?;
@@ -2400,8 +2410,8 @@ impl<'a> FuncCx<'a, '_> {
             Some((symbol, None, object.ty))
         };
         let found = match key {
-            CalleeKey::Object(object) => function(shared.package, object),
-            CalleeKey::Member(import, member) => match &shared.package.object(import).kind {
+            CalleeKey::Object(object) => function(home, object),
+            CalleeKey::Member(import, member) => match &home.object(import).kind {
                 ObjKind::Import { package, .. } => function(package, member),
                 _ => None,
             },
@@ -2446,7 +2456,7 @@ impl<'a> FuncCx<'a, '_> {
                 }
             }
         };
-        self.memo.callees.insert(key, called.clone());
+        self.memo.callees.insert((of, key), called.clone());
         Ok(called)
     }
 

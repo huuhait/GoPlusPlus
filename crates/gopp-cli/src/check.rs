@@ -58,18 +58,26 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
         let all = packages::checked(graph, &names, &types, &sink);
         let mut text = String::new();
         let last = all.len() - 1;
-        for (at, (parsed, package)) in all.iter().enumerate() {
-            let files: Vec<(&File, &SourceFile)> = parsed
-                .files
-                .iter()
-                .map(|(file, source)| (file, &**source))
-                .collect();
+        let pairs: Vec<Vec<(&File, &SourceFile)>> = (all.iter())
+            .map(|(parsed, _)| (parsed.files.iter().map(|(f, s)| (f, &**s))).collect())
+            .collect();
+        let needs = packages::imported(&all);
+        for (at, (_, package)) in all.iter().enumerate() {
             // The instances of the generic code of a package without an
-            // error are held to their bounds, as a build holds them.
+            // error are held to their bounds, as a build holds them:
+            // those of the generic code of the packages that it imports
+            // too.
             if sink.is_empty() {
+                let imports: Vec<gopp_gir::Imported> = (needs[at].iter())
+                    .map(|&import| gopp_gir::Imported {
+                        package: &all[import].1,
+                        files: &pairs[import],
+                    })
+                    .collect();
                 let accepted = gopp_gir::Checked {
                     package,
-                    files: &files,
+                    files: &pairs[at],
+                    imports: &imports,
                     types: &types,
                     names: &names,
                     aborts: false,
@@ -77,7 +85,7 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
                 gopp_gir::check_instances(&accepted, &sink);
             }
             if info && at == last {
-                text = info_text(package, &files, &types, &names);
+                text = info_text(package, &pairs[at], &types, &names);
             }
         }
         Ok((text, sink.finish()))

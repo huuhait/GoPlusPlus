@@ -191,8 +191,9 @@ pub(super) struct FuncCx<'a, 'm> {
     pub b: FuncBuilder<'m>,
     pub tree: &'a File,
     pub source: &'a SourceFile,
-    /// Which file of the package.
-    file: u32,
+    /// Which of the files that the lowering has: one of the package, or
+    /// of a package that it imports for an instance of its generic code.
+    pub(super) file: u32,
     pub body: &'a Body,
     /// What the function does to its parameters and its variables.
     facts: &'a Facts,
@@ -857,7 +858,7 @@ impl FuncCx<'_, '_> {
         let span = self.tree.exprs[value].span;
         self.at(span);
         let mark = self.temps.len();
-        let package = self.shared.package;
+        let package = self.home();
         // A variable named `_` has no place: its value ends here.
         let named = |object: &gopp_sema::ObjId| package.object(*object).name != self.shared.blank;
         let mut wanted = Vec::with_capacity(lhs.len());

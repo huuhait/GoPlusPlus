@@ -49,7 +49,8 @@ pub(super) type IfaceMethod<'a> = (ExprId, &'a [u32], CheckedTypeId, Spur);
 
 /// The method `name` that a value of the declared type `ty` has, or a
 /// pointer to one if `pointer` is set: where it is found, which is in
-/// the type itself or in a type that it embeds.
+/// the type itself or in a type that it embeds. A name that is not
+/// exported is one of the package of the type.
 fn method_found(
     shared: &Shared<'_>,
     ty: CheckedTypeId,
@@ -61,7 +62,12 @@ fn method_found(
         true => types.pointer(ty),
         false => ty,
     };
-    let found = types.lookup(from, name, shared.path, shared.names, false);
+    let home = match &*types.get(ty) {
+        CheckedType::Named { id, .. } => types.home(*id).path,
+        _ => None,
+    };
+    let package = home.unwrap_or(shared.path);
+    let found = types.lookup(from, name, package, shared.names, false);
     found
         .ok()
         .filter(|found| matches!(found.member, Member::Method { .. }))
@@ -1020,6 +1026,11 @@ impl<'a> FuncCx<'a, '_> {
             else {
                 continue;
             };
+            // A method with type parameters of its own is the method of
+            // no interface (GEN-7).
+            if types.generic_func(sig).is_some() {
+                continue;
+            }
             // A value has the methods that take its address too (TYP-5),
             // of the types that are lowered here.
             let lowered = shared.method(found.holder, name).is_some();

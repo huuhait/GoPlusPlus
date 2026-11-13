@@ -1,6 +1,7 @@
 //! The packages of a program: found from its imports, and checked each
 //! after those that it imports.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -106,4 +107,21 @@ pub(crate) fn checked(
         all.push((parsed, package));
     }
     all
+}
+
+/// For each package, the packages that it imports and those that they
+/// import, by their places in `all` and in that order.
+pub(crate) fn imported(all: &[(Parsed, Arc<Package>)]) -> Vec<Vec<usize>> {
+    let mut places: FxHashMap<&str, usize> = FxHashMap::default();
+    let mut found: Vec<Vec<usize>> = Vec::with_capacity(all.len());
+    for (at, (parsed, _)) in all.iter().enumerate() {
+        let mut of = BTreeSet::new();
+        for import in parsed.imports.iter().filter_map(|path| places.get(&**path)) {
+            of.insert(*import);
+            of.extend(&found[*import]);
+        }
+        found.push(of.into_iter().collect());
+        places.insert(&parsed.path, at);
+    }
+    found
 }

@@ -6,15 +6,13 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output};
 use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
 use gopp_diag::{Code, Diagnostic, Severity, Sink, render_text};
-use gopp_gir::{Checked, Module, Summaries, lower_with, print_module};
-use gopp_sema::Package;
+use gopp_gir::{Checked, Imported, Module, Summaries, lower_with, print_module};
 use gopp_sema::types::Types;
 use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::ast::File;
@@ -114,15 +112,23 @@ pub(crate) fn lowered(
     // that it imports, so the packages that import nothing come first,
     // side by side, then those that import only them, and so on. What is
     // said about each is printed in the order of the packages.
-    let lower = |(parsed, package): &(gopp_build::Parsed, Arc<Package>), known: &Summaries| {
-        let pairs: Vec<(&File, &SourceFile)> = parsed
-            .files
-            .iter()
-            .map(|(file, source)| (file, &**source))
+    let pairs: Vec<Vec<(&File, &SourceFile)>> = (all.iter())
+        .map(|(parsed, _)| (parsed.files.iter().map(|(f, s)| (f, &**s))).collect())
+        .collect();
+    // A package makes the instances that it uses of the generic code of
+    // the packages that it imports.
+    let needs = packages::imported(&all);
+    let lower = |at: usize, known: &Summaries| {
+        let imports: Vec<Imported> = (needs[at].iter())
+            .map(|&import| Imported {
+                package: &all[import].1,
+                files: &pairs[import],
+            })
             .collect();
         let checked = Checked {
-            package,
-            files: &pairs,
+            package: &all[at].1,
+            files: &pairs[at],
+            imports: &imports,
             types: &types,
             names: &names,
             aborts,
@@ -142,10 +148,7 @@ pub(crate) fn lowered(
     let mut known = Summaries::default();
     for now in 0..=level.iter().copied().max().unwrap_or(0) {
         let of_level: Vec<usize> = (0..all.len()).filter(|&at| level[at] == now).collect();
-        let lowered: Vec<_> = of_level
-            .par_iter()
-            .map(|&at| lower(&all[at], &known))
-            .collect();
+        let lowered: Vec<_> = of_level.par_iter().map(|&at| lower(at, &known)).collect();
         for (at, (module, own, diagnostics)) in of_level.into_iter().zip(lowered) {
             known.extend(&own);
             made[at] = Some((module, diagnostics));

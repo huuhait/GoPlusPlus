@@ -48,6 +48,7 @@ fn module(name: &str, text: &str) -> Module {
     let checked = Checked {
         package: &package,
         files: &files,
+        imports: &[],
         types: &types,
         names: &names,
         aborts: false,

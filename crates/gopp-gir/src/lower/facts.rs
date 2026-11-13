@@ -119,7 +119,7 @@ impl Facts {
             // types that is called, and where its parameters start.
             let called = match (&tree.exprs[callee].kind, body.uses.get(&callee)) {
                 (ExprKind::Name(_), Some(Ref::Object(object))) => {
-                    Some((Entity::Object(shared.package, *object), 0))
+                    Some((Entity::Object(shared.home(job.file), *object), 0))
                 }
                 (ExprKind::Selector { sel, .. }, _) => match body.selections.get(&callee) {
                     Some(selection) if selection.kind == SelectionKind::Method => {

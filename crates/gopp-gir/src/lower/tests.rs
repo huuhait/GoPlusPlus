@@ -53,6 +53,7 @@ fn checked<T>(texts: &[(&str, &str)], then: impl FnOnce(&Checked<'_>, Vec<String
     let checked = Checked {
         package: &package,
         files: &pairs,
+        imports: &[],
         types: &types,
         names: &names,
         aborts: false,

@@ -42,11 +42,22 @@ pub struct Checked<'a> {
     pub package: &'a Package,
     /// The files in the order in which they were checked.
     pub files: &'a [(&'a File, &'a SourceFile)],
+    /// The packages that the package imports, and those that they
+    /// import: an instance of generic code of theirs is made here.
+    pub imports: &'a [Imported<'a>],
     pub types: &'a Types,
     pub names: &'a ThreadedRodeo,
     /// A panic ends the program at once (`-panic=abort`, PAN-7): no
     /// deferred call is made for it and nothing is unwound.
     pub aborts: bool,
+}
+
+/// A package that another one imports, with its files in the order in
+/// which they were checked.
+#[derive(Clone, Copy)]
+pub struct Imported<'a> {
+    pub package: &'a Package,
+    pub files: &'a [(&'a File, &'a SourceFile)],
 }
 
 /// The least source that one run takes: lowering it costs more than
@@ -287,9 +298,10 @@ enum JobName {
     Method(CheckedTypeId, Spur),
     /// An `init` function, and its number once the files are counted.
     Init(u64),
-    /// A generic function with type arguments: the function, and the
-    /// instance of the package that has the arguments.
-    Instance(ObjId, usize),
+    /// A generic function with type arguments: the package that
+    /// declares it and the function, and the instance of the package
+    /// that has the arguments.
+    Instance(u32, ObjId, usize),
     /// A method with type parameters of its own, of the type, with type
     /// arguments: the instance of the package has them last.
     OwnMethod(CheckedTypeId, Spur, usize),
@@ -302,7 +314,9 @@ enum JobName {
 /// a type, as a use names it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Used {
-    Func(ObjId),
+    /// A function of the package with the number: 0 is the package that
+    /// is lowered.
+    Func(u32, ObjId),
     Method(CheckedTypeId, Spur),
 }
 
@@ -334,7 +348,8 @@ struct Generic {
 /// package, a generic type for a method, or a type for a method with
 /// type parameters of its own.
 enum GenericOf {
-    Func(ObjId),
+    /// A function of the package with the number.
+    Func(u32, ObjId),
     Type(NamedId),
     Method(NamedId, Spur),
 }
@@ -354,7 +369,7 @@ struct Found {
 /// What an instance is an instance of.
 #[derive(Clone, Copy)]
 enum Named {
-    Func(ObjId),
+    Func(u32, ObjId),
     /// A method of the instance of a generic type.
     Method(CheckedTypeId, Spur),
     /// A method with type parameters of its own, of the type.
@@ -373,7 +388,16 @@ pub(crate) struct Method {
 /// What every run reads and none writes.
 pub(crate) struct Shared<'a> {
     pub package: &'a Package,
-    pub files: &'a [(&'a File, &'a SourceFile)],
+    /// The files of the package, then those of the packages that it
+    /// imports.
+    pub files: Vec<(&'a File, &'a SourceFile)>,
+    /// How many of the files are of the package itself.
+    own_files: usize,
+    /// The package, then those that it imports.
+    packages: Vec<&'a Package>,
+    /// For each file: which of the packages it is of, and which of the
+    /// files of that package.
+    homes: Vec<(u32, u32)>,
     pub types: &'a Types,
     pub names: &'a ThreadedRodeo,
     pub layout: TargetLayout,
@@ -571,12 +595,12 @@ pub(crate) struct Memo<'a> {
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
     /// The global of each variable that the run has named.
-    pub global_keys: FxHashMap<CalleeKey, GlobalId>,
+    pub global_keys: FxHashMap<(u32, CalleeKey), GlobalId>,
     /// The type of GIR for each type that an expression or a variable
     /// has: the empty type for a constant without a type.
     pub expr_types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
     /// What is known of each function that the run calls.
-    pub callees: FxHashMap<CalleeKey, Result<Callee, &'static str>>,
+    pub callees: FxHashMap<(u32, CalleeKey), Result<Callee, &'static str>>,
     /// The text of the names that the run has asked for.
     pub names: FxHashMap<Spur, Box<str>>,
     /// Which field of a struct has a name.
@@ -696,12 +720,46 @@ fn imported(package: &Package) -> Vec<&Package> {
 }
 
 impl<'a> Shared<'a> {
+    /// The package that the file is of: what its bodies name is there.
+    pub fn home(&self, file: u32) -> &'a Package {
+        self.packages[self.homes[file as usize].0 as usize]
+    }
+
+    /// The number of the package that the file is of.
+    pub fn package_of(&self, file: u32) -> u32 {
+        self.homes[file as usize].0
+    }
+
+    /// The path of the package that the file is of: a name that is not
+    /// exported is one of that package.
+    fn path_of(&self, file: u32) -> Spur {
+        self.names.get_or_intern(&self.home(file).path)
+    }
+
+    /// What the checker recorded for the file.
+    fn info(&self, file: u32) -> &'a gopp_sema::FileInfo {
+        let (package, at) = self.homes[file as usize];
+        &self.packages[package as usize].files[at as usize]
+    }
+
     /// What every run reads, without what each function does to its
     /// parameters and its variables (`facts`).
     fn found(checked: &'a Checked<'a>, layout: TargetLayout, limits: Limits) -> Self {
+        let mut files = checked.files.to_vec();
+        let mut packages = vec![checked.package];
+        let mut homes: Vec<(u32, u32)> = (0..files.len() as u32).map(|at| (0, at)).collect();
+        for imported in checked.imports {
+            let package = packages.len() as u32;
+            packages.push(imported.package);
+            files.extend(imported.files);
+            homes.extend((0..imported.files.len() as u32).map(|at| (package, at)));
+        }
         let mut shared = Self {
             package: checked.package,
-            files: checked.files,
+            files,
+            own_files: checked.files.len(),
+            packages,
+            homes,
             types: checked.types,
             names: checked.names,
             layout,
@@ -730,20 +788,26 @@ impl<'a> Shared<'a> {
         // The `init` functions count in the order of the names of their
         // files, then of the source.
         let mut inits: Vec<usize> = Vec::new();
-        let mut generics: FxHashMap<ObjId, Generic> = FxHashMap::default();
+        let mut generics: FxHashMap<(u32, ObjId), Generic> = FxHashMap::default();
         let mut methods: FxHashMap<NamedId, Vec<Generic>> = FxHashMap::default();
         let mut own: FxHashMap<(NamedId, Spur), Generic> = FxHashMap::default();
-        let files = shared.files;
+        let files = shared.files.clone();
         for (file, (tree, _)) in files.iter().enumerate() {
+            // Of a package that is imported only the generic code is
+            // of use here: its unit has the rest.
+            let is_own = file < shared.own_files;
             for (at, &decl) in tree.decls.iter().enumerate() {
-                if let Some(job) = shared.job(file as u32, at, decl) {
+                let job = is_own.then(|| shared.job(file as u32, at, decl)).flatten();
+                if let Some(job) = job {
                     if matches!(job.named, JobName::Init(_)) {
                         inits.push(shared.jobs.len());
                     }
                     shared.jobs.push(job);
                 } else if let Some((of, generic)) = shared.generic(file as u32, at, decl) {
                     match of {
-                        GenericOf::Func(object) => drop(generics.insert(object, generic)),
+                        GenericOf::Func(package, object) => {
+                            generics.insert((package, object), generic);
+                        }
                         GenericOf::Type(named) => methods.entry(named).or_default().push(generic),
                         GenericOf::Method(named, name) => drop(own.insert((named, name), generic)),
                     }
@@ -810,7 +874,8 @@ impl<'a> Shared<'a> {
                 };
                 shared.methods.insert((*id, name), method);
             }
-            let body = &shared.package.files[job.file as usize].bodies[job.at];
+            let (file, body) = (job.file, job.at);
+            let body = &shared.info(file).bodies[body];
             let declared = shared.local_types(body).into_iter();
             shared
                 .locals
@@ -886,7 +951,16 @@ impl<'a> Shared<'a> {
     /// in the order of the source, among those that are written
     /// directly in the same function or literal.
     fn number_literals(&mut self) {
+        // A file of another package is read only if an instance is
+        // made of its generic code.
+        let mut has_jobs = vec![false; self.files.len()];
+        for job in &self.jobs {
+            has_jobs[job.file as usize] = true;
+        }
         for (file, (tree, _)) in self.files.iter().enumerate() {
+            if !has_jobs[file] {
+                continue;
+            }
             let file = file as u32;
             // The declarations of the file that have functions, in the
             // order of the source: the instances of a generic function
@@ -938,8 +1012,9 @@ impl<'a> Shared<'a> {
             JobName::Object(object) => Entity::Object(self.package, object),
             JobName::Method(receiver, name) => Entity::Method { receiver, name },
             JobName::Init(number) => Entity::InitFunc(self.package, number),
-            JobName::Instance(object, at) => {
-                Entity::FuncInstance(self.package, object, &self.instances[at].args)
+            JobName::Instance(package, object, at) => {
+                let package = self.packages[package as usize];
+                Entity::FuncInstance(package, object, &self.instances[at].args)
             }
             JobName::OwnMethod(receiver, name, at) => {
                 let instance = &self.instances[at];
@@ -1029,7 +1104,7 @@ impl<'a> Shared<'a> {
     pub fn body(&self, job: &Job) -> &Body {
         match job.made {
             Some(at) => &self.instances[at].body,
-            None => &self.package.files[job.file as usize].bodies[job.at],
+            None => &self.info(job.file).bodies[job.at],
         }
     }
 
@@ -1074,13 +1149,14 @@ impl<'a> Shared<'a> {
             if type_params.is_empty() {
                 return None;
             }
-            let id = *self.package.scope.get(&name.name)?;
-            let object = self.package.object(id);
+            let home = self.home(file);
+            let id = *home.scope.get(&name.name)?;
+            let object = home.object(id);
             let function = matches!(object.kind, ObjKind::Func) && object.span == name.span;
-            return function.then_some((GenericOf::Func(id), made(None)));
+            return function.then_some((GenericOf::Func(self.package_of(file), id), made(None)));
         };
-        let body = &self.package.files[file as usize].bodies[at];
-        let (named, pointer) = self.receiver(tree, body, receiver)?;
+        let body = &self.info(file).bodies[at];
+        let (named, pointer) = self.receiver(self.home(file), tree, body, receiver)?;
         let CheckedType::Named { id, .. } = &*self.types.get(named) else {
             return None;
         };
@@ -1100,16 +1176,30 @@ impl<'a> Shared<'a> {
     /// parameters of its own (`x.m`, `x.m[int]`), with its selector.
     pub fn generic_named(
         &self,
-        tree: &File,
+        file: u32,
         body: &Body,
         expr: ExprId,
     ) -> Option<(Used, Option<ExprId>)> {
+        let (tree, _) = self.files[file as usize];
         let mut named = Self::unparen(tree, expr);
         if let ExprKind::Index { x, .. } = tree.exprs[named].kind {
             named = Self::unparen(tree, x);
         }
         match (&tree.exprs[named].kind, body.uses.get(&named)) {
-            (ExprKind::Name(_), Some(Ref::Object(object))) => Some((Used::Func(*object), None)),
+            (ExprKind::Name(_), Some(Ref::Object(object))) => {
+                Some((Used::Func(self.package_of(file), *object), None))
+            }
+            // A function of a package that the file imports.
+            (ExprKind::Selector { .. }, Some(Ref::Member { import, member })) => {
+                let ObjKind::Import { package, .. } = &self.home(file).object(*import).kind else {
+                    return None;
+                };
+                let of = self
+                    .packages
+                    .iter()
+                    .position(|known| std::ptr::eq(*known, &**package))?;
+                Some((Used::Func(of as u32, *member), None))
+            }
             (ExprKind::Selector { sel, .. }, _) => match body.selections.get(&named) {
                 Some(selection) if selection.kind == gopp_sema::SelectionKind::Method => {
                     Some((Used::Method(selection.holder, sel.name), Some(named)))
@@ -1129,9 +1219,10 @@ impl<'a> Shared<'a> {
     /// generic function and its type arguments, for an instance.
     pub fn job_value(&self, job: usize) -> Option<Entity<'_>> {
         match self.jobs[job].named {
-            JobName::Instance(object, at) => {
+            JobName::Instance(package, object, at) => {
                 let args = &self.instances[at].args;
-                Some(Entity::InstanceValue(self.package, object, args))
+                let package = self.packages[package as usize];
+                Some(Entity::InstanceValue(package, object, args))
             }
             _ => None,
         }
@@ -1155,7 +1246,7 @@ impl<'a> Shared<'a> {
     /// instance is made after it.
     fn instantiate(
         &mut self,
-        generics: &FxHashMap<ObjId, Generic>,
+        generics: &FxHashMap<(u32, ObjId), Generic>,
         methods: &FxHashMap<NamedId, Vec<Generic>>,
         own: &FxHashMap<(NamedId, Spur), Generic>,
     ) {
@@ -1163,8 +1254,15 @@ impl<'a> Shared<'a> {
             return;
         }
         // The bounds, by the nodes of syntax of the package.
-        let code_of = self.decl_nodes();
-        let nodes: u64 = (self.files.iter())
+        let all = generics.values().chain(methods.values().flatten());
+        let mut counted: Vec<bool> = (0..self.files.len())
+            .map(|file| file < self.own_files)
+            .collect();
+        for generic in all.chain(own.values()) {
+            counted[generic.file as usize] = true;
+        }
+        let code_of = self.decl_nodes(&counted);
+        let nodes: u64 = (self.files[..self.own_files].iter())
             .map(|(tree, _)| (tree.exprs.len() + tree.stmts.len()) as u64)
             .sum();
         let limits = self.limits;
@@ -1224,11 +1322,10 @@ impl<'a> Shared<'a> {
                 let body = self.body(job);
                 // In an instance: the body as it is written, which says
                 // what is built around a type parameter.
-                let generic =
-                    (job.made).map(|_| &self.package.files[job.file as usize].bodies[job.at]);
+                let generic = (job.made).map(|_| &self.info(job.file).bodies[job.at]);
                 let mut uses: Vec<_> = (body.instances.iter())
                     .filter_map(|(&expr, instance)| {
-                        let (used, _) = self.generic_named(tree, body, expr)?;
+                        let (used, _) = self.generic_named(job.file, body, expr)?;
                         let span = tree.exprs[expr].span;
                         Some((span.lo, span.hi, used, instance, expr))
                     })
@@ -1244,11 +1341,12 @@ impl<'a> Shared<'a> {
                     // What is used, with the type arguments of its
                     // receiver before its own.
                     let (of, named, entity, of_receiver) = match used {
-                        Used::Func(object) => {
-                            let entity = Entity::FuncInstance(self.package, object, &instance.args);
+                        Used::Func(package, object) => {
+                            let of = self.packages[package as usize];
+                            let entity = Entity::FuncInstance(of, object, &instance.args);
                             (
-                                generics.get(&object),
-                                Named::Func(object),
+                                generics.get(&(package, object)),
+                                Named::Func(package, object),
                                 entity,
                                 Vec::new(),
                             )
@@ -1376,7 +1474,8 @@ impl<'a> Shared<'a> {
                     let Some((name, pointer)) = of.method else {
                         continue;
                     };
-                    let found_method = self.types.lookup(ty, name, self.path, self.names, false);
+                    let path = self.path_of(of.file);
+                    let found_method = self.types.lookup(ty, name, path, self.names, false);
                     let sig = match found_method.map(|found| found.member) {
                         Ok(gopp_sema::types::Member::Method { sig, .. }) => sig,
                         _ => continue,
@@ -1423,11 +1522,11 @@ impl<'a> Shared<'a> {
             let bodies: Vec<Body> = (found.par_iter())
                 .map(|found| {
                     let Generic { file, at, .. } = found.of;
-                    let generic = &self.package.files[file as usize].bodies[at];
+                    let generic = &self.info(file).bodies[at];
                     let written = gopp_sema::Written {
                         types: self.types,
                         names: self.names,
-                        package: self.path,
+                        package: self.path_of(file),
                     };
                     generic.instantiated(written, &found.args)
                 })
@@ -1444,7 +1543,9 @@ impl<'a> Shared<'a> {
                     _ => ty,
                 };
                 let (named, receiver) = match found.named {
-                    Named::Func(object) => (JobName::Instance(object, made), None),
+                    Named::Func(package, object) => {
+                        (JobName::Instance(package, object, made), None)
+                    }
                     Named::Method(ty, name) => (JobName::Method(ty, name), Some(receiver(ty))),
                     Named::OwnMethod(ty, name) => {
                         (JobName::OwnMethod(ty, name, made), Some(receiver(ty)))
@@ -1491,10 +1592,15 @@ impl<'a> Shared<'a> {
         }
     }
 
-    /// How many nodes of syntax each declaration of each file has.
-    fn decl_nodes(&self) -> FxHashMap<(u32, usize), u64> {
+    /// How many nodes of syntax each declaration has, for the files
+    /// that are `counted`: those of the package, and those with generic
+    /// code.
+    fn decl_nodes(&self, counted: &[bool]) -> FxHashMap<(u32, usize), u64> {
         let mut nodes = FxHashMap::default();
         for (file, (tree, _)) in self.files.iter().enumerate() {
+            if !counted[file] {
+                continue;
+            }
             let mut decls: Vec<(u32, u32, usize)> = (tree.decls.iter().enumerate())
                 .map(|(at, &decl)| {
                     let span = tree.decl_nodes[decl].span;
@@ -1523,7 +1629,7 @@ impl<'a> Shared<'a> {
         let mut written = FxHashSet::default();
         let mut walked = FxHashSet::default();
         for of in generic {
-            let body = &self.package.files[of.file as usize].bodies[of.at];
+            let body = &self.info(of.file).bodies[of.at];
             let typed = body.types.values().map(|typed| typed.ty);
             let mut rest: Vec<CheckedTypeId> = typed
                 .chain(body.locals.iter().map(|local| local.ty))
@@ -1596,8 +1702,8 @@ impl<'a> Shared<'a> {
     /// What a use names, as a report says it.
     fn used_name(&self, used: Used) -> String {
         match used {
-            Used::Func(object) => {
-                let name = self.package.object(object).name;
+            Used::Func(package, object) => {
+                let name = self.packages[package as usize].object(object).name;
                 self.names.resolve(&name).to_owned()
             }
             Used::Method(receiver, name) => {
@@ -1629,7 +1735,7 @@ impl<'a> Shared<'a> {
         match &*types.get(ty) {
             CheckedType::Option(of) if types.has_own_nil(*of, self.names) => {
                 // The type parameter that the type argument is given for.
-                let generic = &self.package.files[job.file as usize].bodies[job.at];
+                let generic = &self.info(job.file).bodies[job.at];
                 let args = self.instances[made].args.iter();
                 let param = (args.zip(&generic.type_params))
                     .find(|&(arg, _)| arg == of)
@@ -1680,7 +1786,9 @@ impl<'a> Shared<'a> {
                 break;
             }
             let name = match self.jobs[job].named {
-                JobName::Instance(object, _) => self.used_name(Used::Func(object)),
+                JobName::Instance(package, object, _) => {
+                    self.used_name(Used::Func(package, object))
+                }
                 JobName::Method(ty, name) | JobName::OwnMethod(ty, name, _) => {
                     self.used_name(Used::Method(ty, name))
                 }
@@ -1759,7 +1867,7 @@ impl<'a> Shared<'a> {
             };
         };
         let body = &package.files[file as usize].bodies[at];
-        let (named, pointer) = self.receiver(tree, body, receiver)?;
+        let (named, pointer) = self.receiver(self.home(file), tree, body, receiver)?;
         let kind = types.get(named);
         let CheckedType::Named { id, args } = &*kind else {
             return None;
@@ -1782,6 +1890,7 @@ impl<'a> Shared<'a> {
     /// receiver is a pointer to it.
     fn receiver(
         &self,
+        home: &Package,
         tree: &File,
         body: &Body,
         receiver: &Param,
@@ -1802,7 +1911,7 @@ impl<'a> Shared<'a> {
             }
         }
         match body.uses.get(&base)? {
-            Ref::Object(object) => Some((self.package.object(*object).ty, pointer)),
+            Ref::Object(object) => Some((home.object(*object).ty, pointer)),
             _ => None,
         }
     }

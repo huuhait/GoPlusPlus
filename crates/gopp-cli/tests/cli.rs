@@ -1353,6 +1353,260 @@ func main() {
     assert_eq!(names, ["base.At()", "main.main()"], "{written}");
 }
 
+/// A package with generic code that uses what it does not export.
+const ALGO: &str = r#"package algo
+
+var calls int
+
+func bump() int {
+	calls++
+	return calls
+}
+
+func Calls() int { return calls }
+
+const limit = 3
+
+type Number interface {
+	~int | ~int64 | ~float64
+}
+
+func Sum[T Number](xs []T) T {
+	bump()
+	var total T
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func Map[T, U Clone](xs []T, f func(T) U) []U {
+	out := make([]U, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+func Twice[T Number](xs []T) []T {
+	return Map(xs, func(x T) T { return x + x })
+}
+
+func Max[T Number](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+type entry struct{ text string }
+
+func (e entry) show() string { return e.text }
+
+type Named interface{ Name() string }
+
+func Names[T Named](xs []T) string {
+	type seen struct{ n int }
+	s := seen{}
+	out := ""
+	for _, x := range xs {
+		if s.n == limit {
+			break
+		}
+		out += entry{x.Name()}.show() + ";"
+		s.n++
+	}
+	return out
+}
+
+func At[T Clone](xs []T, at int) T {
+	defer bump()
+	return xs[at]
+}
+
+type Key interface {
+	comparable
+	Clone
+}
+
+type Counter[T Key] struct {
+	seen map[T]int
+}
+
+func NewCounter[T Key]() Counter[T] { return Counter[T]{seen: map[T]int{}} }
+
+func (c *Counter[T]) Add(x T) int {
+	c.seen[x]++
+	return c.note(x)
+}
+
+func (c *Counter[T]) note(x T) int { return c.seen[x] + bump()*0 }
+
+type Thing struct{ n int }
+
+func (t Thing) hidden() int { return t.n }
+
+func (t Thing) Shown() int { return t.hidden() + 1 }
+
+func (t Thing) With[U Clone](f func(int) U) U { return f(t.hidden()) }
+
+type hider interface{ hidden() int }
+
+func Hidden(v any) int { return v.(hider).hidden() }
+"#;
+
+/// A package with generic types, and a use of the generic code of
+/// another package.
+const BOX: &str = r#"package box
+
+import "algo"
+
+type Stack[T Clone] struct {
+	items []T
+}
+
+func New[T Clone]() Stack[T] { return Stack[T]{} }
+
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
+
+func (s *Stack[T]) Pop() T {
+	x := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return x
+}
+
+func (s *Stack[T]) Len() int { return len(s.items) }
+
+type Pair[K, V Clone] struct {
+	Key K
+	Val V
+}
+
+func (p Pair[K, V]) Swap() Pair[V, K] { return Pair[V, K]{p.Val, p.Key} }
+
+func Total(s *Stack[int]) int { return algo.Sum(s.items) }
+
+func Largest[T algo.Number](s *Stack[T]) T {
+	var best T
+	for _, x := range s.items {
+		best = algo.Max(best, x)
+	}
+	return best
+}
+"#;
+
+const USES_GENERIC_CODE: &str = r#"package main
+
+import (
+	"algo"
+	"box"
+)
+
+type dog struct{ name string }
+
+func (d dog) Name() string { return "dog " + d.name }
+
+type shelf struct {
+	counts algo.Counter[string]
+}
+
+var first = algo.Max(2, 5)
+
+func main() {
+	println(algo.Sum([]int{1, 2, 3}), algo.Sum([]float64{1.5, 2.5}) == 4)
+	for _, x := range algo.Twice([]int{4, 5}) {
+		println(x)
+	}
+	words := algo.Map([]int{1, 2}, func(x int) string {
+		if x == 1 {
+			return "one"
+		}
+		return "more"
+	})
+	println(words[0], words[1])
+	s := box.New[string]()
+	s.Push("a")
+	s.Push("b")
+	println(s.Pop(), s.Len())
+	n := box.New[int]()
+	n.Push(7)
+	n.Push(9)
+	println(box.Total(&n), box.Largest(&n))
+	q := box.Pair[string, int]{"k", 3}.Swap()
+	println(q.Key, q.Val)
+	println(algo.Names([]dog{{"a"}, {"b"}, {"c"}, {"d"}}))
+	println(algo.At([]string{"x", "y"}, 1))
+	max := algo.Max[int]
+	println(max(3, 8))
+	held := shelf{algo.NewCounter[string]()}
+	held.counts.Add("k")
+	println(held.counts.Add("k"))
+	var v any = algo.Thing{}
+	println(v.(interface{ Shown() int }).Shown(), algo.Hidden(v))
+	println(algo.Thing{}.With(func(n int) string { return "with" }), first)
+	println(algo.Calls())
+}
+"#;
+
+// rule: GEN-5
+#[test]
+fn a_package_makes_the_instances_of_the_generic_code_that_it_imports() {
+    let dir = TempDir::new().unwrap();
+    let files = [("algo/algo.gopp", ALGO), ("box/box.gopp", BOX)];
+    let root = library(&dir, &files);
+    let file = write_source(&dir, "main.gopp", USES_GENERIC_CODE);
+    let lowered = |path: &Path| {
+        let mut build = gopp();
+        build.env("GOPPROOT", &root).args(["build", "-emit=gir"]);
+        let output = run(build.arg(path));
+        assert_eq!(stderr(&output), "");
+        stdout(&output)
+    };
+    // `algo.Sum[int]` is used by the program and by `box`: each has it,
+    // for the linker to keep one. The package that declares it has none.
+    let sum = "\nfn _GPIF4algoE3SumiE(_1: []i64) -> i64 [go, linkonce_odr] {";
+    assert!(lowered(&file).contains(sum));
+    assert!(lowered(&root.join("std").join("box")).contains(sum));
+    assert!(!lowered(&root.join("std").join("algo")).contains("_GPIF"));
+    // The generic code of `box` uses that of `algo`, which this program
+    // does not import itself.
+    let only_box = "package main\n\nimport \"box\"\n\nfunc main() {\n\tn := box.New[float64]()\n\t\
+                    n.Push(2.5)\n\tprintln(box.Largest(&n) == 2.5)\n}\n";
+    let only = write_source(&dir, "only.gopp", only_box);
+    assert!(lowered(&only).contains("\nfn _GPIF4algoE3MaxdE(_1: f64, _2: f64) -> f64 ["));
+    let checked = run(gopp().env("GOPPROOT", &root).arg("check").arg(&file));
+    assert_eq!(
+        (stderr(&checked).as_str(), checked.status.code()),
+        ("", Some(0))
+    );
+}
+
+// rule: GEN-5
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
+fn a_program_runs_the_generic_code_of_the_packages_that_it_imports() {
+    let dir = TempDir::new().unwrap();
+    let files = [("algo/algo.gopp", ALGO), ("box/box.gopp", BOX)];
+    let root = library(&dir, &files);
+    let file = write_source(&dir, "main.gopp", USES_GENERIC_CODE);
+    let program = dir.path().join("program");
+    let mut build = gopp();
+    build.env("GOPPROOT", &root).arg("build").arg("-o");
+    let built = run_beside(build.arg(&program).arg(&file));
+    assert_eq!(stderr(&built), "");
+    assert_eq!(built.status.code(), Some(0));
+    let ran = run_beside(&mut Command::new(&program));
+    // The generic code names what its package does not export: the
+    // counter of `algo` says how often its functions were called.
+    let expected = "6 true\n8\n10\none more\nb 1\n16 9\n3 k\ndog a;dog b;dog c;\ny\n8\n2\n\
+                    1 0\nwith 5\n6\n";
+    assert_eq!(stderr(&ran), expected);
+    assert_eq!(ran.status.code(), Some(0));
+}
+
 /// The samples of the specification that are built today.
 const BUILT_SAMPLES: &[&str] = &["01-hello"];
 
@@ -1421,13 +1675,25 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
     let mut packages = Vec::new();
     library_packages(&root.join("std"), &mut packages);
     packages.sort();
-    let library: Vec<String> = packages.iter().map(|dir| unit_of(dir)).collect();
+    let of_std: Vec<String> = packages.iter().map(|dir| unit_of(dir)).collect();
     let toolchain = HostToolchain::discover().unwrap();
     let driver = ClangDriver {
         toolchain: &toolchain,
         target: gopp_target::TargetSpec::named("linux/amd64").unwrap(),
         opt: OptLevel::O1,
         strict: false,
+    };
+    let sanitized = |units: &[String], what: &Path| {
+        let dir = TempDir::new().unwrap();
+        let program = gopp_codegen_c::runtime::build_sanitized(&driver, units, dir.path());
+        let ran = run_beside(Command::new(program.unwrap()).env("ASAN_OPTIONS", "detect_leaks=1"));
+        let said = stderr(&ran);
+        let report: Vec<&str> = said
+            .lines()
+            .filter(|line| line.contains("ERROR") || line.contains("SUMMARY"))
+            .collect();
+        assert_eq!(report, [] as [&str; 0], "{}", what.display());
+        assert_eq!(ran.status.code(), Some(0), "{}", what.display());
     };
     let mut checked = 0;
     for entry in fs::read_dir(root.join("tests/run")).unwrap() {
@@ -1443,20 +1709,29 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
             continue;
         }
         let mut units = vec![unit_of(&path)];
-        units.extend(library.iter().cloned());
-        let dir = TempDir::new().unwrap();
-        let program = gopp_codegen_c::runtime::build_sanitized(&driver, &units, dir.path());
-        let ran = run_beside(Command::new(program.unwrap()).env("ASAN_OPTIONS", "detect_leaks=1"));
-        let said = stderr(&ran);
-        let report: Vec<&str> = said
-            .lines()
-            .filter(|line| line.contains("ERROR") || line.contains("SUMMARY"))
-            .collect();
-        assert_eq!(report, [] as [&str; 0], "{}", path.display());
-        assert_eq!(ran.status.code(), Some(0), "{}", path.display());
+        units.extend(of_std.iter().cloned());
+        sanitized(&units, &path);
         checked += 1;
     }
     assert!(checked > 0);
+    // The instances of the generic code of another package, with a
+    // library of their own.
+    let dir = TempDir::new().unwrap();
+    let files = [("algo/algo.gopp", ALGO), ("box/box.gopp", BOX)];
+    let generic = library(&dir, &files);
+    let file = write_source(&dir, "main.gopp", USES_GENERIC_CODE);
+    let std = generic.join("std");
+    let units: Vec<String> = [file.clone(), std.join("algo"), std.join("box")]
+        .iter()
+        .map(|path| {
+            let mut build = gopp();
+            build.env("GOPPROOT", &generic).args(["build", "-emit=c"]);
+            let output = run_beside(build.arg(path));
+            assert_eq!(stderr(&output), "", "{}", path.display());
+            stdout(&output)
+        })
+        .collect();
+    sanitized(&units, &file);
 }
 
 // rule: PAR-10
