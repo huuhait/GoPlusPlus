@@ -73,8 +73,9 @@ struct Chain {
 /// A `defer` statement of the function (PAN-3).
 pub(super) struct Deferred {
     pub stmt: StmtId,
-    /// The statement is in a loop, where it runs more than once.
-    pub in_loop: bool,
+    /// The statement may run more than once, in a loop or in a function
+    /// with labels: which list of the function has its records then.
+    pub list: Option<usize>,
     /// What the statement evaluated, once it is lowered.
     pub call: Option<Pending>,
 }
@@ -97,8 +98,11 @@ pub(super) struct Pending {
     pub what: Waits,
     /// The record of the statement, a slot of its function, and its
     /// type: whether the statement ran, then the receiver and the
-    /// arguments, which the record owns.
-    pub record: LocalId,
+    /// arguments, which the record owns. A statement of a list has no
+    /// slot: each time it runs it makes a record in a cell, which
+    /// starts with the record that was the first of the list before and
+    /// the number of the statement.
+    pub record: Option<LocalId>,
     pub ty: TypeId,
     /// How each of them ends if the call does not take it.
     pub slots: Vec<Option<Ends>>,
@@ -127,8 +131,8 @@ pub(super) struct Outlined {
     symbol: String,
     /// How many addresses the function has for it.
     count: usize,
-    /// The call of each statement that has one.
-    calls: Vec<Option<Pending>>,
+    /// The list of each statement, and its call if it has one.
+    calls: Vec<(Option<usize>, Option<Pending>)>,
 }
 
 /// A label, known when the list of statements that has it is entered.
@@ -247,6 +251,9 @@ pub(super) struct FuncCx<'a, 'm> {
     frame: Option<Frame>,
     /// The symbol of the function that makes its deferred calls.
     deferred: Option<String>,
+    /// For each list of records of `defer` statements that run more
+    /// than once: the slot with the first record, the one made last.
+    lists: Vec<LocalId>,
     /// How often what the scopes and the temporaries own has changed.
     owners: u64,
     /// The first block that unwinding runs for what is owned, as of
@@ -669,6 +676,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             owner: None,
             frame: None,
             deferred: None,
+            lists: Vec::new(),
             owners: 0,
             unwind_head: None,
             temp_heads: Vec::new(),
@@ -767,7 +775,15 @@ impl FuncCx<'_, '_> {
             });
             self.views.push(view);
         }
-        self.find_defers(&block.stmts, false);
+        let mut lists = 0;
+        self.find_defers(&block.stmts, None, &mut lists);
+        // In a function with a label any statement may run again.
+        if self.jumps {
+            lists = 1;
+            for deferred in &mut self.defers {
+                deferred.list = Some(0);
+            }
+        }
         if !self.defers.is_empty() {
             let owner = self.owner;
             self.deferred =
@@ -822,6 +838,7 @@ impl FuncCx<'_, '_> {
                     records: self.b.temp(records),
                     run,
                 });
+                self.lists = (0..lists).map(|_| self.b.temp(bytes)).collect();
                 // The blocks of the outermost scope stand on the block
                 // of the frame from here on, which ends the results.
                 self.results_owned = results_from..results_to;
@@ -854,20 +871,26 @@ impl FuncCx<'_, '_> {
         // on. No panic starts in this block.
         self.quiet = true;
         let bytes = self.bytes_ty();
+        for at in 0..self.lists.len() {
+            let empty = self.zero(bytes);
+            self.b
+                .assign(Place::local(self.lists[at]), Rvalue::Use(empty))?;
+        }
         let mut addresses = Vec::new();
         for at in 0..self.defers.len() {
-            let record = self.defers[at]
-                .call
-                .as_ref()
-                .map(|call| (call.record, call.ty));
-            addresses.push(match record {
-                Some((record, ty)) => {
+            let call = self.defers[at].call.as_ref();
+            let record = call.and_then(|call| Some((call.record?, call.ty)));
+            let list = self.defers[at].list.and_then(|list| self.lists.get(list));
+            addresses.push(match (list, record) {
+                // A statement of a list is found by its list.
+                (Some(&list), _) => self.record(Place::local(list))?,
+                (None, Some((record, ty))) => {
                     let record = Place::local(record);
                     self.b.assign(record.clone(), Rvalue::Use(self.zero(ty)))?;
                     self.record(record)?
                 }
                 // A statement that was refused keeps nothing.
-                None => self.zero(bytes),
+                (None, None) => self.zero(bytes),
             });
         }
         for var in self.pinned_results() {
@@ -910,6 +933,14 @@ impl FuncCx<'_, '_> {
         let named = self.results.clone();
         let given = self.results_now(&named, &parts, &[])?;
         self.give(given)?;
+        // What is left of the results ends: the cell of a result that a
+        // function literal uses.
+        for at in self.results_owned.clone().rev() {
+            if let Some((place, ends)) = self.scopes.first().and_then(|scope| scope.owned.get(at)) {
+                let (place, ends) = (place.clone(), *ends);
+                self.end(place, ends)?;
+            }
+        }
         self.b.ret()
     }
 
@@ -935,7 +966,7 @@ impl FuncCx<'_, '_> {
         let calls: Vec<_> = self
             .defers
             .drain(..)
-            .map(|deferred| deferred.call)
+            .map(|deferred| (deferred.list, deferred.call))
             .collect();
         let count = calls.len() + self.pinned_results().len();
         Some(Outlined {
@@ -946,49 +977,62 @@ impl FuncCx<'_, '_> {
     }
 
     /// The `defer` statements of the statements and of the blocks in
-    /// them, in the order of the source; `in_loop` for those that a
-    /// loop has.
-    fn find_defers(&mut self, stmts: &[StmtId], in_loop: bool) {
+    /// them, in the order of the source. Those of an outermost loop
+    /// share a list, `list`; `lists` counts the lists.
+    fn find_defers(&mut self, stmts: &[StmtId], list: Option<usize>, lists: &mut usize) {
         let tree = self.tree;
         for &stmt in stmts {
             self.memo.steps += 1;
             match &tree.stmts[stmt].kind {
                 StmtKind::Defer(_) => self.defers.push(Deferred {
                     stmt,
-                    in_loop,
+                    list,
                     call: None,
                 }),
                 StmtKind::Labeled { stmt, .. } => {
                     self.jumps = true;
-                    self.find_defers(&[*stmt], in_loop);
+                    self.find_defers(&[*stmt], list, lists);
                 }
                 StmtKind::Branch {
                     kind: BranchKind::Goto,
                     ..
                 } => self.jumps = true,
-                StmtKind::Block(block) => deeper(|| self.find_defers(&block.stmts, in_loop)),
+                StmtKind::Block(block) => {
+                    deeper(|| self.find_defers(&block.stmts, list, lists));
+                }
                 StmtKind::If {
                     then, otherwise, ..
                 } => {
-                    deeper(|| self.find_defers(&then.stmts, in_loop));
-                    self.find_defers(otherwise.as_slice(), in_loop);
+                    deeper(|| self.find_defers(&then.stmts, list, lists));
+                    self.find_defers(otherwise.as_slice(), list, lists);
                 }
                 StmtKind::For { body, .. } | StmtKind::Range { body, .. } => {
-                    deeper(|| self.find_defers(&body.stmts, true));
+                    // A loop in no loop has a list of its own, if it
+                    // has a `defer` statement at all.
+                    let before = self.defers.len();
+                    deeper(|| self.find_defers(&body.stmts, list.or(Some(*lists)), lists));
+                    if list.is_none() && self.defers.len() > before {
+                        *lists += 1;
+                    }
                 }
                 StmtKind::Switch { clauses, .. } => {
                     for clause in clauses {
-                        deeper(|| self.find_defers(&clause.body, in_loop));
+                        deeper(|| self.find_defers(&clause.body, list, lists));
                     }
                 }
                 StmtKind::Select { clauses } => {
                     for clause in clauses {
-                        deeper(|| self.find_defers(&clause.body, in_loop));
+                        deeper(|| self.find_defers(&clause.body, list, lists));
                     }
                 }
                 _ => {}
             }
         }
+    }
+
+    /// The slot with the first record of the list.
+    pub fn defer_list(&self, list: usize) -> Option<LocalId> {
+        self.lists.get(list).copied()
     }
 
     /// The function is left: the calls of its `defer` statements are
@@ -1006,11 +1050,12 @@ impl FuncCx<'_, '_> {
 
     /// The body of the function that makes the deferred calls of a
     /// function: the calls of the statements that ran, the last first.
-    /// A statement that is in no loop runs after those before it in the
-    /// source, so the order of the source turned around is theirs. A
-    /// statement has not run any more once its call is started: a panic
-    /// in the call makes the calls that are left, and not this one
-    /// again.
+    /// A statement that runs once at most runs after those before it in
+    /// the source, so the order of the source turned around is theirs;
+    /// the statements of a loop are in the list of the loop, which is
+    /// gone through where the loop is among them. A statement has not
+    /// run any more once its call is started: a panic in the call makes
+    /// the calls that are left, and not this one again.
     fn deferred_calls(&mut self, outlined: &Outlined) -> Built {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
@@ -1022,88 +1067,190 @@ impl FuncCx<'_, '_> {
             self.b
                 .assign_temp(Rvalue::Cast(crate::CastKind::PtrToPtr, given, records))?;
         let records = self.b.deref(&Place::local(records))?;
-        for (at, pending) in outlined.calls.iter().enumerate().rev() {
+        let mut gone_through = FxHashSet::default();
+        for (at, (list, pending)) in outlined.calls.iter().enumerate().rev() {
+            self.memo.steps += 1;
+            let address = Operand::Copy(self.b.field(&records, at as u32)?);
+            if let Some(list) = list {
+                if gone_through.insert(*list) {
+                    self.deferred_list(address, *list, &outlined.calls)?;
+                }
+                continue;
+            }
             // A statement that was refused keeps nothing.
             let Some(pending) = pending else {
                 continue;
             };
-            let address = Operand::Copy(self.b.field(&records, at as u32)?);
             let record = self.b.types().ptr(pending.ty);
             let record =
                 self.b
                     .assign_temp(Rvalue::Cast(crate::CastKind::PtrToPtr, address, record))?;
             let record = self.b.deref(&Place::local(record))?;
             let flag = self.b.field(&record, 0)?;
-            let [call, done, after] = [(); 3].map(|()| self.b.new_block());
+            let [call, done] = [(); 2].map(|()| self.b.new_block());
             self.b
                 .switch(Operand::Copy(flag.clone()), vec![(0, done)], call)?;
             self.b.switch_to(call);
             let no = self.b.const_bool(false);
             self.b.assign(flag, Rvalue::Use(no))?;
-            let mut slots = Vec::with_capacity(pending.slots.len());
-            for slot in 0..pending.slots.len() {
-                slots.push(self.b.field(&record, slot as u32 + 1)?);
-            }
-            let given: Vec<Operand> = slots.iter().cloned().map(Operand::Copy).collect();
-            let around = self.b.loc();
-            self.at(pending.span);
-            // What the call leaves to the statement ends after the
-            // call, also where a panic leaves it: a parameter that is
-            // only read, what `print` writes, the value that is called.
-            let lent = |at: usize| match &pending.what {
-                Waits::Call(called) => called.lent.get(at) == Some(&true),
-                Waits::Print(_) => true,
-                Waits::Value(_) => at == 0,
-            };
-            self.open_scope();
-            for (at, (slot, ends)) in slots.iter().zip(&pending.slots).enumerate() {
-                if let (true, Some(ends)) = (lent(at), *ends) {
-                    self.hold(slot.clone(), ends);
-                }
-            }
-            match &pending.what {
-                Waits::Call(called) => {
-                    let callee = Operand::Const(Constant {
-                        kind: ConstantKind::Func(called.func),
-                        ty: called.sig,
-                    });
-                    let result = Place::local(self.b.temp(called.ret));
-                    let unwind = self.unwind()?;
-                    self.b
-                        .call(callee, given, result.clone(), Some(after), unwind)?;
-                    self.b.switch_to(after);
-                    // The address of a temporary that a call wrote is
-                    // not taken: its value ends in a slot of its own.
-                    if let Some(ends) = pending.result {
-                        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
-                        self.end(slot, ends)?;
-                    }
-                }
-                Waits::Print(line) => {
-                    self.b.goto(after)?;
-                    self.b.switch_to(after);
-                    let values = given.into_iter().map(|value| (value, pending.span));
-                    self.print_values(*line, values.collect())?;
-                }
-                Waits::Value(code_ty) => {
-                    self.b.goto(after)?;
-                    self.b.switch_to(after);
-                    if let Some(value) = slots.first() {
-                        let (ret, result) =
-                            self.call_value(pending.span, value, *code_ty, given)?;
-                        if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT) {
-                            let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
-                            self.end(slot, ends)?;
-                        }
-                    }
-                }
-            }
-            self.close_scope(pending.span)?;
-            self.b.set_loc(around);
+            self.deferred_call(pending, &record, 1, None)?;
             self.b.goto(done)?;
             self.b.switch_to(done);
         }
         self.b.ret()
+    }
+
+    /// The calls of the records of a list, from the one made last on.
+    /// `address` is that of the slot with the first record. A record is
+    /// taken off the list before its call, and its cell is let go after
+    /// it.
+    fn deferred_list(
+        &mut self,
+        address: Operand,
+        list: usize,
+        calls: &[(Option<usize>, Option<Pending>)],
+    ) -> Built {
+        let bytes = self.bytes_ty();
+        let word = self.b.types().int(64, false);
+        let slot = self.b.types().ptr(bytes);
+        let first = self
+            .b
+            .assign_temp(Rvalue::Cast(crate::CastKind::PtrToPtr, address, slot))?;
+        let first = self.b.deref(&Place::local(first))?;
+        let [again, taken, over, never] = [(); 4].map(|()| self.b.new_block());
+        self.b.goto(again)?;
+        self.b.switch_to(again);
+        let cell = self.slot_of(Rvalue::Use(Operand::Copy(first.clone())))?;
+        let any = Rvalue::Binary(
+            crate::BinOp::Ne,
+            Operand::Copy(cell.clone()),
+            self.zero(bytes),
+        );
+        let any = Operand::Copy(Place::local(self.b.assign_temp(any)?));
+        self.b.switch(any, vec![(0, over)], taken)?;
+        self.b.switch_to(taken);
+        // Every record starts with the record after it and the number
+        // of its statement.
+        let start = self.b.types().tuple(&[bytes, word]);
+        let start = self.cell_type(start);
+        let start = self.b.types().ptr(start);
+        let start = Rvalue::Cast(
+            crate::CastKind::PtrToPtr,
+            Operand::Copy(cell.clone()),
+            start,
+        );
+        let start = Place::local(self.b.assign_temp(start)?);
+        let start = self.b.deref(&start)?;
+        let start = self.b.field(&start, 1)?;
+        let next = Operand::Copy(self.b.field(&start, 0)?);
+        self.b.assign(first, Rvalue::Use(next))?;
+        let which = self.b.field(&start, 1)?;
+        let which = Operand::Copy(self.slot_of(Rvalue::Use(Operand::Copy(which)))?);
+        let mut cases = Vec::new();
+        let of_list = (calls.iter().enumerate()).filter(|(_, (of, _))| *of == Some(list));
+        for (at, (_, pending)) in of_list {
+            self.memo.steps += 1;
+            let Some(pending) = pending else {
+                continue;
+            };
+            let call = self.b.new_block();
+            cases.push((at as u64, call));
+            self.b.switch_to(call);
+            let record = self.cell_type(pending.ty);
+            let record = self.b.types().ptr(record);
+            let record = Rvalue::Cast(
+                crate::CastKind::PtrToPtr,
+                Operand::Copy(cell.clone()),
+                record,
+            );
+            let record = Place::local(self.b.assign_temp(record)?);
+            let record = self.b.deref(&record)?;
+            let record = self.b.field(&record, 1)?;
+            self.deferred_call(pending, &record, 2, Some(cell.clone()))?;
+            self.b.goto(again)?;
+        }
+        self.b.switch_to(taken);
+        self.b.switch(which, cases, never)?;
+        self.b.switch_to(never);
+        self.b.unreachable()?;
+        self.b.switch_to(over);
+        Ok(())
+    }
+
+    /// The call of a statement, with what its record keeps from the
+    /// part `first` on. The cell of the record, if it has one, is let
+    /// go after the call.
+    fn deferred_call(
+        &mut self,
+        pending: &Pending,
+        record: &Place,
+        first: u32,
+        cell: Option<Place>,
+    ) -> Built {
+        let mut slots = Vec::with_capacity(pending.slots.len());
+        for slot in 0..pending.slots.len() {
+            slots.push(self.b.field(record, slot as u32 + first)?);
+        }
+        let given: Vec<Operand> = slots.iter().cloned().map(Operand::Copy).collect();
+        let around = self.b.loc();
+        self.at(pending.span);
+        // What the call leaves to the statement ends after the call,
+        // also where a panic leaves it: a parameter that is only read,
+        // what `print` writes, the value that is called.
+        let lent = |at: usize| match &pending.what {
+            Waits::Call(called) => called.lent.get(at) == Some(&true),
+            Waits::Print(_) => true,
+            Waits::Value(_) => at == 0,
+        };
+        self.open_scope();
+        if let Some(cell) = cell {
+            self.hold(cell, Ends::Cell(None));
+        }
+        for (at, (slot, ends)) in slots.iter().zip(&pending.slots).enumerate() {
+            if let (true, Some(ends)) = (lent(at), *ends) {
+                self.hold(slot.clone(), ends);
+            }
+        }
+        let after = self.b.new_block();
+        match &pending.what {
+            Waits::Call(called) => {
+                let callee = Operand::Const(Constant {
+                    kind: ConstantKind::Func(called.func),
+                    ty: called.sig,
+                });
+                let result = Place::local(self.b.temp(called.ret));
+                let unwind = self.unwind()?;
+                self.b
+                    .call(callee, given, result.clone(), Some(after), unwind)?;
+                self.b.switch_to(after);
+                // The address of a temporary that a call wrote is not
+                // taken: its value ends in a slot of its own.
+                if let Some(ends) = pending.result {
+                    let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
+                    self.end(slot, ends)?;
+                }
+            }
+            Waits::Print(line) => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
+                let values = given.into_iter().map(|value| (value, pending.span));
+                self.print_values(*line, values.collect())?;
+            }
+            Waits::Value(code_ty) => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
+                if let Some(value) = slots.first() {
+                    let (ret, result) = self.call_value(pending.span, value, *code_ty, given)?;
+                    if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT) {
+                        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
+                        self.end(slot, ends)?;
+                    }
+                }
+            }
+        }
+        self.close_scope(pending.span)?;
+        self.b.set_loc(around);
+        Ok(())
     }
 
     // ---- places in the source

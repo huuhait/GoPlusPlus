@@ -143,6 +143,8 @@ fn _GPF4mainE7guarded(_1: i64) -> (i64, string) [go, external] {
   let _40: *u8
   let _41: bool
   let _42: string
+  let _43: bool
+  let _44: ()
   bb0:
     storage_live(_2)  ; a.gopp:14:6
     _2 = const zero: i64  ; a.gopp:14:6
@@ -218,6 +220,11 @@ fn _GPF4mainE7guarded(_1: i64) -> (i64, string) [go, external] {
     _42 = copy _3  ; a.gopp:14:6
     _3 = const zero: string  ; a.gopp:14:6
     _0 = tuple {copy _2, copy _42}  ; a.gopp:14:6
+    _43 = ne(copy _3.2, const zero: *u8)  ; a.gopp:14:6
+    switch copy _43 [0: bb17, otherwise: bb16]  ; a.gopp:14:6
+  bb16:
+    _44 = call const fn @_gopp_string_release(copy _3) -> [return: bb17, unwind: terminate]  ; a.gopp:14:6
+  bb17:
     return  ; a.gopp:14:6
 }
 

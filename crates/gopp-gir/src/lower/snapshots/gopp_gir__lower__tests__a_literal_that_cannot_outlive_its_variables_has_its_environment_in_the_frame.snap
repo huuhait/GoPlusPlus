@@ -299,6 +299,8 @@ fn _GPF4mainE5inner(_1: bool) -> i64 [go, external] {
   let _40: *(*u8, fn "C"(*u8) -> (), *u8, [5]*u8)
   let _41: *u8
   let _42: bool
+  let _43: *u8
+  let _44: ()
   bb0:
     _2 = call const fn @_gopp_cell_new(const 16: u64) -> [return: bb1, unwind: continue]  ; a.gopp:22:6
   bb1:
@@ -380,6 +382,9 @@ fn _GPF4mainE5inner(_1: bool) -> i64 [go, external] {
     switch copy _42 [0: bb2, otherwise: bb20]  ; a.gopp:22:6
   bb20:
     _0 = copy (*_4)  ; a.gopp:22:6
+    _43 = ptr_to_ptr(copy _3) as *u8  ; a.gopp:22:6
+    _44 = call const fn @_gopp_cell_release(copy _43, const zero: fn "C"(*u8) -> ()) -> [return: bb21, unwind: terminate]  ; a.gopp:22:6
+  bb21:
     return  ; a.gopp:22:6
 }
 

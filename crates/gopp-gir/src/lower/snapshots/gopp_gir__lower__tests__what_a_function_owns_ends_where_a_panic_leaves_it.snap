@@ -312,6 +312,8 @@ fn _GPF4mainE7guarded(_1: i64) -> string [go, external] {
   let _57: *u8
   let _58: bool
   let _59: string
+  let _60: bool
+  let _61: ()
   bb0:
     storage_live(_2)  ; a.gopp:24:6
     _2 = const zero: string  ; a.gopp:24:6
@@ -443,6 +445,11 @@ fn _GPF4mainE7guarded(_1: i64) -> string [go, external] {
     _59 = copy _2  ; a.gopp:24:6
     _2 = const zero: string  ; a.gopp:24:6
     _0 = copy _59  ; a.gopp:24:6
+    _60 = ne(copy _2.2, const zero: *u8)  ; a.gopp:24:6
+    switch copy _60 [0: bb41, otherwise: bb40]  ; a.gopp:24:6
+  bb40:
+    _61 = call const fn @_gopp_string_release(copy _2) -> [return: bb41, unwind: terminate]  ; a.gopp:24:6
+  bb41:
     return  ; a.gopp:24:6
 }
 

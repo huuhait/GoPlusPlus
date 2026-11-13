@@ -1522,8 +1522,6 @@ impl<'a> FuncCx<'a, '_> {
         let refused = match () {
             // Its deferred calls would have no function to make them.
             () if !self.defers_calls() => Some("a defer statement in a function without a symbol"),
-            () if self.defers[at].in_loop => Some("a defer statement in a loop"),
-            () if self.jumps => Some("a defer statement in a function with a label"),
             () if *unwrap => Some("a call with `!`"),
             () if !known && prints.is_none() => {
                 Some("a defer statement of this built-in function or of a conversion")
@@ -1674,17 +1672,58 @@ impl<'a> FuncCx<'a, '_> {
         result: Option<super::glue::Ends>,
         span: SourceSpan,
     ) -> Built {
-        let mut fields = vec![TypeInterner::BOOL];
-        let mut kept = vec![self.b.const_bool(true)];
+        // The record owns what the slots had.
+        for &(slot, _) in &slots {
+            self.take_temp(&Place::local(slot));
+        }
+        // A statement that may run again makes a record each time,
+        // which is the first of its list from here on.
+        let list = self.defers[at].list.and_then(|list| self.defer_list(list));
+        let bytes = self.bytes_ty();
+        let word = self.b.types().int(64, false);
+        let (mut fields, mut kept) = match list {
+            Some(list) => (
+                vec![bytes, word],
+                vec![
+                    Operand::Copy(Place::local(list)),
+                    self.b.const_int(word, at as u64)?,
+                ],
+            ),
+            None => (vec![TypeInterner::BOOL], vec![self.b.const_bool(true)]),
+        };
         for &(slot, _) in &slots {
             let slot = Place::local(slot);
             fields.push(self.b.place_ty(&slot));
             kept.push(Operand::Copy(slot));
         }
         let ty = self.b.types().tuple(&fields);
-        let record = self.b.temp(ty);
         let whole = Rvalue::Aggregate(crate::AggKind::Tuple, kept);
-        self.b.assign(Place::local(record), whole)?;
+        let record = match list {
+            Some(list) => {
+                let cell = self.cell_type(ty);
+                let layout = self.b.types().layout(cell, self.shared.layout);
+                let size = self
+                    .b
+                    .const_int(word, layout.map_or(0, |layout| layout.size))?;
+                let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
+                let to = self.b.types().ptr(cell);
+                let cell = Rvalue::Cast(CastKind::PtrToPtr, made.clone(), to);
+                let cell = Place::local(self.b.assign_temp(cell)?);
+                let cell = self.b.deref(&cell)?;
+                let inside = self.b.field(&cell, 1)?;
+                // An aggregate is built in a slot before it is stored
+                // behind a pointer.
+                let whole = Operand::Copy(self.slot_of(whole)?);
+                self.b.assign(inside, Rvalue::Use(whole))?;
+                self.b.assign(Place::local(list), Rvalue::Use(made))?;
+                None
+            }
+            None => {
+                let record = self.b.temp(ty);
+                self.b.assign(Place::local(record), whole)?;
+                Some(record)
+            }
+        };
         self.defers[at].call = Some(super::func::Pending {
             what,
             record,
@@ -1713,6 +1752,11 @@ impl<'a> FuncCx<'a, '_> {
                 self.ends_of(checked, self.tree.exprs[expr].span)?
             }
         };
+        // The slot owns the value while the rest of the statement is
+        // worked out, where a panic may leave it.
+        if let Some(ends) = ends {
+            self.own_temp(Place::local(slot), ends);
+        }
         Ok((slot, ends))
     }
 

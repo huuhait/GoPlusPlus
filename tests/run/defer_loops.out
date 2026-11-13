@@ -1,0 +1,33 @@
+after 3
+inner 2 1
+inner 2 0
+inner 1 1
+inner 1 0
+inner 0 1
+inner 0 0
+between 3
+even 2
+pass 2
+pass 1
+even 0
+pass 0
+before 3
+c: 2
+b: 1
+a: 0
+...c:b:a:
+done 3
+jump 2
+jump 1
+jump 0
+late 1
+late 0
+early 2
+early 1
+early 0
+1
+pass 2 102
+pass 1 102
+pass 0 102
+102
+none 0

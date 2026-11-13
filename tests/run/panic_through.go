@@ -142,16 +142,38 @@ func pair() (string, []string) {
 	return a, b
 }
 
+func passes() (out string) {
+	for i := 0; i < 3; i++ {
+		name := text(i)
+		defer func(note string) {
+			step()
+			out += note + name
+		}(text(1))
+		step()
+		out += text(i % 2)
+	}
+	n := 0
+again:
+	defer join(text(n), out)
+	n++
+	if n < 2 {
+		goto again
+	}
+	step()
+	return out
+}
+
 func work() int {
 	total := scopes()
 	step()
 	total += maps()
 	total += values()
 	total += len(deferred())
-	total += inner()
+	total += len(passes())
 	a, b := pair()
 	step()
-	return total + len(a) + len(b)
+	// The panics end here: this one is stopped where it is.
+	return total + len(a) + len(b) + inner()
 }
 
 func attempt() (result int, stopped bool) {

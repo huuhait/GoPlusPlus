@@ -1424,6 +1424,77 @@ func main() {
 }
 
 #[test]
+fn a_defer_statement_that_runs_again_makes_a_record_each_time() {
+    let text = "package main
+
+func say(s string, n int) {}
+
+func loops(n int, s string) {
+	defer say(s, 0)
+	for i := 0; i < n; i++ {
+		defer say(s, i)
+		for j := 0; j < i; j++ {
+			defer println(i, j)
+		}
+	}
+	defer say(s, n)
+	for range n {
+		defer say(\"again\", n)
+	}
+}
+
+func jumps(n int) {
+again:
+	defer say(\"jump\", n)
+	n--
+	if n > 0 {
+		goto again
+	}
+	defer say(\"last\", n)
+}
+";
+    for file in ["a.gopp", "a.go"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        let body = |symbol: &str| {
+            let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+            without_cleanup(&module[start..][..module[start..].find("\n}\n").unwrap()])
+        };
+        let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+        // The three statements in loops make a record in a cell each
+        // time they run; the two others have a record in the frame.
+        let loops = body("_GPF4mainE5loops");
+        assert_eq!(calls(&loops, "_gopp_cell_new"), 3, "{file}: {loops}");
+        // The function of the deferred calls goes through the list of
+        // each of the two outermost loops, where the loop is among the
+        // statements: it has a call for each statement, and lets the
+        // cell of a record go after its call.
+        let deferred = body("_GPC0_F4mainE5loops");
+        assert_eq!(calls(&deferred, "_GPF4mainE3say"), 4, "{file}: {deferred}");
+        assert_eq!(
+            calls(&deferred, "_gopp_cell_release"),
+            3,
+            "{file}: {deferred}"
+        );
+        // The loop that comes last is first, then the statement before
+        // it, then the other loop, then the first statement.
+        let order: Vec<Option<usize>> = ["15:9", "13:8", "8:9", "6:8"]
+            .iter()
+            .map(|at| deferred.find(&format!("; {file}:{at}\n")))
+            .collect();
+        assert!(order.iter().all(Option::is_some), "{file}: {deferred}");
+        assert!(order.is_sorted(), "{file}: {deferred}");
+        // In a function with a label every statement may run again.
+        let jumps = body("_GPF4mainE5jumps");
+        assert_eq!(calls(&jumps, "_gopp_cell_new"), 2, "{file}: {jumps}");
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
 fn defer_statements_that_are_not_supported_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
@@ -1477,8 +1548,6 @@ func main() {}
     assert_eq!(
         messages,
         [
-            "a.gopp:13:9: not supported yet: a defer statement in a loop",
-            "a.gopp:19:8: not supported yet: a defer statement in a function with a label",
             "a.gopp:32:8: not supported yet: a defer statement of this built-in function or of a \
              conversion",
             "a.gopp:36:9: not supported yet: a deferred call that holds a variable of a block",
@@ -3018,6 +3087,33 @@ fn the_steps_grow_with_the_glue_of_types() {
             .collect();
         steps_of(&format!(
             "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{body}}}\n"
+        ))
+    });
+    // Many `defer` statements in loops in loops, and many loops with
+    // one each.
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| {
+                format!(
+                    "\tfor i{at} := 0; i{at} < x; i{at}++ {{\n\t\tdefer keep(make([]int, i{at}))\n"
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{open}{}}}\n",
+            "\t}\n".repeat(n)
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let loops: String = (0..n)
+            .map(|at| {
+                format!(
+                    "\tfor i := 0; i < x; i++ {{\n\t\tdefer keep(make([]int, i + {at}))\n\t}}\n"
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{loops}}}\n"
         ))
     });
     // What unwinding ends: many variables that own, each followed by a

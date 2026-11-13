@@ -185,6 +185,30 @@ func owners() int {
 	return total + size(move(other)) + g.fd + len(shelf.label)
 }
 
+// Deferred calls of a loop, each with what its pass made, and a
+// statement that a jump runs again.
+func passes() (out string) {
+	for i := 0; i < 3; i++ {
+		name := text(i)
+		defer func(note string) {
+			step()
+			out += note + name
+		}(text(1))
+		f := open(20 + i)
+		step()
+		out += text(f.fd % 2)
+	}
+	n := 0
+again:
+	defer join(text(n), out)
+	n++
+	if n < 2 {
+		goto again
+	}
+	step()
+	return out
+}
+
 func work() int {
 	total := scopes()
 	step()
@@ -192,6 +216,7 @@ func work() int {
 	total += values()
 	total += len(deferred())
 	total += owners()
+	total += len(passes())
 	a, b := pair()
 	step()
 	return total + len(a) + len(b)

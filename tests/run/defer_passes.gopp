@@ -1,0 +1,51 @@
+package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f *File) Sync() { println("sync", f.fd) }
+
+func open(fd int) File { return File{fd: fd} }
+
+func show(names []string, n int) { println(len(names), n) }
+
+// The deferred call of each pass has what its arguments were in that
+// pass: a copy of the slice as it was.
+func copies() {
+	var names []string
+	for i := 0; i < 3; i++ {
+		names = append(names, "n")
+		defer show(names, i)
+	}
+	names = append(names, "last")
+	println("made", len(names))
+}
+
+// A file of each pass, which the deferred call of the pass uses: it
+// lives until that call is made.
+func files(n int) {
+	for i := 1; i <= n; i++ {
+		f := open(i)
+		defer func() { f.Sync() }()
+		println("opened", i)
+	}
+	println("end of files")
+}
+
+func text(parts []string) (out string) {
+	for _, part := range parts {
+		defer func(sep string) { out += sep + part }("/")
+	}
+	return "root"
+}
+
+func main() {
+	copies()
+	files(3)
+	println(text([]string{"a", "b"}))
+}
