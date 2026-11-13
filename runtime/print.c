@@ -3,15 +3,60 @@
 
 #include "internal.h"
 
+void *realloc(void *room, __SIZE_TYPE__ size);
+void free(void *room);
+
+// While a message is kept, what is written goes into it and not to the
+// standard error stream: a panic has its message before anything is
+// written, because the calls that it runs may write first.
+static bool keeping;
+static uint8_t *kept;
+static uint64_t kept_len;
+static uint64_t kept_room;
+
+static void out(const uint8_t *bytes, uint64_t count) {
+  if (!keeping) {
+    _gopp_os_write(bytes, count);
+    return;
+  }
+  if (kept_len + count > kept_room) {
+    kept_room = (kept_len + count) * 2;
+    kept = realloc(kept, kept_room);
+    if (kept == 0) {
+      _gopp_rt_exit(2);
+    }
+  }
+  if (count > 0) {
+    __builtin_memcpy(kept + kept_len, bytes, count);
+  }
+  kept_len += count;
+}
+
+void _gopp_keep_start(void) {
+  keeping = true;
+  kept = 0;
+  kept_len = 0;
+  kept_room = 0;
+}
+
+// What was written since the start, as a string of its own.
+gopp_string _gopp_keep_end(void) {
+  keeping = false;
+  gopp_string text = _gopp_string_concat((gopp_string){kept, kept_len, 0}, (gopp_string){0, 0, 0});
+  free(kept);
+  kept = 0;
+  return text;
+}
+
 void _gopp_write_text(const char *text) {
   uint64_t count = 0;
   while (text[count]) {
     count++;
   }
-  _gopp_os_write((const uint8_t *)text, count);
+  out((const uint8_t *)text, count);
 }
 
-void _gopp_write_string(gopp_string text) { _gopp_os_write(text.ptr, text.len); }
+void _gopp_write_string(gopp_string text) { out(text.ptr, text.len); }
 
 void _gopp_write_uint(uint64_t value) {
   uint8_t digits[20];
@@ -20,7 +65,7 @@ void _gopp_write_uint(uint64_t value) {
     digits[--at] = (uint8_t)('0' + value % 10);
     value /= 10;
   } while (value > 0);
-  _gopp_os_write(digits + at, sizeof digits - at);
+  out(digits + at, sizeof digits - at);
 }
 
 void _gopp_write_int(int64_t value) {
@@ -42,7 +87,7 @@ void _gopp_write_hex(uint64_t value) {
   } while (value > 0);
   digits[--at] = 'x';
   digits[--at] = '0';
-  _gopp_os_write(digits + at, sizeof digits - at);
+  out(digits + at, sizeof digits - at);
 }
 
 // The steps of `printfloat` of Go, one for one: seven digits, which are
@@ -108,7 +153,7 @@ static void write_float(double value) {
   text[DIGITS + 4] = (uint8_t)(exponent / 100 + '0');
   text[DIGITS + 5] = (uint8_t)(exponent / 10 % 10 + '0');
   text[DIGITS + 6] = (uint8_t)(exponent % 10 + '0');
-  _gopp_os_write(text, sizeof text);
+  out(text, sizeof text);
 }
 
 void _gopp_print_bool(bool value) { _gopp_write_text(value ? "true" : "false"); }

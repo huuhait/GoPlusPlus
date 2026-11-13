@@ -1,0 +1,131 @@
+package main
+
+type T struct{ name string }
+
+func (t T) bye() { println("bye", t.name) }
+
+func (t *T) stop() {
+	if r := recover(); r != nil {
+		println(t.name, "stopped a panic")
+	}
+}
+
+// A panic in a deferred call takes the place of the one before it.
+func replaced() (s string) {
+	defer func() {
+		r := recover()
+		s, _ = r.(string)
+	}()
+	defer func() {
+		panic("second")
+	}()
+	panic("first")
+}
+
+// The deferred calls that are left run after one of them panics.
+func rest() {
+	defer func() { recover() }()
+	defer println("third")
+	defer func() { panic("in a deferred call") }()
+	defer println("first")
+}
+
+// A panic in a deferred call of a return that is stopped: the function
+// returns what the return gave.
+func returned() int {
+	defer func() { recover() }()
+	defer func() { panic("late") }()
+	return 7
+}
+
+func two() (int, string) {
+	defer func() { recover() }()
+	defer func() { panic("late") }()
+	return 7, "seven"
+}
+
+func inner(n int) int {
+	defer println("inner leaves", n)
+	if n == 0 {
+		var s []int
+		s[n] = 1
+	}
+	return inner(n-1) + 1
+}
+
+func outer() (n int) {
+	defer func() {
+		if recover() != nil {
+			n = -1
+		}
+	}()
+	return inner(2)
+}
+
+// A function that stops a panic of a function that it calls in a
+// deferred call goes on.
+func within() {
+	defer func() {
+		println("outer deferred call, in a panic")
+		func() {
+			defer func() {
+				println("inner stops:", recover() != nil)
+			}()
+			panic("inner")
+		}()
+		println("the first panic goes on:", recover() != nil)
+	}()
+	panic("outer")
+}
+
+// `recover` in a function that no panic runs gives nil.
+func idle() {
+	println("no panic:", recover() == nil)
+	defer func() {
+		println("no panic:", recover() == nil)
+	}()
+}
+
+func divide(a, b int) (q int, failed bool) {
+	defer func() {
+		if recover() != nil {
+			failed = true
+		}
+	}()
+	return a / b, false
+}
+
+func methods() {
+	t := T{"t"}
+	defer t.stop()
+	defer t.bye()
+	f := T.bye
+	defer f(t)
+	var p *T
+	println(p.name)
+}
+
+func loop() int {
+	total := 0
+	for i := 0; i < 5; i++ {
+		total += outer()
+	}
+	return total
+}
+
+func main() {
+	println(replaced())
+	rest()
+	println(returned())
+	n, s := two()
+	println(n, s)
+	println(outer())
+	within()
+	idle()
+	q, failed := divide(7, 2)
+	println(q, failed)
+	q, failed = divide(7, 0)
+	println(q, failed)
+	methods()
+	println(loop())
+}

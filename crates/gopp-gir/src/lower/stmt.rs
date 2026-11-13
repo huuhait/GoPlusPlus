@@ -601,8 +601,7 @@ impl FuncCx<'_, '_> {
     }
 
     fn ret(&mut self, span: SourceSpan, values: &[ExprId]) -> Built {
-        let result = Place::local(self.b.result());
-        let ty = self.b.place_ty(&result);
+        let ty = self.b.place_ty(&Place::local(self.b.result()));
         let parts: Vec<_> = match self.kind(ty) {
             Type::Tuple(parts) if self.results.len() > 1 => parts.to_vec(),
             _ if self.results.is_empty() => Vec::new(),
@@ -664,9 +663,6 @@ impl FuncCx<'_, '_> {
                 }
                 for (at, (var, value)) in named.iter().zip(held).enumerate() {
                     let Some(var) = var else {
-                        if let Operand::Copy(place) = &value {
-                            self.read_late(place.local);
-                        }
                         unnamed[at] = Some(value);
                         continue;
                     };
@@ -717,6 +713,20 @@ impl FuncCx<'_, '_> {
             self.run_defers()?;
             given = self.results_now(&named, &parts, &unnamed)?;
         }
+        self.give(given)?;
+        if !late {
+            self.drop_temps(0)?;
+            self.run_defers()?;
+        }
+        self.exit_scopes(0)?;
+        self.b.ret()?;
+        self.dead();
+        Ok(())
+    }
+
+    /// The function gives its caller the values, one for each result.
+    pub fn give(&mut self, mut given: Vec<Rvalue>) -> Built {
+        let result = Place::local(self.b.result());
         match given.len() {
             0 => {}
             1 => {
@@ -732,20 +742,13 @@ impl FuncCx<'_, '_> {
                 self.b.assign(result, whole)?;
             }
         }
-        if !late {
-            self.drop_temps(0)?;
-            self.run_defers()?;
-        }
-        self.exit_scopes(0)?;
-        self.b.ret()?;
-        self.dead();
         Ok(())
     }
 
     /// What the results that have names hold now, for the caller: a
     /// value that holds what is freed leaves its variable. A result
     /// without a variable is the value in `unnamed`, or a zero.
-    fn results_now(
+    pub fn results_now(
         &mut self,
         named: &[Option<crate::LocalId>],
         parts: &[crate::TypeId],

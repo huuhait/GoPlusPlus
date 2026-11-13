@@ -1,0 +1,9 @@
+checked
+checked
+panic: main.Level(7)
+
+goroutine 1 [running]:
+main.check()
+	+0x?
+main.main()
+	+0x?

@@ -13,13 +13,14 @@ global const @_GPTaN4mainE6SquareN4mainE5Shape: [3]*u8 [linkonce_odr]
 global const @_GPTiN4mainE6Square: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE6Square
     const 8: u64
-    const 3: u64
+    const 7: u64
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#0 "main.Square"
     const global @_GPTmN4mainE6Square
+    const 0: u64
 
 global const @_GPTmN4mainE6Square: (u64, [2](string, *u8)) [linkonce_odr]
     const 2: u64
@@ -36,13 +37,14 @@ global const @_GPTaN4mainE4TagsN4mainE5Shape: [3]*u8 [linkonce_odr]
 global const @_GPTiN4mainE4Tags: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE4Tags
     const 32: u64
-    const 0: u64
+    const 4: u64
     const fn @_GPTcN4mainE4Tags
     const fn @_GPTdN4mainE4Tags
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#3 "main.Tags"
     const global @_GPTmN4mainE4Tags
+    const 0: u64
 
 global const @_GPTmN4mainE4Tags: (u64, [2](string, *u8)) [linkonce_odr]
     const 2: u64

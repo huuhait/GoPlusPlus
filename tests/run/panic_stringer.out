@@ -1,0 +1,6 @@
+deferred
+panic: a color
+
+goroutine 1 [running]:
+main.main()
+	+0x?

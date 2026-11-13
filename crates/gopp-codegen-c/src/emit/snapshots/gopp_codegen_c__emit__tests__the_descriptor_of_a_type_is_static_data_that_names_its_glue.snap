@@ -65,6 +65,7 @@ struct T18 {
   T19 f6;
   gopp_string f7;
   uint8_t * f8;
+  uint64_t f9;
 };
 struct T23 {
   gopp_string f0;
@@ -123,7 +124,7 @@ struct T59 {
 _Static_assert(sizeof(T4) == 32 && _Alignof(T4) == 8, "the layout of T4");
 _Static_assert(sizeof(T3) == 56 && _Alignof(T3) == 8, "the layout of T3");
 _Static_assert(sizeof(T12) == 16 && _Alignof(T12) == 8, "the layout of T12");
-_Static_assert(sizeof(T18) == 88 && _Alignof(T18) == 8, "the layout of T18");
+_Static_assert(sizeof(T18) == 96 && _Alignof(T18) == 8, "the layout of T18");
 _Static_assert(sizeof(T23) == 32 && _Alignof(T23) == 8, "the layout of T23");
 _Static_assert(sizeof(T24) == 32 && _Alignof(T24) == 8, "the layout of T24");
 _Static_assert(sizeof(T25) == 40 && _Alignof(T25) == 8, "the layout of T25");
@@ -184,14 +185,14 @@ __attribute__((weak)) void gopp_f16(uint8_t * _1) __asm__("_GPTdSi");
 __attribute__((weak)) void gopp_f17(uint8_t * _1) __asm__("_GPTdr");
 __attribute__((weak)) GOPP_CALL void gopp_f18(uint8_t * _1, int64_t _2, gopp_string _3) __asm__("_GPTpM4GrowN4mainE5Named");
 __attribute__((weak)) GOPP_CALL int64_t gopp_f19(uint8_t * _1) __asm__("_GPTpM4SizeN4mainE5Named");
-const T18 gopp_g0 = {(uint8_t *)&gopp_g0, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s0, 3, 0}, 0};
-const T18 gopp_g1 = {(uint8_t *)&gopp_g1, 56ull, 0ull, (T21)gopp_f11, (T21)gopp_f14, 0, 0, {(uint8_t *)gopp_s1, 10, 0}, (uint8_t *)&gopp_g2};
+const T18 gopp_g0 = {(uint8_t *)&gopp_g0, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s0, 3, 0}, 0, 2ull};
+const T18 gopp_g1 = {(uint8_t *)&gopp_g1, 56ull, 4ull, (T21)gopp_f11, (T21)gopp_f14, 0, 0, {(uint8_t *)gopp_s1, 10, 0}, (uint8_t *)&gopp_g2, 0ull};
 const T25 gopp_g2 = {1ull, {{{{(uint8_t *)gopp_s2, 21, 0}, (uint8_t *)gopp_f10}}}};
 const T44 gopp_g3 = {{(uint8_t *)gopp_s5, 10, 0}, 2ull, {{{(uint8_t *)gopp_s6, 22, 0}, {(uint8_t *)gopp_s7, 21, 0}}}};
 const T48 gopp_g4 = {{(uint8_t *)gopp_s8, 24, 0}, 1ull, {{{(uint8_t *)gopp_s9, 21, 0}}}};
 const T51 gopp_g5 = {{(uint8_t *)gopp_s10, 12, 0}, 0ull};
 const T31 gopp_g6 = {{(uint8_t *)&gopp_g7, (uint8_t *)gopp_f18, (uint8_t *)gopp_f19}};
-const T18 gopp_g7 = {(uint8_t *)&gopp_g7, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s11, 11, 0}, (uint8_t *)&gopp_g8};
+const T18 gopp_g7 = {(uint8_t *)&gopp_g7, 8ull, 3ull, 0, 0, 0, 0, {(uint8_t *)gopp_s11, 11, 0}, (uint8_t *)&gopp_g8, 0ull};
 const T59 gopp_g8 = {2ull, {{{{(uint8_t *)gopp_s12, 22, 0}, (uint8_t *)gopp_f18}, {{(uint8_t *)gopp_s13, 21, 0}, (uint8_t *)gopp_f19}}}};
 
 GOPP_CALL int64_t gopp_f0(T3 _1) {

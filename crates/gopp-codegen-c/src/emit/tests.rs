@@ -375,6 +375,7 @@ fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
         VALUES,
         CHECKS,
         INTERFACES,
+        PANICS,
         "package main\n",
     ];
     let cases: Vec<(&str, &str, OptLevel)> = programs
@@ -406,8 +407,81 @@ fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
         }
         assert!(objects[0] == objects[1], "{target}: two builds differ");
         assert!(objects[0].len() > 100);
+        // A COFF object has no time in its header: two builds are the
+        // same whenever they are made.
+        if target == "windows/amd64" {
+            assert_eq!(objects[0][4..8], [0; 4], "the time of the build");
+        }
     });
 }
+
+/// A program that stops its own panics and checks what is left of
+/// them, as `CHECKS` does: a function goes on after a panic with what
+/// its variables had, at every level.
+const PANICS: &str = "package main
+
+func expect(got, want int) {
+	if got != want {
+		var cell [1]int
+		at := 1
+		cell[at] = got
+	}
+}
+
+func fail(n int) int {
+	if n > 2 {
+		panic(n)
+	}
+	return n
+}
+
+func sum(limit int) (total int) {
+	defer func() {
+		if r := recover(); r != nil {
+			n, _ := r.(int)
+			total += 100 * n
+		}
+	}()
+	for i := 0; i < limit; i++ {
+		total += fail(i)
+	}
+	return total
+}
+
+func late() int {
+	defer func() { recover() }()
+	defer func() { panic(\"late\") }()
+	return 7
+}
+
+func through(n int) int {
+	defer func() {}()
+	if n == 0 {
+		var a [3]int
+		return a[n+3]
+	}
+	return through(n-1) + 1
+}
+
+func outer() (n int) {
+	defer func() {
+		if recover() != nil {
+			n = -1
+		}
+	}()
+	return through(3)
+}
+
+func main() {
+	expect(sum(2), 1)
+	expect(sum(9), 303)
+	expect(late(), 7)
+	for i := 0; i < 3; i++ {
+		expect(outer(), -1)
+	}
+	println(\"stopped\", sum(5))
+}
+";
 
 /// A program that checks itself: `expect` indexes past an array when a
 /// value is not what Go says, which panics.
@@ -583,6 +657,7 @@ fn a_program_computes_what_go_says_at_every_level() {
     let failed = "panic: runtime error: ";
     let programs = [
         (CHECKS.to_owned(), 0, String::new()),
+        (PANICS.to_owned(), 0, "stopped 303".to_owned()),
         (
             fails("\tvar a [3]int\n\ta[zero()+3] = 1"),
             2,

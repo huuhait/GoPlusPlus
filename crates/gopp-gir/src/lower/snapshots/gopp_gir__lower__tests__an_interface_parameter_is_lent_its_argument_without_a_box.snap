@@ -14,13 +14,14 @@ global const @_GPTaN4mainE4RectN4mainE5Shape: [2]*u8 [linkonce_odr]
 global const @_GPTiN4mainE4Rect: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE4Rect
     const 16: u64
-    const 2: u64
+    const 6: u64
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#0 "main.Rect"
     const global @_GPTmN4mainE4Rect
+    const 0: u64
 
 global const @_GPTmN4mainE4Rect: (u64, [2](string, *u8)) [linkonce_odr]
     const 2: u64
@@ -39,6 +40,7 @@ global const @_GPTiSi: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#3 "[]int"
     const zero: *u8
+    const 0: u64
 
 fn _GPM4AreaN4mainE4Rect(_1: _GPTiN4mainE4Rect) -> i64 [go, external] {
   let _0: i64

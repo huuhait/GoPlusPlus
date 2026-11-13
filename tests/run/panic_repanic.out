@@ -1,0 +1,13 @@
+seen, and raised again
+main leaves
+panic: runtime error: index out of range [3] with length 0 [recovered, repanicked]
+
+goroutine 1 [running]:
+main.risky.func1()
+	+0x?
+main.risky.func0()
+	+0x?
+main.risky()
+	+0x?
+main.main()
+	+0x?

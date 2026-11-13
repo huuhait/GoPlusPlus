@@ -1213,6 +1213,104 @@ func f(n int, s string) int {
 }
 
 #[test]
+fn a_panic_gives_its_value_to_the_runtime_and_a_function_goes_on_where_it_is_stopped() {
+    let text = "package main
+
+type Failure struct{ code int }
+
+func (f Failure) Error() string { return \"failure\" }
+
+func fail(n int) {
+	if n > 1 {
+		panic(Failure{n})
+	}
+	panic(\"small\")
+}
+
+func guarded(n int) (code int, text string) {
+	defer func() {
+		switch r := recover().(type) {
+		case Failure:
+			code = r.code
+		case string:
+			text = r
+		}
+	}()
+	fail(n)
+	return 0, \"none\"
+}
+
+func plain(n int) int {
+	defer recover()
+	defer func() { recover() }()
+	return n
+}
+
+func main() {
+	code, text := guarded(2)
+	println(code, text, plain(1))
+}
+";
+    for file in ["a.gopp", "a.go"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        // `recover` itself is no deferred function.
+        let refused = format!(
+            "{file}:28:8: not supported yet: a defer statement of this built-in function or of \
+             a conversion"
+        );
+        assert_eq!(messages, [refused], "{file}");
+        let module = print_module(&lowered.module);
+        let body = |symbol: &str| {
+            let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+            &module[start..][..module[start..].find("\n}\n").unwrap()]
+        };
+        let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+        // Each panic gives the runtime its value in an interface value
+        // and the keys of the two methods that say a text, and nothing
+        // follows it.
+        let fail = body("_GPF4mainE4fail");
+        assert_eq!(calls(fail, "_gopp_panic"), 2, "{file}: {fail}");
+        assert_eq!(calls(fail, "_gopp_iface_box"), 1, "{file}: {fail}");
+        assert_eq!(fail.matches("unreachable").count(), 2, "{file}: {fail}");
+        assert!(module.contains("\"Error||"), "{file}: {module}");
+        assert!(module.contains("\"String||"), "{file}: {module}");
+        // A function with `defer` statements is known to the runtime
+        // from its start to each of its ends, where the function that
+        // makes its deferred calls is called.
+        for (name, ends) in [("7guarded", 1), ("5plain", 1)] {
+            let function = body(&format!("_GPF4mainE{name}"));
+            assert_eq!(
+                calls(function, "_gopp_defer_enter"),
+                1,
+                "{file}: {function}"
+            );
+            assert_eq!(
+                calls(function, "_gopp_defer_pop"),
+                ends,
+                "{file}: {function}"
+            );
+            let deferred = format!("_GPC0_F4mainE{name}");
+            assert_eq!(calls(function, &deferred), ends, "{file}: {function}");
+            assert!(
+                function.contains(&format!("const fn @{deferred},")),
+                "{file}"
+            );
+            assert!(module.contains(&format!("\nfn {deferred}(_1: *u8) -> () [c, internal]")));
+        }
+        // After a stopped panic `plain` returns what its result had:
+        // the result without a name has a variable too.
+        let plain = body("_GPF4mainE5plain");
+        assert_eq!(plain.matches("\n    return").count(), 2, "{file}: {plain}");
+        // `recover` asks the runtime, in the literal that calls it.
+        let literal = body("_GPC1_F4mainE7guarded");
+        assert_eq!(calls(literal, "_gopp_recover"), 1, "{file}: {literal}");
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
 fn defer_statements_that_are_not_supported_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
@@ -1665,15 +1763,30 @@ func main() {
         let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
-        let start = module.find("\nfn _GPF4mainE4work(").unwrap();
-        let work = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        let body = |symbol: &str| {
+            let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+            &module[start..][..module[start..].find("\n}\n").unwrap()]
+        };
+        let work = body("_GPF4mainE4work");
         let calls = |name: &str| work.matches(&format!("@{name}(")).count();
         // Each statement keeps its value: the literal as it is made,
         // and one more that shares the environment of `step`. Each is
-        // called by its code where the function is left and ends then.
-        assert_eq!(work.matches(" = call copy _").count(), 2, "{file}: {work}");
+        // called by its code, and ends then, in the function that
+        // makes the deferred calls of `work`.
+        let deferred = body("_GPC0_F4mainE4work");
+        assert_eq!(
+            deferred.matches(" = call copy _").count(),
+            2,
+            "{file}: {deferred}"
+        );
+        assert_eq!(
+            deferred.matches("@_gopp_func_drop(").count(),
+            2,
+            "{file}: {deferred}"
+        );
+        assert_eq!(work.matches(" = call copy _").count(), 0, "{file}: {work}");
         assert_eq!(calls("_gopp_func_clone"), 1, "{file}: {work}");
-        assert_eq!(calls("_gopp_func_drop"), 3, "{file}: {work}");
+        assert_eq!(calls("_gopp_func_drop"), 1, "{file}: {work}");
         // `out` lives in a cell, because `step` uses it and is kept by
         // a `defer` statement. The literal that the first statement
         // calls uses variables of the whole function, so its
@@ -1983,7 +2096,7 @@ func main() {
         "main.NamedShape Area Name"
     );
     assert_eq!(keys("_GPTnN4mainE5Named"), "main.Named Name");
-    assert!(said("_GPTiN4mainE6Square").ends_with("global @_GPTmN4mainE6Square"));
+    assert!(said("_GPTiN4mainE6Square").contains("global @_GPTmN4mainE6Square|"));
     // Asked of the runtime: `v.(Named)`, `v.(Shape)`, two cases, four
     // results and one of the two values of `two`; the other is put
     // into a box.
@@ -2793,6 +2906,33 @@ fn the_steps_grow_with_the_glue_of_types() {
         steps_of(&format!(
             "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{body}}}\n"
         ))
+    });
+    // Many panics and as many deferred calls that stop them, in one
+    // function and in many.
+    assert_near_linear(&sizes, |n| {
+        let body: String = (0..n)
+            .map(|at| {
+                format!(
+                    "\tdefer func() {{\n\t\tif recover() != nil {{\n\t\t\tx += {at}\n\t\t}}\n\t}}()\n\
+                     \tif x == {at} {{\n\t\tpanic({at})\n\t}}\n"
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc f(x int) (n int) {{\n{body}\treturn x\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let functions: String = (0..n)
+            .map(|at| {
+                format!(
+                    "func f{at}(x int) (n int) {{\n\tdefer func() {{\n\t\tif recover() != nil \
+                     {{\n\t\t\tn = {at}\n\t\t}}\n\t}}()\n\tif x > {at} {{\n\t\tpanic(\"f{at}\")\n\t}}\n\
+                     \treturn x\n}}\n\n"
+                )
+            })
+            .collect();
+        steps_of(&format!("package main\n\n{functions}"))
     });
     // Values that end: a slice in each of many blocks in blocks that a
     // `break` leaves, a literal of many slices, and a call that is given

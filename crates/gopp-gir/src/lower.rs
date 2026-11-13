@@ -15,6 +15,7 @@ mod glue;
 mod iface;
 mod map;
 mod merge;
+mod panic;
 mod slice;
 mod stmt;
 mod types;
@@ -183,6 +184,10 @@ pub(crate) struct Shared<'a> {
     /// that copies one.
     pub drop: Spur,
     pub clone: Spur,
+    /// The names of the methods by which the value of a panic says its
+    /// text.
+    pub error: Spur,
+    pub string: Spur,
     jobs: Vec<Job>,
     pub methods: FxHashMap<(NamedId, Spur), Method>,
     /// For each type that a function declares: which job, and which of
@@ -410,6 +415,24 @@ impl<'a> Memo<'a> {
         self.namer.closure(within, literal.ordinal).ok()
     }
 
+    /// The symbol of the function that makes the deferred calls of a
+    /// function of the package, or of a function literal in it: that
+    /// of a literal with the number 0 there, which no literal of the
+    /// source has.
+    pub fn deferred(
+        &mut self,
+        shared: &Shared<'_>,
+        job: &Job,
+        literal: Option<ExprId>,
+    ) -> Option<String> {
+        let within = match literal {
+            Some(literal) => self.literal_node(shared, job.file, literal)?,
+            None => self.namer.entity(shared.entity(job.named)).ok()?,
+        };
+        let node = self.namer.closure(within, 0).ok()?;
+        Some(self.namer.symbol(node))
+    }
+
     /// The literal is to be lowered, once.
     pub fn queue(&mut self, job: &'a Job, expr: ExprId) {
         if self.queued.insert((job.file, expr)) {
@@ -437,6 +460,8 @@ impl<'a> Shared<'a> {
             blank: checked.names.get_or_intern_static("_"),
             drop: checked.names.get_or_intern_static("drop"),
             clone: checked.names.get_or_intern_static("Clone"),
+            error: checked.names.get_or_intern_static("Error"),
+            string: checked.names.get_or_intern_static("String"),
             jobs: Vec::new(),
             methods: FxHashMap::default(),
             locals: FxHashMap::default(),

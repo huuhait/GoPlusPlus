@@ -38,7 +38,7 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
             write("unit.c", &unit).unwrap();
             write(
                 crate::runtime::HEADER_NAME,
-                &crate::runtime::header(target.layout()),
+                &crate::runtime::own_header(target),
             )
             .unwrap();
             let sources = crate::runtime::sources(target.os);

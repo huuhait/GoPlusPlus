@@ -12,13 +12,14 @@ global const @_GPTaN4mainE4ListN4mainE5Sized: [2]*u8 [linkonce_odr]
 global const @_GPTiN4mainE4List: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE4List
     const 32: u64
-    const 0: u64
+    const 4: u64
     const fn @_GPTcN4mainE4List
     const fn @_GPTdN4mainE4List
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#0 "main.List"
     const global @_GPTmN4mainE4List
+    const 0: u64
 
 global const @_GPTmN4mainE4List: (u64, [2](string, *u8)) [linkonce_odr]
     const 2: u64

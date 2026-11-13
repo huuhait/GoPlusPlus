@@ -848,18 +848,17 @@ impl FuncCx<'_, '_> {
         Ok(Ok(()))
     }
 
-    /// A call of the function value in the slot, whose code has the
+    /// A call of the function value in the place, whose code has the
     /// type `code_ty`, with the arguments that follow the value in
     /// `given`: what the call gives, and its place.
     pub fn call_value(
         &mut self,
         span: SourceSpan,
-        value: crate::LocalId,
+        value: &Place,
         code_ty: TypeId,
         mut given: Vec<Operand>,
     ) -> Built<(TypeId, Place)> {
-        let value = Place::local(value);
-        let code = Operand::Copy(self.b.field(&value, 0)?);
+        let code = Operand::Copy(self.b.field(value, 0)?);
         let code = Operand::Copy(self.slot_of(Rvalue::Use(code))?);
         if self.source.dialect() == Dialect::Go {
             self.checked(Check::Nil(code.clone(), span))?;
@@ -870,7 +869,7 @@ impl FuncCx<'_, '_> {
         };
         // The environment in the place of the value.
         if let Some(first) = given.first_mut() {
-            *first = Operand::Copy(self.b.field(&value, 1)?);
+            *first = Operand::Copy(self.b.field(value, 1)?);
         }
         let result = Place::local(self.b.temp(ret));
         let next = self.b.new_block();

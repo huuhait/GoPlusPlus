@@ -29,13 +29,14 @@ global const @_GPTaN4mainE6SquareN4mainE10NamedShape: [3]*u8 [linkonce_odr]
 global const @_GPTiN4mainE6Square: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE6Square
     const 8: u64
-    const 3: u64
+    const 7: u64
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#8 "main.Square"
     const global @_GPTmN4mainE6Square
+    const 0: u64
 
 global const @_GPTmN4mainE6Square: (u64, [3](string, *u8)) [linkonce_odr]
     const 3: u64

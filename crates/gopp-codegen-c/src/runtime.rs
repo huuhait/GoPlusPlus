@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gopp_target::{HEADERS, ObjectFormat, Os, Part, TargetLayout};
+use gopp_target::{HEADERS, ObjectFormat, Os, Part, TargetLayout, TargetSpec};
 
 use crate::driver::{ClangDriver, DriverError};
 
@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 76] = [
+pub const FUNCS: [RuntimeFunc; 81] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -249,6 +249,14 @@ pub const FUNCS: [RuntimeFunc; 76] = [
         "_gopp_iface_table",
         "const uint8_t *itab, const void *wanted",
     ),
+    returns("_gopp_defer_push", "uint8_t *frame"),
+    returns("_gopp_defer_pop", "uint8_t *frame"),
+    gives("bool", "_gopp_defer_enter", "uint8_t *frame"),
+    ends(
+        "_gopp_panic",
+        "uint8_t *value, gopp_string error_key, gopp_string string_key",
+    ),
+    returns("_gopp_recover", "uint8_t *value"),
     ends(
         "_gopp_panic_assert",
         "const uint8_t *itab, const void *wanted, gopp_string iface",
@@ -325,7 +333,27 @@ typedef struct gopp_type {
   uint64_t (*hash)(uint8_t *value, uint64_t seed);
   gopp_string name;
   const gopp_methods *methods;
+  uint64_t kind;
 } gopp_type;
+
+// What a value of a type is, for what writes the value of a panic.
+#define GOPP_KIND_OTHER 0
+#define GOPP_KIND_BOOL 1
+#define GOPP_KIND_INT 2
+#define GOPP_KIND_UINT 3
+#define GOPP_KIND_FLOAT 4
+#define GOPP_KIND_STRING 5
+
+// A function that has `defer` statements and has not returned: the
+// function that makes its deferred calls with the record that it is
+// given, and where the function goes on when one of the calls stopped
+// a panic.
+typedef struct gopp_frame {
+  struct gopp_frame *next;
+  void (*run)(uint8_t *record);
+  uint8_t *record;
+  void *jmp[5];
+} gopp_frame;
 
 // A variable that a function captured, in an environment: its cell,
 // and what ends the variable, or null if its bytes are all there is.
@@ -351,6 +379,8 @@ typedef struct gopp_env {
 #define GOPP_TYPE_INLINE 1
 // Two values of the type are compared with `==`.
 #define GOPP_TYPE_COMPARABLE 2
+// The type has a name that is written with a value of it.
+#define GOPP_TYPE_NAMED 4
 ";
 
 /// The names of the types that C has for the scalars, without a header
@@ -413,10 +443,35 @@ pub fn header(layout: TargetLayout) -> String {
         let (result, name) = (func.result, func.name);
         let _ = writeln!(out, "{noreturn}{result} {name}({});", func.params);
     }
+    out.push_str(ENTER);
     out
 }
 
+/// A function with `defer` statements marks where it goes on after a
+/// panic in its own frame, which a function that it calls cannot do
+/// for it.
+const ENTER: &str = "
+// The function is in the list from here on. It is here a second time,
+// with true, when one of its deferred calls stopped a panic. Clang
+// does not know of `__builtin_setjmp` that the function goes on twice
+// from it, and would let what the second time reads share its room on
+// the stack with what the first time writes; it knows it of a function
+// that it calls with this mark.
+__attribute__((returns_twice)) void _gopp_defer_push(uint8_t *frame);
+#define _gopp_defer_enter(frame) \\
+  (_gopp_defer_push(frame), __builtin_setjmp(((gopp_frame *)(frame))->jmp) != 0)
+";
+
 pub(crate) const HEADER_NAME: &str = "gopp_rt.h";
+
+/// `gopp_rt.h` as the sources of the runtime include it: with how a
+/// Go++ function is called, because the runtime calls the methods of
+/// the value of a panic.
+pub(crate) fn own_header(target: &TargetSpec) -> String {
+    let mut header = header(target.layout());
+    header.push_str(crate::emit::convention(target.swiftcall));
+    header
+}
 
 /// A file of the runtime with its text, which `gopp` carries.
 type Source = (&'static str, &'static str);
@@ -472,7 +527,7 @@ pub fn build(driver: &ClangDriver, form: Form, cache: &Path) -> Result<Vec<PathB
         }
         driver.check_link_inputs()?;
     }
-    let header = header(driver.target.layout());
+    let header = own_header(driver.target);
     let sources = sources(driver.target.os);
     let made: Vec<String> = match form {
         Form::Objects => (sources.iter())

@@ -1524,6 +1524,8 @@ impl<'a> FuncCx<'a, '_> {
             _ => None,
         };
         let refused = match () {
+            // Its deferred calls would have no function to make them.
+            () if !self.defers_calls() => Some("a defer statement in a function without a symbol"),
             () if self.defers[at].in_loop => Some("a defer statement in a loop"),
             () if self.jumps => Some("a defer statement in a function with a label"),
             () if *unwrap => Some("a call with `!`"),
@@ -1676,12 +1678,22 @@ impl<'a> FuncCx<'a, '_> {
         result: Option<super::glue::Ends>,
         span: SourceSpan,
     ) -> Built {
-        let ran = self.b.const_bool(true);
-        let flag = Place::local(self.defers[at].flag);
-        self.b.assign(flag, Rvalue::Use(ran))?;
+        let mut fields = vec![TypeInterner::BOOL];
+        let mut kept = vec![self.b.const_bool(true)];
+        for &(slot, _) in &slots {
+            let slot = Place::local(slot);
+            fields.push(self.b.place_ty(&slot));
+            kept.push(Operand::Copy(slot));
+        }
+        let ty = self.b.types().tuple(&fields);
+        let record = self.b.temp(ty);
+        let whole = Rvalue::Aggregate(crate::AggKind::Tuple, kept);
+        self.b.assign(Place::local(record), whole)?;
         self.defers[at].call = Some(super::func::Pending {
             what,
-            slots,
+            record,
+            ty,
+            slots: slots.into_iter().map(|(_, ends)| ends).collect(),
             result,
             span,
         });
@@ -1860,6 +1872,11 @@ impl<'a> FuncCx<'a, '_> {
                 return self.fresh(expr, ty, grown);
             }
             (Predeclared::CopyFunc, [_, _], _) => return self.copy_into(span, ty, args),
+            (Predeclared::Panic, [value], _) => {
+                self.panic(span, *value)?;
+                return Ok(Rvalue::Use(self.zero(ty)));
+            }
+            (Predeclared::Recover, [], _) => return self.recover(expr, ty),
             // The variable gives its value up where it is named.
             (Predeclared::Move, [of], _) => return self.rvalue_as(*of, ty),
             (Predeclared::Clear, [of], _) if self.clear_slice(span, *of)? => {

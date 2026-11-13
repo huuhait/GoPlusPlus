@@ -8,6 +8,7 @@
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::SelectionKind;
+use gopp_sema::basic::Basic;
 use gopp_sema::types::{Found, Member, Type as CheckedType, TypeId as CheckedTypeId};
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind};
@@ -26,6 +27,7 @@ use crate::{
 /// The marks of a descriptor, as the runtime reads them.
 const INLINE: u64 = 1;
 const COMPARABLE: u64 = 2;
+const NAMED: u64 = 4;
 
 /// An interface value that is looked into: `x.(T)`, a type switch.
 pub(super) struct Looked {
@@ -150,6 +152,7 @@ impl FuncCx<'_, '_> {
             ("hash", glue[3]),
             ("name", string),
             ("methods", bytes),
+            ("kind", word),
         ];
         Memo::runtime(types, "gopp.type", &fields)
     }
@@ -218,6 +221,27 @@ impl FuncCx<'_, '_> {
             Ok(methods) => methods,
             Err(what) => return Ok(Err(what)),
         };
+        // What a value of the type is, for what writes the value of a
+        // panic: as the runtime numbers the kinds.
+        let kind = match &*shared.types.get(shared.types.underlying(ty)) {
+            CheckedType::Basic(basic) => match basic {
+                Basic::Bool => 1,
+                Basic::Int | Basic::Int8 | Basic::Int16 | Basic::Int32 | Basic::Int64 => 2,
+                Basic::Uint
+                | Basic::Uint8
+                | Basic::Uint16
+                | Basic::Uint32
+                | Basic::Uint64
+                | Basic::Uintptr => 3,
+                Basic::Float32 | Basic::Float64 => 4,
+                Basic::String => 5,
+                _ => 0,
+            },
+            _ => 0,
+        };
+        if matches!(&*shared.types.get(ty), CheckedType::Named { .. }) {
+            flags |= NAMED;
+        }
         let record = self.info_type();
         let word = self.b.types().int(64, false);
         let itself = self.b.types().ptr(record);
@@ -268,6 +292,7 @@ impl FuncCx<'_, '_> {
                 ty: bytes,
             },
         });
+        parts.push(int(kind));
         self.b.module().globals[id].parts = parts;
         self.memo.globals.insert(symbol, id);
         Ok(Ok(id))
@@ -901,7 +926,10 @@ impl<'a> FuncCx<'a, '_> {
     /// The key of a method, which is the same for the method of a type
     /// and the method of an interface that it is: the name, the package
     /// of a name that is not exported, and the type.
-    fn method_key(&mut self, method: &gopp_sema::types::Method) -> Result<Vec<u8>, &'static str> {
+    pub fn method_key(
+        &mut self,
+        method: &gopp_sema::types::Method,
+    ) -> Result<Vec<u8>, &'static str> {
         let shared = self.shared;
         let Ok(sig) = symbol_of(&mut self.memo.namer, Entity::TypeInfo(method.sig)) else {
             return Err("a method of a type without a symbol in an interface");

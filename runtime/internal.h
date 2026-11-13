@@ -44,6 +44,22 @@ void _gopp_write_hex(uint64_t value);
 [[noreturn]] void _gopp_fail_convert(gopp_string iface, const gopp_type *have,
                                      gopp_string missing);
 
+// What the type has for the method of the key; null if it has none.
+uint8_t *_gopp_method_of(const gopp_type *type, gopp_string key);
+
+// What is written from here on is kept, and not written to the
+// standard error stream, until it is taken as a string.
+void _gopp_keep_start(void);
+gopp_string _gopp_keep_end(void);
+
+// The program before left no function with deferred calls and no
+// panic.
+void _gopp_panic_reset(void);
+
+// A method of an interface as a table has it: it takes the address of
+// the second word of the interface value. This one gives a string.
+typedef GOPP_CALL gopp_string (*gopp_text_fn)(uint8_t *holder);
+
 // The tables of methods that the program before made are gone with it.
 void _gopp_iface_reset(void);
 

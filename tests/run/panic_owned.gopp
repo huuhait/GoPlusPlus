@@ -1,0 +1,66 @@
+package main
+
+func fail(what string) {
+	panic("failed: " + what)
+}
+
+// What a deferred call keeps ends when a panic runs the call, and the
+// value of the panic ends with the panic: `recover` gives a copy.
+func guarded(name string) (out string) {
+	defer func(note string) {
+		if r := recover(); r != nil {
+			text, _ := r.(string)
+			out = note + text
+		}
+	}("caught " + name + ": ")
+	fail(name)
+	return "not reached"
+}
+
+// The value of a panic that nothing reads ends with the panic too.
+func quiet() {
+	defer func() { recover() }()
+	fail("quiet")
+}
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+func check(n int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err, _ = r.(error)
+		}
+	}()
+	if n < 0 {
+		panic(Problem{what: "negative"})
+	}
+	return nil
+}
+
+// A panic in a deferred call runs the calls that are left, each with
+// what it kept.
+func twice() (seen []string) {
+	defer func() {
+		r := recover()
+		text, _ := r.(string)
+		seen = append(seen, text)
+	}()
+	defer func(note string) {
+		seen = append(seen, note)
+		panic("second, after " + note)
+	}("first")
+	return nil
+}
+
+func main() {
+	println(guarded("a"))
+	quiet()
+	if err := check(-1); err != nil {
+		println(err.Error())
+	}
+	println(check(1) == nil)
+	seen := twice()
+	println(len(seen), seen[0], seen[1])
+}

@@ -115,6 +115,11 @@ impl ClangDriver<'_> {
         }
         flags.push(self.opt.flag().to_owned());
         flags.push(format!("-ffile-prefix-map={}=.", dir.display()));
+        // Clang writes the time into a COFF object unless it is told
+        // that no incremental linker reads it.
+        if self.target.object == ObjectFormat::Coff {
+            flags.push("-mno-incremental-linker-compatible".to_owned());
+        }
         match self.strict {
             true => flags.extend(["-Wall".to_owned(), "-Werror".to_owned()]),
             false => flags.push("-w".to_owned()),

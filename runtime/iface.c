@@ -140,7 +140,7 @@ static int compare(gopp_string a, gopp_string b) {
 }
 
 // What the type has for the method of the key; null if it has none.
-static uint8_t *method_of(const gopp_type *type, gopp_string key) {
+uint8_t *_gopp_method_of(const gopp_type *type, gopp_string key) {
   const gopp_methods *methods = type->methods;
   uint64_t low = 0;
   uint64_t high = methods == 0 ? 0 : methods->count;
@@ -166,7 +166,7 @@ static uint8_t **table_for(const gopp_type *type, const gopp_itype *wanted) {
   uint8_t **table = _gopp_alloc((wanted->count + 1) * sizeof *table);
   table[0] = (uint8_t *)type;
   for (uint64_t at = 0; at < wanted->count; at++) {
-    table[at + 1] = method_of(type, wanted->keys[at]);
+    table[at + 1] = _gopp_method_of(type, wanted->keys[at]);
     if (table[at + 1] == 0) {
       free(table);
       return 0;
@@ -217,7 +217,7 @@ void _gopp_panic_assert_iface(const uint8_t *itab, const void *wanted) {
   const gopp_type *have = itab == 0 ? 0 : *(const gopp_type *const *)itab;
   gopp_string missing = {0};
   for (uint64_t at = 0; have != 0 && at < itype->count; at++) {
-    if (method_of(have, itype->keys[at]) == 0) {
+    if (_gopp_method_of(have, itype->keys[at]) == 0) {
       // The name of the method is the start of its key.
       missing = itype->keys[at];
       for (uint64_t end = 0; end < missing.len; end++) {

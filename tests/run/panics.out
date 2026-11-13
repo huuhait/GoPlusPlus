@@ -1,0 +1,21 @@
+true
+recovered
+false
+value: text
+105
+0
+leaving 1
+leaving 2
+leaving 3
+recovered
+false
+2 -1
+no panic
+recovered
+false
+deferred in main
+panic: my error
+
+goroutine 1 [running]:
+main.main()
+	+0x?

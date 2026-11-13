@@ -1,0 +1,6 @@
+stopped: true
+panic: panic called with nil argument
+
+goroutine 1 [running]:
+main.main()
+	+0x?

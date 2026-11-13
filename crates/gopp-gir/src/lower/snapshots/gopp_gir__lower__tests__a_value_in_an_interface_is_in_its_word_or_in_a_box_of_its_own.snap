@@ -15,28 +15,31 @@ global const @_GPTii: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#0 "int"
     const zero: *u8
+    const 2: u64
 
 global const @_GPTiN4mainE5Point: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE5Point
     const 16: u64
-    const 2: u64
+    const 6: u64
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8) -> ()
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#1 "main.Point"
     const zero: *u8
+    const 0: u64
 
 global const @_GPTiN4mainE5Named: gopp.type [linkonce_odr]
     const global @_GPTiN4mainE5Named
     const 56: u64
-    const 0: u64
+    const 4: u64
     const fn @_GPTcN4mainE5Named
     const fn @_GPTdN4mainE5Named
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
     const str#2 "main.Named"
     const zero: *u8
+    const 0: u64
 
 fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (gopp.iface, gopp.iface, gopp.iface) [go, external] {
   let _0: (gopp.iface, gopp.iface, gopp.iface)

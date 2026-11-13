@@ -95,7 +95,27 @@ typedef struct gopp_type {
   uint64_t (*hash)(uint8_t *value, uint64_t seed);
   gopp_string name;
   const gopp_methods *methods;
+  uint64_t kind;
 } gopp_type;
+
+// What a value of a type is, for what writes the value of a panic.
+#define GOPP_KIND_OTHER 0
+#define GOPP_KIND_BOOL 1
+#define GOPP_KIND_INT 2
+#define GOPP_KIND_UINT 3
+#define GOPP_KIND_FLOAT 4
+#define GOPP_KIND_STRING 5
+
+// A function that has `defer` statements and has not returned: the
+// function that makes its deferred calls with the record that it is
+// given, and where the function goes on when one of the calls stopped
+// a panic.
+typedef struct gopp_frame {
+  struct gopp_frame *next;
+  void (*run)(uint8_t *record);
+  uint8_t *record;
+  void *jmp[5];
+} gopp_frame;
 
 // A variable that a function captured, in an environment: its cell,
 // and what ends the variable, or null if its bytes are all there is.
@@ -121,6 +141,8 @@ typedef struct gopp_env {
 #define GOPP_TYPE_INLINE 1
 // Two values of the type are compared with `==`.
 #define GOPP_TYPE_COMPARABLE 2
+// The type has a name that is written with a value of it.
+#define GOPP_TYPE_NAMED 4
 
 void _gopp_rt_init(int argc, char **argv);
 [[noreturn]] void _gopp_rt_exit(int code);
@@ -192,12 +214,27 @@ void _gopp_iface_drop(uint8_t *value);
 bool _gopp_iface_eq(uint8_t *a, uint8_t *b);
 uint64_t _gopp_iface_hash(uint8_t *value, uint64_t seed);
 uint8_t * _gopp_iface_table(const uint8_t *itab, const void *wanted);
+void _gopp_defer_push(uint8_t *frame);
+void _gopp_defer_pop(uint8_t *frame);
+bool _gopp_defer_enter(uint8_t *frame);
+[[noreturn]] void _gopp_panic(uint8_t *value, gopp_string error_key, gopp_string string_key);
+void _gopp_recover(uint8_t *value);
 [[noreturn]] void _gopp_panic_assert(const uint8_t *itab, const void *wanted, gopp_string iface);
 [[noreturn]] void _gopp_panic_assert_iface(const uint8_t *itab, const void *wanted);
 [[noreturn]] void _gopp_panic_nil(void);
 [[noreturn]] void _gopp_panic_divide(void);
 [[noreturn]] void _gopp_panic_shift(void);
 [[noreturn]] void _gopp_panic_must(gopp_string expr, gopp_string position, gopp_string message);
+
+// The function is in the list from here on. It is here a second time,
+// with true, when one of its deferred calls stopped a panic. Clang
+// does not know of `__builtin_setjmp` that the function goes on twice
+// from it, and would let what the second time reads share its room on
+// the stack with what the first time writes; it knows it of a function
+// that it calls with this mark.
+__attribute__((returns_twice)) void _gopp_defer_push(uint8_t *frame);
+#define _gopp_defer_enter(frame) \
+  (_gopp_defer_push(frame), __builtin_setjmp(((gopp_frame *)(frame))->jmp) != 0)
 
 #define GOPP_CALL __attribute__((swiftcall))
 #define GOPP_ENV __attribute__((swift_context))

@@ -1,0 +1,40 @@
+int 1
+string text
+Name n
+error failed
+other
+panic: main.Name("named")
+	panic: false
+	panic: +2.500000e+000
+	panic: -3
+	panic: 200
+	panic: main.Flag(true)
+	panic: main.Ratio(+1.500000e+000)
+
+goroutine 1 [running]:
+main.main.func1()
+	+0x?
+main.main.func0()
+	+0x?
+main.main.func2()
+	+0x?
+main.main.func0()
+	+0x?
+main.main.func3()
+	+0x?
+main.main.func0()
+	+0x?
+main.main.func4()
+	+0x?
+main.main.func0()
+	+0x?
+main.main.func5()
+	+0x?
+main.main.func0()
+	+0x?
+main.main.func6()
+	+0x?
+main.main.func0()
+	+0x?
+main.main()
+	+0x?

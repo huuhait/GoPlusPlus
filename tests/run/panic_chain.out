@@ -1,0 +1,16 @@
+main leaves
+panic: first [recovered]
+	panic: second
+	panic: third
+
+goroutine 1 [running]:
+main.main.func1()
+	+0x?
+main.main.func0()
+	+0x?
+main.main.func2()
+	+0x?
+main.main.func0()
+	+0x?
+main.main()
+	+0x?

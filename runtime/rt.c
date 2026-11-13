@@ -14,6 +14,7 @@ void _gopp_rt_init(int argc, char **argv) {
   // before are gone with its code.
   tables = 0;
   _gopp_iface_reset();
+  _gopp_panic_reset();
   _gopp_os_init();
 }
 
