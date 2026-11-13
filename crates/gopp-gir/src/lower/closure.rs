@@ -27,6 +27,11 @@ use crate::{
 /// ends its variable.
 const ENV_HEAD: u32 = 2;
 
+/// The type of the code of a function value that a `defer` statement
+/// calls, and the type of the slice that the statement makes of its
+/// last arguments, if it makes one.
+pub(super) type DeferredValue = (TypeId, Option<CheckedTypeId>);
+
 impl FuncCx<'_, '_> {
     /// The type of the code of a function value of the type: that of
     /// its first word.
@@ -310,13 +315,11 @@ impl FuncCx<'_, '_> {
         };
         let checked = types.get(types.underlying(typed.ty));
         let declared = match &*checked {
-            CheckedType::Func { variadic: true, .. } => {
-                return Ok(Some(Err("a call of a function with `...`")));
-            }
             CheckedType::Func { params, .. } => params.len(),
             _ => return Ok(None),
         };
-        if spread {
+        let rest = super::expr::rest_of(self.shared, typed.ty);
+        if spread && rest.is_none() {
             return Ok(Some(Err("a call with `...`")));
         }
         let ty = self.ty_of(callee);
@@ -345,6 +348,7 @@ impl FuncCx<'_, '_> {
             worked: std::rc::Rc::from([]),
             params: sig.params.iter().copied().collect(),
             ret: sig.ret,
+            rest,
         };
         Ok(Some(Ok((called, vec![env]))))
     }
@@ -872,26 +876,27 @@ impl FuncCx<'_, '_> {
     /// `defer f(args)` for a function value `f`, a function literal
     /// too (CLO-3b, CLO-7): the value and the arguments are worked out
     /// now and kept, each for the statement, until the function is
-    /// left. The type of the code of the value; none for what is no
-    /// function value.
+    /// left. None for what is no function value.
     pub fn defer_value(
         &mut self,
         callee: ExprId,
         args: &[ExprId],
         spread: bool,
-    ) -> Built<Option<Result<TypeId, &'static str>>> {
+    ) -> Built<Option<Result<DeferredValue, &'static str>>> {
         let types = self.shared.types;
         let Some(typed) = self.body.types.get(&callee) else {
             return Ok(None);
         };
         let checked = types.get(types.underlying(typed.ty));
         let declared = match &*checked {
-            CheckedType::Func { variadic: true, .. } => {
-                return Ok(Some(Err("a call of a function with `...`")));
-            }
             CheckedType::Func { params, .. } => params.len(),
             _ => return Ok(None),
         };
+        let rest = super::expr::rest_of(self.shared, typed.ty);
+        if spread && rest.is_none() {
+            return Ok(Some(Err("a call with `...`")));
+        }
+        let packed = rest.filter(|_| !spread);
         let ty = self.ty_of(callee);
         let Some(code_ty) = self.code_type(ty) else {
             return Ok(None);
@@ -899,12 +904,26 @@ impl FuncCx<'_, '_> {
         let Type::Func(sig) = self.kind(code_ty) else {
             return Ok(None);
         };
-        if spread || args.len() != declared {
-            return Ok(Some(Err("a call with `...`")));
+        // One call that gives all the arguments is not kept in parts.
+        let results = match args {
+            [one] => {
+                let whole = self.ty_of(*one);
+                matches!(self.kind(whole), Type::Tuple(_))
+            }
+            _ => false,
+        };
+        let fits = match packed {
+            Some(_) => args.len() + 1 >= declared,
+            None => args.len() == declared,
+        };
+        if results || !fits {
+            return Ok(Some(Err(
+                "a deferred call of a function value with the results of a call",
+            )));
         }
         if sig.params.len() != declared + 1 {
             return Ok(Some(Err("a deferred call whose result may be a view")));
         }
-        Ok(Some(Ok(code_ty)))
+        Ok(Some(Ok((code_ty, packed))))
     }
 }

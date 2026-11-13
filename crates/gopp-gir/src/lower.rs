@@ -243,6 +243,9 @@ pub(crate) struct Callee {
     /// Which of the lent parameters the function calls methods through.
     pub worked: std::rc::Rc<[bool]>,
     pub ret: TypeId,
+    /// For a function with `...`: the type of its last parameter, a
+    /// slice, as the checker has it.
+    pub rest: Option<CheckedTypeId>,
 }
 
 /// What one run made.

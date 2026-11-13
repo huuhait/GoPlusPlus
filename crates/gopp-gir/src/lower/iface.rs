@@ -20,7 +20,8 @@ use super::glue::{Ends, Glue};
 use super::{CalleeKey, Made, Memo, Shared};
 use crate::{
     AggKind, AssertKind, BinOp, CallConv, CastKind, Constant, ConstantKind, FuncId, FuncType,
-    Global, GlobalId, Linkage, Mutability, Operand, Place, Rvalue, Type, TypeId, TypeInterner,
+    Global, GlobalId, Linkage, LocalKind, Mutability, Operand, Place, Rvalue, Type, TypeId,
+    TypeInterner,
 };
 
 /// The marks of a descriptor, as the runtime reads them.
@@ -387,6 +388,18 @@ impl FuncCx<'_, '_> {
                     other => self.slot_of(other)?,
                 }
             }
+        };
+        // Nothing points into the slot that a call puts its result in:
+        // the result goes to a slot of its own, which owns it then.
+        let inner = Shared::unparen(self.tree, expr);
+        let called = matches!(self.tree.exprs[inner].kind, ExprKind::Call { .. });
+        let place = match called && self.b.local_kind(place.local) == LocalKind::Temp {
+            true => {
+                let slot = self.slot_of(Rvalue::Use(Operand::Copy(place.clone())))?;
+                self.rehome_temp(&place, &slot);
+                slot
+            }
+            false => place,
         };
         let data = self.record(place)?;
         let itab = self.info_word(first)?;
@@ -1383,9 +1396,6 @@ impl<'a> FuncCx<'a, '_> {
         args: &[ExprId],
         spread: bool,
     ) -> Built<Target> {
-        if spread {
-            return Ok(Err("a call with `...`"));
-        }
         let shared = self.shared;
         let types = shared.types;
         let Some(methods) = types.interface_methods(iface, shared.names) else {
@@ -1396,12 +1406,13 @@ impl<'a> FuncCx<'a, '_> {
         };
         let checked = types.get(methods[slot].sig);
         let declared = match &*checked {
-            CheckedType::Func { variadic: true, .. } => {
-                return Ok(Err("a call of a function with `...`"));
-            }
             CheckedType::Func { params, .. } => params.len(),
             _ => return Ok(Err("a function type")),
         };
+        let rest = super::expr::rest_of(shared, methods[slot].sig);
+        if spread && rest.is_none() {
+            return Ok(Err("a call with `...`"));
+        }
         let sig = self
             .memo
             .signature(shared, self.b.types(), None, methods[slot].sig);
@@ -1440,6 +1451,7 @@ impl<'a> FuncCx<'a, '_> {
             worked: std::rc::Rc::from([]),
             params: params.into(),
             ret: sig.ret,
+            rest,
         };
         Ok(Ok((called, vec![word])))
     }

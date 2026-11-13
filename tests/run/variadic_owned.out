@@ -1,0 +1,16 @@
+6 0
+after total 3 3
+1 1
+after store 4 4
+no file
+after a panic in an argument 5 5
+too many
+after a panic in the function 7 7
+left!, right?, leftright
+4 leftright right
+609
+3 true
+0 problem: empty part
+before the deferred calls 10 7
+after the deferred calls 10 10
+6 x-y 2

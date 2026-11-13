@@ -3,7 +3,7 @@
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::constant::Value;
-use gopp_sema::types::{PARENT, Type as CheckedType};
+use gopp_sema::types::{PARENT, Type as CheckedType, TypeId as CheckedTypeId};
 use gopp_sema::{LocalKind, ObjKind, Package, Predeclared, PredeclaredKind, Ref, SelectionKind};
 use gopp_span::{Dialect, Span as SourceSpan};
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind, UnaryOp};
@@ -47,6 +47,32 @@ pub(super) struct Called {
     pub lent: std::rc::Rc<[bool]>,
     pub worked: std::rc::Rc<[bool]>,
     pub ret: TypeId,
+    /// For a function with `...`: the type of its last parameter, a
+    /// slice, as the checker has it.
+    pub rest: Option<CheckedTypeId>,
+}
+
+/// The type of the last parameter of a function type with `...`, which
+/// is a slice.
+pub(super) fn rest_of(shared: &Shared<'_>, sig: CheckedTypeId) -> Option<CheckedTypeId> {
+    match &*shared.types.get(shared.types.underlying(sig)) {
+        CheckedType::Func {
+            variadic: true,
+            params,
+            ..
+        } => params.last().copied(),
+        _ => None,
+    }
+}
+
+/// Where the elements of the slice of a call of a function with `...`
+/// come from.
+pub(super) enum Rest<'e> {
+    /// Each is an argument of the call.
+    Args(&'e [ExprId]),
+    /// One call gives all the arguments: they are its results from
+    /// this one on.
+    Results(usize),
 }
 
 /// What a call calls, with the arguments that come before those that
@@ -1313,6 +1339,7 @@ impl<'a> FuncCx<'a, '_> {
             lent: called.lent,
             worked: called.worked,
             ret: called.ret,
+            rest: called.rest,
         };
         self.call_with(expr, &called, given, args)
     }
@@ -1329,11 +1356,26 @@ impl<'a> FuncCx<'a, '_> {
         args: &[ExprId],
     ) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
-        let declared = called.params.len() - called.views;
-        let wanted: Vec<_> = called.params[given.len()..declared]
+        let mut declared = called.params.len() - called.views;
+        // The arguments of a function with `...` that come after those
+        // of its other parameters are one slice for its last one,
+        // unless the call gives a slice with `...` itself.
+        let spread = matches!(
+            self.tree.exprs[expr].kind,
+            ExprKind::Call { spread: true, .. }
+        );
+        let packed = called.rest.filter(|_| !spread);
+        if packed.is_some() {
+            declared -= 1;
+        }
+        let mut wanted: Vec<_> = called.params[given.len()..declared]
             .iter()
             .map(|&param| Some(param))
             .collect();
+        let (args, rest) = match packed {
+            Some(_) => self.rest_args(args, &mut wanted, called.params[declared]),
+            None => (args, Rest::Args(&[])),
+        };
         // An argument for a parameter that the function only reads is
         // lent; any other is a value of its own, which the function
         // owns.
@@ -1364,7 +1406,11 @@ impl<'a> FuncCx<'a, '_> {
             }
         }
         self.lent.extend(direct.iter().copied());
-        let values = self.values(args, &wanted)?;
+        let mut values = self.values(args, &wanted)?;
+        let rest = match rest {
+            Rest::Args(rest) => Ok(rest),
+            Rest::Results(from) => Err(values.split_off(from.min(values.len()))),
+        };
         for (at, value) in values.into_iter().enumerate() {
             // One call gives all of them: each is a part of what it gave.
             let of = args.get(at).or(args.first());
@@ -1386,6 +1432,32 @@ impl<'a> FuncCx<'a, '_> {
         }
         for arg in direct {
             self.lent.remove(&arg);
+        }
+        if let Some(checked) = packed {
+            let ty = called.params[declared];
+            let elems = match rest {
+                Ok(rest) => {
+                    // What is worked out for the slice may change what
+                    // the arguments before it read.
+                    if rest.iter().any(|&arg| self.has_effects(arg)) {
+                        for value in &mut given {
+                            *value = self.stable(value.clone())?;
+                        }
+                    }
+                    self.rest_values(ty, rest)?
+                }
+                Err(results) => self.rest_results(ty, args, results)?,
+            };
+            let slice = self.packed(span, checked, ty, elems)?;
+            // A function that only reads the slice is lent it: it ends
+            // with this statement. Any other function owns it.
+            if let Operand::Copy(place) = &slice
+                && called.lent.get(declared) != Some(&true)
+            {
+                self.take_temp(place);
+            }
+            given.push(slice);
+            declared += 1;
         }
         // A place for each view that a result may be: one of this
         // frame, or the place that the caller of this function gave.
@@ -1448,6 +1520,97 @@ impl<'a> FuncCx<'a, '_> {
             }
             _ => self.fresh(expr, ret, Rvalue::Use(Operand::Copy(result))),
         }
+    }
+
+    /// The arguments of a call of a function with `...`, whose last
+    /// parameter has the type `ty`: those of the parameters before it,
+    /// and those of the slice. `wanted` has the types of the parameters
+    /// before it; where one call gives all the arguments (`f(g())`),
+    /// the types of the elements are added to it.
+    pub(super) fn rest_args<'e>(
+        &mut self,
+        args: &'e [ExprId],
+        wanted: &mut Vec<Option<TypeId>>,
+        ty: TypeId,
+    ) -> (&'e [ExprId], Rest<'e>) {
+        let fixed = wanted.len();
+        if let ([one], Type::Slice(of)) = (args, self.kind(ty)) {
+            let inner = Shared::unparen(self.tree, *one);
+            let whole = self.ty_of(*one);
+            let results = match self.kind(whole) {
+                Type::Tuple(parts) => parts.len(),
+                _ => 0,
+            };
+            if results >= fixed.max(2)
+                && matches!(self.tree.exprs[inner].kind, ExprKind::Call { .. })
+            {
+                wanted.resize(results, Some(of));
+                return (args, Rest::Results(fixed));
+            }
+        }
+        let (args, rest) = args.split_at(fixed.min(args.len()));
+        (args, Rest::Args(rest))
+    }
+
+    /// The arguments of the last parameter of a function with `...`,
+    /// whose type is `ty`: each is an element of its own.
+    pub(super) fn rest_values(&mut self, ty: TypeId, rest: &[ExprId]) -> Built<Vec<Operand>> {
+        let Type::Slice(of) = self.kind(ty) else {
+            return Ok(Vec::new());
+        };
+        let wanted = vec![Some(of); rest.len()];
+        let values = self.values_each(rest, &wanted)?;
+        let mut elems = Vec::with_capacity(rest.len());
+        for (value, &arg) in values.into_iter().zip(rest) {
+            let value = self.taken(arg, of, Rvalue::Use(value))?;
+            elems.push(self.operand_of(value)?);
+        }
+        Ok(elems)
+    }
+
+    /// The same, where they are the last results of the one call in
+    /// `args`.
+    pub(super) fn rest_results(
+        &mut self,
+        ty: TypeId,
+        args: &[ExprId],
+        results: Vec<Rvalue>,
+    ) -> Built<Vec<Operand>> {
+        let (Type::Slice(of), [call]) = (self.kind(ty), args) else {
+            return Ok(Vec::new());
+        };
+        let mut elems = Vec::with_capacity(results.len());
+        for value in results {
+            let value = self.taken(*call, of, value)?;
+            elems.push(self.operand_of(value)?);
+        }
+        Ok(elems)
+    }
+
+    /// The elements as one new slice of the type `ty`, which the
+    /// checker has as `checked`, in a temporary that owns it. Without
+    /// elements the slice is nil.
+    pub(super) fn packed(
+        &mut self,
+        span: SourceSpan,
+        checked: CheckedTypeId,
+        ty: TypeId,
+        elems: Vec<Operand>,
+    ) -> Built<Operand> {
+        let Type::Slice(of) = self.kind(ty) else {
+            return Ok(self.zero(ty));
+        };
+        if elems.is_empty() {
+            return Ok(self.zero(ty));
+        }
+        let count = elems.len() as u64;
+        let set = (0..).zip(elems).collect();
+        let made = self.slice_literal(ty, of, count, set)?;
+        let slice = self.slot_of(made)?;
+        if let Some(ends) = self.ends_of(Some(checked), span)? {
+            self.own_temp(slice.clone(), ends);
+        }
+        Ok(Operand::Copy(slice))
     }
 
     /// `call!(args)` (ERR-5): `result` has what the call gave, whose
@@ -1615,9 +1778,6 @@ impl<'a> FuncCx<'a, '_> {
         callee: ExprId,
         spread: bool,
     ) -> Built<Result<(Callee, Option<Receiver<'a>>), &'static str>> {
-        if spread {
-            return Ok(Err("a call with `...`"));
-        }
         if self.body.instances.contains_key(&callee) {
             return Ok(Err("a call of a generic function"));
         }
@@ -1644,6 +1804,12 @@ impl<'a> FuncCx<'a, '_> {
             Some(key) => self.callee(key)?,
             None => Err("a call of this function"),
         };
+        // Only a function with `...` takes a slice for its last
+        // parameter that way.
+        let called = called.and_then(|called| match spread && called.rest.is_none() {
+            true => Err("a call with `...`"),
+            false => Ok(called),
+        });
         Ok(called.map(|called| (called, receiver)))
     }
 
@@ -1719,10 +1885,7 @@ impl<'a> FuncCx<'a, '_> {
             // code is called with its environment.
             Err(what) => {
                 let found = self.defer_value(callee, args, *spread)?;
-                let kept: Vec<ExprId> = std::iter::once(callee)
-                    .chain(args.iter().copied())
-                    .collect();
-                let code_ty = match found.unwrap_or(Err(what)) {
+                let (code_ty, packed) = match found.unwrap_or(Err(what)) {
                     Ok(found) => found,
                     Err(what) => {
                         self.unsupported(span, what);
@@ -1738,7 +1901,17 @@ impl<'a> FuncCx<'a, '_> {
                 let Type::Func(sig) = self.kind(code_ty) else {
                     return Ok(());
                 };
-                let mut slots = Vec::with_capacity(kept.len());
+                // The parameters after the environment, without the
+                // slice that the statement makes.
+                let fixed = match packed {
+                    Some(_) => sig.params.len().saturating_sub(2).min(args.len()),
+                    None => args.len(),
+                };
+                let (args, rest) = args.split_at(fixed);
+                let kept: Vec<ExprId> = std::iter::once(callee)
+                    .chain(args.iter().copied())
+                    .collect();
+                let mut slots = Vec::with_capacity(kept.len() + 1);
                 for (at, &part) in kept.iter().enumerate() {
                     // The value itself, then each argument for its
                     // parameter after the environment.
@@ -1749,6 +1922,10 @@ impl<'a> FuncCx<'a, '_> {
                     let value = self.rvalue_as(part, ty)?;
                     let value = self.taken(part, ty, value)?;
                     slots.push(self.kept(part, ty, value)?);
+                }
+                if let (Some(checked), Some(&ty)) = (packed, sig.params.last()) {
+                    let elems = self.rest_values(ty, rest)?;
+                    slots.push(self.kept_rest(span, checked, ty, elems)?);
                 }
                 self.empty_moved()?;
                 let (result, marked) = match *unwrap {
@@ -1785,17 +1962,40 @@ impl<'a> FuncCx<'a, '_> {
             let value = self.taken(x, wanted, value)?;
             slots.push(self.kept(x, wanted, value)?);
         }
-        let wanted: Vec<_> = called.params[slots.len()..]
+        // The arguments of the last parameter of a function with `...`
+        // are one slice, which the statement keeps like the others.
+        let packed = called.rest.filter(|_| !*spread);
+        let declared = called.params.len() - usize::from(packed.is_some());
+        let mut wanted: Vec<_> = called.params[slots.len()..declared]
             .iter()
             .map(|&param| Some(param))
             .collect();
-        let values = self.values(args, &wanted)?;
+        let (args, rest) = match packed {
+            Some(_) => self.rest_args(args, &mut wanted, called.params[declared]),
+            None => (&args[..], Rest::Args(&[])),
+        };
+        let mut values = self.values(args, &wanted)?;
+        let rest = match rest {
+            Rest::Args(rest) => Ok(rest),
+            Rest::Results(from) => {
+                wanted.truncate(from);
+                Err(values.split_off(from.min(values.len())))
+            }
+        };
         for (at, value) in values.into_iter().enumerate() {
             let of = args.get(at).or(args.first());
             if let (Some(ty), Some(&arg)) = (wanted.get(at).copied().flatten(), of) {
                 let value = self.taken(arg, ty, value)?;
                 slots.push(self.kept(arg, ty, value)?);
             }
+        }
+        if let Some(checked) = packed {
+            let ty = called.params[declared];
+            let elems = match rest {
+                Ok(rest) => self.rest_values(ty, rest)?,
+                Err(results) => self.rest_results(ty, args, results)?,
+            };
+            slots.push(self.kept_rest(span, checked, ty, elems)?);
         }
         self.empty_moved()?;
         let (result, marked) = match *unwrap {
@@ -2036,6 +2236,27 @@ impl<'a> FuncCx<'a, '_> {
         Ok(())
     }
 
+    /// The slice of the last arguments of a deferred call of a
+    /// function with `...`, in a slot like the other arguments.
+    fn kept_rest(
+        &mut self,
+        span: SourceSpan,
+        checked: CheckedTypeId,
+        ty: TypeId,
+        elems: Vec<Operand>,
+    ) -> Built<(LocalId, Option<super::glue::Ends>)> {
+        let ends = match self.flat(ty) {
+            true => None,
+            false => self.ends_of(Some(checked), span)?,
+        };
+        // A slice without elements owns nothing and is no slot yet.
+        let slice = match self.packed(span, checked, ty, elems)? {
+            Operand::Copy(place) if place.projections.is_empty() => place.local,
+            empty => self.b.assign_temp(Rvalue::Use(empty))?,
+        };
+        Ok((slice, ends))
+    }
+
     /// The value in a slot that the function has until it is left,
     /// with how the value ends.
     fn kept(
@@ -2118,14 +2339,6 @@ impl<'a> FuncCx<'a, '_> {
         };
         let called = match found {
             None => Err("a call of this function"),
-            Some((_, _, checked))
-                if matches!(
-                    &*shared.types.get(checked),
-                    CheckedType::Func { variadic: true, .. }
-                ) =>
-            {
-                Err("a call of a function with `...`")
-            }
             Some((symbol, receiver, checked)) => {
                 let sig = self
                     .memo
@@ -2145,6 +2358,7 @@ impl<'a> FuncCx<'a, '_> {
                         ),
                         params: func.params.iter().copied().collect(),
                         ret: func.ret,
+                        rest: rest_of(shared, checked),
                     }),
                     Ok(_) => Err("a call of this function"),
                     Err(what) => Err(what),

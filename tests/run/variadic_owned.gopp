@@ -1,0 +1,148 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func open(fd int) File {
+	opened++
+	return File{fd: fd}
+}
+
+func broken(fd int) File {
+	if fd > 0 {
+		panic("no file")
+	}
+	return File{}
+}
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+// Only reads its files: the slice of a call ends with the statement
+// of the call.
+func total(files ...File) int {
+	sum := 0
+	for i := range files {
+		sum += files[i].fd
+	}
+	return sum
+}
+
+var shelf []File
+
+// Keeps its files.
+func store(files ...File) int {
+	for i := range files {
+		shelf = append(shelf, File{fd: files[i].fd * 10})
+	}
+	return len(shelf)
+}
+
+func fails(files ...File) int {
+	if len(files) > 1 {
+		panic("too many")
+	}
+	return len(files)
+}
+
+func join(sep string, parts ...string) string {
+	out := ""
+	for i, part := range parts {
+		if i > 0 {
+			out += sep
+		}
+		out += part
+	}
+	return out
+}
+
+var words []string
+
+func remember(parts ...string) { words = append(words, parts...) }
+
+func sizes(values ...any) int {
+	n := 0
+	for _, value := range values {
+		switch v := value.(type) {
+		case string:
+			n += len(v)
+		case []string:
+			n += len(v) * 100
+		}
+	}
+	return n
+}
+
+func parse!(parts ...string) int {
+	n := 0
+	for _, part := range parts {
+		if part == "" {
+			return 0, Problem{what: "empty part"}
+		}
+		n += len(part)
+	}
+	return n
+}
+
+func both!(a, b string) int {
+	first := parse!(a, a+b)
+	return first + parse!(b, "")
+}
+
+func caught(run func()) (what string) {
+	defer func() {
+		if r := recover(); r != nil {
+			what = r.(string)
+		}
+	}()
+	run()
+	return "nothing"
+}
+
+func counts(note string) {
+	println(note, opened, closed)
+}
+
+func deferred() {
+	defer total(open(7), open(8))
+	defer remember("late", join("-", "x", "y"))
+	keep := store
+	defer keep(open(9))
+	counts("before the deferred calls")
+}
+
+func main() {
+	println(total(open(1), open(2), open(3)), total())
+	counts("after total")
+	println(store(open(4)), store())
+	counts("after store")
+
+	println(caught(func() { total(open(5), broken(1)) }))
+	counts("after a panic in an argument")
+	println(caught(func() { fails(open(6), open(6)) }))
+	counts("after a panic in the function")
+
+	a, b := "left", "right"
+	println(join(", ", a+"!", b+"?", join("", a, b)))
+	remember(a+b, b)
+	remember(words...)
+	println(len(words), words[2], words[3])
+	println(sizes(a+b, []string{a, b}, 3, words))
+
+	n, err := parse("ab", "c")
+	println(n, err == nil)
+	n, err = both(a, b)
+	println(n, err.Error())
+
+	deferred()
+	counts("after the deferred calls")
+	println(len(words), words[5], len(shelf))
+}

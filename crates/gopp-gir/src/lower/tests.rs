@@ -2391,8 +2391,6 @@ type T struct{ n int }
 
 func (t T) get() int { return t.n }
 
-func many(more ...int) int { return len(more) }
-
 type Getter interface{ get() int }
 
 func main() {
@@ -2402,10 +2400,9 @@ func main() {
 		kept = append(kept, func(a int) int { return a + x })
 	}
 	get := Getter.get
-	all := many
 	go func() {}()
 	defer func() {}()
-	println(get(T{2}), all(1), len(kept))
+	println(get(T{2}), len(kept))
 }
 ";
     // Another name of an element is no variable of its own.
@@ -2419,11 +2416,82 @@ func main() {
         [
             "not supported yet: a function literal that uses a variable that has no cell",
             "not supported yet: a method of an interface or of an embedded type as a function",
-            "not supported yet: a call of a function with `...`",
             "not supported yet: a go statement",
-            "not supported yet: a call of a function with `...`",
         ]
     );
+}
+
+#[test]
+fn the_last_arguments_of_a_function_with_dots_are_one_slice() {
+    let text = "package main
+
+var kept []string
+
+func sum(xs ...int) int {
+	total := 0
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func keep(first string, parts ...string) int {
+	kept = append(kept, first)
+	kept = append(kept, parts...)
+	return len(kept)
+}
+
+func pair() (string, string) { return \"a\", \"b\" }
+
+func none() int { return sum() }
+
+func each(a int) int { return sum(a, 2, a+1) }
+
+func given(xs []int) int { return sum(xs...) }
+
+func owned(a string) int { return keep(a, a, a+a) }
+
+func results() int { return keep(pair()) }
+
+func value(a int) int {
+	total := sum
+	return total(a)
+}
+
+func deferred(a int) {
+	defer sum(a, a)
+	defer keep(\"x\")
+}
+
+func main() {
+	xs := []int{1}
+	deferred(1)
+	println(none(), each(1), given(xs), owned(\"o\"), results(), value(2))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        // The slices that each function makes.
+        let made = |name: &str| {
+            let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+            let body = &module[start..][..module[start..].find("\n}\n").unwrap()];
+            body.matches("@_gopp_slice_make(").count()
+        };
+        // Without arguments for it the slice is nil, and a slice that
+        // is given with `...` is the slice itself.
+        for name in ["4none", "5given"] {
+            assert_eq!(made(name), 0, "{file}: {name}");
+        }
+        // The deferred call without arguments for it keeps a nil slice.
+        for name in ["4each", "5owned", "7results", "5value", "8deferred"] {
+            assert_eq!(made(name), 1, "{file}: {name}");
+        }
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
 }
 
 #[test]
@@ -2676,6 +2744,57 @@ func main() {
 }
 
 #[test]
+fn a_result_that_an_interface_parameter_is_lent_is_in_a_slot_of_its_own() {
+    let text = "package main
+
+type Flat struct{ a, b, c uint64 }
+
+type Named struct {
+	name string
+	n    int
+}
+
+func (n Named) Size() int { return n.n + len(n.name) }
+
+type Sized interface{ Size() int }
+
+func flat() Flat { return Flat{a: 7} }
+
+func named(n int) Named { return Named{\"a\", n} }
+
+func show(x any) int {
+	switch x := x.(type) {
+	case Flat:
+		return int(x.a)
+	case Named:
+		return x.n
+	}
+	return 0
+}
+
+func size(s Sized) int { return s.Size() }
+
+func main() {
+	println(show(flat()), show(named(2)), size(named(3)))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        // Nothing points into the slot that a call puts its result in,
+        // which the rules of a module say.
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        let start = module.find("\nfn _GPF4mainE4main(").unwrap();
+        let main = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        assert_eq!(
+            main.matches("@_gopp_iface_box(").count(),
+            0,
+            "{file}: {main}"
+        );
+    }
+}
+
+#[test]
 fn interface_values_that_are_not_supported_yet_say_so() {
     let text = "package main
 
@@ -2690,11 +2809,9 @@ type Square struct{ side float64 }
 
 func (s Square) Area() float64 { return s.side * s.side }
 
-func (s Square) Name(more ...string) string { return \"square\" }
+func (s Square) Name() string { return \"square\" }
 
-type Lister interface{ List(more ...string) int }
-
-func f(v any, s Shape, n Named, l Lister) int {
+func f(v any, s Shape, n Named) int {
 	if _, ok := v.(Shape); ok {
 		return 1
 	}
@@ -2708,7 +2825,7 @@ func f(v any, s Shape, n Named, l Lister) int {
 	_ = c
 	s = n
 	c = Square{}
-	return l.List()
+	return 0
 }
 ";
     for file in ["a.go", "a.gopp"] {
@@ -2722,15 +2839,12 @@ func f(v any, s Shape, n Named, l Lister) int {
             [
                 "not supported yet: a comparison of values of this type",
                 "not supported yet: a complex number",
-                "not supported yet: a value in an interface whose type has a method that is \
-                 not supported yet",
-                "not supported yet: a call of a function with `...`",
             ],
             "{file}"
         );
     }
     // A struct without a name that has a method from a type that it
-    // embeds, and a method that takes any number of arguments.
+    // embeds.
     let (_, messages) = lowered_with(
         &[(
             "a.go",
@@ -2747,16 +2861,9 @@ type Wide struct {
 	w int
 }
 
-type Lister interface{ List(more ...string) int }
-
-type Names struct{}
-
-func (n Names) List(more ...string) int { return len(more) }
-
 func main() {
 	var s Shape = struct{ Base }{}
-	var l Lister = Names{}
-	_, _ = s, l
+	_ = s
 }
 ",
         )],
@@ -2765,10 +2872,8 @@ func main() {
     assert_eq!(
         messages,
         [
-            "a.go:21:16: not supported yet: a value in an interface whose type has a method that \
-             is not supported yet",
-            "a.go:22:17: not supported yet: a value in an interface whose type has a method that \
-             is not supported yet",
+            "a.go:15:16: not supported yet: a value in an interface whose type has a method that \
+             is not supported yet"
         ]
     );
 }
@@ -3092,6 +3197,25 @@ fn the_steps_grow_with_the_source() {
     });
     assert_near_linear(&[50, 100, 200, 400], |n| {
         steps_of(&many_functions(n).replace("\tgo println(total)\n", ""))
+    });
+}
+
+/// The arguments of a function with `...`: many of one call, many
+/// calls, and calls in calls.
+#[test]
+fn the_steps_grow_with_the_arguments_of_a_function_with_dots() {
+    let sizes = [100, 200, 400, 800];
+    let many = |body: &str| {
+        let many = "func many(first int, more ...int) int { return first + len(more) }\n";
+        steps_of(&format!("{}\n{many}", function(body)))
+    };
+    assert_near_linear(&sizes, |n| {
+        many(&format!("\tx = many(x{})\n", ", x + g(), x".repeat(n)))
+    });
+    assert_near_linear(&sizes, |n| many(&"\tx = many(x, g(), x)\n".repeat(n)));
+    assert_near_linear(&sizes, |n| {
+        let calls = format!("{}x{}", "many(x, g(), ".repeat(n), ")".repeat(n));
+        many(&format!("\tx = {calls}\n\tdefer {calls}\n"))
     });
 }
 
