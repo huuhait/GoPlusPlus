@@ -4929,7 +4929,7 @@ func use(l List, pl *List, ps *[]string, n int, pn *int) {
 	var c string = first(ps)
 	var d *int = keep(pn)
 	same(n, pn)
-	same(pn, pn)
+	same(pn, &n)
 	_, _, _, _ = a, b, c, d
 	first(n)
 	first(pn)
@@ -6947,6 +6947,94 @@ func generic(p *T) {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-B4, UB-2
+#[test]
+fn no_two_pointers_that_a_call_is_given_point_to_one_place() {
+    // The receiver of a method with a pointer receiver and a pointer to
+    // a part of it, two elements whose indexes may be the same, a
+    // variable and a part of it, a pointer and what it points into,
+    // and one pointer twice, to a function that is known or not
+    // (`bad`, `badParam`). What cannot be the same is fine, and so is
+    // what is read through other pointers, which may be one value by
+    // its nature (`fine`).
+    let text = "package p
+
+type Node struct {
+	Name string
+	Age  int
+	next Option[*Node]
+}
+
+type User struct {
+	Name  string
+	Audit string
+	Age   int
+}
+
+func (u *User) SetFrom(src *string) {
+	u.Name = *src
+	u.Audit = \"renamed to \" + *src
+}
+
+func (u *User) SetName(n string) { u.Name = n }
+
+func swapNames(a, b *Node) {
+	old := a.Name
+	b.Name = \"x\"
+	println(old)
+}
+
+func both(u *User, age *int) { *age = u.Age }
+
+func bad(list [4]Node, i, j int) {
+	u := User{}
+	u.SetFrom(&u.Name)
+	swapNames(&list[i], &list[j])
+	both(&u, &u.Age)
+	p := &list[0]
+	swapNames(p, &list[i])
+	swapNames(p, p)
+}
+
+func badParam(n *Node, f func(a, b *Node)) {
+	swapNames(n, n)
+	f(n, n)
+}
+
+func fine(list [4]Node, i int, n, m *Node) {
+	u := User{}
+	other := User{}
+	u.SetName(u.Name)
+	u.SetFrom(&other.Name)
+	swapNames(&list[0], &list[1])
+	swapNames(&list[i], n)
+	swapNames(n, m)
+	both(&u, &other.Age)
+	if a, ok := n.next.Get(); ok {
+		if b, ok := m.next.Get(); ok {
+			swapNames(a, b)
+		}
+	}
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:32:2: cannot give u and &u.Name to u.SetFrom: both may point to the same place \
+         in u",
+        "a.gopp:33:2: cannot give &list[i] and &list[j] to swapNames: both may point to the same \
+         place in list",
+        "a.gopp:34:2: cannot give &u and &u.Age to both: both may point to the same place in u",
+        "a.gopp:36:2: cannot give p and &list[i] to swapNames: both may point to the same place \
+         in list",
+        "a.gopp:37:2: cannot give p and p to swapNames: both may point to the same place in list",
+        "a.gopp:41:2: cannot give n and n to swapNames: both may point to the same place in n",
+        "a.gopp:42:2: cannot give n and n to f: both may point to the same place in n",
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
@@ -7037,6 +7125,24 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
             .collect();
         format!("{head}{functions}func use(x *T) int {{\n\ttotal := 0\n{calls}\treturn total\n}}\n")
     };
+    // Many calls that are each given two pointers into one array, and
+    // one pointer that is given with each of them.
+    let pairs = |count: usize| {
+        let calls: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\ttotal += two(&xs[{}], &xs[{}]) + two(p, &xs[{}])\n",
+                    i % 7,
+                    7 + i % 7,
+                    1 + i % 7
+                )
+            })
+            .collect();
+        format!(
+            "{head}func two(a, b *T) int {{ return a.n + b.n }}\nfunc use(xs [16]T) int \
+             {{\n\ttotal := 0\n\tp := &xs[0]\n{calls}\treturn total\n}}\n"
+        )
+    };
     // Each function stores through the next, and the last one itself;
     // every one is called with a holder and a value of its own.
     let stores = |count: usize, up: bool| {
@@ -7077,6 +7183,7 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(fan(n)));
     linear::assert_near_linear(&sizes, |n| steps(generic(n)));
     linear::assert_near_linear(&sizes, |n| steps(literals(n)));
+    linear::assert_near_linear(&sizes, |n| steps(pairs(n)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(unknown(n)));
@@ -11766,7 +11873,8 @@ func use(v Vec2, xs []int, arr [3]int, t Table) {
 	_ = Scale(1.5)
 	_ = Same(1, 2)
 	_ = Same(v, v)
-	_ = Same(&v, &v)
+	w := v
+	_ = Same(&v, &w)
 	_ = Less(\"a\", \"b\")
 	_ = Less(1.5, 2)
 	_ = Minus(3)

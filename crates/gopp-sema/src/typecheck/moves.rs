@@ -486,6 +486,7 @@ impl<'a> Checker<'a> {
                     selections: &self.selections,
                     locals: &self.locals,
                     instances: &self.instantiated,
+                    pointer_methods: &self.pointer_methods,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -645,6 +646,22 @@ impl<'a> Checker<'a> {
             if !self.against_arguments(holder.and_then(carried), &diagnostic) {
                 self.emit(diagnostic);
             }
+        }
+        for aliased in &found.aliased {
+            if !self.report_once((aliased.at, Code::OwnAliasAtCall)) {
+                continue;
+            }
+            let message = format!(
+                "cannot give {} and {} to {}: both may point to the same place in {}",
+                text(aliased.both.0),
+                text(aliased.both.1),
+                text(aliased.at),
+                named(self, aliased.of)
+            );
+            let fix = "give places that cannot be the same: two variables, two fields, or two \
+                       elements with constant indexes";
+            let diagnostic = Diagnostic::new(Code::OwnAliasAtCall, aliased.at, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixAlias, None, fix.to_owned()));
         }
         for escaped in &found.escaped {
             use borrows::Leaves;

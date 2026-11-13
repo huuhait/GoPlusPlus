@@ -328,6 +328,9 @@ struct Checker<'a> {
     /// While a body is walked: the left sides of its assignments that
     /// write what a pointer points to.
     writes_through: FxHashSet<ExprId>,
+    /// While a body is walked: the selectors that name a method with
+    /// a pointer receiver, whose call is given a pointer to it.
+    pointer_methods: FxHashSet<ExprId>,
     /// While a body is walked: how its places give their values, the
     /// places that swaps assign to, and the uses that are assigned over.
     var_modes: FxHashMap<ExprId, crate::object::Transfer>,
@@ -640,6 +643,7 @@ pub fn declarations(
         excused: Vec::new(),
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
+        pointer_methods: FxHashSet::default(),
         var_modes: FxHashMap::default(),
         swaps: FxHashSet::default(),
         self_moves: FxHashSet::default(),
@@ -3646,6 +3650,7 @@ impl<'a> Checker<'a> {
         };
         let mut cx = self.cx(&Decl { unit, body, form }, None);
         self.locals.clear();
+        self.pointer_methods.clear();
         self.bindings.clear();
         self.read_only.clear();
         self.flow = flow::Flow::default();

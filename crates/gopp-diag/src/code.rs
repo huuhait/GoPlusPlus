@@ -370,6 +370,7 @@ codes! {
     512 OwnPointerOnHeap "err_own_pointer_on_heap",
     513 OwnStoredOutlives "err_own_stored_outlives",
     514 OwnCaptureKept "err_own_capture_kept",
+    515 OwnAliasAtCall "err_own_alias_at_call",
 }
 
 impl Code {

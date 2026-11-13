@@ -517,3 +517,4 @@ E0511 note_borrowed_here
 E0512 err_own_pointer_on_heap
 E0513 err_own_stored_outlives
 E0514 err_own_capture_kept
+E0515 err_own_alias_at_call

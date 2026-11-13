@@ -580,6 +580,16 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func bad(h *Holder) {\n\tx := 1\n\th.p = &x // error\n}\n\nfunc set(h \
              *Holder, p *int) { h.p = p } // ok",
         ),
+        OwnAliasAtCall => (
+            "Two pointers that one call is given, or the receiver of a method and a pointer \
+             among its arguments, may point to the same place or to a place and a part of \
+             it. The function takes each pointer as the only way to what it points to: a \
+             write through one would change what the other reads.",
+            "Give places that cannot be the same: two variables, two fields, two elements \
+             with indexes that are constants. Or give the value itself where it is only read.",
+            "swap(&list[i], &list[j]) // error: i may be j\nswap(&list[0], &list[1]) // \
+             ok\nu.SetFrom(&u.Name)       // error\nu.SetName(u.Name)       // ok",
+        ),
         OwnCaptureKept => (
             "A function literal uses a variable around it that may hold a pointer, and is \
              kept longer than the statement: it is returned, stored, given to a call that \

@@ -694,6 +694,9 @@ impl<'a> Checker<'a> {
         if bound {
             self.addressed(cx, base);
         }
+        if pointer_receiver && self.memo.is_some() {
+            self.pointer_methods.insert(expr);
+        }
         if !called && self.memo.is_some() {
             self.operator_value(cx, expr, name);
             let holds = match bound {

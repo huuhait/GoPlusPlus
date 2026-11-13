@@ -37,6 +37,8 @@ pub(super) struct Places<'a> {
     /// The generic functions and types that the body names with type
     /// arguments.
     pub instances: &'a FxHashMap<ExprId, crate::object::Instance>,
+    /// The selectors that name a method with a pointer receiver.
+    pub pointer_methods: &'a FxHashSet<ExprId>,
     pub base: Spur,
 }
 
@@ -98,8 +100,13 @@ pub(super) struct Call {
     /// The arguments that hold a function value and no pointer: the
     /// function may keep them.
     pub funcs: Vec<bool>,
-    /// The arguments, and where the function is named.
+    /// For each argument that is a pointer, where more than one is:
+    /// the sources of what it points to.
+    pub pointees: Vec<Option<(u32, u32)>>,
+    /// The arguments with where each is written, and where the
+    /// function is named.
     pub exprs: Vec<ExprId>,
+    pub spans: Vec<Span>,
     pub at: Span,
 }
 
@@ -225,10 +232,20 @@ pub(super) struct Problem {
     pub within: Span,
 }
 
+/// Two pointers that one call is given and that may point to one place
+/// of the variable (OWN-B4).
+pub(super) struct Aliased {
+    /// Where the function is named, and where the two are written.
+    pub at: Span,
+    pub both: (Span, Span),
+    pub of: LocalId,
+}
+
 /// What the passes found in a problem.
 pub(super) struct Lent {
     pub broken: Vec<Broken>,
     pub escaped: Vec<Escaped>,
+    pub aliased: Vec<Aliased>,
     /// What the function does with the pointers that it is given.
     pub lends: Lends,
     pub steps: u64,
@@ -608,6 +625,10 @@ impl<'a> Walk<'a> {
             args: vec![(0, 0); count],
             sinks: vec![false; count],
             funcs: vec![false; count],
+            pointees: vec![None; count],
+            spans: (before.iter().chain(args.iter()))
+                .map(|&arg| self.tree.exprs[arg].span)
+                .collect(),
             exprs: before.iter().chain(args.iter()).copied().collect(),
             at: self.tree.exprs[fun].span,
         });
@@ -750,7 +771,21 @@ impl<'a> Walk<'a> {
             sinks[0] = (sinks[0] && receiver) || receives;
             funcs[0] &= receiver;
         }
-        if !sinks.contains(&true) && !funcs.contains(&true) {
+        // The pointers that the call is given: no two of them to one
+        // place (OWN-B4). A method with a pointer receiver is given a
+        // pointer to its receiver.
+        let pointer = |arg: &ExprId| {
+            let ty = self.type_of(self.unparen(*arg));
+            ty.is_some_and(|ty| matches!(&*types.get(types.underlying(ty)), Type::Pointer(_)))
+        };
+        let typed: Vec<bool> = before.iter().chain(args.iter()).map(pointer).collect();
+        let mut pointers = typed.clone();
+        let by_address = receiver && places.pointer_methods.contains(&callee);
+        if before.is_some() {
+            pointers[0] = receiver && (pointers[0] || by_address);
+        }
+        let several = pointers.iter().filter(|&&pointer| pointer).count() > 1;
+        if !sinks.contains(&true) && !funcs.contains(&true) && !several {
             return;
         }
         let mut given = Vec::new();
@@ -758,6 +793,24 @@ impl<'a> Walk<'a> {
         self.given_to_calls(given);
         self.calls[call as usize].sinks = sinks;
         self.calls[call as usize].funcs = funcs;
+        for position in (0..pointers.len()).filter(|&at| several && pointers[at]) {
+            let arg = self.calls[call as usize].exprs[position];
+            let mut found = std::mem::take(&mut self.args);
+            let from = found.len() as u32;
+            let mut given = Vec::new();
+            // The receiver itself, where the method is given its
+            // address.
+            let addressed = position == 0 && by_address && !typed[position];
+            match self.place(arg).filter(|_| addressed) {
+                Some((root, steps)) => {
+                    found.push(Source::Place(root, steps, self.tree.exprs[arg].span));
+                }
+                None => self.sources_in(arg, false, &mut found, &mut given),
+            }
+            self.calls[call as usize].pointees[position] = Some((from, found.len() as u32));
+            self.args = found;
+            self.given_to_calls(given);
+        }
         self.events.push(Event::Called(call));
     }
 
@@ -1311,6 +1364,7 @@ impl Problem {
         let mut lent = Lent {
             broken: Vec::new(),
             escaped: Vec::new(),
+            aliased: Vec::new(),
             lends: Lends {
                 gives: vec![false; self.params.len()],
                 stores: Vec::new(),
@@ -1568,6 +1622,8 @@ impl Problem {
                     }
                     Event::Called(call) => {
                         let record = &self.calls[call as usize];
+                        lent.aliased
+                            .extend(known.aliased(&sets, set, sources, record));
                         let sure = sources.says(call).is_some();
                         // What the function keeps of a function value
                         // that it is given; one that is not known may
@@ -2012,6 +2068,47 @@ impl Known {
             _ => {}
         }
         set
+    }
+
+    /// The first two pointers that the call is given and that may point
+    /// to one place: to the same place of a variable, or to a place and
+    /// a part of it. What is read through a pointer, and what comes
+    /// from outside the function, may be one value by its nature
+    /// (OWN-B10) and is not held to this.
+    fn aliased(&mut self, sets: &Sets, set: u32, of: &Sources, call: &Call) -> Option<Aliased> {
+        let mut pointers: Vec<(usize, Vec<u32>)> = Vec::new();
+        for (position, pointee) in call.pointees.iter().enumerate() {
+            let Some(range) = *pointee else {
+                continue;
+            };
+            let mut loans = self.given_by(sets, set, of, run(&of.problem.args, range));
+            loans.retain(|&loan| {
+                let (root, way, _) = &self.loans[loan as usize];
+                let through = way.iter().filter(|step| **step == Step::Target).count() > 1;
+                *root != OUTSIDE && !through && !way.contains(&Step::Captured)
+            });
+            for (other, others) in &pointers {
+                for (&a, &b) in loans
+                    .iter()
+                    .flat_map(|a| others.iter().map(move |b| (a, b)))
+                {
+                    self.steps += 1;
+                    let ((root, way, _), (other_root, other_way, _)) =
+                        (&self.loans[a as usize], &self.loans[b as usize]);
+                    let apart = matches!(lies(way, other_way), Lies::Apart)
+                        && matches!(lies(other_way, way), Lies::Apart);
+                    if root == other_root && !apart {
+                        return Some(Aliased {
+                            at: call.at,
+                            both: (call.spans[*other], call.spans[position]),
+                            of: *root,
+                        });
+                    }
+                }
+            }
+            pointers.push((position, loans));
+        }
+        None
     }
 
     /// What the call may store: for each argument that the function
