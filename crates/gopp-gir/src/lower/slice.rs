@@ -10,9 +10,10 @@ use gopp_syntax::ast::{ExprId, ExprKind, UnaryOp};
 use super::Shared;
 use super::expr::PlaceMode;
 use super::func::{Built, FuncCx};
+use super::glue::Glue;
 use crate::{
-    AggKind, AssertKind, BinOp, CastKind, LocalId, Mutability, Operand, Place, Rvalue, Type,
-    TypeId, TypeInterner,
+    AggKind, AssertKind, BinOp, CastKind, LocalId, LocalKind, Mutability, Operand, Place, Rvalue,
+    Type, TypeId, TypeInterner,
 };
 
 /// What `x[lo:hi]` of a slice or an array is made as.
@@ -146,26 +147,126 @@ impl FuncCx<'_, '_> {
     /// such values.
     pub fn given(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
         let inner = Shared::unparen(self.tree, expr);
-        let copied = self.body.var_modes.get(&inner) == Some(&Transfer::Copy);
-        if !copied || self.reused == Some(inner) || self.flat(ty) {
+        if self.flat(ty) || self.reused == Some(inner) {
             return Ok(value);
         }
         let span = self.tree.exprs[expr].span;
-        match self.kind(ty) {
-            Type::Slice(of) if self.flat(of) => {
-                let copy = self.slot_of(value)?;
-                let [size, _] = self.element_facts(of)?;
-                let record = self.record(copy.clone())?;
-                let params = [self.bytes_ty(), self.b.operand_ty(&size)];
-                self.runtime_call("_gopp_slice_copy", &params, vec![record, size])?;
-                Ok(Rvalue::Use(Operand::Copy(copy)))
+        let mark = self.body.var_modes.get(&inner);
+        let handed = self.handed.contains(&inner);
+        if mark.is_none() && !handed {
+            return Ok(value);
+        }
+        // Nothing is moved out of a map: the value of an entry is read
+        // into a slot, and the map keeps its own.
+        let moved = (mark == Some(&Transfer::Move) || handed) && self.map_index(inner).is_none();
+        let own = match &value {
+            // The place gives its value up and is empty then.
+            Rvalue::Use(Operand::Copy(from)) if moved => {
+                self.moved.push((from.clone(), ty));
+                Rvalue::Use(Operand::Copy(self.slot_of(value)?))
             }
-            Type::Ptr(_) if self.is_map(ty) => self.map_copy(expr, ty, value),
-            _ => {
-                let checked = self.checked_as(expr, ty);
-                self.cloned_value(span, checked, value)
+            _ => match self.kind(ty) {
+                Type::Slice(of) if self.flat(of) => {
+                    let copy = self.slot_of(value)?;
+                    let [size, _] = self.element_facts(of)?;
+                    let record = self.record(copy.clone())?;
+                    let params = [self.bytes_ty(), self.b.operand_ty(&size)];
+                    self.runtime_call("_gopp_slice_copy", &params, vec![record, size])?;
+                    Rvalue::Use(Operand::Copy(copy))
+                }
+                Type::Ptr(_) if self.is_map(ty) => self.map_copy(expr, ty, value)?,
+                _ => {
+                    let checked = self.checked_as(expr, ty);
+                    self.cloned_value(span, checked, value)?
+                }
+            },
+        };
+        self.fresh(expr, ty, own)
+    }
+
+    /// The value is new and its own. The temporary that holds it owns
+    /// it until something takes it, and frees it when its statement
+    /// ends if nothing does.
+    pub fn fresh(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
+        if self.flat(ty) {
+            return Ok(value);
+        }
+        let place = match &value {
+            Rvalue::Use(Operand::Const(_)) => return Ok(value),
+            Rvalue::Use(Operand::Copy(place))
+                if place.projections.is_empty()
+                    && self.b.local_kind(place.local) == LocalKind::Temp =>
+            {
+                place.clone()
+            }
+            _ => self.slot_of(value)?,
+        };
+        if !self.owns_temp(&place) {
+            let checked = self.checked_as(expr, ty);
+            if let Some(glue) = self.drop_glue(checked, self.tree.exprs[expr].span)? {
+                self.own_temp(place.clone(), glue);
             }
         }
+        Ok(Rvalue::Use(Operand::Copy(place)))
+    }
+
+    /// The value for a new owner. A temporary that owns it gives it up;
+    /// anything else is read where it is, and the new owner gets a
+    /// copy.
+    pub fn taken(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
+        if self.flat(ty) {
+            return Ok(value);
+        }
+        match &value {
+            Rvalue::Use(Operand::Const(_)) => return Ok(value),
+            Rvalue::Use(Operand::Copy(place)) if self.take_temp(place) => return Ok(value),
+            _ => {}
+        }
+        if self.reused == Some(Shared::unparen(self.tree, expr)) {
+            return Ok(value);
+        }
+        let checked = self.checked_as(expr, ty);
+        self.cloned_value(self.tree.exprs[expr].span, checked, value)
+    }
+
+    /// The values of the expressions for new owners (see `values`).
+    pub fn owned_values(
+        &mut self,
+        exprs: &[ExprId],
+        wanted: &[Option<TypeId>],
+    ) -> Built<Vec<Rvalue>> {
+        let values = self.values(exprs, wanted)?;
+        let mut owned = Vec::with_capacity(values.len());
+        for (at, value) in values.into_iter().enumerate() {
+            // One call gives all of them: each is a part of what the
+            // call gave.
+            let of = exprs.get(at).or(exprs.first());
+            owned.push(match (wanted.get(at).copied().flatten(), of) {
+                (Some(ty), Some(&expr)) => self.taken(expr, ty, value)?,
+                _ => value,
+            });
+        }
+        self.empty_moved()?;
+        Ok(owned)
+    }
+
+    /// One value for each expression, each for a new owner.
+    pub fn owned_each(
+        &mut self,
+        exprs: &[ExprId],
+        wanted: &[Option<TypeId>],
+    ) -> Built<Vec<Operand>> {
+        let values = self.values_each(exprs, wanted)?;
+        let mut owned = Vec::with_capacity(values.len());
+        for ((value, &expr), wanted) in values.into_iter().zip(exprs).zip(wanted) {
+            let value = match *wanted {
+                Some(ty) => self.taken(expr, ty, Rvalue::Use(value))?,
+                None => Rvalue::Use(value),
+            };
+            owned.push(self.operand_of(value)?);
+        }
+        self.empty_moved()?;
+        Ok(owned)
     }
 
     /// An integer of any type as an `int64`, for the runtime.
@@ -246,6 +347,7 @@ impl FuncCx<'_, '_> {
             return Ok(Rvalue::Use(self.zero(ty)));
         };
         let own = self.rvalue_as(first, ty)?;
+        let own = self.taken(first, ty, own)?;
         let own = self.slot_of(own)?;
         let [size, plain] = self.element_facts(of)?;
         let bytes = self.bytes_ty();
@@ -279,7 +381,7 @@ impl FuncCx<'_, '_> {
         }
         let wanted = vec![Some(of); more.len()];
         let mut values = Vec::with_capacity(more.len());
-        for value in self.values(more, &wanted)? {
+        for value in self.owned_values(more, &wanted)? {
             values.push(self.operand_of(value)?);
         }
         let before = self.b.assign_temp(Rvalue::Len(own.clone()))?;
@@ -314,16 +416,31 @@ impl FuncCx<'_, '_> {
         let [size, _] = self.element_facts(of)?;
         let bytes = self.bytes_ty();
         let word = self.b.operand_ty(&size);
-        let args = vec![self.record(to.clone())?, self.record(from)?, size];
-        let copied = self.runtime("_gopp_slice_copy_into", &[bytes, bytes, word], word, args)?;
-        if !self.flat(of) {
-            let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
-            let first = self.b.index(&to, none)?;
-            let slice = self.b.place_ty(&to);
-            let checked = self.checked_as(args_to, slice);
-            let checked = checked.and_then(|slice| self.element_of(slice));
-            self.clone_each(span, first, copied.clone(), of, checked)?;
-        }
+        let copied = match self.flat(of) {
+            true => {
+                let args = vec![self.record(to)?, self.record(from)?, size];
+                self.runtime("_gopp_slice_copy_into", &[bytes, bytes, word], word, args)?
+            }
+            // Elements that hold what is freed: a slice of its own with
+            // copies of the elements is moved over those of `to`, which
+            // end first.
+            false => {
+                let slice = self.b.place_ty(&to);
+                let checked = self.checked_as(args_to, slice);
+                let source = self.cloned_value(span, checked, Rvalue::Use(Operand::Copy(from)))?;
+                let source = self.slot_of(source)?;
+                let elem = checked.and_then(|slice| self.element_of(slice));
+                match self.drop_glue(elem, span)? {
+                    None => self.zero(word),
+                    Some(drop) => {
+                        let params = [bytes, bytes, word, self.glue_sig(Glue::Drop)];
+                        let drop = self.glue_value(Glue::Drop, drop);
+                        let args = vec![self.record(to)?, self.record(source)?, size, drop];
+                        self.runtime("_gopp_slice_move_into", &params, word, args)?
+                    }
+                }
+            }
+        };
         Ok(match self.kind(ty) {
             Type::Int { .. } if ty != word => Rvalue::Cast(CastKind::IntToInt, copied, ty),
             _ => Rvalue::Use(copied),
@@ -337,6 +454,19 @@ impl FuncCx<'_, '_> {
             return Ok(false);
         };
         let [size, _] = self.element_facts(elem)?;
+        // Elements that hold what is freed end before they are zero.
+        if !self.flat(elem) {
+            let slice = self.b.place_ty(&of);
+            let checked = self.checked_as(x, slice);
+            let checked = checked.and_then(|slice| self.element_of(slice));
+            if let Some(drop) = self.drop_glue(checked, span)? {
+                let word = self.b.operand_ty(&size);
+                let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                let first = self.b.index(&of, none)?;
+                let count = self.b.assign_temp(Rvalue::Len(of.clone()))?;
+                self.each(first, slot(count), elem, drop)?;
+            }
+        }
         let params = [self.bytes_ty(), self.b.operand_ty(&size)];
         let args = vec![self.record(of)?, size];
         self.runtime_call("_gopp_slice_clear", &params, args)?;
@@ -462,6 +592,21 @@ impl FuncCx<'_, '_> {
                 cap
             }
         };
+        // A slice that stays itself loses the elements that it cuts
+        // off: they end here (SLC-9).
+        if part == Part::InPlace && !self.flat(of) {
+            let checked = self.checked_as(expr, slice);
+            let checked = checked.and_then(|slice| self.element_of(slice));
+            if let Some(drop) = self.drop_glue(checked, span)? {
+                let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                let head = self.b.index(&whole, none)?;
+                self.each(head, slot(lo.0), of, drop)?;
+                let tail = self.b.index(&whole, hi.0)?;
+                let left = Rvalue::Binary(BinOp::Sub, slot(len), slot(hi.0));
+                let left = self.b.assign_temp(left)?;
+                self.each(tail, slot(left), of, drop)?;
+            }
+        }
         let first = self.b.index(&whole, lo.0)?;
         let elements = self.b.assign_temp(Rvalue::AddrOf(first, Mutability::Mut))?;
         let count = self

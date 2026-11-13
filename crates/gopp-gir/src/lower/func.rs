@@ -13,7 +13,7 @@ use super::glue::Glue;
 use super::{Job, Memo, Shared};
 use crate::{
     BlockId, BuildError, Constant, ConstantKind, FuncBuilder, FuncId, Linkage, LocalId, Module,
-    Operand, Place, Rvalue, ScopeKind, Span, Type, TypeId, TypeInterner,
+    Operand, Place, ProjectionKind, Rvalue, ScopeKind, Span, Type, TypeId, TypeInterner,
 };
 
 pub(super) type Built<T = ()> = Result<T, BuildError>;
@@ -32,6 +32,10 @@ pub(super) fn deeper<T>(walk: impl FnOnce() -> T) -> T {
 #[derive(Default)]
 pub(super) struct Scope {
     vars: Vec<LocalId>,
+    /// The places of the block that own what is freed, each with the
+    /// drop glue of its type: variables, parameters, and what a loop
+    /// walks. They end where the block is left, the last first.
+    owned: Vec<(Place, FuncId)>,
     /// The walks of the range loops over maps that the block has: what
     /// the runtime keeps of each, by its address.
     walks: Vec<Operand>,
@@ -45,8 +49,9 @@ pub(super) struct Label {
     pub block: BlockId,
     /// How many scopes are open where it is.
     depth: usize,
-    /// How many variables its scope has where it is, once it is met.
-    live: Option<usize>,
+    /// How many variables its scope has where it is, and how many
+    /// places that own, once it is met.
+    live: Option<(usize, usize)>,
 }
 
 /// A statement that `break` or `continue` leaves.
@@ -94,6 +99,22 @@ pub(super) struct FuncCx<'a, 'm> {
     /// the `return` that is lowered: a view, which is built there, or a
     /// call, which passes them on (SLC-8).
     pub outer: FxHashMap<ExprId, Vec<LocalId>>,
+    /// The temporaries that own a value which nothing has taken yet,
+    /// each with the drop glue of its type: what is left of them when
+    /// their statement ends is freed. They are listed in the order in
+    /// which they were made; `owning` says which of them still own.
+    pub temps: Vec<(Place, FuncId)>,
+    owning: FxHashSet<(LocalId, u32)>,
+    /// The variables that do not own their values: a plain range
+    /// variable of a Go++ file is the element as it is.
+    borrowed: FxHashSet<LocalId>,
+    /// The names in the `return` that is lowered whose variables end
+    /// with the function: each hands its value over.
+    pub handed: FxHashSet<ExprId>,
+    /// The places whose values were moved out and that are still to be
+    /// made empty: what is evaluated beside the move reads them as they
+    /// were (`return s, len(s)`).
+    pub moved: Vec<(Place, TypeId)>,
 }
 
 /// Adds the function of the job to the module, or reports why not.
@@ -170,7 +191,7 @@ pub(super) fn lower_glue<'a>(
     let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
         let mut cx = FuncCx::new(shared, &mut *memo, b, 0, &shared.no_body);
         let made = match kind {
-            Glue::Clone => cx.clone_body(ty)?,
+            Glue::Clone | Glue::Drop => cx.walk_body(kind, ty)?,
             Glue::Eq => cx.eq_body(ty)?,
             Glue::Hash => cx.hash_body(ty)?,
         };
@@ -191,6 +212,19 @@ pub(super) fn lower_glue<'a>(
         let message = format!("{symbol} could not be lowered: {failed}");
         memo.diagnostics
             .push(Diagnostic::new(Code::GirVerify, span, message));
+    }
+}
+
+/// What a temporary that owns is known by: its slot, and which part of
+/// it if it is one of several results.
+fn temp_key(place: &Place) -> Option<(LocalId, u32)> {
+    match &place.projections[..] {
+        [] => Some((place.local, u32::MAX)),
+        [part] => match part.kind {
+            ProjectionKind::Field(at) => Some((place.local, at)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -225,6 +259,11 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             aliases: FxHashSet::default(),
             views: Vec::new(),
             outer: FxHashMap::default(),
+            temps: Vec::new(),
+            owning: FxHashSet::default(),
+            borrowed: FxHashSet::default(),
+            handed: FxHashSet::default(),
+            moved: Vec::new(),
         }
     }
 }
@@ -249,6 +288,9 @@ impl FuncCx<'_, '_> {
                 self.b
                     .set_name(slot, self.memo.name(self.shared, name.name));
                 self.vars.insert(local, slot);
+                // A parameter by value is the function's own: the caller
+                // gave a copy or the value itself.
+                self.owns(local, slot)?;
             }
         }
         for result in results {
@@ -400,9 +442,123 @@ impl FuncCx<'_, '_> {
                 let params = [self.bytes_ty()];
                 self.runtime_call("_gopp_map_iter_end", &params, vec![walk])?;
             }
+            self.end_owned(scope, 0)?;
             for at in (0..self.scopes[scope].vars.len()).rev() {
                 let var = self.scopes[scope].vars[at];
                 self.b.storage_dead(var)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What the places of the scope own from the place `from` on is
+    /// freed, the last first.
+    fn end_owned(&mut self, scope: usize, from: usize) -> Built {
+        for at in (from..self.scopes[scope].owned.len()).rev() {
+            let (place, glue) = self.scopes[scope].owned[at].clone();
+            let at = self.record(place)?;
+            self.call_glue(glue, at)?;
+        }
+        Ok(())
+    }
+
+    /// The variable of the local owns its value, if its type holds what
+    /// is freed: the innermost scope ends it.
+    fn owns(&mut self, local: CheckedLocalId, var: LocalId) -> Built {
+        let ty = self.b.place_ty(&Place::local(var));
+        if self.flat(ty) {
+            return Ok(());
+        }
+        let declared = &self.body.locals[local.0 as usize];
+        let (checked, span) = (declared.ty, declared.span);
+        if let Some(glue) = self.drop_glue(Some(checked), span)?
+            && let Some(scope) = self.scopes.last_mut()
+        {
+            scope.owned.push((Place::local(var), glue));
+        }
+        Ok(())
+    }
+
+    /// The drop glue of the type; none, with a report, for a type that
+    /// has none yet.
+    pub fn drop_glue(
+        &mut self,
+        checked: Option<CheckedTypeId>,
+        span: SourceSpan,
+    ) -> Built<Option<FuncId>> {
+        let glue = match checked {
+            Some(checked) => self.glue(Glue::Drop, checked)?,
+            None => Err("the end of a value whose type is not known"),
+        };
+        match glue {
+            Ok(glue) => Ok(Some(glue)),
+            Err(what) => {
+                self.unsupported(span, what);
+                Ok(None)
+            }
+        }
+    }
+
+    /// The temporary, or the part of a temporary that a call gave,
+    /// owns its value from here on.
+    pub fn own_temp(&mut self, place: Place, glue: FuncId) {
+        if let Some(key) = temp_key(&place)
+            && self.owning.insert(key)
+        {
+            self.temps.push((place, glue));
+        }
+    }
+
+    pub fn owns_temp(&self, place: &Place) -> bool {
+        temp_key(place).is_some_and(|key| self.owning.contains(&key))
+    }
+
+    /// The temporary gives its value up: whether it owned one.
+    pub fn take_temp(&mut self, place: &Place) -> bool {
+        temp_key(place).is_some_and(|key| self.owning.remove(&key))
+    }
+
+    /// The places that gave their values up are empty from here on:
+    /// before anything is stored, called or left.
+    pub fn empty_moved(&mut self) -> Built {
+        for (place, ty) in std::mem::take(&mut self.moved) {
+            self.b.assign(place, Rvalue::Use(self.zero(ty)))?;
+        }
+        Ok(())
+    }
+
+    /// The temporaries from `mark` on that still own their values are
+    /// freed, the last first: nothing took the values.
+    pub fn drop_temps(&mut self, mark: usize) -> Built {
+        self.empty_moved()?;
+        while self.temps.len() > mark {
+            let Some((place, glue)) = self.temps.pop() else {
+                break;
+            };
+            if !self.take_temp(&place) {
+                continue;
+            }
+            // The address of a temporary that a call wrote is not
+            // taken: its value ends in a slot of its own.
+            let slot = self.slot_of(Rvalue::Use(Operand::Copy(place)))?;
+            let at = self.record(slot)?;
+            self.call_glue(glue, at)?;
+        }
+        Ok(())
+    }
+
+    /// The temporaries from `mark` on live as long as the innermost
+    /// scope: what a loop walks.
+    pub fn keep_temps(&mut self, mark: usize) -> Built {
+        let kept: Vec<_> = self.temps.drain(mark.min(self.temps.len())..).collect();
+        for (place, glue) in kept {
+            if !self.take_temp(&place) {
+                continue;
+            }
+            // In a slot whose address is taken where the scope ends.
+            let slot = self.slot_of(Rvalue::Use(Operand::Copy(place)))?;
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.owned.push((slot, glue));
             }
         }
         Ok(())
@@ -420,7 +576,26 @@ impl FuncCx<'_, '_> {
     pub fn declare(&mut self, local: CheckedLocalId) -> Built<LocalId> {
         let declared = &self.body.locals[local.0 as usize];
         let ty = self.lower(declared.ty, declared.span);
-        self.declare_as(local, ty)
+        let var = self.declare_as(local, ty)?;
+        self.owns(local, var)?;
+        Ok(var)
+    }
+
+    /// A new variable that does not own its value: it is read while the
+    /// owner of the value lives.
+    pub fn declare_view(&mut self, local: CheckedLocalId) -> Built<LocalId> {
+        let declared = &self.body.locals[local.0 as usize];
+        let ty = self.lower(declared.ty, declared.span);
+        let var = self.declare_as(local, ty)?;
+        self.borrowed.insert(var);
+        Ok(var)
+    }
+
+    /// The variable of the local, if it is declared and owns its
+    /// value: no other name of an element, and no element as it is.
+    pub fn owning_var(&self, local: CheckedLocalId) -> Option<LocalId> {
+        let var = *self.vars.get(&local)?;
+        (!self.aliases.contains(&var) && !self.borrowed.contains(&var)).then_some(var)
     }
 
     /// A new variable for the local that is another name of a place of
@@ -488,7 +663,7 @@ impl FuncCx<'_, '_> {
     pub fn label_met(&mut self, name: Spur) {
         if let Some(label) = self.labels.get_mut(&name) {
             let scope = self.scopes.get(label.depth.wrapping_sub(1));
-            label.live = Some(scope.map_or(0, |scope| scope.vars.len()));
+            label.live = Some(scope.map_or((0, 0), |scope| (scope.vars.len(), scope.owned.len())));
         }
     }
 
@@ -500,7 +675,8 @@ impl FuncCx<'_, '_> {
         };
         let (block, depth, live) = (label.block, label.depth, label.live);
         self.exit_scopes(depth)?;
-        if let (Some(live), Some(scope)) = (live, depth.checked_sub(1)) {
+        if let (Some((live, owned)), Some(scope)) = (live, depth.checked_sub(1)) {
+            self.end_owned(scope, owned)?;
             for at in (live..self.scopes[scope].vars.len()).rev() {
                 let var = self.scopes[scope].vars[at];
                 self.b.storage_dead(var)?;

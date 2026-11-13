@@ -95,6 +95,18 @@ fn _GPF4mainE5parts(_1: []i64, _2: [4]i64, _3: i64, _4: i64, _5: i64) -> i64 [go
   let _86: i64
   let _87: u64
   let _88: i64
+  let _89: *[]i64
+  let _90: *u8
+  let _91: ()
+  let _92: *[]i64
+  let _93: *u8
+  let _94: ()
+  let _95: *[]i64
+  let _96: *u8
+  let _97: ()
+  let _98: *[]i64
+  let _99: *u8
+  let _100: ()
   bb0:
     _6 = copy _1  ; a.gopp:4:2
     _7 = len(_6)  ; a.gopp:4:2
@@ -212,6 +224,22 @@ fn _GPF4mainE5parts(_1: []i64, _2: [4]i64, _3: i64, _4: i64, _5: i64) -> i64 [go
     _87 = len(_78)  ; a.gopp:9:2
     _88 = int_to_int(copy _87) as i64  ; a.gopp:9:2
     _0 = add(copy _86, copy _88)  ; a.gopp:9:2
+    _89 = &mut _78  ; a.gopp:9:2
+    _90 = ptr_to_ptr(copy _89) as *u8  ; a.gopp:9:2
+    _91 = call const fn @_GPTdSi(copy _90) -> [return: bb16, unwind: continue]  ; a.gopp:9:2
+  bb16:
+    _92 = &mut _65  ; a.gopp:9:2
+    _93 = ptr_to_ptr(copy _92) as *u8  ; a.gopp:9:2
+    _94 = call const fn @_GPTdSi(copy _93) -> [return: bb17, unwind: continue]  ; a.gopp:9:2
+  bb17:
+    _95 = &mut _21  ; a.gopp:9:2
+    _96 = ptr_to_ptr(copy _95) as *u8  ; a.gopp:9:2
+    _97 = call const fn @_GPTdSi(copy _96) -> [return: bb18, unwind: continue]  ; a.gopp:9:2
+  bb18:
+    _98 = &mut _1  ; a.gopp:9:2
+    _99 = ptr_to_ptr(copy _98) as *u8  ; a.gopp:9:2
+    _100 = call const fn @_GPTdSi(copy _99) -> [return: bb19, unwind: continue]  ; a.gopp:9:2
+  bb19:
     storage_dead(_78)  ; a.gopp:9:2
     storage_dead(_65)  ; a.gopp:9:2
     storage_dead(_45)  ; a.gopp:9:2
@@ -231,6 +259,9 @@ fn _GPF4mainE5bytes(_1: string, _2: []u8) -> (string, []u8) [go, external] {
   let _8: *[]u8
   let _9: *u8
   let _10: ()
+  let _11: *[]u8
+  let _12: *u8
+  let _13: ()
   bb0:
     _3 = copy _2  ; a.gopp:13:2
     _4 = &mut _3  ; a.gopp:13:2
@@ -243,6 +274,10 @@ fn _GPF4mainE5bytes(_1: string, _2: []u8) -> (string, []u8) [go, external] {
     _10 = call const fn @_gopp_bytes_from_string(copy _9, copy _1) -> [return: bb2, unwind: continue]  ; a.gopp:13:2
   bb2:
     _0 = tuple {copy _6, copy _7}  ; a.gopp:13:2
+    _11 = &mut _2  ; a.gopp:13:2
+    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:13:2
+    _13 = call const fn @_GPTdSh(copy _12) -> [return: bb3, unwind: continue]  ; a.gopp:13:2
+  bb3:
     return  ; a.gopp:13:2
 }
 
@@ -260,6 +295,9 @@ fn _GPF4mainE4walk(_1: []string) -> i64 [go, external] {
   let _9: u64
   let _10: i64
   let _11: i64
+  let _12: *[]string
+  let _13: *u8
+  let _14: ()
   bb0:
     storage_live(_2)  ; a.gopp:17:2
     _2 = const 0: i64  ; a.gopp:17:2
@@ -287,8 +325,45 @@ fn _GPF4mainE4walk(_1: []string) -> i64 [go, external] {
     goto bb1  ; a.gopp:20:2
   bb4:
     _0 = copy _2  ; a.gopp:21:2
+    _12 = &mut _1  ; a.gopp:21:2
+    _13 = ptr_to_ptr(copy _12) as *u8  ; a.gopp:21:2
+    _14 = call const fn @_GPTdSr(copy _13) -> [return: bb5, unwind: continue]  ; a.gopp:21:2
+  bb5:
     storage_dead(_2)  ; a.gopp:21:2
     return  ; a.gopp:21:2
+}
+
+fn _GPTdSh(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]u8
+  let _3: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]u8
+    _3 = call const fn @_gopp_slice_free(copy _1) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdSi(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]i64
+  let _3: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]i64
+    _3 = call const fn @_gopp_slice_free(copy _1) -> [return: bb1, unwind: continue]
+  bb1:
+    return
+}
+
+fn _GPTdSr(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *[]string
+  let _3: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *[]string
+    _3 = call const fn @_gopp_slice_free(copy _1) -> [return: bb1, unwind: continue]
+  bb1:
+    return
 }
 
 declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
@@ -296,3 +371,5 @@ declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
 declare fn _gopp_string_from_bytes(_1: *u8) -> string [c, external]
 
 declare fn _gopp_bytes_from_string(_1: *u8, _2: string) -> () [c, external]
+
+declare fn _gopp_slice_free(_1: *u8) -> () [c, external]

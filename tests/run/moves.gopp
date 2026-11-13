@@ -1,0 +1,106 @@
+package main
+
+type box struct {
+	items []int
+	tags  [2][]string
+	notes map[int][]int
+}
+
+type shelf struct {
+	left, right box
+	count       int
+}
+
+var kept box
+
+func (b box) size() int { return len(b.items) + len(b.tags[0]) + len(b.notes) }
+
+func (b *box) add(n int) { b.items = append(b.items, n) }
+
+func both(n int) ([]int, int) {
+	s := make([]int, n)
+	return s, len(s)
+}
+
+func twice(n int) ([]int, []int) {
+	s := make([]int, n)
+	return s, s
+}
+
+func pick(first bool) []int {
+	a, b := []int{1}, []int{2, 3}
+	if first {
+		return a
+	}
+	return b
+}
+
+func find(lists map[string][]int, key string) []int {
+	if list, ok := lists[key]; ok {
+		return list
+	}
+	for name, list := range lists {
+		if len(name) > 5 {
+			return list
+		}
+	}
+	return nil
+}
+
+func walk(n int) int {
+	total := 0
+	for i, buf := 0, make([]int, 1); i < n; i++ {
+		if i%2 == 0 {
+			buf = append(buf, i)
+			continue
+		}
+		spare := buf
+		total += len(spare)
+	}
+	switch extra := make([]int, total); {
+	case len(extra) > 1:
+		more := append(extra, 1)
+		total += len(more)
+		fallthrough
+	default:
+		last := []int{total}
+		total += last[0]
+	}
+	return total
+}
+
+// A value that is moved leaves its place, a value that is assigned over
+// ends, and what is read beside a move is read first.
+func main() {
+	s, n := both(3)
+	println(len(s), n, len(pick(true)), len(pick(false)))
+
+	b := box{items: s, tags: [2][]string{{"a"}, nil}, notes: map[int][]int{1: {1}}}
+	b.add(4)
+	println(b.size(), len(s))
+	sh := shelf{left: b, right: box{items: []int{9}}, count: 2}
+	sh.left, sh.right = sh.right, sh.left
+	sh.left.items, b.items = b.items, sh.left.items
+	println(sh.left.size(), sh.right.size(), b.size())
+	kept = sh.right
+	kept = b
+	kept.notes[2] = kept.items
+	println(kept.size(), len(kept.notes[2]))
+
+	lists := map[string][]int{"short": {1}, "longer": {1, 2}}
+	println(len(find(lists, "short")), len(find(lists, "none")), len(find(nil, "x")))
+	part := box{items: pick(false)}.items
+	rest := pick(false)[1:]
+	println(len(part), len(rest), walk(5))
+
+	one, two := twice(2)
+	one[0] = 1
+	println(one[0], two[0])
+
+	var rows [3][]int
+	rows[0], rows[2] = pick(false), rows[0]
+	rows[1] = rows[0]
+	spare := rows
+	rows[1], spare[1] = nil, rows[1]
+	println(len(rows[0]), len(rows[1]), len(spare[1]), len(spare[2]))
+}

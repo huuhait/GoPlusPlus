@@ -9,8 +9,8 @@ use gopp_syntax::ast::{AssignOp, BinaryOp, ExprId, ExprKind};
 use super::Shared;
 use super::expr::{Check, PlaceMode};
 use super::func::{Built, FuncCx};
-use super::map::MapOf;
-use crate::{CastKind, Constant, ConstantKind, Operand, Place, Rvalue, Type, TypeId};
+use super::map::Way;
+use crate::{CastKind, Constant, ConstantKind, FuncId, Operand, Place, Rvalue, Type, TypeId};
 
 /// What one expression on the left of an assignment takes a value for.
 enum Dest {
@@ -18,9 +18,12 @@ enum Dest {
     Blank,
     /// A variable that the statement declares.
     New(CheckedLocalId, TypeId),
-    Place(Place, Vec<Check>),
-    /// `m[k]`: the place that holds the map, and the key by its address.
-    Entry(Place, Vec<Check>, MapOf, Operand),
+    /// A place, the checks that it needs before it is written, and the
+    /// drop glue for the value that it has, if that holds what is freed.
+    Place(Place, Vec<Check>, Option<FuncId>),
+    /// `m[k]`, `m[a][b]`: the place that holds the outermost map, and
+    /// each map on the way with its key by its address.
+    Entry(Place, Vec<Check>, Way),
 }
 
 impl FuncCx<'_, '_> {
@@ -49,11 +52,12 @@ impl FuncCx<'_, '_> {
             .map(|dest| match dest {
                 Dest::Blank => None,
                 Dest::New(_, ty) => Some(*ty),
-                Dest::Place(place, _) => Some(self.b.place_ty(place)),
-                Dest::Entry(_, _, of, _) => Some(of.value),
+                Dest::Place(place, ..) => Some(self.b.place_ty(place)),
+                Dest::Entry(_, _, way) => way.last().map(|(of, _)| of.value),
             })
             .collect();
-        let mut values = self.values(rhs, &wanted)?;
+        // Each place is the new owner of its value.
+        let mut values = self.owned_values(rhs, &wanted)?;
         // A store may change what a value that is stored after it
         // reads: `a, b = b, a`.
         if values.len() > 1 {
@@ -80,20 +84,28 @@ impl FuncCx<'_, '_> {
     fn put(&mut self, dest: Dest, value: Rvalue) -> Built {
         let place = match dest {
             Dest::Blank => return Ok(()),
-            Dest::New(local, _) => Place::local(self.declare(local)?),
-            Dest::Place(place, checks) => {
+            Dest::New(local, _) => (Place::local(self.declare(local)?), None),
+            Dest::Place(place, checks, old) => {
                 for check in checks {
                     self.checked(check)?;
                 }
-                place
+                (place, old)
             }
-            Dest::Entry(map, checks, of, key) => {
+            Dest::Entry(map, checks, way) => {
                 for check in checks {
                     self.checked(check)?;
                 }
-                self.map_entry(map, &of, key)?
+                let old = way.last().and_then(|(of, _)| of.drop);
+                (self.entry_at(map, &way)?, old)
             }
         };
+        // The value that the place has ends before the new one is
+        // there.
+        let (place, old) = place;
+        if let Some(glue) = old {
+            let at = self.record(place.clone())?;
+            self.call_glue(glue, at)?;
+        }
         self.store(place, value)
     }
 
@@ -129,8 +141,11 @@ impl FuncCx<'_, '_> {
         let wanted = match &dest {
             Dest::Blank => return Ok(()),
             Dest::New(_, ty) => *ty,
-            Dest::Place(place, _) => self.b.place_ty(place),
-            Dest::Entry(_, _, of, _) => of.value,
+            Dest::Place(place, ..) => self.b.place_ty(place),
+            Dest::Entry(_, _, way) => match way.last() {
+                Some((of, _)) => of.value,
+                None => return Ok(()),
+            },
         };
         // The loop counts in a type of its own.
         let have = self.b.operand_ty(&value);
@@ -142,10 +157,16 @@ impl FuncCx<'_, '_> {
             true => Rvalue::Cast(CastKind::IntToInt, value, wanted),
             false => Rvalue::Use(value),
         };
-        // An element whose copy is more than its bytes. In a Go++ file
-        // the variable is only read, so it needs no copy of its own
-        // (RNG-1); a Go file may write it.
-        if !self.flat(wanted) && self.source.dialect() == gopp_span::Dialect::Go {
+        // An element whose copy is more than its bytes. A new variable
+        // of a Go++ file is only read: it is the element as it is, and
+        // owns nothing (RNG-1). A Go file may write it, and a place that
+        // is assigned to owns what it gets: both have a copy.
+        let go = self.source.dialect() == gopp_span::Dialect::Go;
+        if let (Dest::New(local, _), false, false) = (&dest, go, self.flat(wanted)) {
+            let var = self.declare_view(*local)?;
+            return self.store(Place::local(var), value);
+        }
+        if !self.flat(wanted) {
             let checked = match &dest {
                 Dest::New(local, _) => Some(self.body.locals[local.0 as usize].ty),
                 _ => self.checked_as(left, wanted),
@@ -190,13 +211,11 @@ impl FuncCx<'_, '_> {
             later: Some(Vec::new()),
             held: later,
         };
-        if let Some((map, index)) = self.map_index(inner) {
-            let Some(of) = self.map_of(map) else {
+        if self.map_index(inner).is_some() {
+            let Some((map, way)) = self.entries(inner, &mut mode)? else {
                 return Ok(Dest::Blank);
             };
-            let map = self.map_place(map, &mut mode)?;
-            let key = self.key_at(index, &of)?;
-            return Ok(Dest::Entry(map, mode.later.unwrap_or_default(), of, key));
+            return Ok(Dest::Entry(map, mode.later.unwrap_or_default(), way));
         }
         let mut place = self.place(left, &mut mode)?;
         // A pointer that is assigned what it points to is written
@@ -204,7 +223,16 @@ impl FuncCx<'_, '_> {
         if self.body.writes_through.contains(&inner) {
             place = self.deref(place, node.span, &mut mode)?;
         }
-        Ok(Dest::Place(place, mode.later.unwrap_or_default()))
+        // `s = append(s, ...)` and `s = s[i:j]` keep what `s` has.
+        let ty = self.b.place_ty(&place);
+        let old = match self.flat(ty) || self.reused.is_some() {
+            true => None,
+            false => {
+                let checked = self.checked_as(left, ty);
+                self.drop_glue(checked, node.span)?
+            }
+        };
+        Ok(Dest::Place(place, mode.later.unwrap_or_default(), old))
     }
 
     /// `x op= y`; `x++` and `x--` without a `y`.
@@ -223,17 +251,21 @@ impl FuncCx<'_, '_> {
         };
         // An entry of a map is read, and then written where the map has
         // it after the value is worked out.
-        if let Some((map, index)) = self.map_index(inner) {
-            let Some(of) = self.map_of(map) else {
+        if self.map_index(inner).is_some() {
+            let Some((map, way)) = self.entries(inner, &mut mode)? else {
                 return Ok(());
             };
-            let map = self.map_place(map, &mut mode)?;
-            let key = self.key_at(index, &of)?;
-            let now = self.stable(Operand::Copy(map.clone()))?;
-            let [first, _] = self.map_get(now, &of, key.clone())?;
-            let (second, nonzero) = self.second(op, y, of.value)?;
+            let Some(&(last, _)) = way.last() else {
+                return Ok(());
+            };
+            // The value is read through the maps as they are.
+            let mut first = self.stable(Operand::Copy(map.clone()))?;
+            for (of, key) in &way {
+                [first, _] = self.map_get(first, of, key.clone())?;
+            }
+            let (second, nonzero) = self.second(op, y, last.value)?;
             let value = self.arith(span, op, first, second, nonzero)?;
-            let entry = self.map_entry(map, &of, key)?;
+            let entry = self.entry_at(map, &way)?;
             return self.b.assign(entry, value);
         }
         let mut place = self.place(x, &mut mode)?;

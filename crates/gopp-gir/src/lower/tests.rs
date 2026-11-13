@@ -799,6 +799,35 @@ func all(xs *[]int) (*[]int, int, *[]int) {
 }
 
 #[test]
+fn a_value_ends_with_its_owner_on_every_way_out() {
+    insta::assert_snapshot!(gir("package main
+
+type box struct{ items []int }
+
+func build(n int) []int { return make([]int, n) }
+
+func two(n int) ([]int, box) { return build(n), box{build(n)} }
+
+func owners(b box, n int) []int {
+	kept := b.items
+	b.items = build(n)
+	build(n)
+	_, other := two(n)
+	if len(build(n)) > n {
+		return kept
+	}
+	for _, v := range build(n) {
+		if v > n {
+			break
+		}
+	}
+	kept, other.items = other.items, kept
+	return nil
+}
+"));
+}
+
+#[test]
 fn structs_and_arrays_are_compared_and_hashed_by_the_glue_of_their_types() {
     insta::assert_snapshot!(gir("package main
 
@@ -859,6 +888,7 @@ func f(a, b boxed) int {
         messages,
         [
             "a.go:9:7: not supported yet: a comparison of interface values",
+            "a.go:9:2: not supported yet: a comparison of interface values",
             "a.go:10:5: not supported yet: a comparison of interface values",
         ]
     );
@@ -1215,6 +1245,29 @@ fn the_steps_grow_with_the_glue_of_types() {
             "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
              func f(t T{}) int {{\n\tu := t\n\treturn len(u.inner)\n}}\n",
             n - 1
+        ))
+    });
+    // Values that end: a slice in each of many blocks in blocks that a
+    // `break` leaves, a literal of many slices, and a call that is given
+    // many of them.
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| format!("\tfor {{\n\t\ts{at} := make([]int, x)\n\t\tif len(s{at}) > {at} {{\n\t\t\tbreak\n\t\t}}\n"))
+            .collect();
+        steps_of(&function(&format!("{open}{}", "\t}\n".repeat(n))))
+    });
+    assert_near_linear(&sizes, |n| {
+        let rows = "{1}, ".repeat(n);
+        steps_of(&function(&format!(
+            "\tgrid := [][]int{{{rows}}}\n\tx += len(grid) + len([][]int{{{rows}}})\n"
+        )))
+    });
+    assert_near_linear(&sizes, |n| {
+        let params: String = (0..n).map(|at| format!("p{at} []int, ")).collect();
+        let args = "make([]int, 1), ".repeat(n);
+        steps_of(&format!(
+            "package main\n\nfunc many({params}) int {{ return len(p0) }}\n\n\
+             func f() int {{\n\treturn many({args})\n}}\n"
         ))
     });
     // Values that are compared and hashed by glue: a chain of types that

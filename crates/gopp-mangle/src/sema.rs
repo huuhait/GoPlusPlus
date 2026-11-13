@@ -41,6 +41,8 @@ pub enum Entity<'a> {
     EqGlue(TypeId),
     /// The function that gives a value of the type its hash.
     HashGlue(TypeId),
+    /// The function that ends a value of the type.
+    DropGlue(TypeId),
 }
 
 /// For a type that is declared in a function: the function, and which
@@ -226,6 +228,7 @@ impl<'a> Namer<'a> {
             Entity::CloneGlue(ty) => Node::Wrap(Wrap::CloneGlue, self.ty(ty)?),
             Entity::EqGlue(ty) => Node::Wrap(Wrap::EqGlue, self.ty(ty)?),
             Entity::HashGlue(ty) => Node::Wrap(Wrap::HashGlue, self.ty(ty)?),
+            Entity::DropGlue(ty) => Node::Wrap(Wrap::DropGlue, self.ty(ty)?),
         };
         self.add(node)
     }

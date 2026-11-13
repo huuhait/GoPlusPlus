@@ -30,7 +30,13 @@ pub(crate) struct MapOf {
     /// The hash and the equality glue of keys that the runtime cannot
     /// compare itself.
     compare: Option<[crate::FuncId; 2]>,
+    /// The drop glue of a value that holds what is freed.
+    pub drop: Option<crate::FuncId>,
 }
+
+/// The maps on the way to an entry `m[a][b]`, the outermost first: what
+/// each is, and its key by its address.
+pub(super) type Way = Vec<(MapOf, Operand)>;
 
 /// How the runtime hashes and compares keys: by their bytes, as
 /// strings, as floats of 32 or of 64 bits, or by the glue of their
@@ -134,14 +140,15 @@ impl FuncCx<'_, '_> {
         };
         // A value whose copy is more than its bytes is copied by its
         // glue when the map is.
-        let copy = match self.flat(value_ty) {
-            true => None,
-            false => match self.glue(Glue::Clone, value) {
-                Ok(Ok(glue)) => Some(glue),
-                Ok(Err(what)) => return Err(what),
-                Err(_) => return Err("a map whose values cannot be copied"),
+        let glue = |this: &mut Self, kind| match this.flat(value_ty) {
+            true => Ok(None),
+            false => match this.glue(kind, value) {
+                Ok(Ok(glue)) => Ok(Some(glue)),
+                Ok(Err(what)) => Err(what),
+                Err(_) => Err("a map whose values cannot be copied"),
             },
         };
+        let (copy, drop) = (glue(self, Glue::Clone)?, glue(self, Glue::Drop)?);
         let mut layout = |ty: TypeId| {
             let layout = self.b.types().layout(ty, shared.layout);
             layout.map_or((0, 1), |layout| (layout.size, layout.align))
@@ -158,6 +165,7 @@ impl FuncCx<'_, '_> {
             shape: [key_size, value_size, value_offset, slot, kind],
             copy,
             compare,
+            drop,
         })
     }
 
@@ -216,7 +224,13 @@ impl FuncCx<'_, '_> {
             Some([hash, eq]) => [Some(hash), Some(eq)],
             None => [None, None],
         };
-        for (kind, glue) in [(Glue::Clone, of.copy), (Glue::Hash, hash), (Glue::Eq, eq)] {
+        let glues = [
+            (Glue::Clone, of.copy),
+            (Glue::Hash, hash),
+            (Glue::Eq, eq),
+            (Glue::Drop, of.drop),
+        ];
+        for (kind, glue) in glues {
             parts.push(match glue {
                 Some(glue) => self.glue_value(kind, glue),
                 None => {
@@ -274,6 +288,42 @@ impl FuncCx<'_, '_> {
         self.map_get(map, &of, key).map(Some)
     }
 
+    /// The way of `m[a][b]` to an entry: the place that holds the
+    /// outermost map, and each map on the way with its key by its
+    /// address, the outermost first. None for a map that is not
+    /// supported, which was said.
+    pub fn entries(&mut self, expr: ExprId, mode: &mut PlaceMode) -> Built<Option<(Place, Way)>> {
+        let mut way = Vec::new();
+        let mut at = expr;
+        while let Some((map, index)) = self.map_index(at) {
+            way.push((map, index));
+            at = map;
+        }
+        let Some(&(outermost, _)) = way.last() else {
+            return Ok(None);
+        };
+        let place = self.map_place(outermost, mode)?;
+        let mut keyed = Vec::with_capacity(way.len());
+        for &(map, index) in way.iter().rev() {
+            let Some(of) = self.map_of(map) else {
+                return Ok(None);
+            };
+            keyed.push((of, self.key_at(index, &of)?));
+        }
+        Ok(Some((place, keyed)))
+    }
+
+    /// Where the value at the end of the way is. Each key that is not
+    /// there is put into its map, and a nil map on the way is made:
+    /// `mm[a][b] = v` puts `a` into `mm` (OWN-P9).
+    pub fn entry_at(&mut self, map: Place, way: &Way) -> Built<Place> {
+        let mut place = map;
+        for (of, key) in way {
+            place = self.map_entry(place, of, key.clone())?;
+        }
+        Ok(place)
+    }
+
     /// Where the value of the key is in the map that `map` holds. A key
     /// that is not there is put into the map, and a nil map is made
     /// first.
@@ -324,7 +374,7 @@ impl FuncCx<'_, '_> {
                 wanted.extend([Some(of.key), Some(of.value)]);
             }
         }
-        let values = self.values_each(&exprs, &wanted)?;
+        let values = self.owned_each(&exprs, &wanted)?;
         let wide = self.b.types().int(64, true);
         let count = self.b.const_int(wide, elems.len() as u64)?;
         let made = self.made_map(ty, &of, count)?;
@@ -384,6 +434,13 @@ impl FuncCx<'_, '_> {
         Ok(Rvalue::Use(self.map_copied(ty, &of, map)?))
     }
 
+    /// The map ends: its values, and its table.
+    pub fn map_dropped(&mut self, ty: TypeId, of: &MapOf, map: Operand) -> Built {
+        let shape = self.shape(of)?;
+        let params = [ty, self.bytes_ty()];
+        self.runtime_call("_gopp_map_drop", &params, vec![map, shape])
+    }
+
     /// A map of its own with the entries of `map`, which is of the
     /// type `ty`.
     pub fn map_copied(&mut self, ty: TypeId, of: &MapOf, map: Operand) -> Built<Operand> {
@@ -410,7 +467,10 @@ impl FuncCx<'_, '_> {
         let Some(of) = self.map_of(x) else {
             return self.close_scope(span);
         };
+        // A map that is made for the loop lives as long as the loop.
+        let mark = self.temps.len();
         let map = self.map_now(x)?;
+        self.keep_temps(mark)?;
         // What the runtime keeps of the walk: three words.
         let word = self.b.types().int(64, false);
         let walk = self.b.types().tuple(&[word; 3]);

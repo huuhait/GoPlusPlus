@@ -57,6 +57,7 @@ impl FuncCx<'_, '_> {
         let node = &self.tree.stmts[id];
         self.at(node.span);
         let label = self.label.take();
+        let mark = self.temps.len();
         match &node.kind {
             StmtKind::Bad | StmtKind::Empty => {}
             StmtKind::Labeled { label, stmt } => {
@@ -104,7 +105,8 @@ impl FuncCx<'_, '_> {
             StmtKind::Send { .. } => self.unsupported(node.span, "a send"),
             StmtKind::Select { .. } => self.unsupported(node.span, "a select statement"),
         }
-        Ok(())
+        // What the statement made and nothing took ends with it.
+        self.drop_temps(mark)
     }
 
     /// A `var` statement; constants and types make no code.
@@ -139,7 +141,7 @@ impl FuncCx<'_, '_> {
             .into_iter()
             .map(|wanted| wanted.map(|(ty, span)| self.lower(ty, span)))
             .collect();
-        let values = self.values(values, &wanted)?;
+        let values = self.owned_values(values, &wanted)?;
         for (name, value) in names.iter().zip(values) {
             if let Some(local) = local(self, name) {
                 let var = self.declare(local)?;
@@ -255,6 +257,8 @@ impl FuncCx<'_, '_> {
         self.at(self.tree.exprs[x].span);
         let word = super::Memo::word(self.shared, self.b.types(), false);
         let slot = |local: LocalId| Operand::Copy(Place::local(local));
+        // What is made to be walked lives as long as the loop.
+        let mark = self.temps.len();
         let walked = self.ty_of(x);
         // What is walked, the number of passes or what tells it, and
         // the type that the loop counts in.
@@ -309,6 +313,7 @@ impl FuncCx<'_, '_> {
                 return self.close_scope(span);
             }
         };
+        self.keep_temps(mark)?;
         let counter = self.b.assign_temp(Rvalue::Use(self.zero(counts)))?;
         let [head, inside, after, exit] = [(); 4].map(|()| self.b.new_block());
         self.b.goto(head)?;
@@ -499,6 +504,7 @@ impl FuncCx<'_, '_> {
                 self.unsupported(span, "a case that is compared by a function");
                 continue;
             }
+            let mark = self.temps.len();
             let value = self.operand_as(case, ty)?;
             let eq = gopp_syntax::ast::BinaryOp::Eq;
             let equal = match by_parts {
@@ -506,6 +512,7 @@ impl FuncCx<'_, '_> {
                 false => self.arith(span, eq, on.clone(), value, false)?,
             };
             let equal = self.b.assign_temp(equal)?;
+            self.drop_temps(mark)?;
             let next = self.b.new_block();
             let equal = Operand::Copy(Place::local(equal));
             self.b.switch(equal, vec![(0, next)], body)?;
@@ -573,10 +580,18 @@ impl FuncCx<'_, '_> {
         let mut given: Vec<Rvalue> = Vec::with_capacity(parts.len());
         if values.is_empty() {
             for (var, &part) in named.iter().zip(&parts) {
-                given.push(Rvalue::Use(match var {
-                    Some(var) => Operand::Copy(Place::local(*var)),
-                    None => self.zero(part),
-                }));
+                let Some(var) = var else {
+                    given.push(Rvalue::Use(self.zero(part)));
+                    continue;
+                };
+                let var = Place::local(*var);
+                let mut value = Rvalue::Use(Operand::Copy(var.clone()));
+                // A result that holds what is freed leaves its variable.
+                if !self.flat(part) {
+                    value = Rvalue::Use(Operand::Copy(self.slot_of(value)?));
+                    self.b.assign(var, Rvalue::Use(self.zero(part)))?;
+                }
+                given.push(value);
             }
         } else {
             let wanted: Vec<_> = parts.iter().map(|&part| Some(part)).collect();
@@ -596,10 +611,26 @@ impl FuncCx<'_, '_> {
                     }
                 }
             }
-            given = self.values(values, &wanted)?;
+            // A variable of the function that is returned ends with the
+            // function: it hands its value over, the first time that it
+            // is named.
+            let mut ended = rustc_hash::FxHashSet::default();
+            for &value in values {
+                let value = Shared::unparen(self.tree, value);
+                if let ExprKind::Name(_) = self.tree.exprs[value].kind
+                    && let Some(gopp_sema::Ref::Local(local)) = self.body.uses.get(&value)
+                    && let Some(var) = self.owning_var(*local)
+                    && ended.insert(var)
+                {
+                    self.handed.insert(value);
+                }
+            }
+            given = self.owned_values(values, &wanted)?;
+            self.handed.clear();
             self.outer.clear();
             // The variables of the results have the values too: what
-            // runs after the `return` reads them.
+            // runs after the `return` reads them. A value that holds
+            // what is freed has one owner, which is the caller.
             if named.iter().any(Option::is_some) {
                 // A result that is returned as it is stays where it is.
                 let itself = |var: &Option<crate::LocalId>, value: &Rvalue| {
@@ -615,8 +646,8 @@ impl FuncCx<'_, '_> {
                     }
                     held.push((own, value));
                 }
-                for (var, (own, value)) in named.iter().zip(&held) {
-                    if let (Some(var), false) = (var, own) {
+                for ((var, (own, value)), &part) in named.iter().zip(&held).zip(&parts) {
+                    if let (Some(var), false, true) = (var, own, self.flat(part)) {
                         self.b
                             .assign(Place::local(*var), Rvalue::Use(value.clone()))?;
                     }
@@ -643,6 +674,7 @@ impl FuncCx<'_, '_> {
                 self.b.assign(result, whole)?;
             }
         }
+        self.drop_temps(0)?;
         self.exit_scopes(0)?;
         self.b.ret()?;
         self.dead();
@@ -698,7 +730,14 @@ impl FuncCx<'_, '_> {
                 x,
             } if plain => self.cond(x, no, yes),
             _ => {
-                let holds = self.operand_as(expr, TypeInterner::BOOL)?;
+                // What the condition made ends before either way is
+                // taken.
+                let mark = self.temps.len();
+                let mut holds = self.operand_as(expr, TypeInterner::BOOL)?;
+                if self.temps.len() > mark || !self.moved.is_empty() {
+                    holds = self.stable(holds)?;
+                    self.drop_temps(mark)?;
+                }
                 self.b.switch(holds, vec![(0, no)], yes)
             }
         }

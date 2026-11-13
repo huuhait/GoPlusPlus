@@ -227,3 +227,27 @@ void _gopp_each(void *first, uint64_t count, uint64_t size, void (*each)(uint8_t
     each(at);
   }
 }
+
+// The slice ends with its owner: its buffer is freed. Its elements were
+// ended before, if they hold what is freed.
+void _gopp_slice_free(const void *slice) {
+  free(((const gopp_slice *)slice)->backing);
+}
+
+// `copy(&to, from)` for elements that hold what is freed. `from` is a
+// slice of its own that ends here: as many elements as both have are
+// moved over those of `to`, which are ended first by `drop`, as are the
+// elements of `from` that are left.
+uint64_t _gopp_slice_move_into(const void *to, const void *from, uint64_t size,
+                               void (*drop)(uint8_t *value)) {
+  const gopp_slice *target = to;
+  const gopp_slice *source = from;
+  uint64_t count = target->len < source->len ? target->len : source->len;
+  _gopp_each(target->ptr, count, size, drop);
+  if (count > 0 && size > 0) {
+    __builtin_memcpy(target->ptr, source->ptr, count * size);
+  }
+  _gopp_each((uint8_t *)source->ptr + count * size, source->len - count, size, drop);
+  free(source->backing);
+  return count;
+}

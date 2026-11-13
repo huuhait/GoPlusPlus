@@ -82,6 +82,8 @@ void _gopp_slice_append(void *slice, const void *from, uint64_t size, bool no_po
 void _gopp_slice_copy(void *slice, uint64_t size);
 uint64_t _gopp_slice_copy_into(const void *to, const void *from, uint64_t size);
 void _gopp_slice_clear(const void *slice, uint64_t size);
+void _gopp_slice_free(const void *slice);
+uint64_t _gopp_slice_move_into(const void *to, const void *from, uint64_t size, void (*drop)(uint8_t *value));
 void _gopp_each(void *first, uint64_t count, uint64_t size, void (*each)(uint8_t *value));
 uint64_t _gopp_hash_bytes(const void *first, uint64_t count, uint64_t seed);
 uint64_t _gopp_hash_string(gopp_string text, uint64_t seed);
@@ -95,6 +97,7 @@ bool _gopp_map_read(const void *map, const void *shape, const void *key, void *v
 void * _gopp_map_set(void *place_of_map, const void *shape, const void *key);
 void _gopp_map_delete(void *map, const void *shape, const void *key);
 void _gopp_map_clear(void *map, const void *shape);
+void _gopp_map_drop(void *map, const void *shape);
 void * _gopp_map_copy(const void *map, const void *shape);
 void _gopp_map_iter_start(void *iter, void *map);
 void * _gopp_map_iter_next(void *iter, const void *shape, void *key);

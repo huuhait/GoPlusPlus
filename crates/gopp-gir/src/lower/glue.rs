@@ -42,6 +42,8 @@ pub(crate) enum Glue {
     Eq,
     /// Gives the value at an address its hash, from a seed.
     Hash,
+    /// Ends the value at an address: what it holds is freed.
+    Drop,
 }
 
 /// The type of the glue of a kind. Glue takes values by their
@@ -51,7 +53,7 @@ pub(super) fn sig(types: &mut TypeInterner, glue: Glue) -> TypeId {
     let bytes = types.ptr(byte);
     let word = types.int(64, false);
     let (params, ret) = match glue {
-        Glue::Clone => (vec![bytes], TypeInterner::UNIT),
+        Glue::Clone | Glue::Drop => (vec![bytes], TypeInterner::UNIT),
         Glue::Eq => (vec![bytes, bytes], TypeInterner::BOOL),
         Glue::Hash => (vec![bytes, word], word),
     };
@@ -81,8 +83,8 @@ impl FuncCx<'_, '_> {
         let types = shared.types;
         match types.copy_rule(ty) {
             Some(CopyRule::Elements | CopyRule::Parts) => {}
-            Some(CopyRule::Method) => return Err("a copy that a `Clone` method makes"),
-            _ => return Err("a copy of a value of this type"),
+            Some(CopyRule::Method) => return Err("a value of a type with a `Clone` method"),
+            _ => return Err("a value of a type that is not copied by its parts"),
         }
         let lower = |this: &mut Self, part| this.memo.lower_type(shared, this.b.types(), part);
         let kind = types.get(types.underlying(ty));
@@ -129,6 +131,7 @@ impl FuncCx<'_, '_> {
             Glue::Clone => Entity::CloneGlue(ty),
             Glue::Eq => Entity::EqGlue(ty),
             Glue::Hash => Entity::HashGlue(ty),
+            Glue::Drop => Entity::DropGlue(ty),
         };
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             let none = Err("a function for a type without a symbol");
@@ -141,7 +144,7 @@ impl FuncCx<'_, '_> {
         self.memo.glue_of.insert((kind, ty), Ok(glue));
         // The parts that have glue of their own, which this one calls.
         let parts = match kind {
-            Glue::Clone => self.cloned_parts(ty),
+            Glue::Clone | Glue::Drop => self.cloned_parts(ty),
             Glue::Eq | Glue::Hash => self.compared_parts(ty),
         };
         let mut made = parts.as_ref().map(|_| glue).map_err(|&what| what);
@@ -231,7 +234,8 @@ impl FuncCx<'_, '_> {
         }
     }
 
-    fn call_glue(&mut self, glue: FuncId, at: Operand) -> Built {
+    /// A call of clone or drop glue with the address of a value.
+    pub fn call_glue(&mut self, glue: FuncId, at: Operand) -> Built {
         let callee = self.glue_value(Glue::Clone, glue);
         let nothing = Place::local(self.b.temp(TypeInterner::UNIT));
         let next = self.b.new_block();
@@ -243,7 +247,7 @@ impl FuncCx<'_, '_> {
 
     /// The runtime calls the glue for each of `count` elements of the
     /// type `of` from `first` on.
-    fn each(&mut self, first: Place, count: Operand, of: TypeId, glue: FuncId) -> Built {
+    pub fn each(&mut self, first: Place, count: Operand, of: TypeId, glue: FuncId) -> Built {
         let word = self.b.types().int(64, false);
         let layout = self.b.types().layout(of, self.shared.layout);
         let size = self
@@ -256,9 +260,12 @@ impl FuncCx<'_, '_> {
         self.runtime_call("_gopp_each", &params, args)
     }
 
-    /// The body of the clone glue of the type: the value at the address
-    /// that the function is given becomes a copy of its own.
-    pub fn clone_body(&mut self, ty: CheckedTypeId) -> Built<Result<(), &'static str>> {
+    /// The body of the clone or of the drop glue of the type. Clone:
+    /// the value at the address that the function is given becomes a
+    /// copy of its own. Drop: what the value holds is freed, its parts
+    /// first.
+    pub fn walk_body(&mut self, kind: Glue, ty: CheckedTypeId) -> Built<Result<(), &'static str>> {
+        let ends = kind == Glue::Drop;
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         let shared = self.shared;
@@ -277,24 +284,40 @@ impl FuncCx<'_, '_> {
             .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given.clone(), to))?;
         let value = self.b.deref(&Place::local(typed))?;
         let word = self.b.types().int(64, false);
+        // The glue of the parts that this one calls.
+        let part = match &how {
+            Cloned::Slice(_, each) => *each,
+            Cloned::Map => None,
+            Cloned::Fields(_) => None,
+            Cloned::Elements(_, _, part) | Cloned::Held(part) => Some(*part),
+        };
+        let of_part = match part.map(|part| self.glue(kind, part)).transpose()? {
+            Some(Err(what)) => return Ok(Err(what)),
+            Some(Ok(glue)) => Some(glue),
+            None => None,
+        };
         match how {
-            Cloned::Slice(of, each) => {
+            Cloned::Slice(of, _) => {
                 let layout = self.b.types().layout(of, shared.layout);
                 let size = self
                     .b
                     .const_int(word, layout.map_or(0, |layout| layout.size))?;
-                let params = [self.bytes_ty(), word];
-                self.runtime_call("_gopp_slice_copy", &params, vec![given, size])?;
-                if let Some(part) = each {
-                    let glue = match self.glue(Glue::Clone, part)? {
-                        Ok(glue) => glue,
-                        Err(what) => return Ok(Err(what)),
-                    };
+                let bytes = self.bytes_ty();
+                // A copy has its buffer before its elements are copied;
+                // a slice that ends loses its elements first.
+                if !ends {
+                    let args = vec![given.clone(), size];
+                    self.runtime_call("_gopp_slice_copy", &[bytes, word], args)?;
+                }
+                if let Some(glue) = of_part {
                     let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
                     let first = self.b.index(&value, none)?;
                     let count = self.b.assign_temp(Rvalue::Len(value))?;
                     let count = Operand::Copy(Place::local(count));
                     self.each(first, count, of, glue)?;
+                }
+                if ends {
+                    self.runtime_call("_gopp_slice_free", &[bytes], vec![given])?;
                 }
             }
             Cloned::Map => {
@@ -302,12 +325,18 @@ impl FuncCx<'_, '_> {
                     Ok(of) => of,
                     Err(what) => return Ok(Err(what)),
                 };
-                let copy = self.map_copied(lowered, &of, Operand::Copy(value.clone()))?;
-                self.b.assign(value, Rvalue::Use(copy))?;
+                let map = Operand::Copy(value.clone());
+                match ends {
+                    true => self.map_dropped(lowered, &of, map)?,
+                    false => {
+                        let copy = self.map_copied(lowered, &of, map)?;
+                        self.b.assign(value, Rvalue::Use(copy))?;
+                    }
+                }
             }
             Cloned::Fields(fields) => {
                 for (at, part) in fields {
-                    let glue = match self.glue(Glue::Clone, part)? {
+                    let glue = match self.glue(kind, part)? {
                         Ok(glue) => glue,
                         Err(what) => return Ok(Err(what)),
                     };
@@ -316,29 +345,23 @@ impl FuncCx<'_, '_> {
                     self.call_glue(glue, at)?;
                 }
             }
-            Cloned::Elements(count, of, part) => {
-                let glue = match self.glue(Glue::Clone, part)? {
-                    Ok(glue) => glue,
-                    Err(what) => return Ok(Err(what)),
-                };
-                if count > 0 {
+            Cloned::Elements(count, of, _) => {
+                if let (Some(glue), true) = (of_part, count > 0) {
                     let first = self.b.const_index(&value, 0)?;
                     let count = self.b.const_int(word, count)?;
                     self.each(first, count, of, glue)?;
                 }
             }
-            Cloned::Held(part) => {
-                let glue = match self.glue(Glue::Clone, part)? {
-                    Ok(glue) => glue,
-                    Err(what) => return Ok(Err(what)),
-                };
+            Cloned::Held(_) => {
                 let [held, done] = [(); 2].map(|()| self.b.new_block());
                 let set = Operand::Copy(self.b.field(&value, 1)?);
                 self.b.switch(set, vec![(0, done)], held)?;
                 self.b.switch_to(held);
-                let inside = self.b.field(&value, 0)?;
-                let at = self.record(inside)?;
-                self.call_glue(glue, at)?;
+                if let Some(glue) = of_part {
+                    let inside = self.b.field(&value, 0)?;
+                    let at = self.record(inside)?;
+                    self.call_glue(glue, at)?;
+                }
                 self.b.goto(done)?;
                 self.b.switch_to(done);
             }

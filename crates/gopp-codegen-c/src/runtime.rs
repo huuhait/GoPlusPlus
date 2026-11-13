@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 56] = [
+pub const FUNCS: [RuntimeFunc; 59] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -108,6 +108,12 @@ pub const FUNCS: [RuntimeFunc; 56] = [
         "const void *to, const void *from, uint64_t size",
     ),
     returns("_gopp_slice_clear", "const void *slice, uint64_t size"),
+    returns("_gopp_slice_free", "const void *slice"),
+    gives(
+        "uint64_t",
+        "_gopp_slice_move_into",
+        "const void *to, const void *from, uint64_t size, void (*drop)(uint8_t *value)",
+    ),
     returns(
         "_gopp_each",
         "void *first, uint64_t count, uint64_t size, void (*each)(uint8_t *value)",
@@ -164,6 +170,7 @@ pub const FUNCS: [RuntimeFunc; 56] = [
         "void *map, const void *shape, const void *key",
     ),
     returns("_gopp_map_clear", "void *map, const void *shape"),
+    returns("_gopp_map_drop", "void *map, const void *shape"),
     gives(
         "void *",
         "_gopp_map_copy",
@@ -305,16 +312,16 @@ pub fn header(layout: TargetLayout) -> String {
     out
 }
 
-const HEADER_NAME: &str = "gopp_rt.h";
+pub(crate) const HEADER_NAME: &str = "gopp_rt.h";
 
 /// A file of the runtime with its text, which `gopp` carries.
 type Source = (&'static str, &'static str);
 
-const INTERNAL: Source = ("internal.h", include_str!("../../../runtime/internal.h"));
+pub(crate) const INTERNAL: Source = ("internal.h", include_str!("../../../runtime/internal.h"));
 
 /// The sources of the runtime for a system: every target has all but
 /// the last.
-fn sources(os: Os) -> [Source; 7] {
+pub(crate) fn sources(os: Os) -> [Source; 7] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",

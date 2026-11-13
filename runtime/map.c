@@ -27,6 +27,9 @@ typedef struct gopp_mapinfo {
   // their type.
   uint64_t (*hash)(uint8_t *key, uint64_t seed);
   bool (*eq)(uint8_t *a, uint8_t *b);
+  // Ends the value at the address; null for a value that holds nothing
+  // that is freed.
+  void (*drop_value)(uint8_t *value);
 } gopp_mapinfo;
 
 enum { KEY_BYTES = 0, KEY_STRING = 1, KEY_FLOAT32 = 2, KEY_FLOAT64 = 3, KEY_GLUE = 4 };
@@ -362,10 +365,37 @@ void _gopp_map_delete(void *map, const void *shape, const void *key) {
   // A search for another key may pass this group only if it is full:
   // then the slot stays marked.
   bool passed = !empties(of->control[group]);
+  if (info->drop_value) {
+    info->drop_value(slot + info->value_offset);
+  }
   set_control(of, group, index % SLOTS, passed ? DELETED : EMPTY);
   of->growth_left += !passed;
   of->deleted += passed;
   of->count--;
+}
+
+// Ends every value of the map, if values hold what is freed.
+static void drop_values(const gopp_map *map, const gopp_mapinfo *info) {
+  if (!info->drop_value) {
+    return;
+  }
+  for (uint64_t group = 0; group < map->groups; group++) {
+    for (uint64_t full = ~map->control[group] & HIGH_BITS; full; full &= full - 1) {
+      info->drop_value(slot_of(map, info, group, first_of(full)) + info->value_offset);
+    }
+  }
+}
+
+// The map ends with its owner: its values, its table and itself.
+void _gopp_map_drop(void *map, const void *shape) {
+  gopp_map *of = map;
+  if (!of) {
+    return;
+  }
+  drop_values(of, shape);
+  free(of->control);
+  free(of->slots);
+  free(of);
 }
 
 void _gopp_map_clear(void *map, const void *shape) {
@@ -377,6 +407,7 @@ void _gopp_map_clear(void *map, const void *shape) {
   if (of->iterators > 0) {
     _gopp_fail("map clear during iteration");
   }
+  drop_values(of, info);
   for (uint64_t group = 0; group < of->groups; group++) {
     of->control[group] = ALL_EMPTY;
   }

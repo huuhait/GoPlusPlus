@@ -320,7 +320,8 @@ impl FuncCx<'_, '_> {
                             true => Part::InPlace,
                             false => Part::Value,
                         };
-                        self.slice_part(expr, ty, *x, bounds, part)
+                        let made = self.slice_part(expr, ty, *x, bounds, part)?;
+                        self.fresh(expr, ty, made)
                     }
                     _ => self.substring(expr, ty, *x, bounds),
                 }
@@ -1076,7 +1077,7 @@ impl FuncCx<'_, '_> {
             let converts = self.body.types.contains_key(&expr);
             return match (self.builtin_of(callee), &args[..]) {
                 (Some(called), _) => self.builtin(expr, ty, called, args, *spread),
-                (None, [value]) if converts => self.convert(span, *value, ty),
+                (None, [value]) if converts => self.convert(expr, *value, ty),
                 _ => Ok(self.placeholder(span, ty, "a call of what is not known")),
             };
         }
@@ -1119,6 +1120,7 @@ impl FuncCx<'_, '_> {
             let value = self.receiver(span, x, path, wanted)?;
             // A receiver by value is the method's own, like an argument.
             let value = self.given(x, wanted, Rvalue::Use(value))?;
+            let value = self.taken(x, wanted, value)?;
             let mut value = self.operand_of(value)?;
             if args.iter().any(|&arg| self.has_effects(arg)) {
                 value = self.stable(value)?;
@@ -1130,7 +1132,9 @@ impl FuncCx<'_, '_> {
             .iter()
             .map(|&param| Some(param))
             .collect();
-        for value in self.values(args, &wanted)? {
+        // The function owns its parameters: each argument is a value of
+        // its own.
+        for value in self.owned_values(args, &wanted)? {
             given.push(self.operand_of(value)?);
         }
         // A place for each view that a result may be: one of this
@@ -1149,6 +1153,7 @@ impl FuncCx<'_, '_> {
             };
             given.push(Operand::Copy(Place::local(place)));
         }
+        self.empty_moved()?;
         let result = self.b.temp(called.ret);
         let next = self.b.new_block();
         let kind = ConstantKind::Func(called.func);
@@ -1168,7 +1173,27 @@ impl FuncCx<'_, '_> {
         )?;
         self.b.switch_to(next);
         self.b.set_loc(around);
-        Ok(Rvalue::Use(Operand::Copy(Place::local(result))))
+        // What the function gives is the caller's own: each result that
+        // holds what is freed.
+        let result = Place::local(result);
+        let checked = self.body.types.get(&expr).map(|typed| typed.ty);
+        let several = checked.map(|checked| self.shared.types.get(checked));
+        match (several.as_deref(), self.kind(called.ret)) {
+            (Some(CheckedType::Tuple(checked)), Type::Tuple(parts))
+                if checked.len() == parts.len() =>
+            {
+                for (at, (&checked, &part)) in checked.iter().zip(parts.iter()).enumerate() {
+                    if !self.flat(part)
+                        && let Some(glue) = self.drop_glue(Some(checked), span)?
+                    {
+                        let part = self.b.field(&result, at as u32)?;
+                        self.own_temp(part, glue);
+                    }
+                }
+                Ok(Rvalue::Use(Operand::Copy(result)))
+            }
+            _ => self.fresh(expr, called.ret, Rvalue::Use(Operand::Copy(result))),
+        }
     }
 
     /// What is known of the function that the key names: the checker
@@ -1272,10 +1297,12 @@ impl FuncCx<'_, '_> {
         let span = self.tree.exprs[expr].span;
         match (called, args, self.kind(ty)) {
             (Predeclared::Make, [_, sizes @ ..], Type::Slice(of)) => {
-                return self.make_slice(ty, of, sizes);
+                let made = self.make_slice(ty, of, sizes)?;
+                return self.fresh(expr, ty, made);
             }
             (Predeclared::Make, [_, sizes @ ..], _) if self.is_map(ty) => {
-                return self.make_map(expr, ty, sizes);
+                let made = self.make_map(expr, ty, sizes)?;
+                return self.fresh(expr, ty, made);
             }
             (Predeclared::Delete, [map, key], _) if self.holds_map(*map) => {
                 self.map_delete(*map, *key)?;
@@ -1289,7 +1316,8 @@ impl FuncCx<'_, '_> {
                 return self.map_len(ty, *map);
             }
             (Predeclared::Append, _, Type::Slice(_)) => {
-                return self.append(span, ty, args, spread);
+                let grown = self.append(span, ty, args, spread)?;
+                return self.fresh(expr, ty, grown);
             }
             (Predeclared::CopyFunc, [_, _], _) => return self.copy_into(span, ty, args),
             (Predeclared::Clear, [of], _) if self.clear_slice(span, *of)? => {
@@ -1457,7 +1485,8 @@ impl FuncCx<'_, '_> {
     }
 
     /// `T(value)` for a type of GIR `to`.
-    fn convert(&mut self, span: SourceSpan, value: ExprId, to: TypeId) -> Built<Rvalue> {
+    fn convert(&mut self, expr: ExprId, value: ExprId, to: TypeId) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
         let mut from = self.ty_of(value);
         if from == TypeInterner::UNIT {
             from = to;
@@ -1475,10 +1504,12 @@ impl FuncCx<'_, '_> {
         let rune = self.b.types().int(32, true);
         let cast = match (self.kind(from), self.kind(to)) {
             (Type::String, Type::Slice(of)) if of == byte => {
-                return self.slice_of_text("_gopp_bytes_from_string", to, given);
+                let made = self.slice_of_text("_gopp_bytes_from_string", to, given)?;
+                return self.fresh(expr, to, made);
             }
             (Type::String, Type::Slice(of)) if of == rune => {
-                return self.slice_of_text("_gopp_runes_from_string", to, given);
+                let made = self.slice_of_text("_gopp_runes_from_string", to, given)?;
+                return self.fresh(expr, to, made);
             }
             (Type::Slice(of), Type::String) if of == byte => {
                 return self.text_of_slice("_gopp_string_from_bytes", to, given);
@@ -1521,7 +1552,13 @@ impl FuncCx<'_, '_> {
 
     // ---- literals
 
+    /// A literal: its parts are its own, and so is the value.
     fn composite(&mut self, expr: ExprId, ty: TypeId, elems: &[ExprId]) -> Built<Rvalue> {
+        let made = self.composite_of(expr, ty, elems)?;
+        self.fresh(expr, ty, made)
+    }
+
+    fn composite_of(&mut self, expr: ExprId, ty: TypeId, elems: &[ExprId]) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let value_of = |this: &Self, elem: ExprId| match this.tree.exprs[elem].kind {
             ExprKind::KeyValue { key, value } => (Some(key), value),
@@ -1564,7 +1601,7 @@ impl FuncCx<'_, '_> {
                 let wanted: Vec<_> = set.iter().map(|&(field, _)| Some(fields[field])).collect();
                 let mut parts: Vec<Operand> =
                     fields.iter().map(|&field| self.zero(field)).collect();
-                let values = self.values_each(&exprs, &wanted)?;
+                let values = self.owned_each(&exprs, &wanted)?;
                 for (&(field, _), value) in set.iter().zip(values) {
                     parts[field] = value;
                 }
@@ -1586,7 +1623,7 @@ impl FuncCx<'_, '_> {
                 }
                 let exprs: Vec<ExprId> = set.iter().map(|&(_, value)| value).collect();
                 let wanted: Vec<_> = set.iter().map(|_| Some(of)).collect();
-                let values = self.values_each(&exprs, &wanted)?;
+                let values = self.owned_each(&exprs, &wanted)?;
                 if len <= ARRAY_AT_ONCE {
                     let mut parts: Vec<Operand> = (0..len).map(|_| self.zero(of)).collect();
                     for (&(at, _), value) in set.iter().zip(values) {
@@ -1616,7 +1653,7 @@ impl FuncCx<'_, '_> {
                 }
                 let exprs: Vec<ExprId> = set.iter().map(|&(_, value)| value).collect();
                 let wanted: Vec<_> = set.iter().map(|_| Some(of)).collect();
-                let values = self.values_each(&exprs, &wanted)?;
+                let values = self.owned_each(&exprs, &wanted)?;
                 let set = set.iter().map(|&(at, _)| at).zip(values).collect();
                 self.slice_literal(ty, of, count, set)
             }

@@ -13,6 +13,7 @@ use lasso::ThreadedRodeo;
 use rayon::prelude::*;
 
 mod calls;
+mod leaks;
 
 use super::{EmitError, EmitOptions, Entry, emit_c23, emit_counted};
 use crate::driver::{ClangDriver, DriverError, OptLevel, Output};
