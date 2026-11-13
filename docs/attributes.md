@@ -2,7 +2,7 @@
 
 Every `@` name in Go++ on one page. The rules are in the spec; this page only says what each one does and where it goes. The full table is [MAC-8](spec/13-macros-surface.md#132-rules).
 
-Where to write them: before a declaration on the line above (`@Pinned` then `type Lock struct {…}`), and on a struct field after the field's type (`ID int @Required`), before any Go tag ([MAC-12](spec/13-macros-surface.md#132-rules)).
+Where to write them: before a declaration on the line above (`@Pinned` then `type Lock struct {…}`), and on a struct field after the field's type (`ID int @Required`), before any tag ([MAC-12](spec/13-macros-surface.md#132-rules)).
 
 ```go
 type User struct {

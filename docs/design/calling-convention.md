@@ -5,7 +5,7 @@ Go++ calling Go++ uses an internal register-rich convention decided in `crates/g
 ## Three decisions
 
 1. **How a parameter is handed over** (`pass_of`, GIR level, determined from the signature alone). It sets the GIR parameter type (`param_type`, shared by declarations, method signatures, and itab slots), so a call site and a declaration cannot disagree, and any `Func` pointer type carries the exact parameter types. Whether the copy of a by-value argument is made or skipped ([ADR-0041](../adr/0041-values-are-copied.md) rule 4) never changes the parameter type or the registers used.
-2. **Which convention a call uses** (GIR level, carried on `Func` types as `CallConv::Go` or `CallConv::C`, printed `fn "C"(...)` for C). Every function's `CC` matches its signature (`V075`). Direct calls read the callee's convention; indirect calls read the function-pointer type's convention.
+2. **Which convention a call uses** (GIR level, carried on `Func` types as `CallConv::Gopp` or `CallConv::C`, printed `fn "C"(...)` for C). Every function's `CC` matches its signature (`V075`). Direct calls read the callee's convention; indirect calls read the function-pointer type's convention.
 3. **How values travel in registers or memory** (`crates/gopp-codegen-c` -> Clang 23 lowering via `__attribute__((swiftcall))` and `swift_context`).
 
 ### 1. Pass modes (`gopp-gir`, PAR-10, [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md))
@@ -30,11 +30,11 @@ Go++ calling Go++ uses an internal register-rich convention decided in `crates/g
 
 | Callee | Convention |
 |---|---|
-| Go++ function, method, itab thunk (`_GPTI...`), or pointer of a Go++ `Func` type | `CallConv::Go` (`__attribute__((swiftcall))` on `amd64`/`arm64`; C fallback on `riscv64`/`wasm32`) |
+| Go++ function, method, itab thunk (`_GPTI...`), or pointer of a Go++ `Func` type | `CallConv::Gopp` (`__attribute__((swiftcall))` on `amd64`/`arm64`; C fallback on `riscv64`/`wasm32`) |
 | `@Extern("C")` function, libc helper, `@Export("C")` thunk, `_GPTC...` callback wrapper, program entry `main`, or the glue of a type (`_GPTc...`: the runtime calls it) | `CallConv::C` (standard C23 prototype, [c-abi.md](c-abi.md)) |
 | Indirect C `Func` pointer (`fn "C"`, including [ADR-0029](../adr/0029-slice-and-map-allocator-word.md) allocator table entries) | `CallConv::C` (`V076`: scalars only until `P07.08`) |
 
-After GIR lowering, `check_calls` verifies that every direct call matches its callee's `CallConv` and that every function stored in static data (itabs, method tables, descriptors) carries `CallConv::Go`.
+After GIR lowering, `check_calls` verifies that every direct call matches its callee's `CallConv` and that every function stored in static data (itabs, method tables, descriptors) carries `CallConv::Gopp`.
 
 ### 3. Register transport (`gopp-codegen-c` -> Clang 23, [ADR-0030](../adr/0030-amd64-calling-convention.md))
 
@@ -67,18 +67,18 @@ Because `(int, error)` is 3 integer words (`int64_t` + 2-word `gopp_iface`), it 
 
 ## C-ABI thunks
 
-A C-ABI thunk is a `CallConv::C` function emitted by `gopp-codegen-c` whose body forwards to a `CallConv::Go` function:
+A C-ABI thunk is a `CallConv::C` function emitted by `gopp-codegen-c` whose body forwards to a `CallConv::Gopp` function:
 
 - **`@Export("C") func f(...)`:** Exports an unmangled C symbol `f` with a standard C prototype that calls the mangled Go++ function (`_GP...`), so Go++ callers still use `swiftcall` while C callers use the C ABI. The exported C name must not start with `_GP` ([appendix A.8](../spec/appendix-a-symbol-names.md), `SYM-4`, `E0445`; `@Extern` reserved prefix is `E0442`), must name `"C"`, must have a body, cannot combine with `@Extern`, cannot be `main`, and must use valid C types (`V067`).
 - **Callbacks (`_GPTC...`):** Passing a top-level Go++ function to an `@Extern("C")` callback parameter (`fn "C"`) emits one `static inline` / weak ODR wrapper `_GPTC<mangled>` per target function so every translation unit hands C a valid C-ABI function pointer.
-- **Verifier invariants:** `V067` (all `CallConv::C` declarations, thunks, and callback types use C-compatible types), `V075` (every function's `CC` equals its signature's `CC`), `V076` (indirect `fn "C"` calls pass scalars only), `V078` (`hasEnv` functions carry `CallConv::Go` and `*u8` env slot `0`).
+- **Verifier invariants:** `V067` (all `CallConv::C` declarations, thunks, and callback types use C-compatible types), `V075` (every function's `CC` equals its signature's `CC`), `V076` (indirect `fn "C"` calls pass scalars only), `V078` (`hasEnv` functions carry `CallConv::Gopp` and `*u8` env slot `0`).
 
 ## Integration across features
 
 | Feature | How it plugs in |
 |---|---|
-| Interface itab calls (`P04.06`) | A table of methods holds one `CallConv::Go` function for each method of the interface, `_GPTI...` in the table of a type and `_GPTp...` in the table of the pointers to it. Its first parameter is the address of the second word of the interface value, then the parameters of the method. It finds the value there (the word itself for a value that is in the word, what the word points to for a box or a pointer that is held) and calls the method with the address of the value or with the value, as the method takes its receiver; a method that takes its receiver by value and does more than read it gets a copy. |
-| Closures & func values (`P04.07`) | `gopp_func` is `{code, env}`; `code` is `__attribute__((swiftcall))` taking `__attribute__((swift_context)) void *_gopp_env` (`r13`/`x20`). `@Extern("C")` functions used as Go++ `func` values get a `_GPTE...` Go-convention adapter that calls C. |
+| Interface itab calls (`P04.06`) | A table of methods holds one `CallConv::Gopp` function for each method of the interface, `_GPTI...` in the table of a type and `_GPTp...` in the table of the pointers to it. Its first parameter is the address of the second word of the interface value, then the parameters of the method. It finds the value there (the word itself for a value that is in the word, what the word points to for a box or a pointer that is held) and calls the method with the address of the value or with the value, as the method takes its receiver; a method that takes its receiver by value and does more than read it gets a copy. |
+| Closures & func values (`P04.07`) | `gopp_func` is `{code, env}`; `code` is `__attribute__((swiftcall))` taking `__attribute__((swift_context)) void *_gopp_env` (`r13`/`x20`). `@Extern("C")` functions used as Go++ `func` values get a `_GPTE...` adapter of the Go++ convention that calls C. |
 | Monomorphized generics (`P04.08`) | `pass_of` and `pass_of_recv` run on substituted instance types (`T = string` -> 3 scalars, `T = int` -> 1 scalar, `T = map[string]int` -> 1 pointer, `T = Unique[Node]` -> 1 pointer; each is the callee's own copy unless the copy is skipped; a `T` that cannot be copied is moved in). |
 | Fallible `!` calls (`P04.10`) | `(T, error)` returns directly in `swiftcall` registers when `<= 4` words; `!` tests `res.err.itab != NULL` directly. |
 | Drops & unwinding (`P04.09`, `P04.26`) | Callee drops `OWN-C3` value parameters (and any `OWN-C2` parameter it owns) via `__attribute__((cleanup(...)))` / GIR `Drop` paths; `swiftcall` preserves standard C callee-saved unwind registers. |

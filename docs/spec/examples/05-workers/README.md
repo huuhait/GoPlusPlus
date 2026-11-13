@@ -1,6 +1,6 @@
 # 05 workers
 
-Three worker goroutines read jobs from a channel and send results back. The results are sorted by job ID, so the output is deterministic. Run: `go run main.go`.
+Three worker goroutines read jobs from a channel and send results back. The results are sorted by job ID, so the output is deterministic.
 
 ## Spec rules exercised
 
@@ -11,8 +11,3 @@ Three worker goroutines read jobs from a channel and send results back. The resu
 - [CLO-2, CLO-3](../../11-closures.md): the two `go func(){...}()` closures escape, so `wg`, `jobs` and `results` live in shared cells.
 - [OWN-C2, OWN-R4](../../04-ownership.md): `job.Text` and `r` are on their last uses in the loop bodies, so `Result{ID: job.ID, Text: job.Text, Sum: sum}` and `all = append(all, r)` hand the values over with no copy and zero retain/release; `append` grows `all` in place.
 - [PAR-1](../../05-parameters.md): the sort callback only reads its `Result` parameters and `work` only reads its `chan` parameters, so the arguments are passed as they are (no copy, 0 retain/release). `slices.SortFunc` changes the slice it is given, so it takes a pointer: `slices.SortFunc(&all, ...)`.
-
-## Differences from the Go version
-
-- `main.gopp` sorts with `slices.SortFunc(&all, ...)`: a by-value slice parameter is the function's own copy, so a function that changes the caller's slice takes a pointer. `main.go` passes `all`.
-- The rest is identical Go code (only comments differ). Output is identical.

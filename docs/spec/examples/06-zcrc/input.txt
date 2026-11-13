@@ -1,2 +1,2 @@
-zlib computes the same CRC-32 as Go.
+zlib computes the CRC-32 of these two lines.
 The check value of "123456789" is cbf43926.

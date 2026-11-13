@@ -6,7 +6,7 @@ This document specifies what happens between a checked package (`gopp-sema`) and
 
 Optimization settings change compile time, binary size, and run-time speed — never what a valid program computes. Standard output, exit status, panic messages, and floating-point results are identical across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on every target:
 
-- **Zero C undefined behavior:** `gopp-codegen-c` compiles all generated GNU C23 with `-std=gnu23 -fwrapv -fno-strict-aliasing -ffp-contract=off -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free`, and lowers Go shift semantics (`count >= width ? 0 : ...` / sign-fill), `MinInt / -1`, `MinInt % -1`, and saturating float-to-integer casts explicitly in C23 helpers.
+- **Zero C undefined behavior:** `gopp-codegen-c` compiles all generated GNU C23 with `-std=gnu23 -fwrapv -fno-strict-aliasing -ffp-contract=off -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free`, and lowers the shifts (`count >= width ? 0 : ...` / sign-fill), `MinInt / -1`, `MinInt % -1`, and saturating float-to-integer casts explicitly in C23 helpers.
 - **Deterministic FMA contraction:** Floating-point multiply-add fusion (`__builtin_fma` / `__builtin_fmaf`) is decided once by `gopp-codegen-c` on `arm64` only, while `-ffp-contract=off` prevents Clang's optimizer from fusing additional operations at higher `-O` levels (section 4).
 - **Allocation observability:** `-fno-builtin-malloc` (and matching `calloc`/`realloc`/`free` flags) prevents Clang from eliding failing oversize allocations (`make([]byte, 1<<48-1)`) above `-opt=0`.
 - **Verified middle-IR plugins:** External `-fpass-plugin=<path>` passes run only after mandatory GIR safety checks and are followed immediately by `gopp_gir::verify_module` (`V001`–`V085`, [gir.md](gir.md) section 8.1).
@@ -48,14 +48,14 @@ Each stage records wall and CPU timing in `PipelineTimes` (`-pipeline-times` pri
 
 `arm64` is not a target of version 1 ([ADR-0037](../adr/0037-v1-targets.md)); this section applies when that target is taken up.
 
-Go's `gc` compiler fuses floating-point `x * y` with a consuming `+` or `-` on `arm64` and never on `amd64`. Go++ matches this rule identically at every `-opt` level:
+A floating-point `x * y` is fused with the `+` or `-` that consumes it on `arm64` and never on `amd64`, the same at every `-opt` level:
 
-- **Single fusion point:** `gopp-codegen-c` runs `fuse_fma` on `arm64` targets only, emitting `__builtin_fma` (`double`) and `__builtin_fmaf` (`float`) where `gc`'s SSA rules fuse `FADDD a (FMULD x y) => FMADDD`, while passing `-ffp-contract=off` globally to `clang` so Clang never fuses anything else (including across `Statement::Boundary` or explicit conversions like `float64(x * y) + z`).
+- **Single fusion point:** `gopp-codegen-c` runs `fuse_fma` on `arm64` targets only, emitting `__builtin_fma` (`double`) and `__builtin_fmaf` (`float`) where a product is added to or subtracted from a value, while passing `-ffp-contract=off` globally to `clang` so Clang never fuses anything else (including across `Statement::Boundary` or explicit conversions like `float64(x * y) + z`).
 - **Dominator-tree + SCC reaching-product matcher (no SSA construction required):**
   - A *product* is a temporary read once or a non-address-taken local/parameter/result written by a float `*`, a negation of a product, or a non-`Boundary` copy of a product (`petgraph` `0.8.3` computes Lengauer-Tarjan dominators and topological SCC numbers).
   - Blocks are walked in dominator-tree preorder with a scoped undo log so every read sees the dominating product write regardless of physical block order.
-  - Intervening writes on non-dominating CFG paths that reach the read without re-entering the product block (which would form a $\phi$ in `gc`) are detected via binary search on topological SCC numbers plus a bounded region walk (`8` steps per block/edge + `64`, linear overall).
-  - Constant factors mirror `gc`'s generic rules (`x * 2.0 => x + x`, `x * 1.0 => x`, `x * -1.0 => -x`, `x / 2^k => x * 2^-k`, non-NaN constant folding).
+  - Intervening writes on non-dominating CFG paths that reach the read without re-entering the product block (which would form a $\phi$ in SSA form) are detected via binary search on topological SCC numbers plus a bounded region walk (`8` steps per block/edge + `64`, linear overall).
+  - Constant factors are rewritten first (`x * 2.0 => x + x`, `x * 1.0 => x`, `x * -1.0 => -x`, `x / 2^k => x * 2^-k`, non-NaN constant folding).
 - **Negated-FMA `-0.0` barrier on `arm64`:** On AArch64, negating `fma(a, b, c)` must produce `-0.0` when `fma(a, b, c)` evaluates to `+0.0`, whereas hardware `fnmadd` (`-(a*b) - c`) yields `+0.0`. Whenever `gopp-codegen-c` emits a negation of a fused `__builtin_fma` / `__builtin_fmaf` on `arm64`, it pins the intermediate result through an inline assembly association barrier (`__asm__("" : "+w"(_fma_tmp))`) before `-_fma_tmp`, preventing Clang's AArch64 instruction selector from folding `-(__builtin_fma(...))` into `fnmadd` at any `-O` level.
 
 ## 5. `-opt=0` with DWARF debug info

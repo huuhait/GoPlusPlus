@@ -79,6 +79,6 @@ func main() {
 		port := strconv.Atoi!(v) // Atoi only reads v: 0 retains
 		fmt.Println("port + 1 =", port+1)
 	}
-	_, err := parse("name=ok\nbroken line\n") // the Go form still works
+	_, err := parse("name=ok\nbroken line\n") // the plain call still works
 	fmt.Println("error:", err)
 }

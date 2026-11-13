@@ -51,7 +51,7 @@ func (p *Parser) peek() byte {
 	return p.src[p.pos]
 }
 
-// fail builds an error value. Its last result is `error`, so it is a plain Go-style function.
+// fail builds an error value. Its last result is `error`, so it is a plain function that returns its error.
 func (p *Parser) fail(msg string) error {
 	return fmt.Errorf("col %d: %s", p.pos+1, msg)
 }
@@ -181,7 +181,7 @@ func main() {
 	exprs := []string{"1 + 2 * 3", "(1 + 2) * 3", "10 / (5 - 5)", "2 * (3 + 4) - -5", "7 +", "8 $ 2", "100 / 7 / 2"}
 	for _, src := range exprs {
 		arena.Reset()               // frees the previous tree at once
-		v, err := calc(&arena, src) // the Go form of a `!` function
+		v, err := calc(&arena, src) // the plain call of a `!` function
 		if err != nil {
 			fmt.Printf("%-18s error: %v\n", src, err)
 			continue

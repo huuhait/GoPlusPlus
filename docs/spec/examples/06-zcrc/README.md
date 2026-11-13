@@ -1,6 +1,6 @@
 # 06 zcrc
 
-Computes a CRC-32 of `input.txt` with zlib, whole and in chunks. Run: `go run main.go` (the Go version uses `hash/crc32`, the same IEEE CRC-32).
+Computes a CRC-32 of `input.txt` with zlib, whole and in chunks.
 
 `gopp.mod` for the Go++ version (hashes elided; see the plan overview):
 
@@ -23,9 +23,3 @@ cdep github.com/madler/zlib v1.3.1 (
 - [OWN-S2](../../04-ownership.md#44-slicing-and-shared-buffers-d16-adr-0032): `&data[i:j]` is an $O(1)$ view of part of `data`, a `*[]byte` that copies no bytes (plain `data[i:j]` is a new slice with a copy of them). `len(chunk)` needs no star; `*chunk` is the whole slice value passed to `crc32`.
 - [OWN-R2](../../04-ownership.md): the `[]byte("123456789")` temporary lives to the end of the statement, so the pointer stays valid during the call.
 - [ERR-6](../../09-errors-and-panics.md): `os.ReadFile!` panics in `main` on error.
-
-## Differences from the Go version
-
-- Go uses `crc32.ChecksumIEEE` and `crc32.Update`; Go++ calls zlib's C `crc32` directly.
-- Output is identical (both are IEEE CRC-32).
-- Not checked here: the exact Go++ type of `zlib.crc32`'s result (written `uint64` as in P07 D7.4: `uLong` on Linux).

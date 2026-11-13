@@ -128,4 +128,4 @@ Go code changes meaning in two places without a compile error ([ADR-0041](../adr
 
 ## 1.8 Samples
 
-Ten sample programs drive this spec (D1.16). They live in [examples/](examples/). Each has a `main.gopp`, a Go counterpart `main.go` and an `expected_output.txt`.
+Ten sample programs drive this spec (D1.16). They live in [examples/](examples/). Each has a `main.gopp` and an `expected_output.txt`.
