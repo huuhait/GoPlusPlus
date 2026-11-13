@@ -310,6 +310,7 @@ codes! {
     446 InstOption "err_inst_option",
     450 InlineMarksConflict "err_inline_marks_conflict",
     451 UseAfterMove "err_use_after_move",
+    452 OwnImplicitClone "err_own_implicit_clone",
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",
     456 NoteWant "note_want",
@@ -362,6 +363,7 @@ codes! {
     505 GenericNoBody "err_generic_no_body",
     506 NoteMovedHere "note_moved_here",
     507 NoteOwnFixPointer "note_own_fix_pointer",
+    508 NoteCapturedHere "note_captured_here",
 }
 
 impl Code {

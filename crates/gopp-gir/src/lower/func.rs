@@ -1441,6 +1441,36 @@ impl FuncCx<'_, '_> {
         }
     }
 
+    /// Whether a value of the type cannot be copied. The program needs
+    /// a copy of `what` here that it does not write: that is said once
+    /// (`E0452`), with the part of the type that has no copy, and with
+    /// the note, if there is one.
+    pub fn uncopied(
+        &mut self,
+        span: SourceSpan,
+        ty: CheckedTypeId,
+        what: &str,
+        note: Option<(SourceSpan, String)>,
+    ) -> bool {
+        let shared = self.shared;
+        let Some((part, why)) = shared.types.not_copied(ty, true) else {
+            return false;
+        };
+        if self.reported.insert((span.lo, span.hi)) {
+            let part = match shared.names.get(&shared.package.name) {
+                Some(package) => shared.types.display_in(part, shared.names, package),
+                None => shared.types.display(part, shared.names),
+            };
+            let message = format!("cannot copy {what}: {}", why.text(&part, true));
+            let mut diagnostic = Diagnostic::new(Code::OwnImplicitClone, span, message);
+            if let Some((at, note)) = note {
+                diagnostic = diagnostic.with_note(Code::NoteCapturedHere, Some(at), note);
+            }
+            self.memo.diagnostics.push(diagnostic);
+        }
+        true
+    }
+
     // ---- types
 
     /// The type of GIR for a type of the checker; the empty type, with
@@ -1973,6 +2003,12 @@ impl FuncCx<'_, '_> {
     /// variables that it uses: its environment is in the frame.
     pub fn framed(&self, literal: ExprId) -> bool {
         self.facts.framed.contains(&literal)
+    }
+
+    /// The first function literal that is not framed and uses the
+    /// local.
+    pub fn later(&self, local: CheckedLocalId) -> Option<ExprId> {
+        self.facts.later.get(&local).copied()
     }
 
     /// Whether a function literal that is not framed uses the local,

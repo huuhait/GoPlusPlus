@@ -1,0 +1,85 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func open(fd int) File {
+	opened++
+	return File{fd: fd}
+}
+
+type Copied struct{ fd int }
+
+func (c *Copied) drop() {
+	if c.fd != 0 {
+		closed++
+	}
+}
+
+func (c Copied) Clone() Copied {
+	opened++
+	return Copied{fd: c.fd + 100}
+}
+
+func first() Copied {
+	opened++
+	return Copied{fd: 1}
+}
+
+// Each pass has its own copy of a variable that a literal keeps.
+func kept() int {
+	var later []func() int
+	i := 0
+	for c := first(); i < 3; i++ {
+		later = append(later, func() int { return c.fd })
+		c.fd++
+	}
+	sum := 0
+	for _, f := range later {
+		sum += f()
+	}
+	return sum
+}
+
+// A literal that is called where it is written needs no copy.
+func called() int {
+	sum, i := 0, 0
+	for f := open(1); i < 3; i++ {
+		sum += func() int { return f.fd + i }()
+	}
+	return sum
+}
+
+// A variable of the body is new in each pass.
+func inner() int {
+	var later []func() int
+	for i := range 3 {
+		f := open(i + 1)
+		later = append(later, func() int { return f.fd })
+	}
+	sum := 0
+	for _, f := range later {
+		sum += f()
+	}
+	return sum
+}
+
+func exchanged() int {
+	a, b, c := open(1), open(2), open(3)
+	a, b, c = b, c, a
+	xs := []File{open(4), open(5)}
+	xs[0], xs[1] = xs[1], xs[0]
+	return a.fd*100 + b.fd*10 + c.fd + xs[0].fd*1000
+}
+
+func main() {
+	println(kept(), called(), inner(), exchanged())
+	println(opened, closed)
+}

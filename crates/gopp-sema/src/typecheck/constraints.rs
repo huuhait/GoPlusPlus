@@ -370,19 +370,7 @@ impl<'a> Checker<'a> {
         why: crate::types::NotCopied,
         at_all: bool,
     ) -> String {
-        use crate::types::NotCopied;
-        let part = self.type_string(part);
-        let asked = match at_all {
-            true => "Clone",
-            false => "Copy",
-        };
-        match why {
-            NotCopied::Drop if at_all => format!("{part} has a drop method and no Clone() {part}"),
-            NotCopied::Drop | NotCopied::CopyMethod => format!("{part} has a drop method"),
-            NotCopied::Pinned => format!("{part} is @Pinned"),
-            NotCopied::Param => format!("{part} is not constrained by {asked}"),
-            NotCopied::OwnRule => format!("a copy of {part} is more than its bytes"),
-        }
+        why.text(&self.type_string(part), at_all)
     }
 
     /// Holds the type arguments of an instance to the constraints of the

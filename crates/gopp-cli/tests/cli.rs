@@ -838,6 +838,24 @@ fn build_says_what_stops_it() {
         unsupported.contains("not supported yet: a go statement"),
         "{unsupported}"
     );
+    // A copy that is not written, of a value that has none.
+    let kept = "package main\n\ntype F struct{ fd int }\n\nfunc (f *F) drop() {}\n\nfunc main() \
+                {\n\tvar fs []func() int\n\ti := 0\n\tfor f := (F{fd: 1}); i < 3; i++ {\n\t\tfs = \
+                append(fs, func() int { return f.fd })\n\t}\n\tprintln(len(fs))\n}\n";
+    let kept = write_source(&dir, "kept.gopp", kept);
+    let uncopied = failed(gopp().args(["build", "-emit=c"]).arg(&kept));
+    assert!(
+        uncopied.contains(
+            "kept.gopp:10:6: error[E0452]: cannot copy f for the next pass of the loop: F has a \
+             drop method and no Clone() F"
+        ),
+        "{uncopied}"
+    );
+    assert!(
+        uncopied.contains("this function literal uses f and may run after the pass"),
+        "{uncopied}"
+    );
+    assert!(!uncopied.contains("E0439"), "{uncopied}");
     fs::create_dir(dir.path().join("p")).unwrap();
     write_source(&dir, "p/p.gopp", "package p\n");
     let two = failed(

@@ -276,6 +276,17 @@ impl FuncCx<'_, '_> {
         };
         let declared = &self.body.locals[local.0 as usize];
         let (checked, span) = (declared.ty, declared.span);
+        // The copy is one that the type must have: it is refused at the
+        // loop, with the first literal that may run after the pass.
+        let name = self.shared.names.resolve(&declared.name);
+        let note = self.later(local).map(|literal| {
+            let note = format!("this function literal uses {name} and may run after the pass");
+            (self.tree.exprs[literal].span, note)
+        });
+        let what = format!("{name} for the next pass of the loop");
+        if self.uncopied(span, checked, &what, note) {
+            return Ok(());
+        }
         let of = self.lower(checked, span);
         let drop = match self.flat(of) {
             true => None,

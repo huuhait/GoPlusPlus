@@ -114,6 +114,20 @@ impl FuncCx<'_, '_> {
         let given: Vec<ExprId> = (rhs.iter())
             .map(|&value| Shared::unparen(self.tree, value))
             .collect();
+        // A copy for each place is one that the types must have.
+        if !as_they_are {
+            let what = match places {
+                true => "this value for an exchange of places that may be one place",
+                false => "this value for an exchange with an entry of a map",
+            };
+            for &value in rhs {
+                let span = self.tree.exprs[value].span;
+                let ty = self.body.types.get(&value).map(|typed| typed.ty);
+                if ty.is_some_and(|ty| self.uncopied(span, ty, what, None)) {
+                    return Ok(());
+                }
+            }
+        }
         // The marks of the checker are set aside while the values are
         // read: nothing is moved out of a place here.
         let aside = match as_they_are {

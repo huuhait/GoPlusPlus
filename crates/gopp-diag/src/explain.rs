@@ -534,6 +534,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func f(xs []int) {\n\tkeep(move(xs))\n\tprintln(len(xs)) // error\n\txs = \
              nil\n\tprintln(len(xs)) // ok\n}",
         ),
+        OwnImplicitClone => (
+            "The program needs a copy that is not written, of a value whose type cannot be \
+             copied. A variable of a `for` loop with three clauses that a function literal \
+             uses, where the literal may run after the pass, is copied for each next pass, so \
+             that every pass has its own. And three or more places that exchange their values \
+             each get a copy if two of them may be one place.",
+            "Give the type a `Clone()` method. Or, in a loop, declare the variable in the body \
+             of the loop; in an exchange, exchange two places at a time.",
+            "for f := open(); i < 3; i++ {\n\tlater = append(later, func() { use(&f) }) // \
+             error: File has no Clone()\n}\nfor ; i < 3; i++ {\n\tf := open()\n\tlater = \
+             append(later, func() { use(&f) }) // ok\n}",
+        ),
         OwnStarOnLeft => (
             "In a .gopp file a pointer is written through without a star: assigning a `T` to a \
              `*T` variable changes what it points to.",

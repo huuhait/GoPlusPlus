@@ -41,6 +41,24 @@ pub enum NotCopied {
     OwnRule,
 }
 
+impl NotCopied {
+    /// Why the type that is written `part` is not copied by its bytes,
+    /// or not at all if `at_all`, as a message says it.
+    pub fn text(self, part: &str, at_all: bool) -> String {
+        let asked = match at_all {
+            true => "Clone",
+            false => "Copy",
+        };
+        match self {
+            NotCopied::Drop if at_all => format!("{part} has a drop method and no Clone() {part}"),
+            NotCopied::Drop | NotCopied::CopyMethod => format!("{part} has a drop method"),
+            NotCopied::Pinned => format!("{part} is @Pinned"),
+            NotCopied::Param => format!("{part} is not constrained by {asked}"),
+            NotCopied::OwnRule => format!("a copy of {part} is more than its bytes"),
+        }
+    }
+}
+
 /// What a copy of a value is (OWN-R6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyRule {

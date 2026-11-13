@@ -1147,6 +1147,97 @@ func main() {
 }
 
 #[test]
+fn a_copy_that_is_not_written_needs_a_type_that_is_copied() {
+    let types = "package main
+
+type F struct{ fd int }
+
+func (f *F) drop() {}
+
+type C struct{ fd int }
+
+func (c *C) drop() {}
+
+func (c C) Clone() C { return C{fd: c.fd} }
+
+type Pair struct {
+	name string
+	f    F
+}
+";
+    let lowered = |body: &str| {
+        let text = format!(
+            "{types}\nfunc run(i, j, k int) {{\n{body}}}\n\nfunc main() {{ run(0, 1, 2) }}\n"
+        );
+        lowered_with(&[("a.gopp", &text)], usize::MAX).1
+    };
+    // A variable of a loop that a literal which may run later uses is
+    // copied for each next pass.
+    let kept = "\tvar later []func() int
+	for f := (F{fd: 1}); i < 3; i++ {
+		later = append(later, func() int { return f.fd })
+	}
+";
+    assert_eq!(
+        lowered(kept),
+        [
+            "a.gopp:20:6: cannot copy f for the next pass of the loop: F has a drop method and no \
+          Clone() F"
+        ]
+    );
+    // A deferred literal runs after the pass too, and a part of the
+    // type that cannot be copied is named.
+    let deferred = "\tfor p := (Pair{name: \"a\"}); i < 3; i++ {
+		defer func() { println(p.name) }()
+	}
+";
+    assert_eq!(
+        lowered(deferred),
+        [
+            "a.gopp:19:6: cannot copy p for the next pass of the loop: F has a drop method and no \
+          Clone() F"
+        ]
+    );
+    // Three places of which two may be one get a copy each.
+    let exchanged = "\txs := []F{{fd: 1}, {fd: 2}, {fd: 3}}
+	xs[i], xs[j], xs[k] = xs[j], xs[k], xs[i]
+";
+    assert_eq!(
+        lowered(exchanged),
+        [
+            "a.gopp:20:24: cannot copy this value for an exchange of places that may be one place: \
+          F has a drop method and no Clone() F"
+        ]
+    );
+    // What needs no copy, or has one: a type with the copy method, a
+    // literal that is called where it is written, a variable of the
+    // body, a `range` loop, two places, and three variables.
+    let good = "\tvar later []func() int
+	for c := (C{fd: 1}); i < 3; i++ {
+		later = append(later, func() int { return c.fd })
+	}
+	for f := (F{fd: 1}); i < 3; i++ {
+		println(func() int { return f.fd }())
+	}
+	for i < 3 {
+		f := F{fd: i}
+		later = append(later, func() int { return f.fd })
+		i++
+	}
+	for n := range 3 {
+		f := F{fd: n}
+		defer func() { println(f.fd) }()
+	}
+	xs := []F{{fd: 1}, {fd: 2}}
+	xs[i], xs[j] = xs[j], xs[i]
+	a, b, c := F{fd: 1}, F{fd: 2}, F{fd: 3}
+	a, b, c = b, c, a
+	println(len(later))
+";
+    assert_eq!(lowered(good), [] as [&str; 0]);
+}
+
+#[test]
 fn places_that_exchange_their_values_copy_and_end_nothing() {
     let text = "package main
 
@@ -3302,6 +3393,35 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
         steps_of(&function(&format!(
             "\ts := \"text\"\n\tif s{joined} < s {{\n\t\tx++\n\t}}\n"
         )))
+    });
+}
+
+/// Many loops whose variable a literal keeps, which each next pass has
+/// a copy of: one after another, and one in another.
+#[test]
+fn the_steps_grow_with_loops_whose_variable_is_kept() {
+    let sizes = [100, 200, 400, 800];
+    let types = "type C struct{ n int }\n\nfunc (c *C) drop() {}\n\n\
+                 func (c C) Clone() C { return C{n: c.n} }\n\nvar later []func() int\n";
+    let passes = |at: usize| {
+        format!(
+            "\tfor c{at}, i{at} := (C{{n: {at}}}), 0; i{at} < 2; i{at}++ {{\n\
+             \t\tlater = append(later, func() int {{ return c{at}.n + i{at} }})\n"
+        )
+    };
+    assert_near_linear(&sizes, |n| {
+        let loops: String = (0..n).map(|at| passes(at) + "\t}\n").collect();
+        steps_of(&format!(
+            "package main\n\n{types}\nfunc f() {{\n{loops}}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let n = n / 4;
+        let loops: String = (0..n).map(passes).collect();
+        let ends = "\t}\n".repeat(n);
+        steps_of(&format!(
+            "package main\n\n{types}\nfunc f() {{\n{loops}{ends}}}\n"
+        ))
     });
 }
 

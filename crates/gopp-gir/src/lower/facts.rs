@@ -53,6 +53,9 @@ pub(crate) struct Facts {
     /// has: each lives in a cell, which the function values that use it
     /// share.
     pub celled: FxHashSet<LocalId>,
+    /// For a variable that a function literal which is not framed
+    /// uses: the first such literal, which a report names.
+    pub later: FxHashMap<LocalId, ExprId>,
     /// The variables of blocks that a `defer` statement borrows: a
     /// deferred function literal uses them, or the statement has their
     /// address as the receiver of its call or as `&x` among its
@@ -89,10 +92,14 @@ impl Facts {
     fn settle(&mut self, body: &Body) {
         self.celled = self.bound.clone();
         self.celled.extend(self.extended.iter().copied());
-        for (literal, captures) in &body.captures {
-            if !self.framed.contains(literal) {
-                self.celled
-                    .extend(captures.iter().map(|capture| capture.local));
+        self.later.clear();
+        for (&literal, captures) in &body.captures {
+            if !self.framed.contains(&literal) {
+                for capture in captures {
+                    self.celled.insert(capture.local);
+                    let first = self.later.entry(capture.local).or_insert(literal);
+                    *first = literal.min(*first);
+                }
             }
         }
     }
