@@ -3713,7 +3713,7 @@ func main() {
     assert!(made.contains(".1.0 = const 2: i64"), "{made}");
 }
 
-// rule: TYP-22, EXP-13, EXP-14
+// rule: TYP-22, EXP-13, EXP-14, EXP-15
 #[test]
 fn a_method_that_may_be_replaced_is_called_through_the_table_of_its_value() {
     let text = "package main
@@ -3749,28 +3749,45 @@ func tag(t *Tagged) int { return t.Tag() }
 
 func direct(s Square) int { return s.Area() }
 
+func extra(t *Tagged) int {
+	if s, ok := t.(*Square); ok {
+		return s.extra
+	}
+	return 0
+}
+
 func main() {
 	sq := Square{side: 3, tag: 1, extra: 2}
-	println(area(&sq), tag(&sq), sq.Twice(), direct(sq))
+	println(area(&sq), tag(&sq), sq.Twice(), direct(sq), extra(&sq))
 }
 ";
     let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
     let module = print_module(&lowered.module);
+    let said = |name: &str| {
+        let start = module.find(&format!("\nglobal const @{name}: ")).unwrap();
+        let from = start + module[start..].find("]\n").unwrap() + 2;
+        &module[from..][..module[from..].find("\n\n").unwrap()]
+    };
     // The table of the type says that it is at the start of its value,
-    // and has its methods in the order of the first parent: its own
-    // `Area`, and the `Kind` that it did not replace.
-    let table = "global const @_GPTvN4mainE6Square: (i64, fn(*u8) -> i64, fn(*u8) -> i64) \
-                 [linkonce_odr]\n    const 0: i64\n    \
+    // names the record of the type, and has its methods in the order of
+    // the first parent: its own `Area`, and the `Kind` that it did not
+    // replace.
+    let table = "    const 0: i64\n    const global @_GPTsN4mainE6SquareB5_\n    \
                  const fn @_GPTt0_M4AreaN4mainE6Square\n    \
-                 const fn @_GPTt0_M4KindN4mainE5Shape\n";
-    assert!(module.contains(table), "{module}");
+                 const fn @_GPTt0_M4KindN4mainE5Shape";
+    assert_eq!(said("_GPTvN4mainE6Square"), table);
     // The part of the second parent has a table of its own: it is 16
     // bytes into the value, and the method gets the value back.
-    let part = "global const @_GPTsN4mainE6SquareN4mainE6Tagged: (i64, fn(*u8) -> i64) \
-                [linkonce_odr]\n    const -16: i64\n    \
-                const fn @_GPTtn16_M3TagN4mainE6Square\n";
-    assert!(module.contains(part), "{module}");
+    let part = "    const -16: i64\n    const global @_GPTsN4mainE6SquareB5_\n    \
+                const fn @_GPTtn16_M3TagN4mainE6Square";
+    assert_eq!(said("_GPTsN4mainE6SquareN4mainE6Tagged"), part);
+    // The record of the type has its name and the parts of its parents
+    // that a pointer to a value may become, which `t.(*Square)` asks.
+    let record = "    const str#1 \"main.Square\"\n    const 2: u64\n    \
+                  const global @_GPTsN4mainE5ShapeB5_\n    const 0: i64\n    \
+                  const global @_GPTsN4mainE6TaggedB5_\n    const 16: i64";
+    assert_eq!(said("_GPTsN4mainE6SquareB5_"), record);
     let body = |name: &str| {
         let start = module.find(&format!("\nfn {name}(")).unwrap();
         &module[start..][..module[start..].find("\n}\n").unwrap()]
@@ -3788,6 +3805,12 @@ func main() {
     assert!(!area.contains("@_GPM4Area"), "{area}");
     let direct = body("_GPF4mainE6direct");
     assert!(direct.contains("@_GPM4AreaN4mainE6Square("), "{direct}");
+    let extra = body("_GPF4mainE5extra");
+    assert!(extra.contains("@_gopp_part_of("), "{extra}");
+    assert!(
+        extra.contains("const global @_GPTsN4mainE6SquareB5_"),
+        "{extra}"
+    );
     // A pointer to the value becomes one to the part of a parent after
     // the value has the addresses of its tables.
     let main = body("_GPF4mainE4main");

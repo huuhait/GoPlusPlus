@@ -424,6 +424,17 @@ static const gopp_type runtime_error = {
   raise_kept();
 }
 
+[[noreturn]] void _gopp_fail_part(gopp_string from, gopp_string have, gopp_string wanted) {
+  _gopp_keep_start();
+  _gopp_write_text("pointer conversion: ");
+  _gopp_write_string(from);
+  _gopp_write_text(" points to ");
+  _gopp_write_string(have);
+  _gopp_write_text(", not ");
+  _gopp_write_string(wanted);
+  raise_kept();
+}
+
 [[noreturn]] void _gopp_fail_convert(gopp_string iface, const gopp_type *have,
                                      gopp_string missing) {
   _gopp_keep_start();

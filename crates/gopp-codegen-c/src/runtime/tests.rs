@@ -66,7 +66,7 @@ fn the_objects_are_made_for_both_targets_without_a_c_library() {
         build(&driver, Form::Objects, cache.path()).unwrap()
     };
     let (elf, coff) = (made("linux/amd64"), made("windows/amd64"));
-    assert_eq!((elf.len(), coff.len()), (10, 10));
+    assert_eq!((elf.len(), coff.len()), (11, 11));
     for object in &elf {
         assert_eq!(magic(object), b"\x7fELF");
     }

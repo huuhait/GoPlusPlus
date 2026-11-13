@@ -19,6 +19,7 @@ use lasso::Spur;
 
 use super::expr::{Called, Code, PlaceMode, Target};
 use super::func::{Built, FuncCx};
+use super::iface::{Looked, Switched};
 use super::{CalleeKey, Made, Memo, Shared};
 use crate::{
     BinOp, CallConv, CastKind, Constant, ConstantKind, FuncType, GlobalId, Mutability, Operand,
@@ -91,6 +92,25 @@ impl Shared<'_> {
                 _ => return None,
             }
         }
+    }
+
+    /// The type and each of its ancestors with a table, with the way
+    /// to its part in a value of the type: what a pointer to the value
+    /// may be turned into (EXP-15).
+    pub fn parts_of(&self, ty: CheckedTypeId) -> Vec<(Vec<u32>, CheckedTypeId)> {
+        let mut found = vec![(Vec::new(), ty)];
+        let mut at = 0;
+        while let Some((way, of)) = found.get(at).cloned() {
+            at += 1;
+            for (index, parent) in self.types.parents(of).into_iter().enumerate() {
+                if self.types.has_table(parent) {
+                    let mut to = way.clone();
+                    to.push(PARENT | index as u32);
+                    found.push((to, parent));
+                }
+            }
+        }
+        found
     }
 
     /// The parts of a value of the type that start with the address of
@@ -186,11 +206,222 @@ impl FuncCx<'_, '_> {
         Ok(offset)
     }
 
+    /// The record of a type with a table: its name, and the parts of
+    /// its ancestors that a pointer to a value of it may be turned
+    /// into, each by the record of its type and by where it starts.
+    /// The address of the record says the type where the program runs.
+    pub(super) fn whole(&mut self, ty: CheckedTypeId) -> Built<Result<GlobalId, &'static str>> {
+        let shared = self.shared;
+        let entity = Entity::PartTable {
+            child: ty,
+            parent: ty,
+        };
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
+            return Ok(Err("a record of a type without a symbol"));
+        };
+        if let Some(&known) = self.memo.globals.get(&symbol) {
+            return Ok(Ok(known));
+        }
+        let lowered = match self.memo.lower_type(shared, self.b.types(), ty) {
+            Ok(lowered) => lowered,
+            Err(what) => return Ok(Err(what)),
+        };
+        let found = shared.parts_of(ty);
+        let (word, offset) = (self.b.types().int(64, false), self.b.types().int(64, true));
+        let name = shared.types.runtime_name(ty, shared.names);
+        let Operand::Const(name) = self.b.const_str(name.as_bytes()) else {
+            return Ok(Err("a name of a type"));
+        };
+        let count = Constant {
+            kind: ConstantKind::Int(found.len() as u64 - 1),
+            ty: word,
+        };
+        let mut parts = vec![name, count];
+        // The type itself comes first in `found`, and has no entry.
+        for (way, part) in found.iter().skip(1) {
+            self.memo.steps += 1;
+            let said = match self.whole(*part)? {
+                Ok(said) => said,
+                Err(what) => return Ok(Err(what)),
+            };
+            let start = match self.part_offset(lowered, way) {
+                Ok(start) => start,
+                Err(what) => return Ok(Err(what)),
+            };
+            let record = self.b.module().globals[said].ty;
+            parts.push(Constant {
+                kind: ConstantKind::Global(said),
+                ty: self.b.types().ptr(record),
+            });
+            parts.push(Constant {
+                kind: ConstantKind::Int(start),
+                ty: offset,
+            });
+        }
+        let of: Vec<TypeId> = parts.iter().map(|part| part.ty).collect();
+        let record = self.b.types().tuple(&of);
+        Ok(Ok(self.said(symbol, record, parts)))
+    }
+
+    /// `p.(*T)` for a pointer or a handle `p` to a value with a table
+    /// (EXP-15): the address of the part of `T` in the value, and
+    /// whether the value has one. With `must`, the program ends if it
+    /// has none. `None` if `p` is no such pointer.
+    pub(super) fn part_asserted(
+        &mut self,
+        expr: ExprId,
+        must: bool,
+    ) -> Built<Option<Result<[Operand; 2], &'static str>>> {
+        let shared = self.shared;
+        let types = shared.types;
+        let ExprKind::Assert { x, .. } = self.tree.exprs[expr].kind else {
+            return Ok(None);
+        };
+        let pointee = |ty: CheckedTypeId| match &*types.get(types.underlying(ty)) {
+            CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
+                Some(*to)
+            }
+            _ => None,
+        };
+        let Some(from) = self.body.types.get(&x).map(|typed| typed.ty) else {
+            return Ok(None);
+        };
+        let Some(of) = pointee(from).filter(|&of| types.has_table(of)) else {
+            return Ok(None);
+        };
+        let Some(typed) = self.body.types.get(&expr) else {
+            return Ok(Some(Err("a value whose type is not known")));
+        };
+        let wanted = match &*types.get(typed.ty) {
+            CheckedType::Tuple(parts) if parts.len() == 2 => parts[0],
+            _ => typed.ty,
+        };
+        let Some(target) = pointee(wanted) else {
+            return Ok(Some(Err("a pointer conversion to what is no pointer")));
+        };
+        let span = self.tree.exprs[expr].span;
+        let ty = self.lower(wanted, span);
+        let mut mode = PlaceMode::default();
+        let base = self.place(x, &mut mode)?;
+        let value = self.through(base, &mut mode)?;
+        if let Err(what) = self.set_tables(&value, of)? {
+            return Ok(Some(Err(what)));
+        }
+        let record = match self.whole(target)? {
+            Ok(record) => record,
+            Err(what) => return Ok(Some(Err(what))),
+        };
+        let bytes = self.bytes_ty();
+        let at = self.b.assign_temp(Rvalue::AddrOf(value, Mutability::Mut))?;
+        let at = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(Place::local(at)), bytes);
+        let at = Operand::Copy(Place::local(self.b.assign_temp(at)?));
+        let record = self.info_word(record)?;
+        let args = vec![at.clone(), record.clone()];
+        let found = self.runtime("_gopp_part_of", &[bytes, bytes], bytes, args)?;
+        let found = self.stable(found)?;
+        let none = self.zero(bytes);
+        let has = Rvalue::Binary(BinOp::Ne, found.clone(), none);
+        let has = Operand::Copy(Place::local(self.b.assign_temp(has)?));
+        if must {
+            let [fails, held] = [(); 2].map(|()| self.b.new_block());
+            self.b.switch(has.clone(), vec![(0, fails)], held)?;
+            self.b.switch_to(fails);
+            let around = self.b.loc();
+            self.at(span);
+            let name = types.runtime_name(from, shared.names);
+            let name = self.b.const_str(name.as_bytes());
+            let string = self.b.operand_ty(&name);
+            let args = vec![at, record, name];
+            self.runtime_call("_gopp_panic_part", &[bytes, bytes, string], args)?;
+            self.b.unreachable()?;
+            self.b.set_loc(around);
+            self.b.switch_to(held);
+        }
+        let part = Rvalue::Cast(CastKind::PtrToPtr, found, ty);
+        let part = Operand::Copy(Place::local(self.b.assign_temp(part)?));
+        Ok(Some(Ok([part, has])))
+    }
+
+    /// A type switch on a pointer or a handle to a value with a table
+    /// (EXP-15): each case asks for the part of its type in the value,
+    /// and the first that the value has runs. With the pointer come,
+    /// for each clause, the address of the part that its last case
+    /// found. `None` if the switch looks into no such pointer.
+    pub(super) fn part_switch(
+        &mut self,
+        x: ExprId,
+        clauses: &[gopp_syntax::ast::CaseClause],
+        bodies: &[crate::BlockId],
+        otherwise: crate::BlockId,
+    ) -> Built<Option<Result<Switched, &'static str>>> {
+        let shared = self.shared;
+        let types = shared.types;
+        let pointee = |ty: CheckedTypeId| match &*types.get(types.underlying(ty)) {
+            CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
+                Some(*to)
+            }
+            _ => None,
+        };
+        let Some(checked) = self.body.types.get(&x).map(|typed| typed.ty) else {
+            return Ok(None);
+        };
+        let Some(of) = pointee(checked).filter(|&of| types.has_table(of)) else {
+            return Ok(None);
+        };
+        let mut mode = PlaceMode::default();
+        let base = self.place(x, &mut mode)?;
+        let value = self.through(base, &mut mode)?;
+        if let Err(what) = self.set_tables(&value, of)? {
+            return Ok(Some(Err(what)));
+        }
+        let bytes = self.bytes_ty();
+        let pointer = self.b.assign_temp(Rvalue::AddrOf(value, Mutability::Mut))?;
+        let pointer = Place::local(pointer);
+        let at = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(pointer.clone()), bytes);
+        let at = Operand::Copy(Place::local(self.b.assign_temp(at)?));
+        let mut found = Vec::with_capacity(clauses.len());
+        for (clause, &body) in clauses.iter().zip(bodies) {
+            let mut last = None;
+            for &case in clause.cases.iter().flatten() {
+                let Some(target) = self.body.case_types.get(&case).and_then(|&ty| pointee(ty))
+                else {
+                    return Ok(Some(Err(
+                        "a case of a switch on a pointer that is no pointer",
+                    )));
+                };
+                let record = match self.whole(target)? {
+                    Ok(record) => self.info_word(record)?,
+                    Err(what) => return Ok(Some(Err(what))),
+                };
+                let args = vec![at.clone(), record];
+                let part = self.runtime("_gopp_part_of", &[bytes, bytes], bytes, args)?;
+                let part = self.stable(part)?;
+                let none = self.zero(bytes);
+                let has = Rvalue::Binary(BinOp::Ne, part.clone(), none);
+                let has = Operand::Copy(Place::local(self.b.assign_temp(has)?));
+                last = Some(part);
+                let next = self.b.new_block();
+                self.b.switch(has, vec![(0, next)], body)?;
+                self.b.switch_to(next);
+            }
+            found.push(last);
+        }
+        self.b.goto(otherwise)?;
+        let looked = Looked {
+            value: pointer,
+            first: at.clone(),
+            info: at,
+            checked,
+        };
+        Ok(Some(Ok((looked, found))))
+    }
+
     /// The table of the part at the end of `way` of a value of the type
     /// `whole`; the part is of the type `head`. It says how far the
-    /// part is from the start of the value, and has for each method of
-    /// `head` that may be replaced the code that runs for a value of
-    /// `whole`: null for a method without a body.
+    /// part is from the start of the value and names the record of
+    /// `whole`, and has for each method of `head` that may be replaced
+    /// the code that runs for a value of `whole`: null for a method
+    /// without a body.
     fn table(
         &mut self,
         whole: CheckedTypeId,
@@ -227,10 +458,22 @@ impl FuncCx<'_, '_> {
         let package = package.unwrap_or(shared.path);
         let bytes = self.bytes_ty();
         let offset = self.b.types().int(64, true);
-        let mut parts = vec![Constant {
-            kind: ConstantKind::Int((-start) as u64),
-            ty: offset,
-        }];
+        let record = match self.whole(whole)? {
+            Ok(record) => record,
+            Err(what) => return Ok(Err(what)),
+        };
+        let said = self.b.module().globals[record].ty;
+        let said = self.b.types().ptr(said);
+        let mut parts = vec![
+            Constant {
+                kind: ConstantKind::Int((-start) as u64),
+                ty: offset,
+            },
+            Constant {
+                kind: ConstantKind::Global(record),
+                ty: said,
+            },
+        ];
         for name in shared.slots(head) {
             self.memo.steps += 1;
             let Ok(found) = types.lookup(whole, name, package, shared.names, false) else {
@@ -415,17 +658,17 @@ impl FuncCx<'_, '_> {
             .assign_temp(Rvalue::AddrOf(part.clone(), Mutability::Mut))?;
         let at = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(Place::local(at)), bytes);
         let receiver = Operand::Copy(Place::local(self.b.assign_temp(at)?));
-        // The table is read as one that ends with this method: a word
-        // that says where the part is, then the methods.
+        // The table is read as one that ends with this method: where
+        // the part is, the record of the type, then the methods.
         let word = Operand::Copy(self.table_word(&part)?);
-        let table = Type::Array(bytes, slot as u64 + 2);
+        let table = Type::Array(bytes, slot as u64 + 3);
         let table = self.b.types().intern(table);
         let to = self.b.types().ptr(table);
         let table = self
             .b
             .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, word, to))?;
         let table = self.b.deref(&Place::local(table))?;
-        let entry = Operand::Copy(self.b.const_index(&table, slot as u64 + 1)?);
+        let entry = Operand::Copy(self.b.const_index(&table, slot as u64 + 2)?);
         let entry = self
             .b
             .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, entry, code))?;

@@ -50,6 +50,10 @@ void _gopp_write_hex(uint64_t value);
 [[noreturn]] void _gopp_fail_assert(gopp_string iface, const gopp_type *have,
                                     const gopp_type *wanted);
 
+// Ends the program as `p.(*T)` does for a pointer of the type `from` to
+// a value of the type `have`, which is no `wanted`.
+[[noreturn]] void _gopp_fail_part(gopp_string from, gopp_string have, gopp_string wanted);
+
 // Ends the program as `x.(I)` does for an interface type named `iface`
 // and an `x` that holds a value of the type `have` without the method
 // `missing`, or nothing for null.

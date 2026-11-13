@@ -1,0 +1,4 @@
+-1 3 2 red t none
+blue tile 2
+a shape square 3 tile blue
+false true

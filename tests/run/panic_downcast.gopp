@@ -1,0 +1,20 @@
+// exit: 2
+package main
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape" }
+
+@Extends(Shape)
+type Square struct{ side int }
+
+@Extends(Square)
+type Tile struct{ color string }
+
+func main() {
+	sq := Square{name: "sq", side: 3}
+	var s *Shape = &sq
+	println(s.(*Square).side)
+	println(s.(*Tile).color)
+}

@@ -1,0 +1,6 @@
+3
+panic: pointer conversion: *main.Shape points to main.Square, not main.Tile
+
+goroutine 1 [running]:
+main.main()
+	+0x?

@@ -218,6 +218,8 @@ bool _gopp_shared_release(uint8_t *value);
 void _gopp_weak_retain(uint8_t *value);
 void _gopp_weak_release(uint8_t *value);
 uint8_t * _gopp_weak_lock(uint8_t *value);
+uint8_t * _gopp_part_of(uint8_t *part, const void *of);
+[[noreturn]] void _gopp_panic_part(const uint8_t *part, const void *of, gopp_string from);
 void _gopp_iface_clone(uint8_t *value);
 void _gopp_iface_drop(uint8_t *value);
 bool _gopp_iface_eq(uint8_t *a, uint8_t *b);

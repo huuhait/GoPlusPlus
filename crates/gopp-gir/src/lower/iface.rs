@@ -42,6 +42,10 @@ pub(super) struct Looked {
     pub checked: CheckedTypeId,
 }
 
+/// What a type switch looks into, and for each clause what its last
+/// case found of it.
+pub(super) type Switched = (Looked, Vec<Option<Operand>>);
+
 /// A method of an interface value that a selector names: the
 /// expression of the value, the way to it, the interface type and the
 /// name.
@@ -307,7 +311,7 @@ impl FuncCx<'_, '_> {
 
     /// The address of a descriptor or of a table of methods, as a word
     /// of an interface value.
-    fn info_word(&mut self, info: GlobalId) -> Built<Operand> {
+    pub(super) fn info_word(&mut self, info: GlobalId) -> Built<Operand> {
         let record = self.b.module().globals[info].ty;
         let ty = self.b.types().ptr(record);
         let kind = ConstantKind::Global(info);
@@ -631,6 +635,12 @@ impl FuncCx<'_, '_> {
     /// ends if `x` holds no `T`, as in Go.
     pub fn asserted(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
+        // `p.(*T)` for a pointer `p` (EXP-15).
+        match self.part_asserted(expr, true)? {
+            Some(Ok([found, _])) => return Ok(Rvalue::Use(found)),
+            Some(Err(what)) => return Ok(self.placeholder(span, ty, what)),
+            None => {}
+        }
         let Assertion { looked, wanted, .. } = match self.assertion(expr)? {
             Ok(parts) if parts.ty == ty => parts,
             Ok(_) => return Ok(self.placeholder(span, ty, "a value whose type is not known")),
@@ -670,6 +680,14 @@ impl FuncCx<'_, '_> {
     pub fn asserted_ok(&mut self, expr: ExprId) -> Built<Option<[Operand; 2]>> {
         let inner = Shared::unparen(self.tree, expr);
         let span = self.tree.exprs[inner].span;
+        match self.part_asserted(inner, false)? {
+            Some(Ok(found)) => return Ok(Some(found)),
+            Some(Err(what)) => {
+                self.unsupported(span, what);
+                return Ok(None);
+            }
+            None => {}
+        }
         let Assertion {
             looked,
             wanted,
@@ -727,6 +745,16 @@ impl FuncCx<'_, '_> {
         otherwise: crate::BlockId,
     ) -> Built<Option<(Looked, Vec<Option<Operand>>)>> {
         let span = self.tree.exprs[x].span;
+        // A switch on a pointer to a value with a table (EXP-15).
+        match self.part_switch(x, clauses, bodies, otherwise)? {
+            Some(Ok(found)) => return Ok(Some(found)),
+            Some(Err(what)) => {
+                self.unsupported(span, what);
+                self.b.goto(otherwise)?;
+                return Ok(None);
+            }
+            None => {}
+        }
         // What the value is made of lives as long as the switch.
         let mark = self.temps.len();
         let looked = match self.looked(x)? {
@@ -790,9 +818,15 @@ impl FuncCx<'_, '_> {
             Some([case]) => self.body.case_types.contains_key(case),
             _ => false,
         };
-        let from = match one {
-            true => self.held_as(looked, table, ty)?,
-            false => looked.value.clone(),
+        // A switch on a pointer has the address of the part that the
+        // case found, or the pointer itself.
+        let pointer = !self.is_iface(self.b.place_ty(&looked.value));
+        let from = match (one, table, pointer) {
+            (true, Some(found), true) => {
+                self.slot_of(Rvalue::Cast(CastKind::PtrToPtr, found, ty))?
+            }
+            (true, table, _) => self.held_as(looked, table, ty)?,
+            (false, ..) => looked.value.clone(),
         };
         if self.b.place_ty(&from) != ty {
             self.unsupported(span, "a variable of a type switch of this type");

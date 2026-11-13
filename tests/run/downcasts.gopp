@@ -1,0 +1,66 @@
+package main
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape" }
+
+type Tagged struct{ tag string }
+
+@Virtual
+func (t *Tagged) Tag() string { return t.tag }
+
+@Extends(Shape)
+type Square struct{ side int }
+
+@Extends(Square)
+@Extends(Tagged)
+type Tile struct{ color string }
+
+@Override
+func (t *Tile) Kind() string { return "tile" }
+
+func side(s *Shape) int {
+	if sq, ok := s.(*Square); ok {
+		return sq.side
+	}
+	return -1
+}
+
+func color(t *Tagged) string {
+	if tile, ok := t.(*Tile); ok {
+		return tile.color + " " + tile.name
+	}
+	return "none"
+}
+
+func what(s *Shape) string {
+	switch v := s.(type) {
+	case *Tile:
+		return "tile " + v.color
+	case *Square:
+		return "square " + show(v.side)
+	default:
+		return "a " + v.Kind()
+	}
+}
+
+func show(n int) string { return string(rune('0' + n)) }
+
+func main() {
+	plain := Shape{name: "plain"}
+	sq := Square{name: "sq", side: 3}
+	tile := Tile{name: "t", side: 2, tag: "x", color: "red"}
+	other := Tagged{tag: "o"}
+	println(side(&plain), side(&sq), side(&tile), color(&tile), color(&other))
+	var s *Shape = &tile
+	t := s.(*Tile)
+	t.color = "blue"
+	println(tile.color, t.Kind(), s.(*Square).side)
+	println(what(&plain), what(&sq), what(&tile))
+	var zero Square
+	var z *Shape = &zero
+	_, isTile := z.(*Tile)
+	_, isSquare := z.(*Square)
+	println(isTile, isSquare)
+}
