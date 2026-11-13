@@ -109,15 +109,25 @@ pub fn run(paths: &[PathBuf], json: bool, info: bool) -> ExitCode {
             };
             let types = types.fork();
             let checked = check(&package.path, &units, &loader, &names, &types, &sink);
+            let files: Vec<(&File, &SourceFile)> = package
+                .files
+                .iter()
+                .map(|(file, source)| (file, &**source))
+                .collect();
+            // The instances of the generic code of a package without an
+            // error are held to their bounds, as a build holds them.
+            if sink.is_empty() {
+                let accepted = gopp_gir::Checked {
+                    package: &checked,
+                    files: &files,
+                    types: &types,
+                    names: &names,
+                    aborts: false,
+                };
+                gopp_gir::check_instances(&accepted, &sink);
+            }
             let text = match info {
-                true => {
-                    let files: Vec<(&File, &SourceFile)> = package
-                        .files
-                        .iter()
-                        .map(|(file, source)| (file, &**source))
-                        .collect();
-                    info_text(&checked, &files, &types, &names)
-                }
+                true => info_text(&checked, &files, &types, &names),
                 false => String::new(),
             };
             (text, sink.finish())

@@ -602,6 +602,35 @@ fn check_reports_what_is_wrong_as_text_or_json() {
 }
 
 #[test]
+fn check_and_build_hold_the_instances_of_a_package_to_their_bounds() {
+    // Each of fifty functions passes a slice of its type parameter on.
+    let mut text = "package main\n\n".to_owned();
+    for at in 0..50 {
+        text += &format!(
+            "func g{at}[T any](x T) int {{ return g{}([]T{{x}}) }}\n\n",
+            at + 1
+        );
+    }
+    text += "func g50[T any](x T) int { return 1 }\n\nfunc main() {\n\tprintln(g0(1))\n}\n";
+    let dir = TempDir::new().unwrap();
+    let deep = write_source(&dir, "deep.go", &text);
+    let refused = "deep.go:99:35: error[E0449]: cannot instantiate g49: a type argument nests more \
+                   than 48 levels (GEN-5)";
+    for command in [
+        gopp().arg("check").arg(&deep),
+        gopp().args(["build", "-emit=c"]).arg(&deep),
+    ] {
+        let output = run(command);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(stdout(&output), "");
+        let said = stderr(&output);
+        assert!(said.contains(refused), "{said}");
+        assert!(said.contains("g48 is instantiated here"), "{said}");
+        assert_eq!(said.matches("error[").count(), 1, "{said}");
+    }
+}
+
+#[test]
 fn check_takes_a_directory_as_one_package_and_prints_what_it_found() {
     let dir = TempDir::new().unwrap();
     let files = [

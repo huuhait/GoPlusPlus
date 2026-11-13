@@ -534,6 +534,19 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func f(xs []int) {\n\tkeep(move(xs))\n\tprintln(len(xs)) // error\n\txs = \
              nil\n\tprintln(len(xs)) // ok\n}",
         ),
+        InstTooLarge => (
+            "The instances of the generic code of a package are bounded, so that no program \
+             expands without end. A type argument that generic code builds around a type \
+             parameter nests at most 48 levels and has at most 4096 parts; a package has at \
+             most 100000 instances, or 8 for each node of its syntax if that is more; and the \
+             code of the package with all its instances is at most 4000000 nodes of syntax, or \
+             64 for each node if that is more.",
+            "Pass the type parameter on as it is, or write the large type out where it is \
+             used: a type that the source writes has no bound.",
+            "func f0[T any](x T) { f1([]T{x}) } // each of 50 such functions nests one level \
+             more: error at the 49th\nfunc g0[T any](x T) { g1(x) }      // ok: T is passed on \
+             as it is",
+        ),
         OwnImplicitClone => (
             "The program needs a copy that is not written, of a value whose type cannot be \
              copied. A variable of a `for` loop with three clauses that a function literal \

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gopp_diag::{Diagnostic, Sink};
+use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_sema::types::Types;
 use gopp_sema::{Package, PackageLoader, Unit, check};
 use gopp_span::{Dialect, SourceFile, SourceMap};
@@ -9,7 +9,7 @@ use gopp_syntax::parser::parse;
 use gopp_target::TargetLayout;
 use lasso::ThreadedRodeo;
 
-use super::{Checked, Shared, lower_counted};
+use super::{Checked, Limits, Shared, lower_bounded, lower_counted};
 use crate::Module;
 use gopp_testutil::linear::assert_near_linear;
 
@@ -900,7 +900,8 @@ func keys(a named) int {
 fn lent(text: &str) -> Vec<String> {
     checked(&[("a.gopp", text)], |checked, messages| {
         assert_eq!(messages, [] as [&str; 0]);
-        let shared = Shared::new(checked, TargetLayout::new(64));
+        let mut shared = Shared::found(checked, TargetLayout::new(64), Limits::OF_A_PACKAGE);
+        shared.facts();
         let named = shared.jobs.iter().map(|job| {
             let flags = job.facts.lent.iter().zip(&job.facts.worked);
             let flags: Vec<&str> = flags
@@ -2978,6 +2979,245 @@ func main() {
     }
 }
 
+/// What lowering the one file of a package reports, with the bounds of
+/// its instances.
+fn bounded(file: &str, text: &str, limits: Limits) -> Vec<String> {
+    checked(&[(file, text)], |checked, messages| {
+        assert_eq!(messages, [] as [&str; 0], "{text}");
+        let layout = TargetLayout::new(64);
+        let (_, reported, _) = lower_bounded(checked, layout, usize::MAX, limits);
+        let source = checked.files[0].1;
+        let said = |diagnostic: &Diagnostic| {
+            let at = source.line_col(diagnostic.span.lo);
+            let notes = diagnostic.notes.iter().map(|note| {
+                let at = note.span.map(|span| source.line_col(span.lo));
+                let at = at.map_or(String::new(), |at| format!("{}:{}: ", at.line, at.column));
+                format!("\n    {at}{}", note.message)
+            });
+            let notes: String = notes.collect();
+            format!("{}:{}: {}{notes}", at.line, at.column, diagnostic.message)
+        };
+        assert!(
+            reported
+                .iter()
+                .all(|diagnostic| diagnostic.code == Code::InstTooLarge)
+        );
+        reported.iter().map(said).collect()
+    })
+}
+
+#[test]
+fn a_type_argument_that_generic_code_builds_is_bounded() {
+    let limits = Limits::OF_A_PACKAGE;
+    // Each function passes a slice of its type parameter on: the last
+    // of `n` gets a type argument that nests `n` levels.
+    let nested = |n: usize, constraint: &str| {
+        let chain: String = (0..n)
+            .map(|at| {
+                format!(
+                    "func g{at}[T {constraint}](x T) int {{ return g{}([]T{{x}}) }}\n\n",
+                    at + 1
+                )
+            })
+            .collect();
+        format!(
+            "package main\n\n{chain}func g{n}[T {constraint}](x T) int {{ return 1 }}\n\n\
+             func main() {{\n\tprintln(g0(1))\n}}\n"
+        )
+    };
+    for (file, constraint) in [("a.go", "any"), ("a.gopp", "Clone")] {
+        assert_eq!(
+            bounded(file, &nested(48, constraint), limits),
+            [] as [&str; 0],
+            "{file}"
+        );
+        let refused = bounded(file, &nested(49, constraint), limits);
+        // At the use that asks for it, with the uses that led there,
+        // the nearest first.
+        let [refused] = &refused[..] else {
+            panic!("{file}: {refused:#?}");
+        };
+        let lines: Vec<&str> = refused.lines().collect();
+        let bound = ": cannot instantiate g49: a type argument nests more than 48 levels (GEN-5)";
+        assert!(
+            lines[0].starts_with("99:") && lines[0].ends_with(bound),
+            "{file}: {refused}"
+        );
+        let led = |line: &str, at: &str, name: &str| {
+            let line = line.trim();
+            line.starts_with(at) && line.ends_with(&format!(": {name} is instantiated here"))
+        };
+        assert!(
+            led(lines[1], "97:", "g48") && led(lines[2], "95:", "g47"),
+            "{file}: {refused}"
+        );
+        assert_eq!(lines.len(), 1 + 16, "{file}");
+    }
+    // Each function passes a pair of its type parameter on: the last
+    // of `n` gets a type argument of `2^(n+1) - 1` parts.
+    let doubled = |n: usize| {
+        let chain: String = (0..n)
+            .map(|at| {
+                format!(
+                    "func g{at}[T any](n int) int {{ return g{}[Pair[T, T]](n) }}\n\n",
+                    at + 1
+                )
+            })
+            .collect();
+        format!(
+            "package main\n\ntype Pair[A, B any] struct {{\n\ta []A\n\tb []B\n}}\n\n{chain}\
+             func g{n}[T any](n int) int {{ return n }}\n\nfunc main() {{\n\tprintln(g0[int](1))\n}}\n"
+        )
+    };
+    for file in ["a.go", "a.gopp"] {
+        assert_eq!(
+            bounded(file, &doubled(11), limits),
+            [] as [&str; 0],
+            "{file}"
+        );
+        let refused = bounded(file, &doubled(12), limits);
+        assert_eq!(refused.len(), 1, "{file}");
+        assert!(
+            refused[0].starts_with(
+                "30:37: cannot instantiate g12: a type argument has more than 4096 parts as a \
+                 tree (GEN-5)\n"
+            ),
+            "{file}: {refused:#?}"
+        );
+    }
+    // The same for an instance of a generic type that a method names:
+    // each of `n` types has a method that names the next one with a
+    // slice of its type parameter.
+    let through_types = |n: usize| {
+        let chain: String = (0..n)
+            .map(|at| {
+                format!(
+                    "type F{at}[T any] struct{{ v []T }}\n\nfunc (f *F{at}[T]) m(n int) int {{\n\t\
+                     var next F{}[[]T]\n\treturn next.m(n) + len(f.v)\n}}\n\n",
+                    at + 1
+                )
+            })
+            .collect();
+        format!(
+            "package main\n\n{chain}type F{n}[T any] struct{{ v []T }}\n\n\
+             func (f *F{n}[T]) m(n int) int {{ return n + len(f.v) }}\n\n\
+             func main() {{\n\tvar first F0[int]\n\tprintln(first.m(1))\n}}\n"
+        )
+    };
+    for file in ["a.go", "a.gopp"] {
+        assert_eq!(
+            bounded(file, &through_types(48), limits),
+            [] as [&str; 0],
+            "{file}"
+        );
+        let refused = bounded(file, &through_types(49), limits);
+        assert_eq!(refused.len(), 1, "{file}");
+        let first = refused[0].lines().next().unwrap();
+        assert!(
+            first.ends_with(
+                ": cannot instantiate F49: a type argument nests more than 48 levels (GEN-5)"
+            ),
+            "{file}: {refused:#?}"
+        );
+    }
+    // A type parameter that is passed on as it is, and a type that the
+    // source writes, have no bound.
+    let passed = "package main
+
+type Deep = [][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][]int
+
+func id[T any](n int) int { return next[T](n) + next[Deep](n) }
+
+func next[T any](n int) int { return n }
+
+func main() {
+	println(id[Deep](1))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        assert_eq!(bounded(file, passed, limits), [] as [&str; 0], "{file}");
+    }
+}
+
+#[test]
+fn the_instances_of_a_package_are_bounded() {
+    let all = Limits::OF_A_PACKAGE;
+    // Three functions with an instance each, and a type with two
+    // methods: five instances.
+    let text = "package main
+
+type Box[T any] struct{ items []T }
+
+func (b *Box[T]) Len() int { return len(b.items) }
+
+func (b *Box[T]) Cap() int { return cap(b.items) }
+
+func one[T any](n int) int { return two[T](n) }
+
+func two[T any](n int) int { return three[T](n) }
+
+func three[T any](n int) int {
+	var b Box[T]
+	return b.Len() + n
+}
+
+func main() {
+	println(one[int](1))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let with = |instances: u64, code: u64| {
+            let limits = Limits {
+                instances: (instances, 0),
+                code: (code, 0),
+                ..all
+            };
+            bounded(file, text, limits)
+        };
+        assert_eq!(with(5, u64::MAX), [] as [&str; 0], "{file}");
+        // The methods of a type are counted where a function names the
+        // type: at the function.
+        assert_eq!(
+            with(4, u64::MAX),
+            [
+                "13:6: cannot instantiate Box.Cap: the package needs more than 4 instances (GEN-5)\n    \
+              11:37: three is instantiated here\n    9:37: two is instantiated here\n    \
+              19:10: one is instantiated here"
+            ],
+            "{file}"
+        );
+        assert_eq!(
+            with(2, u64::MAX),
+            [
+                "11:37: cannot instantiate three: the package needs more than 2 instances (GEN-5)\n    \
+              9:37: two is instantiated here\n    19:10: one is instantiated here"
+            ],
+            "{file}"
+        );
+        // The code of the package and of its instances, in nodes of
+        // its syntax.
+        let fits = (1..200)
+            .find(|&code| with(u64::MAX, code).is_empty())
+            .unwrap();
+        assert!(fits > 40, "{file}: {fits}");
+        let refused = with(u64::MAX, fits - 1);
+        assert_eq!(refused.len(), 1, "{file}");
+        let bound = format!(
+            "the instances of the package hold more than {} nodes of code",
+            fits - 1
+        );
+        assert!(refused[0].contains(&bound), "{file}: {refused:#?}");
+    }
+    // Both bounds grow with the package: so many for each node of its
+    // syntax.
+    let grown = Limits {
+        instances: (0, 1),
+        code: (0, 3),
+        ..all
+    };
+    assert_eq!(bounded("a.go", text, grown), [] as [&str; 0]);
+}
+
 #[test]
 fn a_method_with_type_parameters_of_its_own_is_made_for_each_use() {
     let (lowered, messages) = lowered_with(
@@ -3960,7 +4200,7 @@ fn the_steps_grow_with_the_instances_of_generic_functions() {
         let chain: String = (0..n)
             .map(|at| {
                 format!(
-                    "func g{at}[T Clone](x T) []T {{ return g{}([]T{{x}})[0] }}\n\n",
+                    "func g{at}[T Clone](x T) []T {{ return g{}(x) }}\n\n",
                     at + 1
                 )
             })

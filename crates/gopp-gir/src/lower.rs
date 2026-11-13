@@ -27,7 +27,7 @@ use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_mangle::{Entity, Locals, Namer, symbol_of};
 use gopp_sema::types::{NamedId, Type as CheckedType, TypeId as CheckedTypeId, Types};
 use gopp_sema::{Body, LocalKind, ObjId, ObjKind, Package, Ref};
-use gopp_span::SourceFile;
+use gopp_span::{SourceFile, Span};
 use gopp_syntax::ast::{DeclId, DeclKind, ExprId, ExprKind, File, Param, UnaryOp};
 use gopp_target::TargetLayout;
 use lasso::{Spur, ThreadedRodeo};
@@ -65,6 +65,40 @@ pub fn lower_package(checked: &Checked<'_>, layout: TargetLayout, sink: &Sink) -
     module
 }
 
+/// Reports what the instances of the generic code of a package that
+/// the checker accepted are refused for (`E0449`), as `lower_package`
+/// does: for `gopp check`, which lowers nothing.
+pub fn check_instances(checked: &Checked<'_>, sink: &Sink) {
+    let shared = Shared::found(checked, TargetLayout::new(64), Limits::OF_A_PACKAGE);
+    for diagnostic in shared.refused {
+        sink.push(diagnostic);
+    }
+}
+
+/// The bounds of the instances of a package (GEN-5).
+#[derive(Clone, Copy)]
+pub(crate) struct Limits {
+    /// How many levels a type argument that generic code builds nests.
+    pub height: u32,
+    /// How many parts it has as a tree.
+    pub parts: u64,
+    /// How many instances a package has, and how many for each node of
+    /// its syntax if that is more.
+    pub instances: (u64, u64),
+    /// How many nodes of syntax the package and its instances are, and
+    /// how many for each node of the package if that is more.
+    pub code: (u64, u64),
+}
+
+impl Limits {
+    pub const OF_A_PACKAGE: Self = Self {
+        height: 48,
+        parts: 4096,
+        instances: (100_000, 8),
+        code: (4_000_000, 64),
+    };
+}
+
 /// `lower_package`, with what it reports and the steps that it took.
 /// A run takes `source_each` bytes of source or more.
 pub(crate) fn lower_counted(
@@ -72,7 +106,23 @@ pub(crate) fn lower_counted(
     layout: TargetLayout,
     source_each: usize,
 ) -> (Module, Vec<Diagnostic>, u64) {
-    let shared = Shared::new(checked, layout);
+    lower_bounded(checked, layout, source_each, Limits::OF_A_PACKAGE)
+}
+
+/// `lower_counted`, with the bounds of the instances.
+pub(crate) fn lower_bounded(
+    checked: &Checked<'_>,
+    layout: TargetLayout,
+    source_each: usize,
+    limits: Limits,
+) -> (Module, Vec<Diagnostic>, u64) {
+    let mut shared = Shared::found(checked, layout, limits);
+    // Nothing is lowered of a package whose instances are refused.
+    if !shared.refused.is_empty() {
+        let refused = std::mem::take(&mut shared.refused);
+        return (shared.module(), refused, shared.found_steps);
+    }
+    shared.facts();
     let source: usize = shared.jobs.iter().map(|job| job.source).sum();
     let known: u64 = shared.jobs.iter().map(|job| job.facts.steps).sum();
     let known = known + shared.found_steps;
@@ -129,6 +179,9 @@ pub(crate) fn lower_counted(
     (module, diagnostics, steps)
 }
 
+/// How many of the uses that led to a refused instance are named.
+const MAX_LED: usize = 16;
+
 /// How many broken rules of one module are reported.
 const MAX_VERIFY_ERRORS: usize = 8;
 
@@ -152,6 +205,8 @@ pub(crate) struct Job {
     /// For an instance: which of the bodies that were made for the
     /// instances of the package is its own.
     made: Option<usize>,
+    /// For an instance: the function that used it first, and where.
+    by: Option<(usize, Span)>,
 }
 
 /// What a function with a body is, for its symbol.
@@ -214,6 +269,8 @@ enum GenericOf {
 /// An instance that a level of functions uses first.
 struct Found {
     of: Generic,
+    /// The function that uses it, and where.
+    by: (usize, Span),
     named: Named,
     args: Vec<CheckedTypeId>,
     of_receiver: usize,
@@ -281,6 +338,9 @@ pub(crate) struct Shared<'a> {
     /// a generic function, and for each expression of a body that was
     /// made.
     found_steps: u64,
+    limits: Limits,
+    /// What the instances of the package are refused for.
+    refused: Vec<Diagnostic>,
     pub methods: FxHashMap<(NamedId, Spur), Method>,
     /// For each type that a function declares: which job, and which of
     /// the types of its name there, from 0.
@@ -541,7 +601,9 @@ impl<'a> Memo<'a> {
 }
 
 impl<'a> Shared<'a> {
-    fn new(checked: &'a Checked<'a>, layout: TargetLayout) -> Self {
+    /// What every run reads, without what each function does to its
+    /// parameters and its variables (`facts`).
+    fn found(checked: &'a Checked<'a>, layout: TargetLayout, limits: Limits) -> Self {
         let mut shared = Self {
             package: checked.package,
             files: checked.files,
@@ -560,6 +622,8 @@ impl<'a> Shared<'a> {
             instance_jobs: FxHashMap::default(),
             instance_methods: FxHashMap::default(),
             found_steps: 0,
+            limits,
+            refused: Vec::new(),
             methods: FxHashMap::default(),
             locals: FxHashMap::default(),
             no_body: Body::default(),
@@ -623,32 +687,35 @@ impl<'a> Shared<'a> {
         }
         shared.instantiate(&generics, &methods, &own);
         shared.number_literals();
-        // What each function does to its parameters and its variables,
-        // which every caller of it reads.
+        shared
+    }
+
+    /// What each function does to its parameters and its variables,
+    /// which every caller of it reads.
+    fn facts(&mut self) {
+        let shared = &*self;
         let facts: Vec<_> = (shared.jobs.par_iter())
-            .map(|job| facts::of(&shared, job))
+            .map(|job| facts::of(shared, job))
             .collect();
-        for (job, facts) in shared.jobs.iter_mut().zip(facts) {
+        for (job, facts) in self.jobs.iter_mut().zip(facts) {
             if !job.symbol.is_empty() {
-                shared.lent.insert(job.symbol.clone(), facts.lent.clone());
-                shared
-                    .worked
-                    .insert(job.symbol.clone(), facts.worked.clone());
+                self.lent.insert(job.symbol.clone(), facts.lent.clone());
+                self.worked.insert(job.symbol.clone(), facts.worked.clone());
             }
             job.facts = facts;
         }
         // A literal that a function is lent is framed, which is known
         // now that every function has its facts.
-        let mut facts: Vec<_> = (shared.jobs.iter_mut())
+        let mut facts: Vec<_> = (self.jobs.iter_mut())
             .map(|job| std::mem::take(&mut job.facts))
             .collect();
+        let shared = &*self;
         (facts.par_iter_mut())
             .zip(shared.jobs.par_iter())
-            .for_each(|(facts, job)| facts.lend(&shared, job));
-        for (job, facts) in shared.jobs.iter_mut().zip(facts) {
+            .for_each(|(facts, job)| facts.lend(shared, job));
+        for (job, facts) in self.jobs.iter_mut().zip(facts) {
             job.facts = facts;
         }
-        shared
     }
 
     /// Gives every function literal of the package its number: from 1
@@ -869,7 +936,9 @@ impl<'a> Shared<'a> {
     /// type arguments make the same symbol name one instance. What a
     /// level of functions uses is found in the order of the source,
     /// the types in the order of their symbols, and the bodies are
-    /// made side by side; then they are the next level.
+    /// made side by side; then they are the next level. The instances
+    /// are bounded (GEN-5): past a bound is one report, and no
+    /// instance is made after it.
     fn instantiate(
         &mut self,
         generics: &FxHashMap<ObjId, Generic>,
@@ -879,6 +948,29 @@ impl<'a> Shared<'a> {
         if generics.is_empty() && methods.is_empty() && own.is_empty() {
             return;
         }
+        // The bounds, by the nodes of syntax of the package.
+        let code_of = self.decl_nodes();
+        let nodes: u64 = (self.files.iter())
+            .map(|(tree, _)| (tree.exprs.len() + tree.stmts.len()) as u64)
+            .sum();
+        let limits = self.limits;
+        let most_instances = limits
+            .instances
+            .0
+            .max(limits.instances.1.saturating_mul(nodes));
+        let most_code = limits.code.0.max(limits.code.1.saturating_mul(nodes));
+        let nodes_of = |of: (u32, usize)| code_of.get(&of).copied().unwrap_or(0);
+        let mut code: u64 = self
+            .jobs
+            .iter()
+            .map(|job| nodes_of((job.file, job.at)))
+            .sum();
+        let mut instances = 0u64;
+        let mut sizes: FxHashMap<CheckedTypeId, (u32, u64)> = FxHashMap::default();
+        let all = generics.values().chain(methods.values().flatten());
+        let written = self.written_in(all.chain(own.values()));
+        self.found_steps += written.len() as u64;
+
         let mut by_symbol: FxHashMap<String, usize> = FxHashMap::default();
         let mut seen: FxHashSet<CheckedTypeId> = FxHashSet::default();
         let mut level = 0..self.jobs.len();
@@ -887,28 +979,50 @@ impl<'a> Shared<'a> {
             let mut known: FxHashMap<(Used, Vec<CheckedTypeId>), usize> = FxHashMap::default();
             let mut of_types: Vec<((CheckedTypeId, Spur), usize, bool)> = Vec::new();
             let mut steps = 0;
+            // The first use that passes a bound: what is used, the
+            // bound, and where.
+            let mut refused: Option<(String, String, (usize, Span))> = None;
             // A type argument may be a type that a function declares.
             let locals = |named: NamedId| self.local(named);
             let mut namer = Namer::new(self.types, self.names).with_locals(&locals);
-            let mut types: Vec<(String, CheckedTypeId)> = Vec::new();
-            for at in level {
+            let mut types: Vec<(String, CheckedTypeId, usize)> = Vec::new();
+            // One more instance, of so many nodes of syntax: the bound
+            // that it passes, if it passes one.
+            let mut one_more = |of: Generic| {
+                instances += 1;
+                code = code.saturating_add(nodes_of((of.file, of.at)));
+                if instances > most_instances {
+                    return Some(format!(
+                        "the package needs more than {most_instances} instances"
+                    ));
+                }
+                (code > most_code).then(|| {
+                    format!("the instances of the package hold more than {most_code} nodes of code")
+                })
+            };
+            'level: for at in level {
                 let job = &self.jobs[at];
                 let (tree, _) = self.files[job.file as usize];
                 let body = self.body(job);
+                // In an instance: the body as it is written, which says
+                // what is built around a type parameter.
+                let generic =
+                    (job.made).map(|_| &self.package.files[job.file as usize].bodies[job.at]);
                 let mut uses: Vec<_> = (body.instances.iter())
                     .filter_map(|(&expr, instance)| {
                         let (used, _) = self.generic_named(tree, body, expr)?;
                         let span = tree.exprs[expr].span;
-                        Some((span.lo, span.hi, used, instance))
+                        Some((span.lo, span.hi, used, instance, expr))
                     })
                     .collect();
                 uses.sort_unstable_by_key(|&(lo, hi, ..)| (lo, hi));
                 steps += uses.len() as u64;
-                for (_, _, used, instance) in uses {
+                for (_, _, used, instance, expr) in uses {
                     let key = (used, instance.args.clone());
                     if self.instance_jobs.contains_key(&key) || known.contains_key(&key) {
                         continue;
                     }
+                    let by = (at, tree.exprs[expr].span);
                     // What is used, with the type arguments of its
                     // receiver before its own.
                     let (of, named, entity, of_receiver) = match used {
@@ -934,23 +1048,47 @@ impl<'a> Shared<'a> {
                             (own.get(&(*id, name)), named, entity, args.to_vec())
                         }
                     };
-                    let (Some(&of), Ok(symbol)) = (of, symbol_of(&mut namer, entity)) else {
+                    let Some(&of) = of else {
                         continue;
                     };
-                    let job = *by_symbol.entry(symbol.clone()).or_insert_with(|| {
-                        let mut args = of_receiver;
-                        let of_receiver = args.len();
-                        args.extend(&instance.args);
-                        found.push(Found {
-                            of,
-                            named,
-                            args,
-                            of_receiver,
-                            sig: instance.ty,
-                            symbol,
-                        });
-                        self.jobs.len() + found.len() - 1
+                    // A type argument that the instance builds around a
+                    // type parameter is bounded.
+                    let as_written = generic.and_then(|generic| generic.instances.get(&expr));
+                    let built = as_written.into_iter().flat_map(|written| {
+                        let both = written.args.iter().zip(&instance.args);
+                        both.filter(|&(&from, _)| self.built_around(from))
                     });
+                    let mut bound = None;
+                    for (_, &arg) in built {
+                        bound = bound.or_else(|| self.too_large(arg, &mut sizes, &mut steps));
+                    }
+                    let Ok(symbol) = symbol_of(&mut namer, entity) else {
+                        continue;
+                    };
+                    let job = match (by_symbol.get(&symbol), bound) {
+                        (Some(&job), None) => job,
+                        (_, bound) => {
+                            if let Some(bound) = bound.or_else(|| one_more(of)) {
+                                refused = Some((self.used_name(used), bound, by));
+                                break 'level;
+                            }
+                            let mut args = of_receiver;
+                            let of_receiver = args.len();
+                            args.extend(&instance.args);
+                            let job = self.jobs.len() + found.len();
+                            by_symbol.insert(symbol.clone(), job);
+                            found.push(Found {
+                                of,
+                                by,
+                                named,
+                                args,
+                                of_receiver,
+                                sig: instance.ty,
+                                symbol,
+                            });
+                            job
+                        }
+                    };
                     known.insert(key, job);
                 }
                 // The instances of generic types with methods that the
@@ -966,16 +1104,38 @@ impl<'a> Shared<'a> {
                     steps += 1;
                     let kind = self.types.get(ty);
                     kind.each_part(&mut |part| rest.push(part));
-                    if let CheckedType::Named { id, args } = &*kind {
-                        rest.push(self.types.underlying(ty));
-                        let symbol = (!args.is_empty() && methods.contains_key(id))
-                            .then(|| symbol_of(&mut namer, Entity::TypeInfo(ty)).ok());
-                        types.extend(symbol.flatten().map(|symbol| (symbol, ty)));
+                    let CheckedType::Named { id, args } = &*kind else {
+                        continue;
+                    };
+                    rest.push(self.types.underlying(ty));
+                    if args.is_empty() {
+                        continue;
+                    }
+                    // An instance that the source writes nowhere was
+                    // built around a type parameter.
+                    if job.made.is_some() && !written.contains(&ty) {
+                        let mut bound = None;
+                        for &arg in args.iter() {
+                            bound = bound.or_else(|| self.too_large(arg, &mut sizes, &mut steps));
+                        }
+                        if let Some(bound) = bound {
+                            let name = self.names.resolve(&self.types.home(*id).name);
+                            refused = Some((name.to_owned(), bound, (at, self.name_span(job))));
+                            break 'level;
+                        }
+                    }
+                    if methods.contains_key(id)
+                        && let Ok(symbol) = symbol_of(&mut namer, Entity::TypeInfo(ty))
+                    {
+                        types.push((symbol, ty, at));
                     }
                 }
             }
             types.sort_unstable();
-            for (_, ty) in types {
+            for (_, ty, at) in types {
+                if refused.is_some() {
+                    break;
+                }
                 let CheckedType::Named { id, args } = &*self.types.get(ty) else {
                     continue;
                 };
@@ -993,22 +1153,39 @@ impl<'a> Shared<'a> {
                         continue;
                     };
                     steps += 1;
-                    let job = *by_symbol.entry(symbol.clone()).or_insert_with(|| {
-                        found.push(Found {
-                            of,
-                            named: Named::Method(ty, name),
-                            args: args.to_vec(),
-                            of_receiver: args.len(),
-                            sig,
-                            symbol,
-                        });
-                        self.jobs.len() + found.len() - 1
-                    });
+                    let job = match by_symbol.get(&symbol) {
+                        Some(&job) => job,
+                        None => {
+                            let by = (at, self.name_span(&self.jobs[at]));
+                            if let Some(bound) = one_more(of) {
+                                let used = self.used_name(Used::Method(ty, name));
+                                refused = Some((used, bound, by));
+                                break;
+                            }
+                            let job = self.jobs.len() + found.len();
+                            by_symbol.insert(symbol.clone(), job);
+                            found.push(Found {
+                                of,
+                                by,
+                                named: Named::Method(ty, name),
+                                args: args.to_vec(),
+                                of_receiver: args.len(),
+                                sig,
+                                symbol,
+                            });
+                            job
+                        }
+                    };
                     of_types.push(((ty, name), job, pointer));
                 }
             }
-            self.instance_jobs.extend(known);
             self.found_steps += steps;
+            if let Some((used, bound, by)) = refused {
+                let report = self.too_many(&used, &bound, by);
+                self.refused.push(report);
+                return;
+            }
+            self.instance_jobs.extend(known);
             let bodies: Vec<Body> = (found.par_iter())
                 .map(|found| {
                     let Generic { file, at, .. } = found.of;
@@ -1057,6 +1234,7 @@ impl<'a> Shared<'a> {
                     source: (span.hi - span.lo) as usize,
                     facts: facts::Facts::default(),
                     made: Some(made),
+                    by: Some(found.by),
                 });
             }
             // The types that an instance declares are its own.
@@ -1081,6 +1259,159 @@ impl<'a> Shared<'a> {
             }
             level = start..self.jobs.len();
         }
+    }
+
+    /// How many nodes of syntax each declaration of each file has.
+    fn decl_nodes(&self) -> FxHashMap<(u32, usize), u64> {
+        let mut nodes = FxHashMap::default();
+        for (file, (tree, _)) in self.files.iter().enumerate() {
+            let mut decls: Vec<(u32, u32, usize)> = (tree.decls.iter().enumerate())
+                .map(|(at, &decl)| {
+                    let span = tree.decl_nodes[decl].span;
+                    (span.lo, span.hi, at)
+                })
+                .collect();
+            decls.sort_unstable();
+            let exprs = tree.exprs.iter().map(|(_, expr)| expr.span);
+            for span in exprs.chain(tree.stmts.iter().map(|(_, stmt)| stmt.span)) {
+                let before = decls.partition_point(|&(start, _, _)| start <= span.lo);
+                let around = before.checked_sub(1).map(|at| decls[at]);
+                if let Some((_, _, at)) = around.filter(|&(_, end, _)| span.hi <= end) {
+                    *nodes.entry((file as u32, at)).or_default() += 1;
+                }
+            }
+        }
+        nodes
+    }
+
+    /// The types without a type parameter that the generic bodies are
+    /// written with, and their parts: the source writes them.
+    fn written_in<'g>(
+        &self,
+        generic: impl Iterator<Item = &'g Generic>,
+    ) -> FxHashSet<CheckedTypeId> {
+        let mut written = FxHashSet::default();
+        let mut walked = FxHashSet::default();
+        for of in generic {
+            let body = &self.package.files[of.file as usize].bodies[of.at];
+            let typed = body.types.values().map(|typed| typed.ty);
+            let mut rest: Vec<CheckedTypeId> = typed
+                .chain(body.locals.iter().map(|local| local.ty))
+                .collect();
+            while let Some(ty) = rest.pop() {
+                if !walked.insert(ty) {
+                    continue;
+                }
+                if !self.types.has_param(ty) {
+                    written.insert(ty);
+                }
+                self.types.get(ty).each_part(&mut |part| rest.push(part));
+            }
+        }
+        written
+    }
+
+    /// Whether the type is built around a type parameter: written with
+    /// one, and not one itself, which is passed on as it is.
+    fn built_around(&self, ty: CheckedTypeId) -> bool {
+        self.types.has_param(ty) && !matches!(&*self.types.get(ty), CheckedType::Param(_))
+    }
+
+    /// The bound that a type argument which generic code built passes,
+    /// if it passes one: how deep it nests, and how many parts it has
+    /// as a tree. `sizes` has both for the types that were measured.
+    fn too_large(
+        &self,
+        ty: CheckedTypeId,
+        sizes: &mut FxHashMap<CheckedTypeId, (u32, u64)>,
+        steps: &mut u64,
+    ) -> Option<String> {
+        let mut rest = vec![(ty, false)];
+        while let Some((ty, parts_done)) = rest.pop() {
+            if sizes.contains_key(&ty) {
+                continue;
+            }
+            *steps += 1;
+            let mut parts = Vec::new();
+            self.types.get(ty).each_part(&mut |part| parts.push(part));
+            if parts_done {
+                let of_parts = parts
+                    .iter()
+                    .map(|part| sizes.get(part).copied().unwrap_or((0, 1)));
+                let size = of_parts.fold((0u32, 1u64), |(height, count), (deep, many)| {
+                    (height.max(deep + 1), count.saturating_add(many))
+                });
+                sizes.insert(ty, size);
+            } else {
+                rest.push((ty, true));
+                rest.extend(parts.into_iter().map(|part| (part, false)));
+            }
+        }
+        let (height, parts) = sizes.get(&ty).copied().unwrap_or((0, 1));
+        let limits = self.limits;
+        if height > limits.height {
+            return Some(format!(
+                "a type argument nests more than {} levels",
+                limits.height
+            ));
+        }
+        (parts > limits.parts).then(|| {
+            format!(
+                "a type argument has more than {} parts as a tree",
+                limits.parts
+            )
+        })
+    }
+
+    /// What a use names, as a report says it.
+    fn used_name(&self, used: Used) -> String {
+        match used {
+            Used::Func(object) => {
+                let name = self.package.object(object).name;
+                self.names.resolve(&name).to_owned()
+            }
+            Used::Method(receiver, name) => {
+                let of = match &*self.types.get(receiver) {
+                    CheckedType::Named { id, .. } => self.types.home(*id).name,
+                    _ => self.blank,
+                };
+                format!("{}.{}", self.names.resolve(&of), self.names.resolve(&name))
+            }
+        }
+    }
+
+    /// Where the name of the function of a job is declared.
+    fn name_span(&self, job: &Job) -> Span {
+        let (tree, _) = self.files[job.file as usize];
+        match &tree.decl_nodes[job.decl].kind {
+            DeclKind::Func { name, .. } => name.span,
+            _ => tree.decl_nodes[job.decl].span,
+        }
+    }
+
+    /// The report of the instance that passes a bound (`E0449`), at
+    /// the use that asks for it, with the uses that led there.
+    fn too_many(&self, used: &str, bound: &str, (mut job, at): (usize, Span)) -> Diagnostic {
+        let message = format!("cannot instantiate {used}: {bound} (GEN-5)");
+        let mut report = Diagnostic::new(Code::InstTooLarge, at, message);
+        let mut led = 0;
+        while let Some((before, at)) = self.jobs[job].by {
+            led += 1;
+            if led > MAX_LED {
+                break;
+            }
+            let name = match self.jobs[job].named {
+                JobName::Instance(object, _) => self.used_name(Used::Func(object)),
+                JobName::Method(ty, name) | JobName::OwnMethod(ty, name, _) => {
+                    self.used_name(Used::Method(ty, name))
+                }
+                JobName::Object(_) | JobName::Init(_) => break,
+            };
+            let note = format!("{name} is instantiated here");
+            report = report.with_note(Code::NoteRefersTo, Some(at), note);
+            job = before;
+        }
+        report
     }
 
     /// The function that declares the type, and which of the types of
@@ -1124,6 +1455,7 @@ impl<'a> Shared<'a> {
             source,
             facts: facts::Facts::default(),
             made: None,
+            by: None,
         };
         let Some(receiver) = receiver else {
             if text == "init" {

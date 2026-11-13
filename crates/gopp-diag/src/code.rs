@@ -308,6 +308,7 @@ codes! {
     442 GirExternBad "err_gir_extern_bad",
     445 GirExportBad "err_gir_export_bad",
     446 InstOption "err_inst_option",
+    449 InstTooLarge "err_inst_too_large",
     450 InlineMarksConflict "err_inline_marks_conflict",
     451 UseAfterMove "err_use_after_move",
     452 OwnImplicitClone "err_own_implicit_clone",
