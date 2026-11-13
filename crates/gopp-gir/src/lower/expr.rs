@@ -461,8 +461,14 @@ impl<'a> FuncCx<'a, '_> {
             ExprKind::Name(_) => self.name(expr, ty),
             ExprKind::Selector { .. } => self.selector(expr, ty),
             ExprKind::Index { .. } => {
-                // `f[int]`: an instance of a generic function.
+                // `f[int]`: an instance of a generic function, or of a
+                // method with type parameters of its own (`x.m[int]`).
                 if let Some(key) = self.instance_named(expr) {
+                    let named = self.shared.generic_named(self.file, self.body, expr);
+                    if matches!(named, Some((_, Some(_)))) {
+                        let made = self.method_value(expr, ty)?;
+                        return self.fresh(expr, ty, made);
+                    }
                     return self.func_value(expr, ty, key);
                 }
                 if let Some((map, index)) = self.map_index(expr) {
@@ -575,7 +581,9 @@ impl<'a> FuncCx<'a, '_> {
                         return Ok(Rvalue::Use(Operand::Copy(place)));
                     }
                     Some(ObjKind::Func) => {
-                        return self.func_value(expr, ty, CalleeKey::Member(*import, *member));
+                        let key = self.instance_named(expr);
+                        let key = key.unwrap_or(CalleeKey::Member(*import, *member));
+                        return self.func_value(expr, ty, key);
                     }
                     _ => "a name of another package",
                 }

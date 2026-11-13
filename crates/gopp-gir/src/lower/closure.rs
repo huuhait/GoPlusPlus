@@ -426,12 +426,16 @@ impl FuncCx<'_, '_> {
     /// The method `name` of a declared type or of an interface type as
     /// what a method value or a method expression calls: the type of
     /// the method without its receiver, and whether the type is an
-    /// interface.
+    /// interface. A method with type parameters of its own is the
+    /// instance of the job.
     fn bound_method(
         shared: &Shared<'_>,
-        ty: CheckedTypeId,
-        name: Spur,
+        (ty, name, instance): (CheckedTypeId, Spur, Option<usize>),
     ) -> Option<(CheckedTypeId, bool)> {
+        if let Some(job) = instance {
+            let (_, _, sig) = shared.job_called(job);
+            return Some((sig, false));
+        }
         let types = shared.types;
         if let Some(methods) = types.interface_methods(ty, shared.names) {
             let method = methods.iter().find(|method| method.name == name)?;
@@ -452,15 +456,23 @@ impl FuncCx<'_, '_> {
     pub fn method_value(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let shared = self.shared;
-        let ExprKind::Selector { x, sel } = self.tree.exprs[expr].kind else {
+        // `x.m[int]` names its method by the selector in it.
+        let named = shared.generic_named(self.file, self.body, expr);
+        let selector = named.and_then(|(_, selector)| selector).unwrap_or(expr);
+        let instance = match self.instance_named(expr) {
+            Some(CalleeKey::Instance(job)) => Some(job),
+            _ => None,
+        };
+        let ExprKind::Selector { x, sel } = self.tree.exprs[selector].kind else {
             return Ok(self.placeholder(span, ty, "a method as a value"));
         };
-        let selection = self.body.selections.get(&expr);
+        let selection = self.body.selections.get(&selector);
         let (Some(selection), Some(code_ty)) = (selection, self.code_type(ty)) else {
             return Ok(self.placeholder(span, ty, "a method as a value"));
         };
         let (holder, path) = (selection.holder, &selection.path[..]);
-        let Some((_, dynamic)) = Self::bound_method(shared, holder, sel.name) else {
+        let of = (holder, sel.name, instance);
+        let Some((_, dynamic)) = Self::bound_method(shared, of) else {
             let generic = matches!(&*shared.types.get(holder),
                 CheckedType::Named { args, .. } if !args.is_empty());
             let what = match generic {
@@ -469,10 +481,14 @@ impl FuncCx<'_, '_> {
             };
             return Ok(self.placeholder(span, ty, what));
         };
-        let entity = Entity::MethodValue {
-            receiver: holder,
-            name: sel.name,
+        let entity = match instance.and_then(|job| shared.job_value(job)) {
+            Some(entity) => entity,
+            None => Entity::MethodValue {
+                receiver: holder,
+                name: sel.name,
+            },
         };
+        let key = instance.map_or(CalleeKey::Method(holder, sel.name), CalleeKey::Instance);
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             let what = "a method of a type without a name as a value";
             return Ok(self.placeholder(span, ty, what));
@@ -493,7 +509,7 @@ impl FuncCx<'_, '_> {
                 (copy, Some(holder))
             }
             false => {
-                let called = match self.callee(CalleeKey::Method(holder, sel.name))? {
+                let called = match self.callee(key)? {
                     Ok(called) => called,
                     Err(what) => return Ok(self.placeholder(span, ty, what)),
                 };
@@ -517,7 +533,7 @@ impl FuncCx<'_, '_> {
         let of = self.b.operand_ty(&bound);
         // The variable whose address the receiver is, if it is one of
         // this function: its cell lives as long as the value.
-        let address = self.body.method_values.get(&expr) == Some(&MethodValue::Address);
+        let address = self.body.method_values.get(&selector) == Some(&MethodValue::Address);
         let root = match address {
             true => self
                 .root_local(x)
@@ -529,7 +545,7 @@ impl FuncCx<'_, '_> {
         if !asked {
             self.memo
                 .glues
-                .push((symbol, Made::MethodValue(sel.name), holder));
+                .push((symbol, Made::MethodValue(sel.name, instance), holder));
         }
         // The cell of the receiver, which the environment has alone.
         let bytes = self.bytes_ty();
@@ -659,10 +675,11 @@ impl FuncCx<'_, '_> {
         shared: &Shared<'_>,
         memo: &mut super::Memo<'_>,
         types: &mut TypeInterner,
-        (ty, name): (CheckedTypeId, Spur),
+        of: (CheckedTypeId, Spur, Option<usize>),
         first: Option<bool>,
     ) -> Result<TypeId, &'static str> {
-        let Some((sig, _)) = Self::bound_method(shared, ty, name) else {
+        let (ty, name, _) = of;
+        let Some((sig, _)) = Self::bound_method(shared, of) else {
             return Err("a method that its type does not have");
         };
         let plain = memo.signature(shared, types, None, sig)?;
@@ -701,17 +718,17 @@ impl FuncCx<'_, '_> {
     /// away ends here.
     pub fn bound_body(
         &mut self,
-        ty: CheckedTypeId,
-        name: Spur,
+        of: (CheckedTypeId, Spur, Option<usize>),
         first: Option<bool>,
     ) -> Built<Result<(), &'static str>> {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         let shared = self.shared;
-        let Some((checked, dynamic)) = Self::bound_method(shared, ty, name) else {
+        let (ty, name, instance) = of;
+        let Some((checked, dynamic)) = Self::bound_method(shared, of) else {
             return Ok(Err("a method that its type does not have"));
         };
-        let own = Self::bound_sig(shared, self.memo, self.b.types(), (ty, name), first);
+        let own = Self::bound_sig(shared, self.memo, self.b.types(), of, first);
         let own = match own.map(|own| (own, self.kind(own))) {
             Ok((id, Type::Func(own))) => (id, own),
             Ok(_) => return Ok(Err("a function type")),
@@ -721,10 +738,13 @@ impl FuncCx<'_, '_> {
         let before = 1 + u32::from(first.is_some());
         let called = match dynamic {
             true => None,
-            false => match self.callee(CalleeKey::Method(ty, name))? {
-                Ok(called) => Some(called),
-                Err(what) => return Ok(Err(what)),
-            },
+            false => {
+                let key = instance.map_or(CalleeKey::Method(ty, name), CalleeKey::Instance);
+                match self.callee(key)? {
+                    Ok(called) => Some(called),
+                    Err(what) => return Ok(Err(what)),
+                }
+            }
         };
         // The receiver where it is: in the cell of the environment, or
         // in the parameter.

@@ -530,8 +530,9 @@ pub(crate) enum Made {
     Value(String),
     /// The code of a method value: the method `name` of a declared
     /// type or of an interface type, with its receiver in the
-    /// environment.
-    MethodValue(Spur),
+    /// environment. A method with type parameters of its own is the
+    /// instance of the job.
+    MethodValue(Spur, Option<usize>),
     /// The code of a method expression: the method `name` of a
     /// declared type as a function that takes its receiver first, by
     /// its address if `pointer` is set and the method takes a value.
@@ -1223,6 +1224,14 @@ impl<'a> Shared<'a> {
                 let args = &self.instances[at].args;
                 let package = self.packages[package as usize];
                 Some(Entity::InstanceValue(package, object, args))
+            }
+            JobName::OwnMethod(receiver, name, at) => {
+                let instance = &self.instances[at];
+                Some(Entity::MethodInstanceValue {
+                    receiver,
+                    name,
+                    args: &instance.args[instance.of_receiver..],
+                })
             }
             _ => None,
         }
@@ -2016,7 +2025,7 @@ impl<'a> Shared<'a> {
                     Made::Value(of) => {
                         func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty));
                     }
-                    Made::MethodValue(_) | Made::MethodExpr { .. } => {
+                    Made::MethodValue(..) | Made::MethodExpr { .. } => {
                         func::lower_bound(self, &mut module, &mut memo, &symbol, (kind, ty));
                     }
                 }

@@ -634,12 +634,13 @@ pub(super) fn lower_bound<'a>(
     symbol: &str,
     (made, ty): (super::Made, CheckedTypeId),
 ) {
-    let (name, first) = match made {
-        super::Made::MethodValue(name) => (name, None),
-        super::Made::MethodExpr { name, pointer } => (name, Some(pointer)),
+    let (name, first, instance) = match made {
+        super::Made::MethodValue(name, instance) => (name, None, instance),
+        super::Made::MethodExpr { name, pointer } => (name, Some(pointer), None),
         _ => return,
     };
-    let sig = FuncCx::bound_sig(shared, memo, &mut module.types, (ty, name), first);
+    let of = (ty, name, instance);
+    let sig = FuncCx::bound_sig(shared, memo, &mut module.types, of, first);
     let sig = match sig {
         Ok(sig) => sig,
         Err(what) => return not_made(shared, memo, symbol, Ok(Err(what))),
@@ -653,7 +654,7 @@ pub(super) fn lower_bound<'a>(
             0,
             (&shared.no_body, &shared.no_facts),
         );
-        let made = cx.bound_body(ty, name, first)?;
+        let made = cx.bound_body(of, first)?;
         // What cannot be made has no body: its reason is reported.
         if made.is_err() {
             return Ok(made);

@@ -1544,6 +1544,9 @@ func main() {
 	var v any = algo.Thing{}
 	println(v.(interface{ Shown() int }).Shown(), algo.Hidden(v))
 	println(algo.Thing{}.With(func(n int) string { return "with" }), first)
+	var largest func(int, int) int = algo.Max
+	with := algo.Thing{}.With[int]
+	println(largest(4, 1), with(func(n int) int { return n + 7 }))
 	println(algo.Calls())
 }
 "#;
@@ -1602,7 +1605,7 @@ fn a_program_runs_the_generic_code_of_the_packages_that_it_imports() {
     // The generic code names what its package does not export: the
     // counter of `algo` says how often its functions were called.
     let expected = "6 true\n8\n10\none more\nb 1\n16 9\n3 k\ndog a;dog b;dog c;\ny\n8\n2\n\
-                    1 0\nwith 5\n6\n";
+                    1 0\nwith 5\n4 7\n6\n";
     assert_eq!(stderr(&ran), expected);
     assert_eq!(ran.status.code(), Some(0));
 }

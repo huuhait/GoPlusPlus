@@ -60,6 +60,13 @@ pub enum Entity<'a> {
     /// The code of the method value `x.name` for an `x` of the declared
     /// type `receiver`: the method with the receiver in its environment.
     MethodValue { receiver: TypeId, name: Spur },
+    /// The code of a method value of a method with type parameters of
+    /// its own, with its type arguments.
+    MethodInstanceValue {
+        receiver: TypeId,
+        name: Spur,
+        args: &'a [TypeId],
+    },
     /// The code of the method expression `T.name`: the method as a
     /// function that takes its receiver first. With `pointer`, that of
     /// `(*T).name` for a method that takes its receiver by value.
@@ -302,6 +309,18 @@ impl<'a> Namer<'a> {
             Entity::MethodValue { receiver, name } => {
                 let method = self.entity(Entity::Method { receiver, name })?;
                 Node::Wrap(Wrap::MethodValue, method)
+            }
+            Entity::MethodInstanceValue {
+                receiver,
+                name,
+                args,
+            } => {
+                let instance = Entity::MethodInstance {
+                    receiver,
+                    name,
+                    args,
+                };
+                Node::Wrap(Wrap::MethodValue, self.entity(instance)?)
             }
             Entity::MethodExpr {
                 receiver,

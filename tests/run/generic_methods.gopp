@@ -71,4 +71,10 @@ func main() {
 	println(c.Add(2), c.Add(2.5), c.Add[int](1), c.Scaled(2), c.Scaled(0.5))
 	var held Counted = c
 	println(held.Count())
+	// As values: the receiver is kept when the value is made.
+	add := c.Add[int]
+	var scaled func(float64) float64 = c.Scaled
+	fold := l.Fold[string]
+	println(add(1), add(2.0), scaled(0.5), c.n)
+	println(fold(">", func(acc string, n int) string { return acc + digits(n) }))
 }

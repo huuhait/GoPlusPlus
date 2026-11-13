@@ -3248,23 +3248,6 @@ func main() {
             "{file}"
         );
     }
-    // A method with type parameters of its own as a value.
-    let text = "package main
-
-type List[T any] struct{ items []T }
-
-func (l *List[T]) Len[U any]() int { return len(l.items) }
-
-func main() {
-	var l List[int]
-	size := l.Len[string]
-	println(size())
-}
-";
-    assert_eq!(
-        said("a.gopp", text),
-        ["not supported yet: a function as a value"]
-    );
 }
 
 /// The body of the function whose symbol starts with `symbol`, with
