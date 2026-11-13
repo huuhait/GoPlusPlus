@@ -1,0 +1,40 @@
+package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func each(n int, f func(int)) {
+	for i := range n {
+		f(i)
+	}
+}
+
+// A literal that cannot outlive its variables uses them where they
+// are: another name of an element, a value that cannot be copied.
+func main() {
+	xs := []int{1, 2, 3}
+	for _, &x := range xs {
+		func() { x *= 10 }()
+	}
+	println(xs[0], xs[1], xs[2])
+
+	f := File{fd: 1}
+	each(2, func(i int) { f.fd += i + 1 })
+	println("fd", f.fd)
+
+	names := []string{"a"}
+	add := func(s string) { names = append(names, s) }
+	add("b")
+	add("c")
+	println(len(names), names[2])
+	func() {
+		g := File{fd: 9}
+		func() { println("inner", g.fd, f.fd) }()
+	}()
+	println("done")
+}

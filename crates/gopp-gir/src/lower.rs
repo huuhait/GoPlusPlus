@@ -511,6 +511,17 @@ impl<'a> Shared<'a> {
             }
             job.facts = facts;
         }
+        // A literal that a function is lent is framed, which is known
+        // now that every function has its facts.
+        let mut facts: Vec<_> = (shared.jobs.iter_mut())
+            .map(|job| std::mem::take(&mut job.facts))
+            .collect();
+        (facts.par_iter_mut())
+            .zip(shared.jobs.par_iter())
+            .for_each(|(facts, job)| facts.lend(&shared, job));
+        for (job, facts) in shared.jobs.iter_mut().zip(facts) {
+            job.facts = facts;
+        }
         shared
     }
 

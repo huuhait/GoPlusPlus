@@ -1674,8 +1674,109 @@ func main() {
         assert_eq!(work.matches(" = call copy _").count(), 2, "{file}: {work}");
         assert_eq!(calls("_gopp_func_clone"), 1, "{file}: {work}");
         assert_eq!(calls("_gopp_func_drop"), 3, "{file}: {work}");
-        // `out` and `n` live in cells, because the literals use them.
-        assert_eq!(calls("_gopp_cell_new"), 2, "{file}: {work}");
+        // `out` lives in a cell, because `step` uses it and is kept by
+        // a `defer` statement. The literal that the first statement
+        // calls uses variables of the whole function, so its
+        // environment is in the frame, and `n` stays where it is.
+        assert_eq!(calls("_gopp_cell_new"), 1, "{file}: {work}");
+        assert_eq!(calls("_gopp_env_new"), 1, "{file}: {work}");
+    }
+}
+
+#[test]
+fn a_literal_that_cannot_outlive_its_variables_has_its_environment_in_the_frame() {
+    let text = "package main
+
+func apply(values []int, f func(int)) {
+	for _, v := range values {
+		f(v)
+	}
+}
+
+func keep(f func(int)) func(int) { return f }
+
+func direct(n int) int {
+	sum := n
+	func() { sum *= 2 }()
+	return sum
+}
+
+func deferred(n int) (out int) {
+	defer func() { out += n }()
+	return 1
+}
+
+func inner(flag bool) (out int) {
+	if flag {
+		five := 5
+		defer func() { out += five }()
+	}
+	return 1
+}
+
+func lent(values []int) int {
+	sum := 0
+	apply(values, func(v int) { sum += v })
+	return sum
+}
+
+func helper(values []int) int {
+	sum := 0
+	add := func(v int) { sum += v }
+	for _, v := range values {
+		add(v)
+	}
+	return sum
+}
+
+func escapes(values []int) int {
+	sum := 0
+	add := func(v int) { sum += v }
+	keep(add)(1)
+	apply(values, add)
+	return sum
+}
+
+func passed(values []int) int {
+	sum := 0
+	apply(values, keep(func(v int) { sum += v }))
+	return sum
+}
+
+func main() {
+	xs := []int{1, 2, 3}
+	println(direct(2), deferred(3), inner(true), lent(xs), helper(xs), escapes(xs), passed(xs))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        // The environments and the cells that each function makes on
+        // the heap.
+        let made = |name: &str| {
+            let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+            let body = &module[start..][..module[start..].find("\n}\n").unwrap()];
+            let calls = |name: &str| body.matches(&format!("@{name}(")).count();
+            [calls("_gopp_env_new"), calls("_gopp_cell_new")]
+        };
+        // Called where it is written, called by a `defer` statement
+        // with variables of the whole function, lent to a function
+        // that only calls it, held by a variable that is only called:
+        // nothing is made.
+        for name in ["6direct", "8deferred", "4lent", "6helper"] {
+            assert_eq!(made(name), [0, 0], "{file}: {name}");
+        }
+        // A deferred literal that uses a variable of a block, a
+        // variable that is passed on, and a literal that is given to a
+        // function which keeps it: an environment, and a cell for each
+        // variable.
+        assert_eq!(made("5inner"), [1, 2], "{file}");
+        assert_eq!(made("7escapes"), [1, 1], "{file}");
+        assert_eq!(made("6passed"), [1, 1], "{file}");
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
     }
 }
 
@@ -1693,15 +1794,15 @@ type Getter interface{ get() int }
 
 func main() {
 	xs := []int{1}
+	var kept []func(int) int
 	for _, &x := range xs {
-		add := func(a int) int { return a + x }
-		println(add(1))
+		kept = append(kept, func(a int) int { return a + x })
 	}
 	get := Getter.get
 	all := many
 	go func() {}()
 	defer func() {}()
-	println(get(T{2}), all(1))
+	println(get(T{2}), all(1), len(kept))
 }
 ";
     // Another name of an element is no variable of its own.
@@ -2641,6 +2742,23 @@ fn the_steps_grow_with_the_glue_of_types() {
             "package main\n\nfunc f() int {{\n{vars}\tall := func() int {{ return 0{sum} }}\n\
              \tsum := all()\n{literals}\treturn sum\n}}\n\n\
              func g(v0 int) int {{\n\t{nested}\n}}\n"
+        ))
+    });
+    // Many literals that are framed, each with many variables, and
+    // many that are lent to one function.
+    assert_near_linear(&sizes, |n| {
+        let n = n / 4;
+        let vars: String = (0..n).map(|at| format!("\tv{at} := {at}\n")).collect();
+        let sum: String = (0..n).map(|at| format!(" + v{at}")).collect();
+        let direct: String = (0..n)
+            .map(|at| format!("\tfunc() {{ v{at} += v0 }}()\n"))
+            .collect();
+        let lent: String = (0..n)
+            .map(|at| format!("\teach(func(a int) {{ v{at} += a }})\n"))
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc each(f func(int)) {{ f(1) }}\n\n\
+             func f() int {{\n{vars}\tfunc() {{ v0 += 0{sum} }}()\n{direct}{lent}\treturn v0\n}}\n"
         ))
     });
     // Many types with a `drop` and a `Clone` method that each hold the

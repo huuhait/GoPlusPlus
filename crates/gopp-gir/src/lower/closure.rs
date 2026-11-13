@@ -113,6 +113,37 @@ impl FuncCx<'_, '_> {
         let captured: Vec<CheckedLocalId> = (captures.unwrap_or_default().iter())
             .map(|capture| capture.local)
             .collect();
+        let code = self.function_named(&symbol, code_ty)?;
+        self.memo.queue(job, expr);
+        if captured.is_empty() {
+            return Ok(self.bare(code, code_ty));
+        }
+        // A literal whose value cannot outlive its variables has an
+        // environment in this frame, with the address of each variable
+        // where it is, or of its cell (CLO-1).
+        if self.framed(expr) {
+            let word = self.b.types().int(64, false);
+            let mut parts = vec![self.b.const_int(word, u64::MAX)?];
+            for &local in &captured {
+                let slot = match self.cells.get(&local) {
+                    Some(&cell) => cell,
+                    None => {
+                        let var = self.var(local)?;
+                        let place = self.var_place(var)?;
+                        let address = Rvalue::AddrOf(place, crate::Mutability::Mut);
+                        self.b.assign_temp(address)?
+                    }
+                };
+                parts.push(Operand::Copy(Place::local(slot)));
+            }
+            let env = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;
+            let env = self.record(env)?;
+            let code = Operand::Const(Constant {
+                kind: ConstantKind::Func(code),
+                ty: code_ty,
+            });
+            return Ok(Rvalue::Aggregate(AggKind::Tuple, vec![code, env]));
+        }
         // Every variable that it uses has its cell here.
         let mut cells = Vec::with_capacity(captured.len());
         for local in &captured {
@@ -123,11 +154,6 @@ impl FuncCx<'_, '_> {
                     return Ok(self.placeholder(span, ty, what));
                 }
             }
-        }
-        let code = self.function_named(&symbol, code_ty)?;
-        self.memo.queue(job, expr);
-        if captured.is_empty() {
-            return Ok(self.bare(code, code_ty));
         }
         let bytes = self.bytes_ty();
         let word = self.b.types().int(64, false);
@@ -173,6 +199,9 @@ impl FuncCx<'_, '_> {
             return Ok(());
         }
         let captured = self.captured.clone();
+        if self.in_frame {
+            return self.open_frame(&captured);
+        }
         let env_ty = self.env_type(&captured);
         let to = self.b.types().ptr(env_ty);
         let given = Operand::Copy(Place::local(self.b.param(0)));
@@ -186,6 +215,48 @@ impl FuncCx<'_, '_> {
             let declared = &self.body.locals[local.0 as usize];
             let of = self.lower(declared.ty, declared.span);
             self.name_cell(local, cell, of)?;
+        }
+        Ok(())
+    }
+
+    /// At the start of the code of a literal whose environment is in a
+    /// frame: each variable is another name of what the address in the
+    /// environment leads to, the variable itself or what its cell
+    /// holds.
+    fn open_frame(&mut self, captured: &[CheckedLocalId]) -> Built {
+        let word = self.b.types().int(64, false);
+        let mut fields = vec![word];
+        let mut kinds = Vec::with_capacity(captured.len());
+        for &local in captured {
+            let declared = &self.body.locals[local.0 as usize];
+            let of = self.lower(declared.ty, declared.span);
+            let held = match self.celled(local) {
+                true => self.cell_type(of),
+                false => of,
+            };
+            fields.push(self.b.types().ptr(held));
+            kinds.push(of);
+        }
+        let env_ty = self.b.types().tuple(&fields);
+        let to = self.b.types().ptr(env_ty);
+        let given = Operand::Copy(Place::local(self.b.param(0)));
+        let env = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given, to))?;
+        let env = self.b.deref(&Place::local(env))?;
+        for (at, (&local, of)) in captured.iter().zip(kinds).enumerate() {
+            let slot = self.b.field(&env, 1 + at as u32)?;
+            let address = Rvalue::Use(Operand::Copy(slot));
+            match self.celled(local) {
+                true => {
+                    let cell = self.b.assign_temp(address)?;
+                    self.name_cell(local, cell, of)?;
+                }
+                false => {
+                    let var = self.declare_alias(local, of)?;
+                    self.b.assign(Place::local(var), address)?;
+                }
+            }
         }
         Ok(())
     }

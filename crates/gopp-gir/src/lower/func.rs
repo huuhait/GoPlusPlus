@@ -147,6 +147,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The variables that the function literal that is lowered uses of
     /// the functions around it, in the order of its environment.
     pub captured: Vec<CheckedLocalId>,
+    /// The environment of that literal is in a frame: it has the
+    /// addresses of the variables, or of their cells.
+    pub in_frame: bool,
     /// The local of each variable that is another name of what a cell
     /// holds.
     cell_vars: FxHashMap<LocalId, CheckedLocalId>,
@@ -313,6 +316,7 @@ pub(super) fn lower_literal<'a>(
         let captures = body.captures.get(&literal).map(Vec::as_slice);
         let captures = captures.unwrap_or_default().iter();
         cx.captured = captures.map(|capture| capture.local).collect();
+        cx.in_frame = job.facts.framed.contains(&literal);
         cx.function(None, *ty, block, 1)?;
         cx.b.drop_unreached();
         cx.b.finish()
@@ -536,6 +540,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             parts: FxHashMap::default(),
             cells: FxHashMap::default(),
             captured: Vec::new(),
+            in_frame: false,
             cell_vars: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
@@ -1200,8 +1205,14 @@ impl FuncCx<'_, '_> {
         Ok(var)
     }
 
-    /// Whether a function literal uses the local, which then lives in
-    /// a cell.
+    /// Whether the value of the function literal cannot outlive the
+    /// variables that it uses: its environment is in the frame.
+    pub fn framed(&self, literal: ExprId) -> bool {
+        self.facts.framed.contains(&literal)
+    }
+
+    /// Whether a function literal that is not framed uses the local,
+    /// which then lives in a cell.
     pub fn celled(&self, local: CheckedLocalId) -> bool {
         self.facts.celled.contains(&local)
     }
