@@ -127,6 +127,23 @@ pub struct Body {
     /// of a function type. In a generic body they may be written with its
     /// type parameters.
     pub instances: FxHashMap<ExprId, Instance>,
+    /// The type parameters of a generic function as its body names
+    /// them: those of its receiver, then its own. The types of the
+    /// body are written with these.
+    pub type_params: Vec<TypeId>,
+    /// In a generic body: for a place of `var_modes`, the type that
+    /// its value is given as, if that type decides whether the place
+    /// has a mark. An instance has the mark only if its type has one.
+    pub given_types: FxHashMap<ExprId, TypeId>,
+    /// In a generic body: the selectors that reach a method of a type
+    /// parameter, each with the name of the method. An instance
+    /// reaches the method that its type has by that name.
+    pub param_methods: FxHashMap<ExprId, Spur>,
+    /// In a generic body of a `.gopp` file: the receivers of the calls
+    /// of such methods that are in `var_modes` for the instances, each
+    /// with its selector. An instance has the mark if the method that
+    /// it calls gets a copy of its receiver.
+    pub receiver_marks: FxHashMap<ExprId, ExprId>,
     /// For a call `f!(x)`, what it does with an error.
     pub bangs: FxHashMap<ExprId, Bang>,
     /// In a `.gopp` file: for a place whose value is given to a new

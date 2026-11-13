@@ -1,7 +1,7 @@
 //! Whether a type implements an interface, said as Go says it.
 
 use super::*;
-use crate::types::Lacks;
+use crate::types::{IntoInterface, Lacks};
 
 /// Why a value is no value of a type.
 pub(super) struct Cause {
@@ -205,28 +205,18 @@ impl<'a> Checker<'a> {
             true => self.fit_own(x, to, writes),
             false => Some((x.ty, to)),
         };
-        // An option of an interface holds the interface.
-        let held = |mut ty: TypeId| {
-            while let Type::Option(elem) = &*self.types.get(self.types.underlying(ty)) {
-                ty = *elem;
+        let into = fit.and_then(|(from, to)| self.types.into_interface(from, to, self.names));
+        match into.filter(|&(_, from, _)| !self.open(from)) {
+            Some((IntoInterface::Changed, from, to)) => {
+                self.iface_changes.insert(expr, (from, to));
+                false
             }
-            ty
-        };
-        if let Some((from, to)) = fit.map(|(from, to)| (held(from), held(to)))
-            && self.types.is_interface(to)
-            && !self.open(from)
-        {
-            if self.types.is_interface(from) {
-                let methods = |ty| self.types.interface_methods(ty, self.names);
-                if methods(from) != methods(to) {
-                    self.iface_changes.insert(expr, (from, to));
-                }
-                return false;
+            Some((IntoInterface::Put, from, to)) => {
+                self.iface_conversions.insert(expr, (from, to));
+                self.own_rules(cx) && self.boxed(cx, (expr, x), (from, to), place, how)
             }
-            self.iface_conversions.insert(expr, (from, to));
-            return self.own_rules(cx) && self.boxed(cx, (expr, x), (from, to), place, how);
+            None => false,
         }
-        false
     }
 
     /// Notes that the value `x`, the one with the number `at` of the
@@ -242,24 +232,13 @@ impl<'a> Checker<'a> {
         if self.memo.is_none() || !x.is_value() || self.is_untyped(x.ty) {
             return;
         }
-        // An option of an interface holds the interface.
-        let held = |mut ty: TypeId| {
-            while let Type::Option(elem) = &*self.types.get(self.types.underlying(ty)) {
-                ty = *elem;
-            }
-            ty
+        let found = self.types.into_interface(x.ty, to, self.names);
+        let Some((how, from, into)) = found.filter(|&(_, from, _)| !self.open(from)) else {
+            return;
         };
-        let (from, into) = (held(x.ty), held(to));
-        if !self.types.is_interface(into) || self.open(from) {
-            return;
-        }
-        let methods = |ty| self.types.interface_methods(ty, self.names);
-        if self.types.is_interface(from) && methods(from) == methods(into) {
-            return;
-        }
         self.part_conversions
             .insert((expr, at as u32), (from, into));
-        if !self.types.is_interface(from) && self.own_rules(cx) {
+        if how == IntoInterface::Put && self.own_rules(cx) {
             self.boxed(cx, (expr, x), (from, into), to, None);
         }
     }

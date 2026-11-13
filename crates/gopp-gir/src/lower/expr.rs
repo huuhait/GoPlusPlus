@@ -444,6 +444,10 @@ impl<'a> FuncCx<'a, '_> {
             ExprKind::Name(_) => self.name(expr, ty),
             ExprKind::Selector { .. } => self.selector(expr, ty),
             ExprKind::Index { .. } => {
+                // `f[int]`: an instance of a generic function.
+                if let Some(key) = self.instance_named(expr) {
+                    return self.func_value(expr, ty, key);
+                }
                 if let Some((map, index)) = self.map_index(expr) {
                     return Ok(Rvalue::Use(match self.map_read(map, index)? {
                         Some([value, _]) => value,
@@ -517,7 +521,8 @@ impl<'a> FuncCx<'a, '_> {
                     return Ok(Rvalue::Use(Operand::Copy(place)));
                 }
                 ObjKind::Func => {
-                    return self.func_value(expr, ty, CalleeKey::Object(*object));
+                    let key = self.instance_named(expr);
+                    return self.func_value(expr, ty, key.unwrap_or(CalleeKey::Object(*object)));
                 }
                 ObjKind::Const => "a constant of several parts",
                 _ => "this name",
@@ -809,6 +814,11 @@ impl<'a> FuncCx<'a, '_> {
                 ));
             }
             place = self.through(place, span, mode)?;
+            // A value of a type that is not supported has no parts: the
+            // type was reported.
+            if self.b.place_ty(&place) == TypeInterner::UNIT {
+                return Ok(place);
+            }
             place = self.b.field(&place, step)?;
         }
         Ok(place)
@@ -1770,6 +1780,16 @@ impl<'a> FuncCx<'a, '_> {
         Ok(())
     }
 
+    /// The instance of a generic function of the package that the
+    /// expression names with type arguments, written or inferred.
+    pub(super) fn instance_named(&self, expr: ExprId) -> Option<CalleeKey> {
+        let instance = self.body.instances.get(&expr)?;
+        let shared = self.shared;
+        let object = shared.generic_named(self.tree, self.body, expr)?;
+        let job = shared.instance(object, &instance.args)?;
+        Some(CalleeKey::Instance(job))
+    }
+
     /// The function that a call of `callee` calls, and its receiver
     /// with the way to it if it is a method; or why the call is not
     /// supported.
@@ -1778,15 +1798,22 @@ impl<'a> FuncCx<'a, '_> {
         callee: ExprId,
         spread: bool,
     ) -> Built<Result<(Callee, Option<Receiver<'a>>), &'static str>> {
-        if self.body.instances.contains_key(&callee) {
-            return Ok(Err("a call of a generic function"));
-        }
         if self.body.foreign_uses.contains_key(&callee) {
             return Ok(Err("a call of a function of a header"));
         }
         let body = self.body;
         let mut receiver = None;
+        // A generic function is called as the instance that its type
+        // arguments make.
+        let instance = match body.instances.contains_key(&callee) {
+            true => match self.instance_named(callee) {
+                Some(key) => Some(key),
+                None => return Ok(Err("a call of this generic function")),
+            },
+            false => None,
+        };
         let key = match (&self.tree.exprs[callee].kind, body.uses.get(&callee)) {
+            _ if instance.is_some() => instance,
             (ExprKind::Name(_), Some(Ref::Object(object))) => Some(CalleeKey::Object(*object)),
             (ExprKind::Selector { .. }, Some(Ref::Member { import, member })) => {
                 Some(CalleeKey::Member(*import, *member))
@@ -2332,6 +2359,7 @@ impl<'a> FuncCx<'a, '_> {
                     .map(|method| (method.symbol.clone(), Some(method.receiver), method.sig)),
                 _ => None,
             },
+            CalleeKey::Instance(job) => Some(shared.job_called(job)),
         };
         let declared = |receiver: Option<_>, checked| match &*shared.types.get(checked) {
             CheckedType::Func { params, .. } => params.len() + usize::from(receiver.is_some()),

@@ -363,8 +363,13 @@ pub(super) fn lower_function<'a>(
         line: at.line,
         col: at.column,
     };
-    let built = FuncBuilder::new(module, &job.symbol, sig, Linkage::External, loc).and_then(|b| {
-        let body = &shared.package.files[job.file as usize].bodies[job.at];
+    // Every package that uses an instance has it; the linker keeps one.
+    let link = match shared.is_instance(job) {
+        true => Linkage::LinkOnceOdr,
+        false => Linkage::External,
+    };
+    let built = FuncBuilder::new(module, &job.symbol, sig, link, loc).and_then(|b| {
+        let body = shared.body(job);
         let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
         cx.owner = Some((job, None));
         cx.function(receiver.as_ref(), *ty, block, 0)?;
@@ -404,7 +409,7 @@ fn lower_deferred<'a>(
         cc: crate::CallConv::C,
     }));
     let b = FuncBuilder::new(module, &outlined.symbol, sig, Linkage::Internal, loc)?;
-    let body = &shared.package.files[job.file as usize].bodies[job.at];
+    let body = shared.body(job);
     let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
     cx.deferred_calls(&outlined)?;
     cx.b.drop_unreached();
@@ -425,7 +430,7 @@ pub(super) fn lower_literal<'a>(
     let ExprKind::FuncLit { ty, body: block } = &node.kind else {
         return;
     };
-    let Some((symbol, _)) = memo.literal(shared, job.file, literal) else {
+    let Some(symbol) = memo.literal(shared, job, literal) else {
         return;
     };
     let report = |memo: &mut Memo<'a>, code: Code, message: String| {
@@ -433,7 +438,7 @@ pub(super) fn lower_literal<'a>(
             .push(Diagnostic::new(code, node.span, message));
     };
     // The type of the code is that of the first word of the value.
-    let body = &shared.package.files[job.file as usize].bodies[job.at];
+    let body = shared.body(job);
     let value = body.types.get(&literal).map(|typed| typed.ty);
     let value = value.and_then(|value| memo.lower_type(shared, &mut module.types, value).ok());
     let sig = value.and_then(|value| match module.types.get(value) {
@@ -1402,11 +1407,6 @@ impl FuncCx<'_, '_> {
     }
 
     // ---- places in the source
-
-    /// Which file of the package the function is in.
-    pub fn file(&self) -> u32 {
-        self.file
-    }
 
     pub fn loc(&self, span: SourceSpan) -> Span {
         let at = self.source.line_col(span.lo);

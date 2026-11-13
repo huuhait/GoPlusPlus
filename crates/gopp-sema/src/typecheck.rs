@@ -221,6 +221,12 @@ impl BodyTypes {
                 *arg = to(*arg);
             }
         }
+        for param in &mut self.type_params {
+            *param = to(*param);
+        }
+        for given in self.given_types.values_mut() {
+            *given = to(*given);
+        }
         let tables = [
             &mut self.operators,
             &mut self.op_assigns,
@@ -441,6 +447,18 @@ struct Checker<'a> {
     /// While a body is walked: the generic functions and types that it
     /// names, each with its type arguments.
     instantiated: FxHashMap<ExprId, crate::object::Instance>,
+    /// The type parameters of the function whose body is checked, as
+    /// the body names them: those of its receiver, then its own.
+    body_params: Vec<TypeId>,
+    /// In a generic body: the type that each place of `var_modes` is
+    /// given as, where the type decides whether there is a mark.
+    given_types: FxHashMap<ExprId, TypeId>,
+    /// The selectors that reach a method of a type parameter, each with
+    /// the name of the method.
+    param_methods: FxHashMap<ExprId, Spur>,
+    /// The receivers of the calls of such methods that are marked in
+    /// `var_modes` for the instances, each with its selector.
+    receiver_marks: FxHashMap<ExprId, ExprId>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -527,6 +545,10 @@ struct BodyTypes {
     iface_changes: FxHashMap<ExprId, (TypeId, TypeId)>,
     part_conversions: FxHashMap<(ExprId, u32), (TypeId, TypeId)>,
     instances: FxHashMap<ExprId, crate::object::Instance>,
+    type_params: Vec<TypeId>,
+    given_types: FxHashMap<ExprId, TypeId>,
+    param_methods: FxHashMap<ExprId, Spur>,
+    receiver_marks: FxHashMap<ExprId, ExprId>,
     bangs: FxHashMap<ExprId, Bang>,
     var_modes: FxHashMap<ExprId, crate::object::Transfer>,
     swaps: FxHashSet<ExprId>,
@@ -651,6 +673,10 @@ pub fn declarations(
         partial: FxHashMap::default(),
         assigned_to: None,
         instantiated: FxHashMap::default(),
+        body_params: Vec::new(),
+        given_types: FxHashMap::default(),
+        param_methods: FxHashMap::default(),
+        receiver_marks: FxHashMap::default(),
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -744,6 +770,10 @@ pub fn declarations(
             body.iface_changes = found.iface_changes;
             body.part_conversions = found.part_conversions;
             body.instances = found.instances;
+            body.type_params = found.type_params;
+            body.given_types = found.given_types;
+            body.param_methods = found.param_methods;
+            body.receiver_marks = found.receiver_marks;
             body.bangs = found.bangs;
             for (LocalId(local), ty) in found.locals {
                 body.locals[local as usize].ty = ty;
@@ -2748,6 +2778,11 @@ impl<'a> Checker<'a> {
                 }
                 self.need_method(&found);
                 if let (Some(kind), true) = (kind, self.memo.is_some()) {
+                    // Which method of its type an instance reaches, the
+                    // type argument decides.
+                    if method && self.is_param(found.holder) {
+                        self.param_methods.insert(expr, sel.name);
+                    }
                     let selection = Selection {
                         kind,
                         recv,
@@ -3497,8 +3532,10 @@ impl<'a> Checker<'a> {
                     self.mono_same(&own, &of_function);
                 }
                 self.receiver_of = None;
+                self.body_params.clone_from(&own);
                 if let Some(receiver) = receiver {
                     let named = self.receiver_params(&mut cx, receiver.ty);
+                    self.body_params.splice(0..0, named.iter().copied());
                     self.around.extend(&named);
                     self.params(&cx, std::slice::from_ref(receiver));
                     self.receiver_of = self.receiver_named(unit, receiver.ty);
@@ -3661,6 +3698,10 @@ impl<'a> Checker<'a> {
             iface_changes: std::mem::take(&mut self.iface_changes),
             part_conversions: std::mem::take(&mut self.part_conversions),
             instances: std::mem::take(&mut self.instantiated),
+            type_params: std::mem::take(&mut self.body_params),
+            given_types: std::mem::take(&mut self.given_types),
+            param_methods: std::mem::take(&mut self.param_methods),
+            receiver_marks: std::mem::take(&mut self.receiver_marks),
             bangs: std::mem::take(&mut self.bangs),
         }
     }

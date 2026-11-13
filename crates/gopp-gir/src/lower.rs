@@ -75,6 +75,7 @@ pub(crate) fn lower_counted(
     let shared = Shared::new(checked, layout);
     let source: usize = shared.jobs.iter().map(|job| job.source).sum();
     let known: u64 = shared.jobs.iter().map(|job| job.facts.steps).sum();
+    let known = known + shared.found_steps;
     let runs = rayon::current_num_threads().min(source / source_each.max(1));
     // Runs of about as much source each, in the order of the source.
     let mut cut: Vec<&[Job]> = Vec::new();
@@ -158,6 +159,18 @@ enum JobName {
     Method(CheckedTypeId, Spur),
     /// An `init` function, and its number once the files are counted.
     Init(u64),
+    /// A generic function with type arguments: which of the instances
+    /// of the package.
+    Instance(usize),
+}
+
+/// A generic function of the package with its type arguments.
+struct Instantiated {
+    object: ObjId,
+    args: Vec<CheckedTypeId>,
+    /// What the checker recorded for the body of the function, read
+    /// with the type arguments.
+    body: Body,
 }
 
 /// A method of a type of the package.
@@ -194,6 +207,17 @@ pub(crate) struct Shared<'a> {
     pub error: Spur,
     pub string: Spur,
     jobs: Vec<Job>,
+    /// The instances of generic functions that the package uses, each
+    /// once, in the order in which they are found: those that the
+    /// functions use in the order of the source, then those that the
+    /// instances found so far use (GEN-5).
+    instances: Vec<Instantiated>,
+    /// The job of a generic function with type arguments.
+    instance_jobs: FxHashMap<(ObjId, Vec<CheckedTypeId>), usize>,
+    /// The steps that finding the instances took: one for each use of
+    /// a generic function, and for each expression of a body that was
+    /// made.
+    found_steps: u64,
     pub methods: FxHashMap<(NamedId, Spur), Method>,
     /// For each type that a function declares: which job, and which of
     /// the types of its name there, from 0.
@@ -225,6 +249,8 @@ pub(crate) enum CalleeKey {
     Member(ObjId, ObjId),
     /// A method of the type.
     Method(CheckedTypeId, Spur),
+    /// A generic function with type arguments, by its job.
+    Instance(usize),
 }
 
 /// A function that a run calls: where it is in the module of the run,
@@ -261,8 +287,10 @@ pub(crate) struct Part {
 /// A function literal: where it is written, and its number there for
 /// its symbol.
 pub(crate) struct Literal {
-    /// The function of the package around it.
-    job: usize,
+    /// The declaration of its file that it is written in: that of a
+    /// function, or of a generic function, whose instances each have
+    /// the literal.
+    at: usize,
     /// The function literal that it is written directly in, if it is
     /// in one.
     within: Option<ExprId>,
@@ -310,7 +338,7 @@ pub(crate) struct Memo<'a> {
     /// The function literals that the functions of the run name, which
     /// are lowered after the function that is lowered now.
     pub literals: Vec<(&'a Job, ExprId)>,
-    queued: rustc_hash::FxHashSet<(u32, ExprId)>,
+    queued: rustc_hash::FxHashSet<(*const Job, ExprId)>,
     /// The type that every interface value has, once an interface type
     /// is lowered.
     pub iface: Option<TypeId>,
@@ -392,33 +420,26 @@ impl<'a> Memo<'a> {
         }
     }
 
-    /// The symbol of the function literal of a file, and the function
-    /// of the package that it is written in; none for a literal that is
-    /// in no function.
-    pub fn literal(
-        &mut self,
-        shared: &'a Shared<'_>,
-        file: u32,
-        expr: ExprId,
-    ) -> Option<(String, &'a Job)> {
-        let literal = shared.literals.get(&(file, expr))?;
-        let node = self.literal_node(shared, file, expr)?;
-        Some((self.namer.symbol(node), &shared.jobs[literal.job]))
+    /// The symbol of the function literal that is written in the
+    /// function of the job; none for a literal that is not in it.
+    pub fn literal(&mut self, shared: &Shared<'_>, job: &Job, expr: ExprId) -> Option<String> {
+        let node = self.literal_node(shared, job, expr)?;
+        Some(self.namer.symbol(node))
     }
 
     fn literal_node(
         &mut self,
         shared: &Shared<'_>,
-        file: u32,
+        job: &Job,
         expr: ExprId,
     ) -> Option<gopp_mangle::NodeId> {
-        let literal = shared.literals.get(&(file, expr))?;
+        let literal = shared.literals.get(&(job.file, expr))?;
+        if literal.at != job.at {
+            return None;
+        }
         let within = match literal.within {
-            Some(within) => func::deeper(|| self.literal_node(shared, file, within))?,
-            None => {
-                let entity = shared.entity(shared.jobs[literal.job].named);
-                self.namer.entity(entity).ok()?
-            }
+            Some(within) => func::deeper(|| self.literal_node(shared, job, within))?,
+            None => self.namer.entity(shared.entity(job.named)).ok()?,
         };
         self.namer.closure(within, literal.ordinal).ok()
     }
@@ -434,7 +455,7 @@ impl<'a> Memo<'a> {
         literal: Option<ExprId>,
     ) -> Option<String> {
         let within = match literal {
-            Some(literal) => self.literal_node(shared, job.file, literal)?,
+            Some(literal) => self.literal_node(shared, job, literal)?,
             None => self.namer.entity(shared.entity(job.named)).ok()?,
         };
         let node = self.namer.closure(within, 0).ok()?;
@@ -443,7 +464,7 @@ impl<'a> Memo<'a> {
 
     /// The literal is to be lowered, once.
     pub fn queue(&mut self, job: &'a Job, expr: ExprId) {
-        if self.queued.insert((job.file, expr)) {
+        if self.queued.insert((std::ptr::from_ref(job), expr)) {
             self.literals.push((job, expr));
         }
     }
@@ -472,6 +493,9 @@ impl<'a> Shared<'a> {
             error: checked.names.get_or_intern_static("Error"),
             string: checked.names.get_or_intern_static("String"),
             jobs: Vec::new(),
+            instances: Vec::new(),
+            instance_jobs: FxHashMap::default(),
+            found_steps: 0,
             methods: FxHashMap::default(),
             locals: FxHashMap::default(),
             no_body: Body::default(),
@@ -483,6 +507,7 @@ impl<'a> Shared<'a> {
         // The `init` functions count in the order of the names of their
         // files, then of the source.
         let mut inits: Vec<usize> = Vec::new();
+        let mut generics: FxHashMap<ObjId, (u32, usize, DeclId)> = FxHashMap::default();
         let files = shared.files;
         for (file, (tree, _)) in files.iter().enumerate() {
             for (at, &decl) in tree.decls.iter().enumerate() {
@@ -491,6 +516,8 @@ impl<'a> Shared<'a> {
                         inits.push(shared.jobs.len());
                     }
                     shared.jobs.push(job);
+                } else if let Some(object) = shared.generic(file as u32, decl) {
+                    generics.insert(object, (file as u32, at, decl));
                 }
             }
         }
@@ -530,6 +557,7 @@ impl<'a> Shared<'a> {
                 }
             }
         }
+        shared.instantiate(&generics);
         shared.number_literals();
         // What each function does to its parameters and its variables,
         // which every caller of it reads.
@@ -565,15 +593,18 @@ impl<'a> Shared<'a> {
     fn number_literals(&mut self) {
         for (file, (tree, _)) in self.files.iter().enumerate() {
             let file = file as u32;
-            // The functions of the file, in the order of the source.
-            let mut jobs: Vec<(u32, u32, usize)> = (self.jobs.iter().enumerate())
-                .filter(|(_, job)| job.file == file)
-                .map(|(at, job)| {
+            // The declarations of the file that have functions, in the
+            // order of the source: the instances of a generic function
+            // are of one declaration.
+            let mut jobs: Vec<(u32, u32, usize)> = (self.jobs.iter())
+                .filter(|job| job.file == file)
+                .map(|job| {
                     let span = tree.decl_nodes[job.decl].span;
-                    (span.lo, span.hi, at)
+                    (span.lo, span.hi, job.at)
                 })
                 .collect();
             jobs.sort_unstable();
+            jobs.dedup();
             let mut literals: Vec<(u32, std::cmp::Reverse<u32>, ExprId)> = (tree.exprs.iter())
                 .filter(|(_, expr)| matches!(expr.kind, ExprKind::FuncLit { .. }))
                 .map(|(id, expr)| (expr.span.lo, std::cmp::Reverse(expr.span.hi), id))
@@ -589,14 +620,14 @@ impl<'a> Shared<'a> {
                 }
                 let before = jobs.partition_point(|&(start, _, _)| start <= lo);
                 let around = before.checked_sub(1).map(|at| jobs[at]);
-                let Some((_, _, job)) = around.filter(|&(_, end, _)| hi <= end) else {
+                let Some((_, _, at)) = around.filter(|&(_, end, _)| hi <= end) else {
                     continue;
                 };
                 let within = open.last().map(|&(_, within)| within);
-                let ordinal = count.entry((job, within)).or_default();
+                let ordinal = count.entry((at, within)).or_default();
                 *ordinal += 1;
                 let literal = Literal {
-                    job,
+                    at,
                     within,
                     ordinal: *ordinal,
                 };
@@ -607,17 +638,183 @@ impl<'a> Shared<'a> {
     }
 
     /// What the function of a job is, for its symbol.
-    fn entity(&self, named: JobName) -> Entity<'a> {
+    fn entity(&self, named: JobName) -> Entity<'_> {
         match named {
             JobName::Object(object) => Entity::Object(self.package, object),
             JobName::Method(receiver, name) => Entity::Method { receiver, name },
             JobName::Init(number) => Entity::InitFunc(self.package, number),
+            JobName::Instance(at) => {
+                let instance = &self.instances[at];
+                Entity::FuncInstance(self.package, instance.object, &instance.args)
+            }
+        }
+    }
+
+    /// Whether the function of the job is an instance of a generic one.
+    pub fn is_instance(&self, job: &Job) -> bool {
+        matches!(job.named, JobName::Instance(_))
+    }
+
+    /// What the checker recorded for the body of the function of a job.
+    pub fn body(&self, job: &Job) -> &Body {
+        match job.named {
+            JobName::Instance(at) => &self.instances[at].body,
+            _ => &self.package.files[job.file as usize].bodies[job.at],
+        }
+    }
+
+    /// The generic function of the package that the declaration makes,
+    /// if it has a body: its instances are lowered.
+    fn generic(&self, file: u32, decl: DeclId) -> Option<ObjId> {
+        let (tree, _) = self.files[file as usize];
+        let DeclKind::Func {
+            is_macro: false,
+            receiver: None,
+            name,
+            type_params,
+            body: Some(_),
+            ..
+        } = &tree.decl_nodes[decl].kind
+        else {
+            return None;
+        };
+        if type_params.is_empty() {
+            return None;
+        }
+        let id = *self.package.scope.get(&name.name)?;
+        let object = self.package.object(id);
+        (matches!(object.kind, ObjKind::Func) && object.span == name.span).then_some(id)
+    }
+
+    /// The generic function of the package that the expression names
+    /// with type arguments: `f` or `f[int]`.
+    pub fn generic_named(&self, tree: &File, body: &Body, expr: ExprId) -> Option<ObjId> {
+        let mut named = Self::unparen(tree, expr);
+        if let ExprKind::Index { x, .. } = tree.exprs[named].kind {
+            named = Self::unparen(tree, x);
+        }
+        match (&tree.exprs[named].kind, body.uses.get(&named)) {
+            (ExprKind::Name(_), Some(Ref::Object(object))) => Some(*object),
+            _ => None,
+        }
+    }
+
+    /// The job of the generic function with the type arguments.
+    pub fn instance(&self, object: ObjId, args: &[CheckedTypeId]) -> Option<usize> {
+        self.instance_jobs.get(&(object, args.to_vec())).copied()
+    }
+
+    /// What the code of the function of the job is as a value: the
+    /// generic function and its type arguments, for an instance.
+    pub fn job_value(&self, job: usize) -> Option<Entity<'_>> {
+        match self.jobs[job].named {
+            JobName::Instance(at) => {
+                let instance = &self.instances[at];
+                let (object, args) = (instance.object, &instance.args);
+                Some(Entity::InstanceValue(self.package, object, args))
+            }
+            _ => None,
+        }
+    }
+
+    /// The symbol and the type of the function of the job, for a call.
+    pub fn job_called(&self, job: usize) -> (String, Option<CheckedTypeId>, CheckedTypeId) {
+        let job = &self.jobs[job];
+        (job.symbol.clone(), job.receiver, job.sig)
+    }
+
+    /// Gives each instance of a generic function that is used a job.
+    /// Two uses whose type arguments make the same symbol name one
+    /// instance. The instances that a level of functions uses are
+    /// found in the order of the source, and their bodies are made
+    /// side by side; then they are the next level.
+    fn instantiate(&mut self, generics: &FxHashMap<ObjId, (u32, usize, DeclId)>) {
+        if generics.is_empty() {
+            return;
+        }
+        let mut by_symbol: FxHashMap<String, usize> = FxHashMap::default();
+        let mut level = 0..self.jobs.len();
+        while !level.is_empty() {
+            let mut found: Vec<(ObjId, Vec<CheckedTypeId>, CheckedTypeId, String)> = Vec::new();
+            let mut known: FxHashMap<(ObjId, Vec<CheckedTypeId>), usize> = FxHashMap::default();
+            let mut steps = 0;
+            // A type argument may be a type that a function declares.
+            let locals = |named: NamedId| self.local(named);
+            let mut namer = Namer::new(self.types, self.names).with_locals(&locals);
+            for at in level {
+                let job = &self.jobs[at];
+                let (tree, _) = self.files[job.file as usize];
+                let body = self.body(job);
+                let mut uses: Vec<_> = (body.instances.iter())
+                    .filter_map(|(&expr, instance)| {
+                        let object = self.generic_named(tree, body, expr)?;
+                        let span = tree.exprs[expr].span;
+                        generics
+                            .contains_key(&object)
+                            .then_some((span.lo, span.hi, object, instance))
+                    })
+                    .collect();
+                uses.sort_unstable_by_key(|&(lo, hi, ..)| (lo, hi));
+                steps += uses.len() as u64;
+                for (_, _, object, instance) in uses {
+                    let key = (object, instance.args.clone());
+                    if self.instance_jobs.contains_key(&key) || known.contains_key(&key) {
+                        continue;
+                    }
+                    let entity = Entity::FuncInstance(self.package, object, &instance.args);
+                    let Ok(symbol) = symbol_of(&mut namer, entity) else {
+                        continue;
+                    };
+                    let job = *by_symbol.entry(symbol.clone()).or_insert_with(|| {
+                        found.push((object, instance.args.clone(), instance.ty, symbol));
+                        self.jobs.len() + found.len() - 1
+                    });
+                    known.insert(key, job);
+                }
+            }
+            self.instance_jobs.extend(known);
+            self.found_steps += steps;
+            let bodies: Vec<Body> = (found.par_iter())
+                .map(|(object, args, ..)| {
+                    let (file, at, _) = generics[object];
+                    let generic = &self.package.files[file as usize].bodies[at];
+                    let dialect = self.files[file as usize].1.dialect();
+                    let written = gopp_sema::Written {
+                        types: self.types,
+                        names: self.names,
+                        package: self.path,
+                        own_rules: dialect == gopp_span::Dialect::Gopp,
+                    };
+                    generic.instantiated(written, args)
+                })
+                .collect();
+            let start = self.jobs.len();
+            for ((object, args, sig, symbol), body) in found.into_iter().zip(bodies) {
+                self.found_steps += body.types.len() as u64;
+                let (file, at, decl) = generics[&object];
+                let (tree, _) = self.files[file as usize];
+                let span = tree.decl_nodes[decl].span;
+                let named = JobName::Instance(self.instances.len());
+                self.instances.push(Instantiated { object, args, body });
+                self.jobs.push(Job {
+                    file,
+                    at,
+                    decl,
+                    named,
+                    symbol,
+                    receiver: None,
+                    sig,
+                    source: (span.hi - span.lo) as usize,
+                    facts: facts::Facts::default(),
+                });
+            }
+            level = start..self.jobs.len();
         }
     }
 
     /// The function that declares the type, and which of the types of
     /// its name there the type is.
-    fn local(&self, named: NamedId) -> Option<(Entity<'a>, u64)> {
+    fn local(&self, named: NamedId) -> Option<(Entity<'_>, u64)> {
         let &(job, ordinal) = self.locals.get(&named)?;
         Some((self.entity(self.jobs[job].named), ordinal))
     }

@@ -792,6 +792,16 @@ pub struct Types {
     forked: fork::Sizes,
 }
 
+/// How a value gets into a place of an interface type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntoInterface {
+    /// The value is put into an interface value.
+    Put,
+    /// The value is an interface value, and the interface type of the
+    /// place has other methods than its own.
+    Changed,
+}
+
 impl Types {
     /// `names` is the interner of the compilation.
     pub fn new(names: &ThreadedRodeo) -> Self {
@@ -2124,6 +2134,34 @@ impl Types {
 
     pub fn is_interface(&self, id: TypeId) -> bool {
         matches!(&*self.get(self.underlying(id)), Type::Interface { .. })
+    }
+
+    /// How a value of the type `from` gets into a place of the type
+    /// `to`, with the two types that say it: an option of an interface
+    /// holds the interface. None if the place holds no interface, or
+    /// takes the value as it is: an interface value of a type with the
+    /// same methods.
+    pub fn into_interface(
+        &self,
+        from: TypeId,
+        to: TypeId,
+        names: &ThreadedRodeo,
+    ) -> Option<(IntoInterface, TypeId, TypeId)> {
+        let held = |mut ty: TypeId| {
+            while let Type::Option(elem) = &*self.get(self.underlying(ty)) {
+                ty = *elem;
+            }
+            ty
+        };
+        let (from, to) = (held(from), held(to));
+        if !self.is_interface(to) {
+            return None;
+        }
+        if !self.is_interface(from) {
+            return Some((IntoInterface::Put, from, to));
+        }
+        let changed = self.interface_methods(from, names) != self.interface_methods(to, names);
+        changed.then_some((IntoInterface::Changed, from, to))
     }
 
     /// Whether the type has a name: a declared type, a type parameter or

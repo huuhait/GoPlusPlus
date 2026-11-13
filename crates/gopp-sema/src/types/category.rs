@@ -113,6 +113,18 @@ impl Types {
         self.category_as(ty, false)
     }
 
+    /// Whether a place whose value is given to a new owner as a value
+    /// of the type is marked with how it is given (`Body::var_modes`):
+    /// a value that is copied by its bytes has no mark, and a Go file
+    /// (`own_rules` not set) marks only what is copied.
+    pub fn given_is_marked(&self, ty: TypeId, own_rules: bool) -> bool {
+        match self.category(ty) {
+            Category::Trivial => false,
+            Category::Copyable => true,
+            Category::NoCopy => own_rules,
+        }
+    }
+
     /// Whether a value of the type holds something that is ended with
     /// it: a buffer, a counted handle, a value with a `drop` method.
     pub fn holds_owned(&self, ty: TypeId) -> bool {

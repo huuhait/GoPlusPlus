@@ -19,6 +19,8 @@ use crate::node::{BadNode, Basic, Context, Dir, Node, NodeId, Pair, Required, Wr
 pub enum Entity<'a> {
     /// A function or a variable of the package.
     Object(&'a Package, ObjId),
+    /// A generic function of the package with its type arguments.
+    FuncInstance(&'a Package, ObjId, &'a [TypeId]),
     /// The method `name` of the declared type `receiver`, or of an
     /// instance of one.
     Method { receiver: TypeId, name: Spur },
@@ -46,6 +48,8 @@ pub enum Entity<'a> {
     /// The code of a function of a package that is used as a value: the
     /// function with an environment in front, which it does not read.
     FuncValue(&'a Package, ObjId),
+    /// The same for a generic function with its type arguments.
+    InstanceValue(&'a Package, ObjId, &'a [TypeId]),
     /// The code of the method value `x.name` for an `x` of the declared
     /// type `receiver`: the method with the receiver in its environment.
     MethodValue { receiver: TypeId, name: Spur },
@@ -220,6 +224,17 @@ impl<'a> Namer<'a> {
                     _ => return Err(NoSymbol::NotEmitted),
                 }
             }
+            Entity::FuncInstance(package, id, args) => {
+                let object = package.object(id);
+                let (package, name) = (package.path.as_bytes().into(), self.text(object.name));
+                if &*name == b"_" {
+                    return Err(NoSymbol::Blank);
+                }
+                let of = self.add(Node::Func { package, name })?;
+                let args: Result<Box<[NodeId]>, NoSymbol> =
+                    args.iter().map(|&arg| self.ty(arg)).collect();
+                Node::Instance { of, args: args? }
+            }
             Entity::Method { receiver, name } => {
                 let name = self.text(name);
                 if &*name == b"_" {
@@ -261,6 +276,10 @@ impl<'a> Namer<'a> {
             Entity::DropGlue(ty) => Node::Wrap(Wrap::DropGlue, self.ty(ty)?),
             Entity::FuncValue(package, id) => {
                 let function = self.entity(Entity::Object(package, id))?;
+                Node::Wrap(Wrap::MethodExpr, function)
+            }
+            Entity::InstanceValue(package, id, args) => {
+                let function = self.entity(Entity::FuncInstance(package, id, args))?;
                 Node::Wrap(Wrap::MethodExpr, function)
             }
             Entity::MethodValue { receiver, name } => {

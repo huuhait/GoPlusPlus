@@ -508,6 +508,16 @@ impl<'a> Checker<'a> {
         self.error_with_fix(code, span, message, (Code::NoteOwnFixAddress, fix));
     }
 
+    /// Marks how the value of the place is given to a new owner as a
+    /// value of the type `ty`. In a generic body the type is kept: each
+    /// instance has the mark only if its type has one.
+    fn mark_given(&mut self, expr: ExprId, how: Transfer, ty: TypeId) {
+        self.var_modes.insert(expr, how);
+        if !self.body_params.is_empty() {
+            self.given_types.insert(expr, ty);
+        }
+    }
+
     /// The value of the place `expr` is given to a new owner as a value
     /// of the type `ty`: a copy of it is, unless it cannot be copied
     /// (OWN-R3, OWN-R3a). A temporary is given as it is, and nothing is
@@ -519,11 +529,17 @@ impl<'a> Checker<'a> {
         }
         let expr = self.unparen(cx, expr);
         // A Go file has the same copies and none of the other rules:
-        // every type that it can write is copied.
+        // every type that it can write is copied. What a type parameter
+        // is copied as, each instance decides: the place is marked for
+        // them.
         if !self.own_rules(cx) {
-            let copied = x.ty == ty && self.types.category(ty) == Category::Copyable;
+            let by_param = || {
+                let why = self.types.not_copied(ty, true);
+                matches!(why, Some((_, NotCopied::Param)))
+            };
+            let copied = x.ty == ty && (self.types.given_is_marked(ty, false) || by_param());
             if copied && self.place_of(cx, expr) != Place::Temporary {
-                self.var_modes.insert(expr, Transfer::Copy);
+                self.mark_given(expr, Transfer::Copy, ty);
             }
             return;
         }
@@ -553,7 +569,7 @@ impl<'a> Checker<'a> {
             return self.error_with_fix(Code::PartialValue, span, message, fix);
         }
         let category = self.types.category(ty);
-        if category == Category::Trivial {
+        if !self.types.given_is_marked(ty, true) {
             return;
         }
         // What a pointer or a handle is read as is where it points.
@@ -565,7 +581,7 @@ impl<'a> Checker<'a> {
             return;
         }
         if self.swapping {
-            self.var_modes.insert(expr, Transfer::Move);
+            self.mark_given(expr, Transfer::Move, ty);
             return;
         }
         let same = |target: &String| *target == self.expr_string(cx, expr);
@@ -574,7 +590,7 @@ impl<'a> Checker<'a> {
             self.self_moves.insert(expr);
         }
         if category == Category::Copyable {
-            self.var_modes.insert(expr, Transfer::Copy);
+            self.mark_given(expr, Transfer::Copy, ty);
             return;
         }
         let binding = match place {
@@ -583,7 +599,7 @@ impl<'a> Checker<'a> {
         };
         let element = binding.is_some();
         if self.passed_as_it_is(ty, how) {
-            self.var_modes.insert(expr, Transfer::Copy);
+            self.mark_given(expr, Transfer::Copy, ty);
             return;
         }
         let Some((part, why)) = self.types.not_copied(ty, true) else {
@@ -602,7 +618,7 @@ impl<'a> Checker<'a> {
             if over {
                 self.target = None;
             }
-            self.var_modes.insert(expr, Transfer::Move);
+            self.mark_given(expr, Transfer::Move, ty);
             return;
         }
         let text = self.expr_string(cx, expr);
@@ -706,8 +722,21 @@ impl<'a> Checker<'a> {
         let Some(holder) = self.selections.get(&expr).map(|selection| selection.holder) else {
             return;
         };
+        // Which method an instance calls, and so whether the method
+        // gets a copy of the receiver, the type argument decides: the
+        // receiver is marked for the instances.
+        if self.is_param(holder) {
+            let is_place = matches!(x.mode, Mode::Variable | Mode::MapIndex);
+            let base = self.unparen(cx, base);
+            let temporary = x.ty == holder && self.place_of(cx, base) == Place::Temporary;
+            if called && self.memo.is_some() && is_place && !temporary {
+                self.var_modes.insert(base, Transfer::Copy);
+                self.receiver_marks.insert(base, expr);
+            }
+            return;
+        }
         // A method of an interface is called on the value where it is.
-        if self.is_param(holder) || called && self.types.is_interface(holder) {
+        if called && self.types.is_interface(holder) {
             return;
         }
         // The copy method, an operator and a conversion read the receiver

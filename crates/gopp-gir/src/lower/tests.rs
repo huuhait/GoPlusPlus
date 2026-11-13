@@ -2835,6 +2835,294 @@ func main() {
 }
 
 #[test]
+fn an_instance_of_a_generic_function_is_made_once() {
+    let text = "package main
+
+type Alias = int
+
+func id[T any](x T) T { return x }
+
+func outer[T COPIED](x T) T { return id(x) }
+
+func unused[T any](x T) T { return x }
+
+func a() int { return id(1) + outer(2) }
+
+func b() (int, string, byte) {
+	keep := id[uint8]
+	return id[Alias](3), id(\"s\"), keep(4)
+}
+
+func main() {
+	n, s, c := b()
+	println(a(), n, s, c)
+}
+";
+    // A Go++ file copies a value of a type parameter only if the
+    // constraint says that it has a copy.
+    for (file, copied) in [("a.go", "any"), ("a.gopp", "Clone")] {
+        let text = text.replace("COPIED", copied);
+        let (lowered, messages) = lowered_with(&[(file, &text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        // The functions of the source, then the instances that they
+        // use in the order of the source, then those that the
+        // instances use: each once, whatever names its type arguments,
+        // and one that nothing uses not at all. The linker keeps one
+        // of the copies that the packages have.
+        let functions: Vec<&str> = (module.lines())
+            .filter(|line| line.starts_with("fn _GPF") || line.starts_with("fn _GPIF"))
+            .map(|line| &line["fn ".len()..line.find('(').unwrap()])
+            .collect();
+        assert_eq!(
+            functions,
+            [
+                "_GPF4mainE1a",
+                "_GPF4mainE1b",
+                "_GPF4mainE4main",
+                "_GPIF4mainE2idiE",
+                "_GPIF4mainE5outeriE",
+                "_GPIF4mainE2idhE",
+                "_GPIF4mainE2idrE",
+            ],
+            "{file}"
+        );
+        let odr = module.lines().filter(|line| line.starts_with("fn _GPIF"));
+        assert!(
+            odr.clone()
+                .all(|line| line.ends_with("[go, linkonce_odr] {"))
+        );
+        // The code of an instance that is a value is made once too.
+        assert_eq!(
+            module.matches("\nfn _GPTEIF4mainE2idhE(").count(),
+            1,
+            "{file}"
+        );
+        if file == "a.gopp" {
+            insta::assert_snapshot!(module);
+        }
+    }
+}
+
+#[test]
+fn generic_code_that_is_not_supported_yet_says_so() {
+    let text = "package main
+
+type Stack[T any] struct{ items []T }
+
+func (s *Stack[T]) Len() int { return len(s.items) }
+
+func local[T any](n int) int {
+	type pair struct{ a, b []T }
+	var p pair
+	return len(p.a) + n
+}
+
+func main() {
+	var s Stack[string]
+	println(s.Len(), local[int](1))
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
+        let messages: Vec<&str> = messages
+            .iter()
+            .map(|message| message.split_once(": ").map_or("", |(_, what)| what))
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "not supported yet: a method of a generic type",
+                "not supported yet: a type that has no symbol",
+                "not supported yet: the built-in function len",
+            ],
+            "{file}"
+        );
+    }
+}
+
+/// The body of the function whose symbol starts with `symbol`, with
+/// the symbol out of the names in it.
+fn body_without_its_name(module: &str, symbol: &str) -> String {
+    let start = module.find(&format!("\nfn {symbol}")).unwrap();
+    let whole = &module[start + 4..][..module[start + 4..].find("\n}\n").unwrap()];
+    let (header, body) = whole.split_once('\n').unwrap();
+    let name = &header[..header.find('(').unwrap()];
+    body.replace(&name["_GP".len()..], "SELF")
+}
+
+/// What a type argument decides in a generic body is decided as in a
+/// body that is written with the type: an instance is the function
+/// that the same source makes with a name of the type in the place of
+/// the type parameter.
+#[test]
+fn an_instance_is_the_function_that_is_written_with_its_type_argument() {
+    let declared = "type Point struct{ x, y int }
+
+func (p Point) String() string { return \"p\" }
+
+type Named struct {
+	name string
+	tags []string
+}
+
+type Stringer interface{ String() string }
+
+type Counted struct{ n int }
+
+func (c *Counted) drop() {}
+
+func (c Counted) Clone() Counted { return Counted{n: c.n} }
+
+func (c Counted) String() string { return \"c\" }
+
+type Tagged struct{ tag string }
+
+func (t *Tagged) String() string { return t.tag }
+
+func sink(v any) {}
+
+func size(v any) int { return 1 }
+";
+    // A type that has the method of a type that it embeds, which only
+    // a Go file writes.
+    let embeds = "type Wrapped struct {\n\tPoint\n\tn int\n}\n";
+    // Each type, whether its values are compared, and whether it has
+    // the method `String`. The last two are for a Go file only.
+    let types = [
+        ("int", true, 0),
+        ("string", true, 0),
+        ("float64", true, 0),
+        ("Point", true, 1),
+        ("Named", false, 0),
+        ("[]int", false, 0),
+        ("[2]string", true, 0),
+        ("map[string]int", false, 0),
+        ("any", true, 0),
+        ("Stringer", true, 1),
+        ("func() int", false, 0),
+        ("Counted", false, 1),
+        ("[]Counted", false, 0),
+        ("Wrapped", true, 1),
+        ("*Tagged", true, 1),
+    ];
+    // Each body, and what it asks of the type: nothing, values that
+    // are compared, or the method.
+    let bodies = [
+        ("\tvar held any = x\n\tsink(held)\n\treturn x, len(xs)\n", 0),
+        (
+            "\ty := x\n\tys := append(xs, y, x)\n\treturn y, len(ys)\n",
+            0,
+        ),
+        ("\tsink(x)\n\treturn xs[0], size(x) + size(xs)\n", 0),
+        (
+            "\tfor _, v := range xs {\n\t\tsink(v)\n\t}\n\treturn x, 0\n",
+            0,
+        ),
+        (
+            "\tm := map[string]T{\"a\": x}\n\tm[\"b\"] = xs[0]\n\tv, ok := m[\"a\"]\n\tif !ok \
+             {\n\t\treturn x, 0\n\t}\n\treturn v, len(m)\n",
+            0,
+        ),
+        (
+            "\tpair := [2]T{x, x}\n\tpair[1] = xs[0]\n\treturn pair[0], len(pair)\n",
+            0,
+        ),
+        ("\tdefer sink(x)\n\tdefer size(xs)\n\treturn x, 1\n", 0),
+        (
+            "\tswitch v := any(x).(type) {\n\tcase T:\n\t\treturn v, 1\n\t}\n\treturn x, 0\n",
+            0,
+        ),
+        (
+            "\tkeep := func() T { return x }\n\treturn keep(), len(xs)\n",
+            0,
+        ),
+        (
+            "\tfor i, v := range xs {\n\t\tif v == x {\n\t\t\treturn v, i\n\t\t}\n\t}\n\treturn x, \
+             -1\n",
+            1,
+        ),
+        (
+            "\tseen := map[T]int{x: 1}\n\tseen[xs[0]]++\n\treturn x, len(seen)\n",
+            1,
+        ),
+        (
+            "\tn := len(x.String())\n\treturn xs[0], n + len(xs[0].String())\n",
+            2,
+        ),
+        (
+            "\tn := 0\n\tfor _, v := range xs {\n\t\tn += len(v.String())\n\t}\n\treturn x, n\n",
+            2,
+        ),
+        ("\tdefer x.String()\n\treturn x, len(xs)\n", 2),
+    ];
+    let cases: Vec<_> = (["a.go", "a.gopp"].iter())
+        .flat_map(|file| types.iter().map(move |ty| (*file, *ty)))
+        .flat_map(|(file, ty)| bodies.iter().map(move |body| (file, ty, *body)))
+        .filter(|(file, (ty, compared, named), (_, asks))| {
+            let written = *file == "a.go" || !["Wrapped", "*Tagged"].contains(ty);
+            written
+                && match asks {
+                    1 => *compared,
+                    2 => *named != 0,
+                    _ => true,
+                }
+        })
+        .collect();
+    assert_eq!(cases.len(), (15 + 13) * 9 + (9 + 7) * 2 + (5 + 3) * 3);
+    let mut differ = Vec::new();
+    for (file, (ty, ..), (body, asks)) in cases {
+        let declared = match file {
+            "a.go" => format!("{declared}\n{embeds}"),
+            _ => declared.to_owned(),
+        };
+        // A Go++ file copies a value of a type parameter, and keeps it
+        // in an interface, only if the constraint says that it may.
+        let constraint = match (file, asks) {
+            ("a.go", 1) => "comparable",
+            ("a.go", 2) => "Stringer",
+            ("a.go", _) => "any",
+            (_, 1) => "interface{ comparable; Clone; Send }",
+            (_, 2) => "interface{ Stringer; Clone; Send }",
+            _ => "interface{ Clone; Send }",
+        };
+        let rest = format!(
+            "{body}}}\n\nfunc use(x {ty}, xs []{ty}) {{\n\ttarget(x, xs)\n}}\n\nfunc main() {{}}\n"
+        );
+        let plain = format!(
+            "package main\n\n{declared}\ntype T = {ty}\n\nfunc target(x T, xs []T) (T, int) {{\n{rest}"
+        );
+        let generic = format!(
+            "package main\n\n{declared}\n// The same lines.\n\nfunc target[T {constraint}](x T, xs []T) \
+             (T, int) {{\n{rest}"
+        );
+        let lowered = |text: &str, symbol: &str| {
+            let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+            match messages.is_empty() {
+                true => Ok(body_without_its_name(
+                    &print_module(&lowered.module),
+                    symbol,
+                )),
+                false => Err(messages),
+            }
+        };
+        let plain = lowered(&plain, "_GPF4mainE6target(");
+        let generic = lowered(&generic, "_GPIF4mainE6target");
+        if plain != generic || plain.is_err() {
+            differ.push(format!("{file}: {ty}:\n{body}{plain:?}\n{generic:?}"));
+        }
+    }
+    let shown = differ.iter().take(3).map(|case| &**case);
+    let shown: Vec<&str> = shown.collect();
+    assert!(
+        differ.is_empty(),
+        "{} cases:\n{}",
+        differ.len(),
+        shown.join("\n")
+    );
+}
+
+#[test]
 fn a_result_that_an_interface_parameter_is_lent_is_in_a_slot_of_its_own() {
     let text = "package main
 
@@ -3123,7 +3411,10 @@ func f(xs []int, s Shape, name string) (int, string) {
 fn many_functions(count: usize) -> String {
     let mut text = "package main\n\nvar total int\n\ntype Pair struct{ a, b int }\n\n\
                     type Sized interface{ Size() int }\n\n\
-                    func (p Pair) Size() int { return p.a + p.b }\n"
+                    func (p Pair) Size() int { return p.a + p.b }\n\n\
+                    func first[T Clone](xs []T, or T) T {\n\tif len(xs) > 0 {\n\t\treturn xs[0]\n\t}\n\t\
+                    return or\n}\n\n\
+                    func twice[T Clone](x T) []T { return []T{first([]T{x}, x), x} }\n"
         .to_owned();
     for at in 0..count {
         let next = (at + 7) % count;
@@ -3155,6 +3446,7 @@ func f{at}(n int, p Pair) (int, string) {{
 	total += sized.Size()
 	next := func(n int) int {{ return func(m int) int {{ return m + int(l.v) + {at} }}(n) }}
 	total += next(n)
+	total += len(twice(l)) + first([]int{{n}}, {at}) + len(twice(p))
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}
@@ -3393,6 +3685,55 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
         steps_of(&function(&format!(
             "\ts := \"text\"\n\tif s{joined} < s {{\n\t\tx++\n\t}}\n"
         )))
+    });
+}
+
+/// Generic functions: many instances of one function, many uses of
+/// one instance, a chain of functions that each use the next one with
+/// their type parameter, and many functions that each use one instance
+/// of each of the others before them.
+#[test]
+fn the_steps_grow_with_the_instances_of_generic_functions() {
+    let sizes = [100, 200, 400, 800];
+    let id = "func id[T any](x T) T { return x }\n";
+    assert_near_linear(&sizes, |n| {
+        let types: String = (0..n)
+            .map(|at| format!("type S{at} struct{{ a{at} int }}\n\n"))
+            .collect();
+        let uses: String = (0..n)
+            .map(|at| format!("\tx += id(S{at}{{x}}).a{at}\n"))
+            .collect();
+        steps_of(&format!("{}\n{types}{id}", function(&uses)))
+    });
+    assert_near_linear(&sizes, |n| {
+        steps_of(&format!("{}\n{id}", function(&"\tx += id(x)\n".repeat(n))))
+    });
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (0..n)
+            .map(|at| {
+                format!(
+                    "func g{at}[T Clone](x T) []T {{ return g{}([]T{{x}})[0] }}\n\n",
+                    at + 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "{}\n{chain}func g{n}[T Clone](x T) []T {{ return []T{{x}} }}\n",
+            function("\tx += len(g0(x))\n")
+        ))
+    });
+    assert_near_linear(&[40, 80, 160, 320], |n| {
+        let all: String = (0..n)
+            .map(|at| {
+                let before = at.saturating_sub(8)..at;
+                let calls: String = before.map(|of| format!(" + h{of}(n)")).collect();
+                format!("func h{at}[T ~int](n T) T {{ return n{calls} }}\n\n")
+            })
+            .collect();
+        steps_of(&format!(
+            "{}\n{all}",
+            function(&format!("\tx += h{}(x)\n", n - 1))
+        ))
     });
 }
 

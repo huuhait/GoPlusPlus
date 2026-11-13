@@ -1,0 +1,124 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+func (f File) Clone() File {
+	opened++
+	return File{fd: f.fd + 100}
+}
+
+func open(fd int) File {
+	opened++
+	return File{fd: fd}
+}
+
+type Sized interface{ Size() int }
+
+func (f File) Size() int { return f.fd }
+
+type Text string
+
+func (t Text) Size() int { return len(t) }
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+// Calls a method of each value where the value is.
+func Total[T Sized](xs []T) int {
+	sum := 0
+	for i := range xs {
+		sum += xs[i].Size()
+	}
+	return sum
+}
+
+// Each element of the result is a copy of its own.
+func Repeat[T Clone](x T, n int) []T {
+	var out []T
+	for i := 0; i < n; i++ {
+		out = append(out, x)
+	}
+	return out
+}
+
+// The values are given: the function owns them and they end with it.
+func Count[T any](xs ...T) int { return len(xs) }
+
+func Pick[T Clone](xs []T, at int) T {
+	if at >= len(xs) {
+		panic("out of range")
+	}
+	return xs[at]
+}
+
+func First[T Clone]!(xs []T) T {
+	if len(xs) == 0 {
+		return nil, Problem{what: "empty"}
+	}
+	return xs[0]
+}
+
+func Each[T any](xs *[]T, visit func(*T)) {
+	for i := range xs {
+		visit(&xs[i])
+	}
+}
+
+func Later[T Clone](x T) func() T {
+	return func() T { return x }
+}
+
+func counts(note string) { println(note, opened, closed) }
+
+func caught(run func()) (what string) {
+	defer func() {
+		if r := recover(); r != nil {
+			what = r.(string)
+		}
+	}()
+	run()
+	return "nothing"
+}
+
+func files() {
+	fs := []File{open(1), open(2)}
+	println(Total(fs), Total([]Text{"ab", "c"}))
+	counts("after Total")
+	copies := Repeat(open(3), 2)
+	println(len(copies), copies[1].fd)
+	counts("after Repeat")
+	println(Count(open(4), open(5)), Count[File](), Count("a", "b", "c"))
+	counts("after Count")
+	held := []File{open(9)}
+	one := Pick(held, 0)
+	println(one.fd, caught(func() { Pick(held, 9) }))
+	counts("after Pick")
+	others := []File{open(7), open(8)}
+	sum := 0
+	Each(&others, func(f *File) { sum += f.fd })
+	println(sum)
+	counts("after Each")
+}
+
+func main() {
+	files()
+	counts("after files")
+	words := Repeat("ab"+"c", 3)
+	println(len(words), words[2], Pick(words, 0))
+	first, err := First([]string{})
+	println(first == "", err.Error())
+	first, err = First(words)
+	println(first, err == nil)
+	keep := Later(open(6))
+	println(keep().fd)
+	counts("at the end")
+}

@@ -58,22 +58,35 @@ impl FuncCx<'_, '_> {
     pub fn func_value(&mut self, expr: ExprId, ty: TypeId, key: CalleeKey) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let shared = self.shared;
+        // What the code is named after, and the type of the function.
         let named = match key {
-            CalleeKey::Object(object) => Some((shared.package, object)),
+            CalleeKey::Object(object) => {
+                let package = shared.package;
+                Some((
+                    Entity::FuncValue(package, object),
+                    package.object(object).ty,
+                ))
+            }
             CalleeKey::Member(import, member) => match &shared.package.object(import).kind {
-                ObjKind::Import { package, .. } => Some((&**package, member)),
+                ObjKind::Import { package, .. } => Some((
+                    Entity::FuncValue(package, member),
+                    package.object(member).ty,
+                )),
                 _ => None,
             },
             CalleeKey::Method(..) => None,
+            CalleeKey::Instance(job) => {
+                let (_, _, sig) = shared.job_called(job);
+                shared.job_value(job).map(|entity| (entity, sig))
+            }
         };
-        let (Some((package, object)), Some(code_ty)) = (named, self.code_type(ty)) else {
+        let (Some((entity, checked)), Some(code_ty)) = (named, self.code_type(ty)) else {
             return Ok(self.placeholder(span, ty, "a function as a value"));
         };
         let called = match self.callee(key)? {
             Ok(called) => called,
             Err(what) => return Ok(self.placeholder(span, ty, what)),
         };
-        let entity = Entity::FuncValue(package, object);
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             return Ok(self.placeholder(span, ty, "a function without a symbol as a value"));
         };
@@ -81,7 +94,6 @@ impl FuncCx<'_, '_> {
         let code = self.function_named(&symbol, code_ty)?;
         if !asked {
             let of = self.b.module().funcs[called.func].name().to_owned();
-            let checked = package.object(object).ty;
             self.memo.glues.push((symbol, Made::Value(of), checked));
         }
         Ok(self.bare(code, code_ty))
@@ -110,7 +122,10 @@ impl FuncCx<'_, '_> {
     /// more shares (CLO-2).
     pub fn literal(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
-        let named = self.memo.literal(self.shared, self.file(), expr);
+        let named = self.owner.and_then(|(job, _)| {
+            let symbol = self.memo.literal(self.shared, job, expr)?;
+            Some((symbol, job))
+        });
         let (Some((symbol, job)), Some(code_ty)) = (named, self.code_type(ty)) else {
             return Ok(self.placeholder(span, ty, "a function literal"));
         };
@@ -460,7 +475,13 @@ impl FuncCx<'_, '_> {
         };
         let (holder, path) = (selection.holder, &selection.path[..]);
         let Some((_, dynamic)) = Self::bound_method(shared, holder, sel.name) else {
-            return Ok(self.placeholder(span, ty, "a method of another package as a value"));
+            let generic = matches!(&*shared.types.get(holder),
+                CheckedType::Named { args, .. } if !args.is_empty());
+            let what = match generic {
+                true => "a method of a generic type",
+                false => "a method of another package as a value",
+            };
+            return Ok(self.placeholder(span, ty, what));
         };
         let entity = Entity::MethodValue {
             receiver: holder,

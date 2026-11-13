@@ -112,7 +112,7 @@ impl Facts {
             return;
         }
         let (tree, _) = shared.files[job.file as usize];
-        let body = &shared.package.files[job.file as usize].bodies[job.at];
+        let body = shared.body(job);
         let mut namer = Namer::new(shared.types, shared.names);
         for (literal, callee, at) in std::mem::take(&mut self.asked) {
             // The function of the package or the method of one of its
@@ -201,7 +201,7 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
     let mut walk = Walk {
         shared,
         tree,
-        body: &shared.package.files[job.file as usize].bodies[job.at],
+        body: shared.body(job),
         more: FxHashSet::default(),
         called: FxHashSet::default(),
         direct: Vec::new(),
