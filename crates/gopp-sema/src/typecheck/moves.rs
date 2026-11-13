@@ -287,6 +287,7 @@ pub(super) struct Walk<'a> {
     pub calls: Vec<borrows::Call>,
     pub args: Vec<borrows::Source>,
     pub call_ids: FxHashMap<ExprId, u32>,
+    pub carriers: FxHashMap<u32, borrows::Carrier>,
     /// The function of the declaration, if others call it by its name;
     /// whether it is the one that is walked; and its parameters, the
     /// receiver first.
@@ -353,6 +354,7 @@ pub(super) fn of(
         calls: Vec::new(),
         args: Vec::new(),
         call_ids: FxHashMap::default(),
+        carriers: FxHashMap::default(),
         owner,
         top: true,
         params: Vec::new(),
@@ -395,21 +397,13 @@ pub(super) fn of(
 }
 
 impl<'a> Checker<'a> {
-    /// The function of the declaration as those who call it name it:
-    /// none for a generic one, which is walked once, for no type.
+    /// The function of the declaration as those who call it name it.
+    /// A generic one is one function for every type that it is used
+    /// with.
     pub(super) fn lender(&self, cx: &Cx<'a>, decl: &ast::Decl) -> Option<borrows::Callee> {
-        let DeclKind::Func {
-            receiver,
-            name,
-            type_params,
-            ..
-        } = &decl.kind
-        else {
+        let DeclKind::Func { receiver, name, .. } = &decl.kind else {
             return None;
         };
-        if !type_params.is_empty() {
-            return None;
-        }
         if receiver.is_none() {
             let object = self.by_span.get(&name.span)?;
             return Some(borrows::Callee::Func(ObjId(*object as u32)));
@@ -421,9 +415,7 @@ impl<'a> Checker<'a> {
             ty = *to;
         }
         match &*self.types.get(ty) {
-            Type::Named { id, args } if args.is_empty() => {
-                Some(borrows::Callee::Method(*id, name.name))
-            }
+            Type::Named { id, .. } => Some(borrows::Callee::Method(*id, name.name)),
             _ => None,
         }
     }
@@ -465,13 +457,14 @@ impl<'a> Checker<'a> {
         let watched = self.own_collections(cx);
         // Nothing is given, moved, written or lent so in most bodies.
         // A body lends if it takes an address or has a loop over
-        // something, or a variable of it is a pointer or a handle, which
-        // is lent where a pointer is wanted.
+        // something, or a variable of it may hold a pointer or is a
+        // handle, which is lent where a pointer is wanted.
         let handle = |held: &Operand| {
-            matches!(
+            let handle = matches!(
                 &*self.types.get(self.types.underlying(held.ty)),
-                Type::Pointer(_) | Type::Unique(_) | Type::Shared(_)
-            )
+                Type::Unique(_) | Type::Shared(_)
+            );
+            handle || self.types.may_hold_pointer(held.ty)
         };
         let lends = std::mem::take(&mut self.lends) || self.locals.values().any(handle);
         if self.var_modes.is_empty() && watched.is_empty() && !lends {
@@ -565,10 +558,11 @@ impl<'a> Checker<'a> {
     /// Says what was found of the pointers of a function of the body,
     /// whose source is `text`: by its walk, and by the passes (OWN-B2,
     /// OWN-B3, OWN-B5, RNG-3).
+    /// `carried` says the type of what carries a loan.
     pub(super) fn lent(
         &mut self,
-        body: &Body,
-        text: &str,
+        (body, text): (&Body, &str),
+        carried: &dyn Fn(borrows::Carrier) -> Option<TypeId>,
         walked: &[borrows::Broken],
         found: &borrows::Lent,
     ) {
@@ -642,7 +636,10 @@ impl<'a> Checker<'a> {
                     )
                 }
             };
-            self.emit(diagnostic);
+            let holder = broken.holder.map(borrows::Carrier::Local);
+            if !self.against_arguments(holder.and_then(carried), &diagnostic) {
+                self.emit(diagnostic);
+            }
         }
         for escaped in &found.escaped {
             use borrows::Leaves;
@@ -695,8 +692,29 @@ impl<'a> Checker<'a> {
                 false => format!("the pointer into {owner} is made here"),
             };
             let diagnostic = Diagnostic::new(code, escaped.at, message);
-            self.emit(diagnostic.with_note(Code::NoteBorrowedHere, Some(escaped.made), note));
+            if !self.against_arguments(escaped.carrier.and_then(carried), &diagnostic) {
+                self.emit(diagnostic.with_note(Code::NoteBorrowedHere, Some(escaped.made), note));
+            }
         }
+    }
+
+    /// What is found is carried by a value of the type `ty`. If only a
+    /// type parameter says that such a value may hold a pointer, it is
+    /// true of the type arguments with one and of no other: nothing is
+    /// said here, and no type argument for the parameter holds one.
+    fn against_arguments(&mut self, ty: Option<TypeId>, found: &Diagnostic) -> bool {
+        let Some(Held::Params(params)) = ty.map(|ty| self.types.held(ty)) else {
+            return false;
+        };
+        if params.is_empty() {
+            return false;
+        }
+        let why = format!(
+            "the function is not for a type with a pointer in it: {}",
+            found.message
+        );
+        self.kept_where(&params, found.span, &why);
+        true
     }
 }
 
@@ -796,6 +814,7 @@ impl<'a> Walk<'a> {
         self.calls.clear();
         self.args.clear();
         self.call_ids.clear();
+        self.carriers.clear();
         self.params.clear();
         self.frames.clear();
         self.loops.clear();

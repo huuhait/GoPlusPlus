@@ -954,9 +954,12 @@ impl<'a> Checker<'a> {
         use borrows::Callee;
         let mut problems = Vec::new();
         let mut lenders = Vec::new();
+        // For each problem, which of the bodies of its file it is of.
+        let mut checked = Vec::new();
         for (file, of_file) in bodies.iter_mut().enumerate() {
-            for body in of_file {
+            for (at, body) in of_file.iter_mut().enumerate() {
                 let lent = std::mem::take(&mut body.lent);
+                checked.extend(lent.iter().map(|_| at));
                 problems.extend(
                     lent.into_iter()
                         .map(|(decl, problem)| (file, decl, problem)),
@@ -1037,14 +1040,22 @@ impl<'a> Checker<'a> {
                 solved[member] = Some(lent);
             }
         }
-        for ((file, decl, problem), found) in problems.iter().zip(&solved) {
+        for (((file, decl, problem), found), at) in problems.iter().zip(&solved).zip(checked) {
             let Some(found) = found else {
                 continue;
             };
             self.steps += found.steps;
             let body = &self.package.files[*file].bodies[*decl];
             let text = units[*file].source.text();
-            self.lent(body, text, &problem.broken, found);
+            let types = &bodies[*file][at];
+            let carried = |carrier| match carrier {
+                borrows::Carrier::Expr(expr) => types.exprs.get(&expr).map(|typed| typed.ty),
+                borrows::Carrier::Local(local) => {
+                    let found = types.locals.iter().find(|(declared, _)| *declared == local);
+                    found.map(|&(_, ty)| ty)
+                }
+            };
+            self.lent((body, text), &carried, &problem.broken, found);
         }
         // For those who call the functions of this package.
         for lender in lenders {
@@ -1476,7 +1487,7 @@ impl<'a> Checker<'a> {
                     self.error(Code::InvalidHandleType, span, message);
                 }
                 Held::Params(params) if params.is_empty() => {}
-                Held::Params(params) => self.kept_where(&params, span, &written),
+                Held::Params(params) => self.kept_where(&params, span, &own::kept_in(&written)),
             }
         }
         for (ty, span) in std::mem::take(&mut self.required_fields) {

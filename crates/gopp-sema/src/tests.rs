@@ -6603,6 +6603,196 @@ func fine3(h *Holder, p *T) {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-B3, OWN-B5, GEN-5
+#[test]
+fn a_value_of_a_type_parameter_is_followed_as_what_may_hold_a_pointer() {
+    // A generic function says what it does with what it is given as a
+    // plain one does: `id` and `last` give back, `set`, `through` and
+    // `Put` store. `wrapped` returns what is only a pointer to its own
+    // variable if `X` holds a pointer: that is held against the type
+    // argument (`bad5`), and `wrapped` with an `int` is fine.
+    let flows = "package p
+
+type T struct{ n int }
+
+type Holder struct{ p *T }
+
+var origin T
+
+func id[X Clone](x X) X { return x }
+
+func set[X Clone](out *X, v X) { *out = v }
+
+func last[X Clone](a, b X) X { return b }
+
+func wrapped[X Clone](wrap func(*int) X) X {
+	x := 1
+	return wrap(&x)
+}
+
+func through[X Clone](out *X, v X) { set(out, v) }
+
+type Box[X Clone] struct{ v X }
+
+func (b *Box[X]) Put(v X) { b.v = v }
+
+func (b *Box[X]) Get() X { return b.v }
+
+func bad1() int {
+	h := Holder{&origin}
+	{
+		y := T{1}
+		set(&h.p, &y)
+	}
+	return h.p.n
+}
+
+func bad2() int {
+	r := &origin
+	{
+		y := T{2}
+		r = id(&y)
+	}
+	return r.n
+}
+
+func bad3() int {
+	x := T{3}
+	r := &x
+	{
+		y := T{3}
+		r = last(&x, &y)
+	}
+	return r.n
+}
+
+func bad4() int {
+	b := Box[*T]{&origin}
+	{
+		y := T{4}
+		b.Put(&y)
+	}
+	return b.Get().n
+}
+
+func bad5() int {
+	return *wrapped(func(p *int) *int { return p })
+}
+
+func bad6() int {
+	h := Holder{&origin}
+	{
+		y := T{6}
+		through(&h.p, &y)
+	}
+	return h.p.n
+}
+
+func fine() int {
+	x := T{7}
+	r := &x
+	n := 0
+	{
+		y := T{8}
+		r = last(&y, &x)
+		set(&n, y.n)
+	}
+	return r.n + n + wrapped(func(p *int) int { return *p }) + id(3)
+}
+";
+    let said = |text: &str| -> Vec<String> {
+        let all = messages("a.gopp", text).into_iter();
+        all.filter(|message| !message.starts_with("    ")).collect()
+    };
+    let expected = [
+        "a.gopp:33:2: y ends here, and h points into it and is used later",
+        "a.gopp:42:2: y ends here, and r points into it and is used later",
+        "a.gopp:52:2: y ends here, and r points into it and is used later",
+        "a.gopp:61:2: y ends here, and b points into it and is used later",
+        "a.gopp:66:10: cannot use *int for X: the function is not for a type with a pointer in \
+         it: cannot return a pointer into x: x ends when the function returns",
+        "a.gopp:74:2: y ends here, and h points into it and is used later",
+    ];
+    assert_eq!(said(flows), expected);
+    // Generic code that calls the methods of its type parameter is for
+    // types with pointers too (`fine`); what `max` gives back is
+    // followed (`bad1`). A function without a pointer among its own
+    // variables says what it gives back too (`get`, `bad2`).
+    let methods = "package p
+
+type T struct{ n int }
+
+type Holder struct{ p *T }
+
+var origin T
+
+type Adder[A any] interface {
+	Clone
+	Add(other A) A
+	Less(other A) bool
+}
+
+type Num struct{ n int }
+
+func (a Num) Add(b Num) Num   { return Num{a.n + b.n} }
+func (a Num) Less(b Num) bool { return a.n < b.n }
+
+type Ref struct{ p *T }
+
+func (a Ref) Add(b Ref) Ref   { return b }
+func (a Ref) Less(b Ref) bool { return a.p.n < b.p.n }
+
+func sum[A Adder[A]](first A, rest [2]A) A {
+	acc := first
+	for i := range rest {
+		acc = acc.Add(rest[i])
+	}
+	return acc
+}
+
+func max[A Adder[A]](a, b A) A {
+	if a.Less(b) {
+		return b
+	}
+	return a
+}
+
+func get(h Holder) *T { return h.p }
+
+func fine() int {
+	x := T{1}
+	a := sum(Num{1}, [2]Num{{2}, {3}})
+	b := max(Num{1}, Num{2})
+	c := max(Ref{&x}, Ref{&origin})
+	d := sum(Ref{&x}, [2]Ref{{&x}, {&origin}})
+	return a.n + b.n + c.p.n + d.p.n
+}
+
+func bad1() int {
+	r := Ref{&origin}
+	{
+		y := T{2}
+		r = max(Ref{&y}, r)
+	}
+	return r.p.n
+}
+
+func bad2() int {
+	r := &origin
+	{
+		y := T{3}
+		r = get(Holder{&y})
+	}
+	return r.n
+}
+";
+    let expected = [
+        "a.gopp:56:2: y ends here, and r points into it and is used later",
+        "a.gopp:65:2: y ends here, and r points into it and is used later",
+    ];
+    assert_eq!(said(methods), expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
@@ -6654,6 +6844,25 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
             .collect();
         format!("{head}func pick(a, b *T) *T {{ return a }}\n{functions}")
     };
+    // The same chain of generic functions, each used with a pointer
+    // and with a number.
+    let generic = |count: usize| {
+        let functions: String = (0..count)
+            .map(|i| match i + 1 == count {
+                true => format!("func g{i}[X Clone](a, b X) X {{ return a }}\n"),
+                false => format!(
+                    "func g{i}[X Clone](a, b X) X {{ return g{}(b, a) }}\n",
+                    i + 1
+                ),
+            })
+            .collect();
+        let calls: String = (0..count)
+            .map(|i| format!("\ttotal += g{i}(x, y).n + g{i}({i}, 1)\n"))
+            .collect();
+        format!(
+            "{head}{functions}func use(x, y *T) int {{\n\ttotal := 0\n{calls}\treturn total\n}}\n"
+        )
+    };
     // Each function stores through the next, and the last one itself;
     // every one is called with a holder and a value of its own.
     let stores = |count: usize, up: bool| {
@@ -6692,6 +6901,7 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(ring(n)));
     linear::assert_near_linear(&sizes, |n| steps(fan(n)));
+    linear::assert_near_linear(&sizes, |n| steps(generic(n)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(unknown(n)));

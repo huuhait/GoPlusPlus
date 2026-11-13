@@ -258,6 +258,13 @@ impl Types {
         matches!(self.held(ty), Held::Pointer)
     }
 
+    /// Whether a value of the type holds a pointer where it is, or a
+    /// value of a type parameter, which stands for a type that may
+    /// hold one.
+    pub fn may_hold_pointer(&self, ty: TypeId) -> bool {
+        !matches!(self.held(ty), Held::Params(params) if params.is_empty())
+    }
+
     /// What a value of the type holds where it is, of what is not kept
     /// on the heap (OWN-B5): in itself, in a field (of a parent too),
     /// an element of an array, an option or a part of a tuple. What a
@@ -331,7 +338,8 @@ impl Types {
     }
 
     /// Whether a value of the type leads to a place that may be given
-    /// a pointer: it holds a pointer to what holds one.
+    /// a pointer: it holds a pointer to what holds one. A type
+    /// parameter stands for a type that may.
     pub fn leads_to_store(&self, ty: TypeId) -> bool {
         self.leads(ty, &mut (FxHashSet::default(), 0))
     }
@@ -358,7 +366,8 @@ impl Types {
             _ => Vec::new(),
         };
         let found = match &*self.get(self.underlying(ty)) {
-            Type::Pointer(to) => self.holds_pointer(*to),
+            Type::Pointer(to) => self.may_hold_pointer(*to),
+            Type::Param(_) => true,
             _ => (parts.into_iter()).any(|part| super::deep(|| self.leads(part, seen))),
         };
         seen.0.remove(&ty);

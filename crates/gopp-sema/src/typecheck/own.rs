@@ -5,6 +5,16 @@
 
 use super::*;
 
+/// How the reason starts that a type argument is refused for what
+/// generic code keeps on the heap.
+pub(super) const KEPT: &str = "a value of it is kept in ";
+
+/// Why no type argument with a pointer is given to generic code that
+/// keeps a value of its type parameter in `what`.
+pub(super) fn kept_in(what: &str) -> String {
+    format!("{KEPT}{what}, and a pointer in it may outlive what it points to")
+}
+
 /// What to do with a pointer that may not be kept where it is put.
 pub(super) const HEAP_FIX: &str = "let the heap own the value with a Unique, a Shared or a Weak, \
                                    or keep the pointers in an array";
@@ -391,7 +401,7 @@ impl<'a> Checker<'a> {
             // arguments are held to it.
             Held::Params(params) => {
                 if !params.is_empty() {
-                    self.kept_where(&params, span, what);
+                    self.kept_where(&params, span, &kept_in(what));
                 }
                 return false;
             }

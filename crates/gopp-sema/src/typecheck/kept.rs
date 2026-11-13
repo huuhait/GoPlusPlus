@@ -22,8 +22,9 @@ pub(super) struct Kept {
 }
 
 impl<'a> Checker<'a> {
-    /// A value of each of the type parameters `params` is put on the
-    /// heap at `span`, into `what`.
+    /// No type argument for one of the type parameters `params` holds a
+    /// pointer, for what is written at `span`: `what` says why, as the
+    /// end of a message.
     pub(super) fn kept_where(&mut self, params: &[TypeId], span: Span, what: &str) {
         if let Some(aside) = &mut self.aside {
             let event = mono::Event::Kept(params.to_vec(), span, what.to_owned());
@@ -110,13 +111,18 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let message = format!(
-                "cannot use {} for {}: a value of it is kept in {what}, and a pointer in it may \
-                 outlive what it points to",
+                "cannot use {} for {}: {what}",
                 self.type_string(arg),
                 self.type_string(param)
             );
-            let fix = (Code::NoteOwnFixHeapPointer, own::HEAP_FIX.to_owned());
-            self.error_with_fix(Code::OwnPointerOnHeap, span, message, fix);
+            // What is kept on the heap may be owned by a handle.
+            match what.starts_with(own::KEPT) {
+                true => {
+                    let fix = (Code::NoteOwnFixHeapPointer, own::HEAP_FIX.to_owned());
+                    self.error_with_fix(Code::OwnPointerOnHeap, span, message, fix);
+                }
+                false => self.error(Code::OwnPointerOnHeap, span, message),
+            }
         }
     }
 }
