@@ -1,0 +1,41 @@
+package main
+
+type Value struct {
+	ref   uint64
+	gcPtr Option[*uint64]
+}
+
+type Named struct {
+	name string
+	n    int
+}
+
+func (n Named) Size() int { return n.n + len(n.name) }
+
+type Sized interface{ Size() int }
+
+var valueNull Value
+
+func Null() Value { return Value{ref: 7} }
+
+func named(n int) Named { return Named{"a" + "bc", n} }
+
+func both() (Named, Value) { return named(4), Null() }
+
+func show(x any) int {
+	switch x := x.(type) {
+	case Value:
+		return int(x.ref)
+	case Named:
+		return x.Size()
+	}
+	return 0
+}
+
+func size(s Sized) int { return s.Size() }
+
+func main() {
+	println(show(Null()), show(named(2)), size(named(3)), show((named(5))))
+	a, b := both()
+	println(show(a), show(b))
+}

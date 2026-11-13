@@ -1,0 +1,73 @@
+package main
+
+type rgb struct{ r, g, b uint8 }
+
+type point struct{ x, y float64 }
+
+type wide struct{ a, b, c, d, e int64 }
+
+func mix(a, b rgb) rgb {
+	return rgb{(a.r + b.r) / 2, (a.g + b.g) / 2, (a.b + b.b) / 2}
+}
+
+func corners(n int16) [3]int16 {
+	return [3]int16{n, n * 2, n * 3}
+}
+
+func flags(on bool) (flags [5]bool, count int) {
+	for i := range flags {
+		flags[i] = on && i%2 == 0
+		if flags[i] {
+			count++
+		}
+	}
+	return
+}
+
+func divide(a, b int) (int, int, bool) {
+	if b == 0 {
+		return 0, 0, false
+	}
+	return a / b, a % b, true
+}
+
+func spread(p point, by float64) (point, point, float64) {
+	return point{p.x - by, p.y - by}, point{p.x + by, p.y + by}, by * 2
+}
+
+func sum(w wide, name string, scale int64) (wide, string, int64) {
+	total := (w.a + w.b + w.c + w.d + w.e) * scale
+	w.e = total
+	return w, name + "!", total
+}
+
+func many(a int8, b uint16, c int32, d int64, e float32, f float64, g bool, h string,
+	i rgb, j point, k wide, l [3]int16, m *int, n uint8) (int64, float64, string, uint8) {
+	m += 1
+	whole := int64(a) + int64(b) + int64(c) + d + k.e + int64(l[2]) + int64(*m)
+	if g {
+		whole = -whole
+	}
+	return whole, float64(e) + f + j.x + j.y, h, i.g + n
+}
+
+func main() {
+	c := mix(rgb{10, 20, 30}, rgb{30, 40, 250})
+	println(c.r, c.g, c.b)
+	t := corners(-7)
+	println(t[0], t[1], t[2])
+	on, count := flags(true)
+	println(on[0], on[1], on[4], count)
+	q, r, ok := divide(47, 5)
+	println(q, r, ok)
+	_, _, ok = divide(1, 0)
+	println(ok)
+	lo, hi, size := spread(point{1.5, 2.5}, 0.5)
+	println(lo.x, lo.y, hi.x, hi.y, size)
+	w, name, total := sum(wide{1, 2, 3, 4, 5}, "sum", 3)
+	println(w.a, w.e, name, total)
+	cell := 41
+	n, f, s, u := many(-3, 40000, -70000, 1<<40, 1.5, 2.25, true, "text",
+		rgb{1, 2, 3}, point{0.5, 0.25}, w, t, &cell, 9)
+	println(n, f, s, u, cell)
+}

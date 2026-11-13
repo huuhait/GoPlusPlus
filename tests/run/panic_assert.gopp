@@ -1,0 +1,18 @@
+// exit: 2
+package main
+
+type point struct{ x, y int }
+
+type pair struct {
+	first  any
+	second struct{ a, b int }
+}
+
+func number(v any) int { return v.(int) }
+
+func main() {
+	println(number(1))
+	values := []any{pair{}, map[string][]point{}, struct{ x int }{}}
+	println(len(values))
+	println(number(values[0]))
+}

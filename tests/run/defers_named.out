@@ -1,0 +1,17 @@
+6 4 7 1 2
+rename  renamed
+double 0
+0 renamed
+rename one renamed
+double 2
+2 renamed
+rename many renamed
+double 40
+40 renamed
+grow 2
+2 7 
+deferred print 1 1 
+grow 4
+4 3 full
+end of main
+main is left 1 true
