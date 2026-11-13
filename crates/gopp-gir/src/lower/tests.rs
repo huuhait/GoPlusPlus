@@ -1152,6 +1152,32 @@ func three(xs [][]int, i, j, k int) [][]int {
 }
 
 #[test]
+fn a_string_that_is_added_to_grows_where_it_is_in_both_dialects() {
+    let text = "package main
+
+type log struct{ text string }
+
+func add(l *log, s string, more string) string {
+	names := []string{\"a\"}
+	s += more
+	l.text += more
+	names[0] += more
+	println(names[0])
+	return s
+}
+";
+    for name in ["a.gopp", "a.go"] {
+        let (lowered, messages) = lowered_with(&[(name, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0]);
+        let module = print_module(&lowered.module);
+        let calls = |called: &str| module.matches(&format!("call const fn @{called}")).count();
+        // No new string is made, and none ends, for any of the three.
+        assert_eq!(calls("_gopp_string_append"), 3, "{name}");
+        assert_eq!(calls("_gopp_string_concat"), 0, "{name}");
+    }
+}
+
+#[test]
 fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
     let (_, messages) = lowered_with(
         &[(

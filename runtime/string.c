@@ -73,6 +73,47 @@ gopp_string _gopp_string_concat(gopp_string a, gopp_string b) {
   return joined;
 }
 
+// `s += more`: the string grows where it is if its buffer is its own
+// and has room behind its bytes, which no other string reads. Else it
+// gets a buffer of its own with room to grow, so that a string that is
+// built piece by piece is copied as often as its length doubles.
+void _gopp_string_append(gopp_string *to, gopp_string more) {
+  if (more.len == 0) {
+    return;
+  }
+  uint64_t len = to->len + more.len;
+  if (len < to->len) {
+    fatal("runtime: string concatenation too long");
+  }
+  gopp_string_buffer *buffer = (gopp_string_buffer *)to->backing;
+  if (buffer && __atomic_load_n(&buffer->refcount, __ATOMIC_ACQUIRE) == 1) {
+    uint64_t before = (uint64_t)(to->ptr - (uint8_t *)(buffer + 1));
+    if (before + len <= buffer->byte_cap) {
+      // `more` may be the string itself: its bytes end where these
+      // start.
+      __builtin_memcpy(to->ptr + to->len, more.ptr, more.len);
+      to->ptr[len] = 0;
+      to->len = len;
+      return;
+    }
+  }
+  uint64_t room = len + len / 2 + 16;
+  if (room < len) {
+    fatal("runtime: string concatenation too long");
+  }
+  gopp_string grown = fresh(room);
+  if (to->len > 0) {
+    __builtin_memcpy(grown.ptr, to->ptr, to->len);
+  }
+  __builtin_memcpy(grown.ptr + to->len, more.ptr, more.len);
+  grown.ptr[len] = 0;
+  grown.len = len;
+  // The old bytes go last: `more` may be a part of them.
+  gopp_string old = *to;
+  *to = grown;
+  _gopp_string_release(old);
+}
+
 bool _gopp_string_eq(gopp_string a, gopp_string b) {
   if (a.len != b.len) {
     return false;

@@ -68,6 +68,7 @@ void _gopp_print_pointer(uint8_t *value);
 void _gopp_print_space(void);
 void _gopp_print_newline(void);
 gopp_string _gopp_string_concat(gopp_string a, gopp_string b);
+void _gopp_string_append(gopp_string *to, gopp_string more);
 void _gopp_string_retain(gopp_string text);
 void _gopp_string_release(gopp_string text);
 bool _gopp_string_eq(gopp_string a, gopp_string b);

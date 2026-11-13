@@ -11,7 +11,7 @@ use super::expr::{Check, PlaceMode};
 use super::func::{Built, FuncCx};
 use super::glue::Ends;
 use super::map::Way;
-use crate::{CastKind, Constant, ConstantKind, Operand, Place, Rvalue, Type, TypeId};
+use crate::{CastKind, Constant, ConstantKind, Mutability, Operand, Place, Rvalue, Type, TypeId};
 
 /// What one expression on the left of an assignment takes a value for.
 enum Dest {
@@ -356,6 +356,16 @@ impl FuncCx<'_, '_> {
             place = self.deref(place, span, &mut mode)?;
         }
         let ty = self.b.place_ty(&place);
+        // `s += x` grows the string where it is, if its bytes are its
+        // own and have room behind them (STM-8).
+        if let (Type::String, BinaryOp::Add) = (self.kind(ty), op) {
+            let (more, _) = self.second(op, y, ty)?;
+            self.empty_moved()?;
+            let at = self.b.assign_temp(Rvalue::AddrOf(place, Mutability::Mut))?;
+            let params = [self.b.types().ptr(ty), ty];
+            let args = vec![Operand::Copy(Place::local(at)), more];
+            return self.runtime_call("_gopp_string_append", &params, args);
+        }
         let mut first = Operand::Copy(place.clone());
         if later {
             first = self.stable(first)?;

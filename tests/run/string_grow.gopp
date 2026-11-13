@@ -1,0 +1,37 @@
+package main
+
+// Two million appends: a string that was copied at every one of them
+// would not end.
+func build(n int) string {
+	s := ""
+	for i := 0; i < n; i++ {
+		s += "ab"
+		if i%500000 == 0 {
+			s += "-"
+		}
+	}
+	return s
+}
+
+type log struct{ text string }
+
+func (l *log) add(line string) {
+	l.text += line
+	l.text += "\n"
+}
+
+func main() {
+	long := build(2000000)
+	println(len(long), long[0:6], long[len(long)-2:])
+	var l log
+	for i := 0; i < 300000; i++ {
+		l.add("line")
+	}
+	println(len(l.text))
+	// A copy keeps what it had.
+	a := "one"
+	a += "-two"
+	b := a
+	a += "-three"
+	println(a, b)
+}
