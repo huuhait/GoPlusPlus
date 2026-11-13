@@ -1382,3 +1382,105 @@ fn a_sample_prints_what_its_file_says() {
         assert_eq!(ran.status.code(), Some(0), "{name}");
     }
 }
+
+/// The packages of the standard library, by their directories.
+fn library_packages(dir: &Path, found: &mut Vec<PathBuf>) {
+    let mut has_source = false;
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            library_packages(&path, found);
+        } else {
+            has_source |= path
+                .extension()
+                .is_some_and(|extension| extension == "gopp");
+        }
+    }
+    if has_source {
+        found.push(dir.to_owned());
+    }
+}
+
+/// What a program frees is freed once, across packages too: a caller
+/// lends an argument to a function of another package that only reads
+/// it, as the function was built. Every run test that imports a package
+/// is built with the units of the standard library and the sanitizers of
+/// Clang, and runs without a report.
+#[test]
+#[ignore = "long: builds programs and the standard library with the sanitizers of Clang"]
+fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
+    use gopp_codegen_c::driver::{ClangDriver, OptLevel};
+    use gopp_codegen_c::toolchain::HostToolchain;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let unit_of = |path: &Path| {
+        let output = run_beside(gopp().args(["build", "-emit=c"]).arg(path));
+        assert_eq!(stderr(&output), "", "{}", path.display());
+        stdout(&output)
+    };
+    let mut packages = Vec::new();
+    library_packages(&root.join("std"), &mut packages);
+    packages.sort();
+    let library: Vec<String> = packages.iter().map(|dir| unit_of(dir)).collect();
+    let toolchain = HostToolchain::discover().unwrap();
+    let driver = ClangDriver {
+        toolchain: &toolchain,
+        target: gopp_target::TargetSpec::named("linux/amd64").unwrap(),
+        opt: OptLevel::O1,
+        strict: false,
+    };
+    let mut checked = 0;
+    for entry in fs::read_dir(root.join("tests/run")).unwrap() {
+        let path = entry.unwrap().path();
+        let is_program = path
+            .extension()
+            .is_some_and(|extension| extension == "gopp");
+        let text = match is_program {
+            true => fs::read_to_string(&path).unwrap(),
+            false => continue,
+        };
+        if text.starts_with("// exit:") || !text.contains("\nimport ") {
+            continue;
+        }
+        let mut units = vec![unit_of(&path)];
+        units.extend(library.iter().cloned());
+        let dir = TempDir::new().unwrap();
+        let program = gopp_codegen_c::runtime::build_sanitized(&driver, &units, dir.path());
+        let ran = run_beside(Command::new(program.unwrap()).env("ASAN_OPTIONS", "detect_leaks=1"));
+        let said = stderr(&ran);
+        let report: Vec<&str> = said
+            .lines()
+            .filter(|line| line.contains("ERROR") || line.contains("SUMMARY"))
+            .collect();
+        assert_eq!(report, [] as [&str; 0], "{}", path.display());
+        assert_eq!(ran.status.code(), Some(0), "{}", path.display());
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+// rule: PAR-10
+#[test]
+fn an_argument_is_lent_to_a_function_of_another_package_that_only_reads_it() {
+    let dir = TempDir::new().unwrap();
+    let reads = "package reads\n\nfunc Sum(xs []int) int {\n\ttotal := 0\n\t\
+                 for _, x := range xs {\n\t\ttotal += x\n\t}\n\treturn total\n}\n\n\
+                 func Keep(xs []int) []int {\n\txs[0] = 9\n\treturn xs\n}\n";
+    let root = library(&dir, &[("reads/reads.gopp", reads)]);
+    let lowered = |call: &str| {
+        let text = format!(
+            "package main\n\nimport \"reads\"\n\nfunc main() {{\n\txs := []int{{1, 2}}\n\t\
+             println({call})\n\tprintln(len(xs))\n}}\n"
+        );
+        let file = write_source(&dir, "main.gopp", &text);
+        let mut build = gopp();
+        build.env("GOPPROOT", &root).args(["build", "-emit=gir"]);
+        let output = run(build.arg(&file));
+        assert_eq!(stderr(&output), "");
+        stdout(&output)
+    };
+    // `xs` is read again after the call. A function that only reads its
+    // parameter is lent the slice; one that changes it gets a copy.
+    assert!(!lowered("reads.Sum(xs)").contains("_gopp_slice_copy"));
+    assert!(lowered("len(reads.Keep(xs))").contains("_gopp_slice_copy"));
+}

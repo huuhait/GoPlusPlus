@@ -53,16 +53,53 @@ pub struct Checked<'a> {
 /// starting a run and merging what it made.
 const SOURCE_EACH: usize = 256 * 1024;
 
+/// What the callers of the functions of packages know of them, by the
+/// symbol of each function: which parameters it does not own, so that a
+/// caller lends its arguments to those, and through which it calls
+/// methods. A package that imports others is lowered with theirs.
+#[derive(Clone, Debug, Default)]
+pub struct Summaries {
+    lent: FxHashMap<String, Vec<bool>>,
+    worked: FxHashMap<String, Vec<bool>>,
+}
+
+impl Summaries {
+    /// Adds what is known of the functions of more packages.
+    pub fn extend(&mut self, more: &Summaries) {
+        let pairs = |map: &FxHashMap<String, Vec<bool>>| {
+            let cloned = map
+                .iter()
+                .map(|(symbol, facts)| (symbol.clone(), facts.clone()));
+            cloned.collect::<Vec<_>>()
+        };
+        self.lent.extend(pairs(&more.lent));
+        self.worked.extend(pairs(&more.worked));
+    }
+}
+
 /// The module of a package that the checker accepted. What the lowering
 /// does not support yet is reported to `sink` as `E0439`, each place
 /// once, and has a zero of its type in the module; the module is
 /// verified, and a rule that it breaks is reported as `E0440`.
 pub fn lower_package(checked: &Checked<'_>, layout: TargetLayout, sink: &Sink) -> Module {
-    let (module, diagnostics, _) = lower_counted(checked, layout, SOURCE_EACH);
+    lower_with(checked, &Summaries::default(), layout, sink).0
+}
+
+/// `lower_package` for a package that imports others, with what is
+/// known of their functions; and what the packages that import this one
+/// know of its functions.
+pub fn lower_with(
+    checked: &Checked<'_>,
+    imported: &Summaries,
+    layout: TargetLayout,
+    sink: &Sink,
+) -> (Module, Summaries) {
+    let limits = Limits::OF_A_PACKAGE;
+    let (module, diagnostics, _, own) = lower_all(checked, imported, layout, SOURCE_EACH, limits);
     for diagnostic in diagnostics {
         sink.push(diagnostic);
     }
-    module
+    (module, own)
 }
 
 /// Reports what the instances of the generic code of a package that
@@ -101,6 +138,7 @@ impl Limits {
 
 /// `lower_package`, with what it reports and the steps that it took.
 /// A run takes `source_each` bytes of source or more.
+#[cfg(test)]
 pub(crate) fn lower_counted(
     checked: &Checked<'_>,
     layout: TargetLayout,
@@ -110,18 +148,40 @@ pub(crate) fn lower_counted(
 }
 
 /// `lower_counted`, with the bounds of the instances.
+#[cfg(test)]
 pub(crate) fn lower_bounded(
     checked: &Checked<'_>,
     layout: TargetLayout,
     source_each: usize,
     limits: Limits,
 ) -> (Module, Vec<Diagnostic>, u64) {
+    let none = Summaries::default();
+    let (module, diagnostics, steps, _) = lower_all(checked, &none, layout, source_each, limits);
+    (module, diagnostics, steps)
+}
+
+/// `lower_bounded` with what is known of the functions of the packages
+/// that are imported, and what is found of those of this one.
+fn lower_all(
+    checked: &Checked<'_>,
+    imported: &Summaries,
+    layout: TargetLayout,
+    source_each: usize,
+    limits: Limits,
+) -> (Module, Vec<Diagnostic>, u64, Summaries) {
     let mut shared = Shared::found(checked, layout, limits);
     // Nothing is lowered of a package whose instances are refused.
     if !shared.refused.is_empty() {
         let refused = std::mem::take(&mut shared.refused);
-        return (shared.module(), refused, shared.found_steps);
+        return (
+            shared.module(),
+            refused,
+            shared.found_steps,
+            Summaries::default(),
+        );
     }
+    shared.lent.clone_from(&imported.lent);
+    shared.worked.clone_from(&imported.worked);
     shared.facts();
     let source: usize = shared.jobs.iter().map(|job| job.source).sum();
     let known: u64 = shared.jobs.iter().map(|job| job.facts.steps).sum();
@@ -176,7 +236,17 @@ pub(crate) fn lower_bounded(
             diagnostics.push(Diagnostic::new(Code::GirVerify, span, message));
         }
     }
-    (module, diagnostics, steps)
+    // What is known of the functions of this package only.
+    let mut own = Summaries::default();
+    for job in shared.jobs.iter().filter(|job| !job.symbol.is_empty()) {
+        if let Some(lent) = shared.lent.get(&job.symbol) {
+            own.lent.insert(job.symbol.clone(), lent.clone());
+        }
+        if let Some(worked) = shared.worked.get(&job.symbol) {
+            own.worked.insert(job.symbol.clone(), worked.clone());
+        }
+    }
+    (module, diagnostics, steps, own)
 }
 
 /// How many of the uses that led to a refused instance are named.

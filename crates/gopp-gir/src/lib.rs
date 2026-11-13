@@ -9,7 +9,7 @@ mod verify;
 
 pub use builder::{BuildError, FuncBuilder};
 pub use ir::*;
-pub use lower::{Checked, check_instances, lower_package};
+pub use lower::{Checked, Summaries, check_instances, lower_package, lower_with};
 pub use print::print_module;
 pub use types::{FuncType, RecId, StructId, Type, TypeError, TypeId, TypeInterner};
 pub use verify::{VerifyError, verify_module};

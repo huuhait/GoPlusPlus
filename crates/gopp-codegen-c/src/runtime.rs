@@ -665,3 +665,40 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     }
     hash
 }
+
+/// Builds the units of C of one program in `dir` with the runtime from
+/// its sources and the address, the leak and the undefined-behaviour
+/// sanitizers of Clang: the program that says what a program frees.
+pub fn build_sanitized(
+    driver: &ClangDriver,
+    units: &[String],
+    dir: &Path,
+) -> Result<PathBuf, DriverError> {
+    let write = |name: &str, text: &str| {
+        let path = dir.join(name);
+        fs::write(&path, text).map_err(|source| DriverError::Write { path, source })
+    };
+    let mut names = Vec::new();
+    for (at, unit) in units.iter().enumerate() {
+        names.push(format!("unit{at}.c"));
+        write(&names[at], unit)?;
+    }
+    write(HEADER_NAME, &own_header(driver.target))?;
+    let sources = sources(driver.target.os);
+    for (name, text) in sources.iter().chain([&INTERNAL]) {
+        write(name, text)?;
+    }
+    let mut clang = driver.clang(dir);
+    clang.args(driver.compile_flags(dir));
+    clang.args(["-g", "-gdwarf-4", "-fno-omit-frame-pointer"]);
+    clang.args([
+        "-fsanitize=address,undefined",
+        "-fno-sanitize-recover=undefined",
+    ]);
+    clang.args(driver.link_flags());
+    clang.args(&names);
+    clang.args(sources.iter().map(|(name, _)| name));
+    clang.args(["-o", "program"]);
+    driver.run(clang)?;
+    Ok(dir.join("program"))
+}

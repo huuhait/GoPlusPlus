@@ -13,7 +13,7 @@ use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
 use gopp_diag::{Code, Diagnostic, Severity, Sink, render_text};
-use gopp_gir::{Checked, Module, lower_package, print_module};
+use gopp_gir::{Checked, Module, Summaries, lower_with, print_module};
 use gopp_sema::Package;
 use gopp_sema::types::Types;
 use gopp_span::{SourceFile, SourceMap};
@@ -110,9 +110,11 @@ pub(crate) fn lowered(
     if reported(sink.finish(), &sources, color, said) {
         return None;
     }
-    // The packages are lowered side by side; what is said about each is
-    // printed in the order of the packages.
-    let lower = |(parsed, package): &(gopp_build::Parsed, Arc<Package>)| {
+    // A package is lowered with what is known of the functions of those
+    // that it imports, so the packages that import nothing come first,
+    // side by side, then those that import only them, and so on. What is
+    // said about each is printed in the order of the packages.
+    let lower = |(parsed, package): &(gopp_build::Parsed, Arc<Package>), known: &Summaries| {
         let pairs: Vec<(&File, &SourceFile)> = parsed
             .files
             .iter()
@@ -126,13 +128,32 @@ pub(crate) fn lowered(
             aborts,
         };
         let sink = Sink::new(MAX_DIAGNOSTICS);
-        let module = lower_package(&checked, target.layout(), &sink);
-        (module, sink.finish())
+        let (module, own) = lower_with(&checked, known, target.layout(), &sink);
+        (module, own, sink.finish())
     };
-    let made: Vec<(Module, Vec<Diagnostic>)> = all.par_iter().map(lower).collect();
+    let mut level = vec![0; all.len()];
+    for at in 0..all.len() {
+        let imported = all[at].0.imports.iter();
+        let before =
+            imported.filter_map(|path| all[..at].iter().position(|(p, _)| p.path == *path));
+        level[at] = before.map(|import| level[import] + 1).max().unwrap_or(0);
+    }
+    let mut made: Vec<Option<(Module, Vec<Diagnostic>)>> = all.iter().map(|_| None).collect();
+    let mut known = Summaries::default();
+    for now in 0..=level.iter().copied().max().unwrap_or(0) {
+        let of_level: Vec<usize> = (0..all.len()).filter(|&at| level[at] == now).collect();
+        let lowered: Vec<_> = of_level
+            .par_iter()
+            .map(|&at| lower(&all[at], &known))
+            .collect();
+        for (at, (module, own, diagnostics)) in of_level.into_iter().zip(lowered) {
+            known.extend(&own);
+            made[at] = Some((module, diagnostics));
+        }
+    }
     let mut failed = false;
     let mut modules = Vec::with_capacity(made.len());
-    for ((module, diagnostics), (parsed, _)) in made.into_iter().zip(&all) {
+    for ((module, diagnostics), (parsed, _)) in made.into_iter().flatten().zip(&all) {
         failed |= reported(diagnostics, &sources, color, said);
         modules.push((parsed.path.clone(), module));
     }
@@ -184,9 +205,10 @@ pub fn run(options: &Options) -> ExitCode {
     let paths: Vec<String> = imports.iter().map(|(path, _)| path.clone()).collect();
     let emit = EmitOptions {
         layout: target.layout(),
+        // A package that is no program is built as a program takes it.
         entry: match is_main {
             true => Entry::Main,
-            false => Entry::None,
+            false => Entry::Package,
         },
         imports: &paths,
         swiftcall: target.swiftcall,
