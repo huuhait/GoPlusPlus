@@ -15,7 +15,7 @@ func (c counter) show(tag string) { println("show", tag, c.name, c.n) }
 func say(s string, n int) { println("say", s, n) }
 
 func set(p *int, v int) {
-	p = v
+	*p = v
 	println("set", v)
 }
 

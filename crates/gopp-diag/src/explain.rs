@@ -29,7 +29,7 @@ pub enum Status {
 
 /// The rows of features that the language no longer has. Nothing is
 /// reported with them, and their numbers are not used again.
-const RETIRED: [&str; 52] = [
+const RETIRED: [&str; 54] = [
     "err_view_for_ref",
     "err_sema_assign",
     "err_sema_builtin",
@@ -91,6 +91,9 @@ const RETIRED: [&str; 52] = [
     "err_embedded_field_unsafe_pointer",
     "err_embedded_field_type_param",
     "err_generic_no_body",
+    // `*p = v` writes what `p` points to, as `p = v` does.
+    "err_own_star_on_left",
+    "note_own_fix_no_star",
 ];
 
 /// What the row `number` of the registry is; `None` if there is no such
@@ -580,12 +583,6 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "for f := open(); i < 3; i++ {\n\tlater = append(later, func() { use(&f) }) // \
              error: File has no Clone()\n}\nfor ; i < 3; i++ {\n\tf := open()\n\tlater = \
              append(later, func() { use(&f) }) // ok\n}",
-        ),
-        OwnStarOnLeft => (
-            "In a .gopp file a pointer is written through without a star: assigning a `T` to a \
-             `*T` variable changes what it points to.",
-            "Remove the star.",
-            "func set(p *int) {\n\t*p = 9 // error\n\tp = 9  // ok\n}",
         ),
         OwnCopyToCopy => (
             "`copy(&dst, src)` writes into `dst`. Passing `dst` without `&` would fill a copy \

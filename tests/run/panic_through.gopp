@@ -175,7 +175,7 @@ func (c *Counter) add() {
 
 func bump(n *int) {
 	step()
-	n += 1
+	*n += 1
 }
 
 func borrowed() (total int) {

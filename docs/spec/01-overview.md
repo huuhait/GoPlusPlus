@@ -103,7 +103,7 @@ Go code changes meaning in two places without a compile error ([ADR-0041](../adr
 | ADR-0033 | `@Const` functions and composite `const` declarations | [06](06-expressions.md#611-compile-time-evaluation-and-composite-constants-adr-0033), [13](13-macros-surface.md) |
 | ADR-0041 | a value is a copy; `move(x)`; pointers to slices and maps (replaces the shared slice and map buffers of ADR-0032) | [04](04-ownership.md), [05](05-parameters.md), [08](08-slices-and-range.md), [12](12-concurrency.md) |
 | ADR-0042 | what a `Shared[T]` holds is read-only; changing it needs a `Mutex` | [04](04-ownership.md), [12](12-concurrency.md) |
-| ADR-0043 | a pointer is used like the variable it points to; `*p = v` is not written | [04](04-ownership.md), [03](03-types.md), [06](06-expressions.md) |
+| ADR-0043 | a pointer is used like the variable it points to; `*p = v` may be written `p = v` | [04](04-ownership.md), [03](03-types.md), [06](06-expressions.md) |
 | ADR-0044 | nothing is borrowed from what an arena value owns | [04](04-ownership.md), [08](08-slices-and-range.md) |
 | ADR-0045 | a copy is written `=`; `Clone` is the copy method of a type with cleanup, a constraint, and the copy of a whole object through a parent pointer | [04](04-ownership.md), [10](10-generics.md) |
 

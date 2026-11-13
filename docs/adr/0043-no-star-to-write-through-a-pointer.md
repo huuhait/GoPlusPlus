@@ -1,6 +1,7 @@
 # ADR-0043: A pointer is used like the variable it points to; `*p = v` is not written
 
 - **Status:** accepted (owner decision)
+- **Status note (2026-11-13, owner decision):** decision 6 is withdrawn. `*p = v`, `*p += v` and `*p++` are accepted again and write what `p = v`, `p += v` and `p++` write, so both spellings are Go++ and code written as in Go needs no change here. `E0469` is retired.
 - **Date:** 2026-11-11
 - **Plan reference:** P01.16; extends rule 7 of [ADR-0041](0041-values-are-copied.md); changes OWN-P5, OWN-P1, OWN-S2, TYP-2, PAR-1, SLC-8, EXP-17 point 7 and decision 4 of [ADR-0024](0024-operator-overloading.md)
 

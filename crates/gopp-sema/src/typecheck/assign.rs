@@ -436,19 +436,6 @@ impl<'a> Checker<'a> {
         }
         let span = cx.tree.exprs[lhs].span;
         let text = self.expr_string(cx, lhs);
-        // A pointer is written through without a star, also one that is
-        // no variable itself.
-        if let ExprKind::Unary {
-            op: UnaryOp::Star,
-            x: pointer,
-        } = cx.tree.exprs[inner].kind
-        {
-            let message = format!("cannot assign to {text}: a pointer is written without *");
-            let fix = format!("use {}", self.expr_string(cx, pointer));
-            let fix = (Code::NoteOwnFixNoStar, fix);
-            self.error_with_fix(Code::OwnStarOnLeft, span, message, fix);
-            return Some(Types::INVALID);
-        }
         if self.shared_changed(cx, lhs, "assign to") {
             return Some(Types::INVALID);
         }

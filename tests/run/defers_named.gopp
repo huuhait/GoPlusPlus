@@ -1,17 +1,17 @@
 package main
 
 func double(p *int) {
-	p *= 2
+	*p *= 2
 	println("double", *p)
 }
 
 func rename(p *string, to string) {
 	println("rename", *p, to)
-	p = to
+	*p = to
 }
 
 func grow(p *[]int) {
-	p = append(*p, len(*p))
+	*p = append(*p, len(*p))
 	println("grow", len(*p))
 }
 
@@ -41,7 +41,7 @@ func list(n int) (out []int, err string) {
 	return
 }
 
-func note(p *int) { p++ }
+func note(p *int) { *p++ }
 
 // A result without a name keeps the value of the return.
 func parse(n int) (_ int, count int) {

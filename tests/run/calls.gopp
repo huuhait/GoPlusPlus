@@ -43,7 +43,7 @@ func sum(w wide, name string, scale int64) (wide, string, int64) {
 
 func many(a int8, b uint16, c int32, d int64, e float32, f float64, g bool, h string,
 	i rgb, j point, k wide, l [3]int16, m *int, n uint8) (int64, float64, string, uint8) {
-	m += 1
+	*m += 1
 	whole := int64(a) + int64(b) + int64(c) + d + k.e + int64(l[2]) + int64(*m)
 	if g {
 		whole = -whole

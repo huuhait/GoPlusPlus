@@ -2239,20 +2239,6 @@ fn a_place_takes_what_the_rules_of_gopp_say() {
             vec!["9:8: p.Age undefined (type User has no field or method Age)".to_owned()],
         ),
         (
-            "*n = 3",
-            vec![
-                "9:2: cannot assign to *n: a pointer is written without *".to_owned(),
-                "    use n".to_owned(),
-            ],
-        ),
-        (
-            "*n++",
-            vec![
-                "9:2: cannot assign to *n: a pointer is written without *".to_owned(),
-                "    use n".to_owned(),
-            ],
-        ),
-        (
             "var x, y int\n\tx, y = 1\n\t_, _ = x, y",
             vec!["10:9: assignment mismatch: 2 variables but 1 value".to_owned()],
         ),
@@ -11926,6 +11912,29 @@ func f(n *int, m *int, xs *[]int, l *List, o *List, v int, pair func() (int, *in
         "9: n", "10: n", "11: n", "12: n", "13: xs", "14: xs", "22: n",
     ];
     assert_eq!(written, expected);
+
+    // With a star the place is what the pointer points to, as it is
+    // written: nothing is left to find out.
+    let starred = "package p
+func g(n *int, xs *[]int, q **int, v int) {
+	*n = 9
+	*n += v
+	*n++
+	*xs = append(*xs, 4)
+	*q = n
+	**q = 3
+	*n, v = v, *n
+}
+";
+    let checked = check_texts("p", &[("a.gopp", starred)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    assert!(checked.package.files[0].bodies[0].writes_through.is_empty());
+    // What is no pointer has nothing behind it.
+    let found = messages("a.gopp", "package p\nfunc h(v int) { *v = 1 }\n");
+    assert_eq!(
+        found,
+        ["a.gopp:2:18: invalid operation: cannot indirect v (variable of type int)"]
+    );
 }
 
 #[test]

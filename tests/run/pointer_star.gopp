@@ -1,0 +1,37 @@
+package main
+
+// A pointer is written through with a star or without one: `*p = v` and
+// `p = v` write the same variable (OWN-P5).
+
+type Point struct{ x, y int }
+
+func set(p *int, v int) { *p = v }
+
+func bump(p *int) {
+	*p += 10
+	*p++
+}
+
+func grow(xs *[]int) { *xs = append(*xs, len(*xs)) }
+
+func turn(p *Point) { *p = Point{p.y, p.x} }
+
+func main() {
+	a, b := 1, 2
+	set(&a, 5)
+	bump(&a)
+	p := &a
+	*p = *p * 2
+	p = p + 1
+	println(a)
+	p = &b
+	*p, a = a, *p
+	xs := []int{7}
+	grow(&xs)
+	grow(&xs)
+	pt := Point{1, 2}
+	turn(&pt)
+	q := &p
+	**q = 100
+	println(a, b, len(xs), xs[2], pt.x, pt.y, p == &b)
+}
