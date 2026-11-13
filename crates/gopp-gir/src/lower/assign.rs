@@ -32,6 +32,14 @@ impl FuncCx<'_, '_> {
         if let (AssignOp::Op(op), [x], [y]) = (op, lhs, rhs) {
             return self.op_assign(*x, op, Some(*y));
         }
+        let unparen = |expr: &ExprId| Shared::unparen(self.tree, *expr);
+        if lhs.len() > 1
+            && lhs
+                .iter()
+                .all(|left| self.body.swaps.contains(&unparen(left)))
+        {
+            return self.exchange(lhs, rhs);
+        }
         // `s = append(s, ...)` and `s = s[i:j]` work on `s` where it is:
         // the slice on the right is not a copy.
         self.reused = match (op, lhs, rhs) {
@@ -79,6 +87,80 @@ impl FuncCx<'_, '_> {
             self.put(dest, value)?;
         }
         Ok(())
+    }
+
+    /// `a, b = b, a`: the places exchange what they have (OWN-R4). No
+    /// value is made and none ends: the bytes of all are read first and
+    /// stored as they are. With two places that is right also where
+    /// the two are one, as in `xs[i], xs[j] = xs[j], xs[i]` with equal
+    /// indexes. With three or more of which two may be one, a value
+    /// could be lost and another kept twice: each place gets a copy
+    /// then, as in any other assignment, and so does an entry of a map.
+    fn exchange(&mut self, lhs: &[ExprId], rhs: &[ExprId]) -> Built {
+        let mut dests = Vec::with_capacity(lhs.len());
+        for &left in lhs {
+            dests.push(self.dest(left, false, true)?);
+        }
+        let wanted: Vec<Option<TypeId>> = dests
+            .iter()
+            .map(|dest| match dest {
+                Dest::Place(place, ..) => Some(self.b.place_ty(place)),
+                Dest::Entry(_, _, way) => way.last().map(|(of, _)| of.value),
+                Dest::Blank | Dest::New(..) => None,
+            })
+            .collect();
+        let places = dests.iter().all(|dest| matches!(dest, Dest::Place(..)));
+        let as_they_are = places && (lhs.len() == 2 || self.apart(lhs));
+        let given: Vec<ExprId> = (rhs.iter())
+            .map(|&value| Shared::unparen(self.tree, value))
+            .collect();
+        // The marks of the checker are set aside while the values are
+        // read: nothing is moved out of a place here.
+        let aside = match as_they_are {
+            true => &mut self.lent,
+            false => &mut self.copied,
+        };
+        aside.extend(&given);
+        let values = match as_they_are {
+            true => self.values(rhs, &wanted),
+            false => self.owned_values(rhs, &wanted),
+        };
+        for value in &given {
+            self.lent.remove(value);
+            self.copied.remove(value);
+        }
+        let values = values?;
+        // Every value is read before any is stored.
+        let mut held = Vec::with_capacity(values.len());
+        for value in values {
+            let read = self.operand_of(value)?;
+            held.push(Rvalue::Use(self.stable(read)?));
+        }
+        for (dest, value) in dests.into_iter().zip(held) {
+            match (as_they_are, dest) {
+                (true, Dest::Place(place, checks, _)) => {
+                    for check in checks {
+                        self.checked(check)?;
+                    }
+                    self.store(place, value)?;
+                }
+                (_, dest) => self.put(dest, value)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the places are variables of the function, each another
+    /// one: no two of them are one place.
+    fn apart(&self, places: &[ExprId]) -> bool {
+        places.iter().all(|&place| {
+            let inner = Shared::unparen(self.tree, place);
+            let direct = matches!(self.tree.exprs[inner].kind, ExprKind::Name(_))
+                && !self.body.writes_through.contains(&inner);
+            let plain = matches!(self.denoted(inner), Some(gopp_sema::Ref::Local(local))
+                if self.plain_var(*local));
+            direct && plain
+        })
     }
 
     /// The store of one value, with the checks of its place.

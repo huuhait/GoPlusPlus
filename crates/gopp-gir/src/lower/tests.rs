@@ -1108,6 +1108,50 @@ func main() {
 }
 
 #[test]
+fn places_that_exchange_their_values_copy_and_end_nothing() {
+    let text = "package main
+
+func two(xs [][]int, i, j int) [][]int {
+	xs[i], xs[j] = xs[j], xs[i]
+	return xs
+}
+
+func locals(a, b, c []int) int {
+	a, b, c = b, c, a
+	return len(a) + len(b) + len(c)
+}
+
+func three(xs [][]int, i, j, k int) [][]int {
+	xs[i], xs[j], xs[k] = xs[j], xs[k], xs[i]
+	return xs
+}
+";
+    // How often the statement of the line copies a slice and ends one.
+    let counts = |module: &str, line: u32| {
+        let at = format!(":{line}:2");
+        let count = |call: &str| {
+            let called = format!("call const fn @{call}");
+            let of_line = |text: &&str| text.contains(&called) && text.contains(&at);
+            module.lines().filter(of_line).count()
+        };
+        [count("_gopp_slice_copy"), count("_GPTd")]
+    };
+    let module = gir(text);
+    // Two places, and variables that are not one another: the bytes
+    // change places. Three elements of which two may be one: each is
+    // copied, and what the places had ends.
+    assert_eq!(counts(&module, 4), [0, 0]);
+    assert_eq!(counts(&module, 9), [0, 0]);
+    assert_eq!(counts(&module, 14), [3, 3]);
+    // A Go file has no exchange: every value is copied.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    assert_eq!(counts(&module, 4), [2, 2]);
+    assert_eq!(counts(&module, 14), [3, 3]);
+}
+
+#[test]
 fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
     let (_, messages) = lowered_with(
         &[(

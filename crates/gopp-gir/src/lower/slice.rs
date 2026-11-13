@@ -180,8 +180,9 @@ impl FuncCx<'_, '_> {
         // that reads the value of another owner.
         let reads =
             matches!(self.denoted(inner), Some(Ref::Local(local)) if self.reads_only(*local));
+        let kept = reads || self.copied.contains(&inner);
         let moved =
-            (mark == Some(&Transfer::Move) || handed) && self.map_index(inner).is_none() && !reads;
+            (mark == Some(&Transfer::Move) || handed) && self.map_index(inner).is_none() && !kept;
         let own = match &value {
             // The place gives its value up and is empty then.
             Rvalue::Use(Operand::Copy(from)) if moved => {

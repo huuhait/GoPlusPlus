@@ -81,6 +81,10 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The arguments of the call that is lowered which are lent: each
     /// is read where it is, and no copy of it is made.
     pub lent: FxHashSet<ExprId>,
+    /// The places that the checker marks as moved which give a copy:
+    /// those of an exchange of three places or more of which two may
+    /// be one.
+    pub copied: FxHashSet<ExprId>,
     /// The parameters that the function only reads: its caller owns
     /// their values.
     lent_params: FxHashSet<LocalId>,
@@ -264,6 +268,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             body,
             facts,
             lent: FxHashSet::default(),
+            copied: FxHashSet::default(),
             lent_params: FxHashSet::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
@@ -644,6 +649,13 @@ impl FuncCx<'_, '_> {
             && !self.borrowed.contains(&var)
             && !self.lent_params.contains(&var);
         own.then_some(var)
+    }
+
+    /// Whether the local has a variable of its own, which is no other
+    /// name of an element.
+    pub fn plain_var(&self, local: CheckedLocalId) -> bool {
+        let var = self.vars.get(&local);
+        var.is_some_and(|var| !self.aliases.contains(var))
     }
 
     /// Whether the variable of the local reads a value that another
