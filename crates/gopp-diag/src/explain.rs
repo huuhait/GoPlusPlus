@@ -571,7 +571,10 @@ pub fn explain(code: Code) -> Option<Explanation> {
         OwnStoredOutlives => (
             "A pointer into a variable of the function is stored behind a pointer that leads \
              out of the function: one in a parameter, from a call or from a variable of the \
-             package. What is there outlives the function, and the variable ends with it.",
+             package. What is there outlives the function, and the variable ends with it. \
+             The same holds for a call that may store one of its arguments behind another, \
+             and for what a parameter points to: it is stored behind another parameter only, \
+             where the caller sees it.",
             "Store a `Unique` or a `Shared`, or let the caller own the value and give a \
              pointer to it.",
             "func bad(h *Holder) {\n\tx := 1\n\th.p = &x // error\n}\n\nfunc set(h \

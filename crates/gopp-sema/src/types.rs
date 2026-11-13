@@ -565,6 +565,7 @@ struct Inner {
     /// into what a declaration puts a value of a type parameter on the
     /// heap.
     holding: FxHashMap<TypeId, Held>,
+    leading: FxHashMap<TypeId, bool>,
     kept: FxHashMap<TypeId, Arc<str>>,
     /// What each method of a declared type does with the pointers that
     /// it is given.

@@ -6461,6 +6461,148 @@ func bad7() int {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-B5
+#[test]
+fn a_call_stores_what_its_function_says_behind_the_pointers_that_it_is_given() {
+    // `set`, `Set`, `swap` and `tie` store what one parameter points to
+    // behind another, and `twice` by a call of `set`: where they are
+    // called, the variable behind the pointer holds what was given
+    // (`bad2` to `bad5`), a pointer to a variable of the function is
+    // not given where it is stored outside the function (`bad1`,
+    // `bad7`), and what a parameter points to is not stored where
+    // nothing says how long it lives (`bad8`). A function value may
+    // store all that it is given (`bad6`). `count` stores nothing.
+    let text = "package p
+
+type T struct{ n int }
+
+type Holder struct{ p *T }
+
+type Link struct {
+	owner *Holder
+	back  Option[*Link]
+	n     int
+}
+
+var origin T
+var holder = Holder{&origin}
+
+func set(out **T, p *T) { *out = p }
+
+func (h *Holder) Set(p *T) { h.p = p }
+
+func swap(a, b *Holder) { a.p, b.p = b.p, a.p }
+
+func twice(h *Holder, p *T) { set(&h.p, p) }
+
+func (l *Link) tie(other *Link) { other.back = l }
+
+func find() *Holder { return &holder }
+
+func count(h *Holder, t *T) int { return h.p.n + t.n }
+
+func bad1() {
+	x := T{1}
+	set(&holder.p, &x)
+}
+
+func bad2() int {
+	h := Holder{&origin}
+	{
+		y := T{2}
+		h.Set(&y)
+	}
+	return h.p.n
+}
+
+func bad3() int {
+	h := Holder{&origin}
+	{
+		y := T{3}
+		set(&h.p, &y)
+	}
+	return h.p.n
+}
+
+func bad4() int {
+	a := Holder{&origin}
+	{
+		y := T{4}
+		b := Holder{&y}
+		swap(&a, &b)
+	}
+	return a.p.n
+}
+
+func bad5() int {
+	h := Holder{&origin}
+	{
+		y := T{5}
+		twice(&h, &y)
+	}
+	return h.p.n
+}
+
+func bad6(f func(*Holder, *T)) int {
+	h := Holder{&origin}
+	{
+		y := T{6}
+		f(&h, &y)
+	}
+	return h.p.n
+}
+
+func bad7(outer *Link) {
+	mine := Link{owner: outer.owner}
+	mine.tie(outer)
+}
+
+func bad8(p *T) {
+	find().Set(p)
+}
+
+func fine1() int {
+	y := T{7}
+	h := Holder{&origin}
+	h.Set(&y)
+	set(&h.p, &y)
+	return h.p.n
+}
+
+func fine2() int {
+	h := Holder{&origin}
+	total := 0
+	{
+		y := T{8}
+		total = count(&h, &y)
+	}
+	return total + h.p.n
+}
+
+func fine3(h *Holder, p *T) {
+	h.Set(p)
+	set(&h.p, p)
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:32:2: cannot give a pointer into x to set: the call may store it where it \
+         outlives x",
+        "a.gopp:40:2: y ends here, and h points into it and is used later",
+        "a.gopp:49:2: y ends here, and h points into it and is used later",
+        "a.gopp:59:2: y ends here, and a points into it and is used later",
+        "a.gopp:68:2: y ends here, and h points into it and is used later",
+        "a.gopp:77:2: y ends here, and h points into it and is used later",
+        "a.gopp:83:2: cannot give a pointer into mine to mine.tie: the call may store it where it \
+         outlives mine",
+        "a.gopp:87:2: cannot give what p points to to find().Set: the call may store it where it \
+         outlives what p points to",
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
@@ -6512,11 +6654,47 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
             .collect();
         format!("{head}func pick(a, b *T) *T {{ return a }}\n{functions}")
     };
+    // Each function stores through the next, and the last one itself;
+    // every one is called with a holder and a value of its own.
+    let stores = |count: usize, up: bool| {
+        let mut functions: Vec<String> = (0..count)
+            .map(|i| match i + 1 == count {
+                true => format!("func s{i}(h *H, p *T) {{ h.p = p }}\n"),
+                false => format!("func s{i}(h *H, p *T) {{ s{}(h, p) }}\n", i + 1),
+            })
+            .collect();
+        if up {
+            functions.reverse();
+        }
+        let calls: String = (0..count)
+            .map(|i| format!("\tx{i} := T{{{i}}}\n\th{i} := H{{&x{i}}}\n\ts{i}(&h{i}, &x{i})\n"))
+            .collect();
+        format!(
+            "{head}type H struct{{ p *T }}\n{}func use() {{\n{calls}}}\n",
+            functions.concat()
+        )
+    };
+    // A function value may store all that it is given: many calls of
+    // one, each with holders of its own.
+    let unknown = |count: usize| {
+        let calls: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\tx{i} := T{{{i}}}\n\ta{i}, b{i} := H{{&x{i}}}, H{{&x{i}}}\n\tf(&a{i}, \
+                     &b{i})\n"
+                )
+            })
+            .collect();
+        format!("{head}type H struct{{ p *T }}\nfunc use(f func(a, b *H)) {{\n{calls}}}\n")
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(ring(n)));
     linear::assert_near_linear(&sizes, |n| steps(fan(n)));
+    linear::assert_near_linear(&sizes, |n| steps(stores(n, false)));
+    linear::assert_near_linear(&sizes, |n| steps(stores(n, true)));
+    linear::assert_near_linear(&sizes, |n| steps(unknown(n)));
 }
 
 // rule: OWN-B5

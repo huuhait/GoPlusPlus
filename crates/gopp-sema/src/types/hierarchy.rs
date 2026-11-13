@@ -25,6 +25,9 @@ pub struct Lends {
     /// For each parameter, the receiver first: whether a result may
     /// point into what the parameter reaches.
     pub gives: Vec<bool>,
+    /// Each pair of parameters of which the function may store what
+    /// the second reaches behind a pointer that the first reaches.
+    pub stores: Vec<(u32, u32)>,
 }
 
 impl Lends {
@@ -327,6 +330,44 @@ impl Types {
         self.write(|inner| inner.kept.insert(param, what));
     }
 
+    /// Whether a value of the type leads to a place that may be given
+    /// a pointer: it holds a pointer to what holds one.
+    pub fn leads_to_store(&self, ty: TypeId) -> bool {
+        self.leads(ty, &mut (FxHashSet::default(), 0))
+    }
+
+    /// `leads_to_store`, kept as `holds` keeps what it finds.
+    fn leads(&self, ty: TypeId, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
+        if let Some(known) = self.read(|inner| inner.leading.get(&ty).copied()) {
+            return known;
+        }
+        if !seen.0.insert(ty) {
+            seen.1 += 1;
+            return false;
+        }
+        let before = seen.1;
+        self.steps
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let parts: Vec<TypeId> = match &*self.get(self.underlying(ty)) {
+            Type::Struct(fields) => {
+                let own = fields.iter().map(|field| field.ty);
+                own.chain(self.parents(ty)).collect()
+            }
+            Type::Array { elem, .. } | Type::Option(elem) => vec![*elem],
+            Type::Tuple(parts) => parts.to_vec(),
+            _ => Vec::new(),
+        };
+        let found = match &*self.get(self.underlying(ty)) {
+            Type::Pointer(to) => self.holds_pointer(*to),
+            _ => (parts.into_iter()).any(|part| super::deep(|| self.leads(part, seen))),
+        };
+        seen.0.remove(&ty);
+        if found || seen.1 == before {
+            self.write(|inner| inner.leading.insert(ty, found));
+        }
+        found
+    }
+
     /// Says what the method `name` of the declared type does with the
     /// pointers that it is given.
     pub fn set_lends(&self, named: NamedId, name: lasso::Spur, lends: Arc<Lends>) {
@@ -350,6 +391,7 @@ impl Types {
             inner.tables.clear();
             inner.abstracts.clear();
             inner.holding.clear();
+            inner.leading.clear();
             inner.open_abstracts.clear();
         });
     }

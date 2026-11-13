@@ -84,11 +84,16 @@ pub(super) enum Callee {
     Unknown,
 }
 
-/// A call that gives back what may hold pointers: for each parameter,
-/// the receiver first, the sources that its argument gives.
+/// A call that gives back what may hold pointers, or is given a
+/// pointer to store behind: for each parameter, the receiver first, the
+/// sources that its argument gives.
 pub(super) struct Call {
     pub callee: Callee,
     pub args: Vec<(u32, u32)>,
+    /// The arguments that lead to a place which may be given a pointer.
+    pub sinks: Vec<bool>,
+    /// Where the function is named.
+    pub at: Span,
 }
 
 /// The variable that stands for what is outside the function.
@@ -143,13 +148,26 @@ pub(super) struct Broken {
     pub made: Span,
 }
 
-/// A loan of what ends with the function that is returned, or stored
-/// behind a pointer of `behind` that leads out of the function.
+/// A loan that leaves the function at `at`: one of what ends with the
+/// function, or with `given` one of what a parameter points to that is
+/// put where the function does not know how long it lives.
 pub(super) struct Escaped {
     pub at: Span,
     pub of: LocalId,
     pub made: Span,
-    pub behind: Option<LocalId>,
+    pub how: Leaves,
+    pub given: bool,
+}
+
+/// How a loan leaves the function.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Leaves {
+    Returned,
+    /// It is stored behind a pointer of the variable.
+    Stored(LocalId),
+    /// It is given to a call that may store it behind another pointer
+    /// that it is given.
+    Called,
 }
 
 /// What a function does with pointers, as its walk found it: the
@@ -480,6 +498,12 @@ impl<'a> Walk<'a> {
         // place there: their sources are kept apart, one after another.
         let mut given = Vec::new();
         self.sources_in(expr, false, found, &mut given);
+        self.given_to_calls(given);
+    }
+
+    /// The sources of the arguments of calls, each with its call and
+    /// its place there.
+    fn given_to_calls(&mut self, mut given: Vec<(u32, usize, ExprId, bool)>) {
         while let Some((call, position, arg, receiver)) = given.pop() {
             let mut args = std::mem::take(&mut self.args);
             let from = args.len() as u32;
@@ -499,11 +523,112 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// What is given before the arguments of a call of `fun`: the
+    /// receiver of a method, and what a function value is a part of.
+    fn given_first(&self, fun: ExprId) -> Option<ExprId> {
+        let selector = self.unparen(fun);
+        let ExprKind::Selector { x, .. } = self.tree.exprs[selector].kind else {
+            return None;
+        };
+        let selections = self.places.map(|places| places.selections);
+        let selection = selections.and_then(|all| all.get(&selector));
+        let named = self.body.uses.contains_key(&selector);
+        let typed = selection.map(|found| found.kind) == Some(SelectionKind::MethodExpr);
+        Some(x).filter(|_| !named && !typed)
+    }
+
+    /// The number of the call `expr` of `fun` with `args` among the
+    /// calls of the function. A call that is met first has its
+    /// arguments put into `given`.
+    fn call_of(
+        &mut self,
+        expr: ExprId,
+        fun: ExprId,
+        args: &[ExprId],
+        given: &mut Vec<(u32, usize, ExprId, bool)>,
+    ) -> u32 {
+        if let Some(&call) = self.call_ids.get(&expr) {
+            return call;
+        }
+        let before = self.given_first(fun);
+        let call = self.calls.len() as u32;
+        let all = before.iter().chain(args.iter());
+        for (position, &arg) in all.enumerate() {
+            given.push((call, position, arg, position == 0 && before.is_some()));
+        }
+        let count = args.len() + before.iter().count();
+        self.calls.push(Call {
+            callee: self.callee(fun),
+            args: vec![(0, 0); count],
+            sinks: vec![false; count],
+            at: self.tree.exprs[fun].span,
+        });
+        self.call_ids.insert(expr, call);
+        call
+    }
+
+    /// The call has its operands: what it is given may be stored
+    /// behind the pointers that it is given, as the function says.
+    pub(super) fn called(&mut self, expr: ExprId) {
+        let Some(places) = self.places else {
+            return;
+        };
+        let ExprKind::Call { fun, args, .. } = &self.tree.exprs[expr].kind else {
+            return;
+        };
+        // A conversion and a built-in function store nothing.
+        let callee = self.unparen(*fun);
+        let typed = places.memo.get(&callee).map(|operand| &operand.mode);
+        let built_in = matches!(self.body.uses.get(&callee), Some(Ref::Universe(_)));
+        if built_in || matches!(typed, Some(Mode::Type)) {
+            return;
+        }
+        // Nor does a method that an option or a handle has of its own.
+        let before = self.given_first(*fun);
+        let own = before.is_some_and(|x| {
+            let mut steps = Vec::new();
+            let ty = self.type_of(self.unparen(x));
+            let ty = ty.map(|ty| self.through(ty, &mut steps));
+            let handle = steps.last() == Some(&Step::Held);
+            let option = ty.is_some_and(|ty| places.types.is_option(ty));
+            (handle || option) && !places.selections.contains_key(&callee)
+        });
+        if own {
+            return;
+        }
+        // Only an argument that leads to a place which holds a pointer
+        // can have one stored behind it; a method may be given the
+        // address of its receiver.
+        let types = places.types;
+        let leads = |arg: &ExprId| {
+            let ty = self.type_of(self.unparen(*arg));
+            ty.is_some_and(|ty| types.leads_to_store(ty))
+        };
+        let receives = before.is_some_and(|x| {
+            let ty = self.type_of(self.unparen(x));
+            ty.is_some_and(|ty| types.holds_pointer(ty))
+        });
+        let mut sinks: Vec<bool> = before.iter().chain(args.iter()).map(leads).collect();
+        if let Some(first) = sinks.first_mut() {
+            *first |= receives;
+        }
+        if !sinks.contains(&true) {
+            return;
+        }
+        let mut given = Vec::new();
+        let call = self.call_of(expr, *fun, args, &mut given);
+        self.given_to_calls(given);
+        self.calls[call as usize].sinks = sinks;
+        self.events.push(Event::Called(call));
+    }
+
     /// The function that the call of `fun` runs.
     fn callee(&self, fun: ExprId) -> Callee {
         let Some(places) = self.places else {
             return Callee::Unknown;
         };
+        // A generic function is walked once, for no type: what it does
+        // with a value of a type parameter is not known.
         let fun = self.unparen(fun);
         if places.instances.contains_key(&fun) {
             return Callee::Unknown;
@@ -649,32 +774,8 @@ impl<'a> Walk<'a> {
                         continue;
                     }
                     // What it gives back of its arguments, the
-                    // function says; the receiver of a method is the
-                    // first of them, and so is what a function value is
-                    // a part of.
-                    let callee = self.callee(*fun);
-                    let selector = self.unparen(*fun);
-                    let before = match tree.exprs[selector].kind {
-                        ExprKind::Selector { x, .. } => {
-                            let selection = self.places.and_then(|places| {
-                                places.selections.get(&selector).map(|found| found.kind)
-                            });
-                            let named = self.body.uses.contains_key(&selector);
-                            let typed = selection == Some(SelectionKind::MethodExpr);
-                            Some(x).filter(|_| !named && !typed)
-                        }
-                        _ => None,
-                    };
-                    let call = self.calls.len() as u32;
-                    let all = before.iter().chain(args.iter());
-                    for (position, &arg) in all.enumerate() {
-                        given.push((call, position, arg, position == 0 && before.is_some()));
-                    }
-                    let count = args.len() + before.iter().count();
-                    self.calls.push(Call {
-                        callee,
-                        args: vec![(0, 0); count],
-                    });
+                    // function says.
+                    let call = self.call_of(expr, *fun, args, given);
                     found.push(Source::Call(call));
                 }
                 _ => {}
@@ -1033,6 +1134,7 @@ impl Problem {
             escaped: Vec::new(),
             lends: Lends {
                 gives: vec![false; self.params.len()],
+                stores: Vec::new(),
             },
             steps: 0,
         };
@@ -1119,7 +1221,6 @@ impl Problem {
         }
 
         // Both together, event by event.
-        let locals = self.locals;
         let mut later: Vec<u32> = Vec::new();
         for block in 0..count {
             let (first, last) = (self.blocks[block].0 as usize, self.blocks[block].1 as usize);
@@ -1261,45 +1362,98 @@ impl Problem {
                 // What ends with the function does not leave it: not as
                 // a result, and not behind a pointer that leads out of
                 // the function.
-                let leaves = match event {
-                    Event::Returned(from, to, span) => Some((from, to, span, None)),
+                match event {
+                    Event::Returned(from, to, span) => {
+                        let given = known.given(&sets, set, sources, (from, to));
+                        self.leaves(&known, None, &given, (span, Leaves::Returned), &mut lent);
+                    }
                     Event::Stored(root, from, to, behind, span) => {
                         let places = known.read(&sets, set, root, behind, false);
-                        let outside =
-                            |&place: &u32| known.loans[place as usize].1.contains(&Step::Target);
-                        let out = places.is_empty() || places.iter().any(outside);
-                        out.then_some((from, to, span, Some(root)))
+                        let given = known.given(&sets, set, sources, (from, to));
+                        let how = (span, Leaves::Stored(root));
+                        self.leaves(&known, Some(&places), &given, how, &mut lent);
                     }
-                    _ => None,
-                };
-                if let Some((from, to, span, behind)) = leaves {
-                    let given = known.given(&sets, set, sources, (from, to));
-                    for loan in given {
-                        let (of, way, made) = &known.loans[loan as usize];
-                        // A result may point into what a parameter
-                        // points to: those who call the function are
-                        // told.
-                        let param = self.params.iter().position(|param| *param == Some(*of));
-                        if let (None, Some(param)) = (behind, param) {
-                            lent.lends.gives[param] = true;
-                        }
-                        // What a pointer points to is not the
-                        // function's, and outlives it.
-                        if of.0 < locals && !way.contains(&Step::Target) {
-                            lent.escaped.push(Escaped {
-                                at: span,
-                                of: *of,
-                                made: *made,
-                                behind,
-                            });
+                    Event::Called(call) => {
+                        let at = self.calls[call as usize].at;
+                        for (places, given, _) in known.stored_by(&sets, set, sources, call) {
+                            let how = (at, Leaves::Called);
+                            self.leaves(&known, Some(&places), &given, how, &mut lent);
                         }
                     }
+                    _ => {}
                 }
                 set = known.apply(&mut sets, set, sources, event);
             }
         }
+        lent.lends.stores.sort_unstable();
+        lent.lends.stores.dedup();
         lent.steps = known.steps + sets.steps + reads.steps;
         lent
+    }
+
+    /// The loans `given` leave the function as `how` says: as results,
+    /// or into the places `places`, if these are behind a pointer that
+    /// leads out of the function. What ends with the function does not
+    /// leave it; what a parameter points to leaves only as a result or
+    /// to behind a parameter, which those who call the function are
+    /// told.
+    fn leaves(
+        &self,
+        known: &Known,
+        places: Option<&[u32]>,
+        given: &[u32],
+        (at, how): (Span, Leaves),
+        lent: &mut Lent,
+    ) {
+        let param = |local: LocalId| self.params.iter().position(|param| *param == Some(local));
+        // The parameters that the places are behind, and whether one
+        // is somewhere else outside the function. A pointer of which
+        // nothing is known leads out of the function too.
+        let mut behind = Vec::new();
+        let nowhere = places.is_some_and(|places| places.is_empty());
+        let mut unknown = false;
+        for &place in places.unwrap_or(&[]) {
+            let (of, way, _) = &known.loans[place as usize];
+            if !way.contains(&Step::Target) {
+                continue;
+            }
+            match param(*of) {
+                Some(at) => behind.push(at as u32),
+                None => unknown = true,
+            }
+        }
+        if places.is_some() && behind.is_empty() && !unknown && !nowhere {
+            return;
+        }
+        for &loan in given {
+            let (of, way, made) = &known.loans[loan as usize];
+            let escaped = |given: bool| Escaped {
+                at,
+                of: *of,
+                made: *made,
+                how,
+                given,
+            };
+            // What a pointer points to is not the function's, and
+            // outlives it.
+            if of.0 < self.locals && !way.contains(&Step::Target) {
+                lent.escaped.push(escaped(false));
+                continue;
+            }
+            let Some(from) = param(*of) else {
+                continue;
+            };
+            match places {
+                None => lent.lends.gives[from] = true,
+                Some(_) => {
+                    let pairs = behind.iter().map(|&into| (into, from as u32));
+                    lent.lends.stores.extend(pairs);
+                    if unknown {
+                        lent.escaped.push(escaped(true));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1467,13 +1621,18 @@ impl Known {
     }
 
     /// The loans that the sources from the first number to the second
-    /// give, where the variables hold what the set says. A place behind
-    /// a pointer of a variable is a place in what the variable points
-    /// into; a call gives what the arguments give that the function may
-    /// give back, and what is outside.
+    /// give, where the variables hold what the set says.
     fn given(&mut self, sets: &Sets, set: u32, of: &Sources, range: (u32, u32)) -> Vec<u32> {
+        self.given_by(sets, set, of, run(&of.problem.sources, range))
+    }
+
+    /// The loans that the sources give. A place behind a pointer of a
+    /// variable is a place in what the variable points into; a call
+    /// gives what the arguments give that the function may give back,
+    /// and what is outside.
+    fn given_by(&mut self, sets: &Sets, set: u32, of: &Sources, first: &[Source]) -> Vec<u32> {
         let mut given: Vec<u32> = Vec::new();
-        let mut rest = vec![run(&of.problem.sources, range)];
+        let mut rest = vec![first];
         while let Some(sources) = rest.pop() {
             for source in sources {
                 self.steps += 1;
@@ -1565,9 +1724,83 @@ impl Known {
                     }
                 }
             }
+            Event::Called(call) => {
+                for (places, given, own) in self.stored_by(sets, set, sources, call) {
+                    for place in places {
+                        let (of, way, _) = &self.loans[place as usize];
+                        let of = *of;
+                        if way.contains(&Step::Target) {
+                            continue;
+                        }
+                        for &loan in given.iter().chain(&own) {
+                            set = self.hold(sets, set, of, loan);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
         set
+    }
+
+    /// What the call may store: for each argument that the function
+    /// may store behind, the places that the argument reaches, and the
+    /// loans in what it may store there. A function that is not known
+    /// may store all that it is given behind every argument that leads
+    /// to a place for a pointer; what it stores of an argument behind
+    /// the same argument comes last, apart: it is taken to stay inside
+    /// the function.
+    fn stored_by(
+        &mut self,
+        sets: &Sets,
+        set: u32,
+        of: &Sources,
+        call: u32,
+    ) -> Vec<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+        let record = &of.problem.calls[call as usize];
+        let count = record.args.len();
+        let known = of.lends[call as usize].as_deref();
+        // A function that says nothing of its parameters stores
+        // nothing; one that is given another number of arguments than
+        // it has parameters is taken as not known.
+        let known = known.filter(|lends| lends.gives.is_empty() || lends.gives.len() == count);
+        let mut into: Vec<Vec<usize>> = vec![Vec::new(); count];
+        match known {
+            Some(lends) => {
+                for &(sink, from) in &lends.stores {
+                    into[sink as usize].push(from as usize);
+                }
+            }
+            None => {
+                for sink in (0..count).filter(|&sink| record.sinks[sink]) {
+                    into[sink] = (0..count).collect();
+                }
+            }
+        }
+        let mut reached: Vec<Option<Vec<u32>>> = vec![None; count];
+        let mut all = Vec::new();
+        for (sink, from) in into.into_iter().enumerate() {
+            if from.is_empty() {
+                continue;
+            }
+            for &arg in std::iter::once(&sink).chain(&from) {
+                if reached[arg].is_none() {
+                    let sources = run(&of.problem.args, record.args[arg]);
+                    reached[arg] = Some(self.given_by(sets, set, of, sources));
+                }
+            }
+            let places = reached[sink].clone().unwrap_or_default();
+            let apart = |arg: &&usize| known.is_none() && **arg == sink;
+            let loans = |args: Vec<&usize>| -> Vec<u32> {
+                let loans = args
+                    .into_iter()
+                    .flat_map(|&arg| reached[arg].iter().flatten());
+                loans.copied().collect()
+            };
+            let (own, others): (Vec<&usize>, Vec<&usize>) = from.iter().partition(apart);
+            all.push((places, loans(others), loans(own)));
+        }
+        all
     }
 
     /// The places that the change writes, each with whether it is

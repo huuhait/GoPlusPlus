@@ -63,6 +63,7 @@ impl Inner {
             tables: self.tables.clone(),
             abstracts: self.abstracts.clone(),
             holding: self.holding.clone(),
+            leading: self.leading.clone(),
             kept: self.kept.clone(),
             lends: self.lends.clone(),
             open_abstracts: open_abstracts
