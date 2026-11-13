@@ -42,8 +42,10 @@ pub(super) struct Called {
     pub params: std::rc::Rc<[TypeId]>,
     /// How many of the last parameters are places for views.
     pub views: usize,
-    /// Which of the parameters are lent their arguments.
+    /// Which of the parameters are lent their arguments, and which of
+    /// those a value that nothing else reads.
     pub lent: std::rc::Rc<[bool]>,
+    pub worked: std::rc::Rc<[bool]>,
     pub ret: TypeId,
 }
 
@@ -209,7 +211,10 @@ impl<'a> FuncCx<'a, '_> {
     /// The value of the expression, for a place of the type `ty`.
     pub fn rvalue_as(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         if let Some(&(from, to)) = self.body.iface_conversions.get(&expr) {
-            return deeper(|| self.in_iface(expr, ty, from, to));
+            return match self.unboxed.get(&expr).copied() {
+                Some(worked) => deeper(|| self.lent_iface(expr, ty, (from, to), worked)),
+                None => deeper(|| self.in_iface(expr, ty, from, to)),
+            };
         }
         match self.body.iface_changes.get(&expr) {
             Some(&(_, to)) => deeper(|| self.iface_change(expr, ty, to)),
@@ -1272,6 +1277,7 @@ impl<'a> FuncCx<'a, '_> {
             params: called.params,
             views: called.views,
             lent: called.lent,
+            worked: called.worked,
             ret: called.ret,
         };
         self.call_with(expr, &called, given, args)
@@ -1300,11 +1306,26 @@ impl<'a> FuncCx<'a, '_> {
         let lent: Vec<bool> = (given.len()..declared)
             .map(|at| called.lent.get(at) == Some(&true))
             .collect();
+        let worked: Vec<bool> = (given.len()..declared)
+            .map(|at| called.worked.get(at) == Some(&true))
+            .collect();
+        // A value that an interface parameter is lent needs no box: the
+        // interface value points to where the value is (TYP-7).
+        let mut unboxed = Vec::new();
+        if args.len() == lent.len() {
+            for (at, &arg) in args.iter().enumerate() {
+                if lent[at] && self.body.iface_conversions.contains_key(&arg) {
+                    self.unboxed.insert(arg, worked[at]);
+                    unboxed.push(arg);
+                }
+            }
+        }
         // An argument that a call inside another argument cannot change
         // either is read where it is.
         let mut direct = Vec::new();
-        for (&arg, _) in args.iter().zip(&lent).filter(|&(_, &lent)| lent) {
-            if self.quiet(arg) {
+        for (at, &arg) in args.iter().enumerate() {
+            let read = lent.get(at) == Some(&true) && worked.get(at) != Some(&true);
+            if read && self.quiet(arg) {
                 direct.push(Shared::unparen(self.tree, arg));
             }
         }
@@ -1314,6 +1335,10 @@ impl<'a> FuncCx<'a, '_> {
             // One call gives all of them: each is a part of what it gave.
             let of = args.get(at).or(args.first());
             let value = match (wanted.get(at).copied().flatten(), of) {
+                (Some(_), Some(arg)) if unboxed.contains(arg) => value,
+                (Some(ty), Some(&arg)) if worked.get(at) == Some(&true) => {
+                    self.worked_value(arg, ty, value)?
+                }
                 (Some(ty), Some(&arg)) if lent.get(at) == Some(&true) => {
                     self.lent_value(arg, ty, value)?
                 }
@@ -1321,6 +1346,9 @@ impl<'a> FuncCx<'a, '_> {
                 _ => value,
             };
             given.push(self.operand_of(value)?);
+        }
+        for arg in unboxed {
+            self.unboxed.remove(&arg);
         }
         for arg in direct {
             self.lent.remove(&arg);
@@ -1672,6 +1700,10 @@ impl<'a> FuncCx<'a, '_> {
                         lent: shared.lent.get(&symbol).map_or_else(
                             || std::rc::Rc::from([]),
                             |lent| std::rc::Rc::from(&lent[..]),
+                        ),
+                        worked: shared.worked.get(&symbol).map_or_else(
+                            || std::rc::Rc::from([]),
+                            |worked| std::rc::Rc::from(&worked[..]),
                         ),
                         params: func.params.iter().copied().collect(),
                         ret: func.ret,

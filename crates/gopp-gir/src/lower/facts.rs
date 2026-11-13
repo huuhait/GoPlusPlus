@@ -8,6 +8,12 @@
 //! address, a move out of it, a `return` of it. A copy that the function
 //! gives away is a read, since the copy is made of it.
 //!
+//! A parameter of an interface type that the function calls methods
+//! through, and does no more to, is lent too, and **worked on**: a
+//! method may change the value that the interface value holds, so the
+//! caller lends a value of its own for the call, which nothing else
+//! reads (TYP-7).
+//!
 //! A variable is **reached** if something else than the function may
 //! change it while a call runs: its address is taken. A value in a
 //! variable that is not reached cannot change during a call, so it can
@@ -24,9 +30,12 @@ use super::{Job, Shared};
 
 #[derive(Default)]
 pub(crate) struct Facts {
-    /// For each parameter, the receiver first: the function only reads
-    /// it.
+    /// For each parameter, the receiver first: the function does not
+    /// own it. It only reads it, or calls methods through it.
     pub lent: Vec<bool>,
+    /// For each parameter: it is lent, and the function calls methods
+    /// through it, which may change the value that it holds.
+    pub worked: Vec<bool>,
     /// The variables whose address is taken.
     reached: FxHashSet<LocalId>,
     /// A function literal, a `go` or a `defer` statement is in the
@@ -52,6 +61,9 @@ struct Walk<'a> {
     body: &'a Body,
     /// The variables that the function does more to than read.
     more: FxHashSet<LocalId>,
+    /// The variables of an interface type that a method is called
+    /// through.
+    called: FxHashSet<LocalId>,
     facts: Facts,
 }
 
@@ -80,6 +92,7 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         tree,
         body: &shared.package.files[job.file as usize].bodies[job.at],
         more: FxHashSet::default(),
+        called: FxHashSet::default(),
         facts: Facts::default(),
     };
     walk.block(block);
@@ -93,7 +106,12 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         // A parameter without a name is never used.
         !walk.facts.all && local.is_none_or(|local| !walk.more.contains(local))
     };
-    walk.facts.lent = receiver.iter().chain(params).map(lent).collect();
+    let worked = |param: &Param| {
+        let local = (param.name).and_then(|name| walk.body.defs.get(&name.span.lo));
+        lent(param) && local.is_some_and(|local| walk.called.contains(local))
+    };
+    let all = || receiver.iter().chain(params);
+    (walk.facts.lent, walk.facts.worked) = (all().map(lent).collect(), all().map(worked).collect());
     walk.facts
 }
 
@@ -209,6 +227,22 @@ impl Walk<'_> {
         };
         if selection.kind == SelectionKind::Field {
             return;
+        }
+        // A method of an interface value works on the value that the
+        // variable holds, and gets no address that outlives the call.
+        if self.shared.types.is_interface(selection.holder) {
+            let mut receiver = *x;
+            while let ExprKind::Paren(inner) = self.tree.exprs[receiver].kind {
+                receiver = inner;
+            }
+            if let (ExprKind::Name(_), Some(Ref::Local(local)), true) = (
+                &self.tree.exprs[receiver].kind,
+                self.body.uses.get(&receiver),
+                selection.path.is_empty(),
+            ) {
+                self.called.insert(*local);
+                return;
+            }
         }
         // A method of this package says how it takes its receiver; of
         // any other it is not known, and may be by its address.

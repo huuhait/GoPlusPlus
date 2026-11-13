@@ -192,9 +192,13 @@ pub(crate) struct Shared<'a> {
     no_body: Body,
     no_facts: facts::Facts,
     /// For the symbol of each function of the package: which of its
-    /// parameters it only reads, the receiver first. A caller lends its
-    /// arguments to those.
+    /// parameters it does not own, the receiver first. A caller lends
+    /// its arguments to those.
     pub lent: FxHashMap<String, Vec<bool>>,
+    /// For the symbol of each function of the package: which of its
+    /// parameters it calls methods through. A caller lends those a
+    /// value that nothing else reads.
+    pub worked: FxHashMap<String, Vec<bool>>,
 }
 
 /// A function that is called or a variable that is used, as the source
@@ -219,9 +223,11 @@ pub(crate) struct Callee {
     /// How many of the last parameters are places for views that the
     /// results may be.
     pub views: usize,
-    /// Which of the parameters the function only reads: it is lent
+    /// Which of the parameters the function does not own: it is lent
     /// those. Empty for a function whose body is not known here.
     pub lent: std::rc::Rc<[bool]>,
+    /// Which of the lent parameters the function calls methods through.
+    pub worked: std::rc::Rc<[bool]>,
     pub ret: TypeId,
 }
 
@@ -361,6 +367,7 @@ impl<'a> Shared<'a> {
             no_body: Body::default(),
             no_facts: facts::Facts::default(),
             lent: FxHashMap::default(),
+            worked: FxHashMap::default(),
         };
         // The `init` functions count in the order of the names of their
         // files, then of the source.
@@ -420,6 +427,9 @@ impl<'a> Shared<'a> {
         for (job, facts) in shared.jobs.iter_mut().zip(facts) {
             if !job.symbol.is_empty() {
                 shared.lent.insert(job.symbol.clone(), facts.lent.clone());
+                shared
+                    .worked
+                    .insert(job.symbol.clone(), facts.worked.clone());
             }
             job.facts = facts;
         }

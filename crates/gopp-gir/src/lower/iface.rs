@@ -295,6 +295,64 @@ impl FuncCx<'_, '_> {
         self.boxed(span, ty, (from, to), value)
     }
 
+    /// The value of the expression in a value of the interface type
+    /// `to` that a parameter is lent (TYP-7): there is no box, the
+    /// second word is the address of the value where it is. A function
+    /// that only reads its parameter gets the variable of the caller
+    /// itself, if nothing can change it during the call; one that calls
+    /// methods through it (`worked`) gets a value of the caller's own,
+    /// which ends with the statement. A value that is in the word
+    /// itself has no box to save.
+    pub fn lent_iface(
+        &mut self,
+        expr: ExprId,
+        ty: TypeId,
+        (from, to): (CheckedTypeId, CheckedTypeId),
+        worked: bool,
+    ) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
+        let lowered = self.lower(from, span);
+        if !self.is_iface(ty) || self.inline(lowered) {
+            return self.in_iface(expr, ty, from, to);
+        }
+        let first = match self.empty_iface(to) {
+            true => self.type_info(from)?,
+            false => self.itab(from, to)?,
+        };
+        let first = match first {
+            Ok(first) => first,
+            Err(what) => return Ok(self.placeholder(span, ty, what)),
+        };
+        let place = match worked {
+            true => {
+                let value = self.rvalue_plain(expr, lowered)?;
+                let value = self.taken(expr, lowered, value)?;
+                // What owns nothing is copied by its bytes.
+                match self.fresh(expr, lowered, value)? {
+                    Rvalue::Use(Operand::Copy(place)) if self.owns_temp(&place) => place,
+                    other => self.slot_of(other)?,
+                }
+            }
+            false => {
+                let inner = Shared::unparen(self.tree, expr);
+                let direct = self.quiet(expr) && self.lent.insert(inner);
+                let value = self.rvalue_plain(expr, lowered)?;
+                let value = self.lent_value(expr, lowered, value)?;
+                if direct {
+                    self.lent.remove(&inner);
+                }
+                match value {
+                    Rvalue::Use(Operand::Copy(place)) => place,
+                    other => self.slot_of(other)?,
+                }
+            }
+        };
+        let data = self.record(place)?;
+        let itab = self.info_word(first)?;
+        let lent = self.slot_of(Rvalue::Aggregate(AggKind::Of(ty), vec![itab, data]))?;
+        Ok(Rvalue::Use(Operand::Copy(lent)))
+    }
+
     /// The value of the type `from`, which is its own, in a value of
     /// the interface type `to` for a place of the type `ty`.
     pub fn boxed(
@@ -1218,6 +1276,7 @@ impl<'a> FuncCx<'a, '_> {
             code: Code::Slot(value, slot as u32, code, nilable),
             views: sig.params.len() - declared,
             lent: std::rc::Rc::from([]),
+            worked: std::rc::Rc::from([]),
             params: params.into(),
             ret: sig.ret,
         };

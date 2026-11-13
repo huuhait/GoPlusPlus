@@ -121,9 +121,16 @@ pub(super) struct FuncCx<'a, 'm> {
     /// those of an exchange of three places or more of which two may
     /// be one.
     pub copied: FxHashSet<ExprId>,
-    /// The parameters that the function only reads: its caller owns
+    /// The parameters that the function does not own: its caller owns
     /// their values.
     lent_params: FxHashSet<LocalId>,
+    /// Those of them that the function calls methods through: the
+    /// caller lent a value that nothing else reads.
+    worked_params: FxHashSet<LocalId>,
+    /// The arguments of the call that is lowered which an interface
+    /// parameter is lent without a box, each with whether the function
+    /// calls methods through the parameter.
+    pub unboxed: FxHashMap<ExprId, bool>,
     vars: FxHashMap<CheckedLocalId, LocalId>,
     scopes: Vec<Scope>,
     pub labels: FxHashMap<Spur, Label>,
@@ -361,6 +368,8 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             lent: FxHashSet::default(),
             copied: FxHashSet::default(),
             lent_params: FxHashSet::default(),
+            worked_params: FxHashSet::default(),
+            unboxed: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
             labels: FxHashMap::default(),
@@ -412,6 +421,9 @@ impl FuncCx<'_, '_> {
                 match self.facts.lent.get(at) {
                     Some(true) => drop(self.lent_params.insert(slot)),
                     _ => self.owns(local, slot)?,
+                }
+                if self.facts.worked.get(at) == Some(&true) {
+                    self.worked_params.insert(slot);
                 }
             }
         }
@@ -980,6 +992,13 @@ impl FuncCx<'_, '_> {
     pub fn plain_var(&self, local: CheckedLocalId) -> bool {
         let var = self.vars.get(&local);
         var.is_some_and(|var| !self.aliases.contains(var))
+    }
+
+    /// Whether the local is a parameter that the function calls
+    /// methods through: its value is the function's to let be changed.
+    pub fn worked_param(&self, local: CheckedLocalId) -> bool {
+        let var = self.vars.get(&local);
+        var.is_some_and(|var| self.worked_params.contains(var))
     }
 
     /// Whether the variable of the local reads a value that another

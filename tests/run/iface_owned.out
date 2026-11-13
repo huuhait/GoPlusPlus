@@ -8,11 +8,9 @@ ab ab
 dup 3
 boxed 103 3
 dup 103
-dup 203
-file 303
-close 303
-end of files
+file 203
 close 203
+end of files
 close 103
 close 3
 negative true

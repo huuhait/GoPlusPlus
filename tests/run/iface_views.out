@@ -7,12 +7,10 @@
 3 2 2
 1 7
 held 1
+in any 1
 dup 1
-in any 101
-dup 101
-copied 201
-close 201
-end of files
+copied 101
 close 101
+end of files
 close 1
 done

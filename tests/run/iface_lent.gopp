@@ -1,0 +1,89 @@
+package main
+
+type Counter struct {
+	n    int
+	note string
+}
+
+func (c *Counter) Inc()      { c.n++ }
+func (c Counter) Value() int { return c.n }
+
+type Counting interface {
+	Inc()
+	Value() int
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd)
+	}
+}
+
+func (f File) Clone() File {
+	println("dup", f.fd)
+	return File{fd: f.fd + 100}
+}
+
+func (f *File) Seek() int { f.fd++; return f.fd }
+
+type Seeker interface{ Seek() int }
+
+// Calls methods through its parameter: the caller lends a value of its
+// own, and its variable stays what it was.
+func bump(c Counting) int {
+	c.Inc()
+	c.Inc()
+	return c.Value()
+}
+
+// Only reads its parameter: the caller lends its variable itself.
+func read(v any) int {
+	if c, ok := v.(Counter); ok {
+		return c.n + len(c.note)
+	}
+	if list, ok := v.([]int); ok {
+		return len(list)
+	}
+	return -1
+}
+
+func length(v any) int { return read(v) + read(v) }
+
+// The last use of a parameter that methods are called through goes on
+// as it is; an earlier use gets a value of its own.
+func chain(c Counting) int { return bump(c) }
+
+func twice(c Counting) int { return bump(c) + bump(c) }
+
+func keep(c Counting) Counting { return c }
+
+func seek(s Seeker) int { return s.Seek() + s.Seek() }
+
+var kept any
+
+func store(v any) { kept = v }
+
+func main() {
+	c := Counter{n: 1, note: "c"}
+	println(bump(c), c.n)
+	println(read(c), length(c), read([]int{1, 2, 3}), read(7))
+	println(chain(c), c.n)
+	println(twice(c), c.n)
+	k := keep(c)
+	k.Inc()
+	println(k.Value(), c.n)
+	println(bump(k), k.Value(), chain(k), twice(k), k.Value())
+
+	list := []int{1, 2}
+	println(read(list), length(list))
+	store(list)
+	list[0] = 9
+	println(kept.([]int)[0], list[0])
+
+	f := File{fd: 1}
+	println("seek", seek(f), f.fd)
+	println("seek", seek(File{fd: 10}))
+	println("done")
+}

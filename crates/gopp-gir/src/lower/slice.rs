@@ -281,6 +281,22 @@ impl FuncCx<'_, '_> {
         self.fresh(expr, ty, copy)
     }
 
+    /// The value for a parameter that its function calls methods
+    /// through: a method may change it, so it is a value of the caller's
+    /// own that nothing else reads, which ends with the statement. The
+    /// last use of a parameter that this function was lent the same
+    /// way goes on as it is.
+    pub fn worked_value(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
+        let inner = Shared::unparen(self.tree, expr);
+        let passed_on = self.body.last_uses.contains(&inner)
+            && matches!(self.denoted(inner), Some(Ref::Local(local)) if self.worked_param(*local));
+        if self.flat(ty) || passed_on {
+            return Ok(value);
+        }
+        let value = self.taken(expr, ty, value)?;
+        self.fresh(expr, ty, value)
+    }
+
     /// The values of the expressions for new owners (see `values`).
     pub fn owned_values(
         &mut self,

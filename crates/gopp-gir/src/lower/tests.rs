@@ -862,14 +862,20 @@ func keys(a named) int {
 }
 
 /// For each function of the first file, in the order of the source:
-/// its name and which of its parameters it only reads.
+/// its name and which of its parameters it only reads, or only calls
+/// methods through.
 fn lent(text: &str) -> Vec<String> {
     checked(&[("a.gopp", text)], |checked, messages| {
         assert_eq!(messages, [] as [&str; 0]);
         let shared = Shared::new(checked, TargetLayout::new(64));
         let named = shared.jobs.iter().map(|job| {
-            let flags: Vec<&str> = (job.facts.lent.iter())
-                .map(|&lent| if lent { "lent" } else { "own" })
+            let flags = job.facts.lent.iter().zip(&job.facts.worked);
+            let flags: Vec<&str> = flags
+                .map(|flags| match flags {
+                    (true, true) => "worked",
+                    (true, false) => "lent",
+                    (false, _) => "own",
+                })
                 .collect();
             let name = gopp_mangle::demangle(job.symbol.as_bytes(), 64).unwrap();
             format!("{name}: {}", flags.join(" "))
@@ -1418,6 +1424,95 @@ func main() {
         ],
         [1, 1, 0]
     );
+}
+
+#[test]
+fn an_interface_parameter_is_lent_its_argument_without_a_box() {
+    let text = "package main
+
+type Shape interface{ Area() int }
+
+type Rect struct{ w, h int }
+
+func (r Rect) Area() int { return r.w * r.h }
+
+func (r *Rect) grow() { r.w++ }
+
+var last any
+
+func read(v any) bool { return v == nil }
+
+func area(s Shape) int { return s.Area() }
+
+func keep(v any) { last = v }
+
+func returned(s Shape) Shape { return s }
+
+func assigned(s Shape, other Shape) int {
+	s = other
+	return s.Area()
+}
+
+func field(h struct{ s Shape }) int { return h.s.Area() }
+
+func passes(s Shape) int { return area(s) }
+
+func twice(s Shape) int { return area(s) + area(s) }
+
+func main() {
+	r := Rect{2, 3}
+	list := []int{1}
+	var s Shape = r
+	println(read(r), read(list), area(r), area(Rect{1, 1}), area(s), passes(r), twice(r))
+	keep(r)
+	keep(list)
+	println(r.w, len(list))
+}
+";
+    assert_eq!(
+        lent(text),
+        [
+            "main.Rect.Area: lent",
+            "main.Rect.grow: own",
+            "main.read: lent",
+            "main.area: worked",
+            "main.keep: lent",
+            "main.returned: own",
+            "main.assigned: own lent",
+            "main.field: own",
+            "main.passes: lent",
+            "main.twice: lent",
+            "main.main: ",
+        ]
+    );
+    let module = gir(text);
+    let main = module.find("fn _GPF4mainE4main(").unwrap();
+    let main = &module[main..][..module[main..].find("\n}\n").unwrap()];
+    // The one box of `main` is that of `var s Shape = r`: every
+    // argument is lent where it is, also to `keep`, which only reads
+    // its parameter to store a copy of it.
+    let boxes = |text: &str| text.matches("@_gopp_iface_box(").count();
+    assert_eq!(boxes(main), 1);
+    // The copy that `keep` stores is made where it is stored.
+    let keep = module.find("fn _GPF4mainE4keep(").unwrap();
+    let keep = &module[keep..][..module[keep..].find("\n}\n").unwrap()];
+    assert_eq!(keep.matches("@_gopp_iface_clone(").count(), 1);
+    // A function that only passes its parameter on reads it: what it
+    // passes on to a function that calls methods is a copy each time.
+    let clones = |name: &str| {
+        let start = module.find(&format!("fn _GPF4mainE{name}(")).unwrap();
+        let body = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        body.matches("@_gopp_iface_clone(").count()
+    };
+    assert_eq!([clones("6passes"), clones("5twice")], [1, 2]);
+    insta::assert_snapshot!(module);
+    // A Go file lends the same way.
+    let (lowered, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let main = module.find("fn _GPF4mainE4main(").unwrap();
+    let main = &module[main..][..module[main..].find("\n}\n").unwrap()];
+    assert_eq!(boxes(main), 1);
 }
 
 #[test]
