@@ -68,6 +68,7 @@ impl Inner {
             labels: self.labels.clone(),
             optional: self.optional.clone(),
             held: self.held.clone(),
+            required: self.required.clone(),
             no_zero: self.no_zero.clone(),
             not_constant: self.not_constant.clone(),
         }

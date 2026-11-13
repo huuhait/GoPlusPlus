@@ -566,6 +566,9 @@ struct Inner {
     optional: FxHashSet<TypeId>,
     /// The type parameters that a declaration holds a value of.
     held: FxHashSet<TypeId>,
+    /// The type parameters that a declaration has a `@Required` field
+    /// of.
+    required: FxHashSet<TypeId>,
     /// For a type that was asked: the part of it without a zero value.
     no_zero: FxHashMap<TypeId, Option<(TypeId, NoZero)>>,
     /// For a type that was asked, what keeps it from being the type of
@@ -2097,6 +2100,29 @@ impl Types {
 
     pub fn is_held(&self, param: TypeId) -> bool {
         self.read(|inner| inner.held.contains(&param))
+    }
+
+    /// Notes that a declaration has a `@Required` field of its type
+    /// parameter `param`, so no type argument for it is an option.
+    pub fn set_required(&self, param: TypeId) {
+        self.write(|inner| inner.required.insert(param));
+    }
+
+    pub fn is_required(&self, param: TypeId) -> bool {
+        self.read(|inner| inner.required.contains(&param))
+    }
+
+    /// Whether the type has nil of its own, so that an option of it
+    /// says nothing more (OWN-P9).
+    pub fn has_own_nil(&self, ty: TypeId, names: &ThreadedRodeo) -> bool {
+        self.underlying(ty) != Types::INVALID
+            && !matches!(&*self.get(ty), Type::Param(_))
+            && (self.has_nil(ty, Dialect::Gopp) || self.is_unsafe_pointer(ty, names))
+    }
+
+    /// Whether the type is an option, or is declared as one.
+    pub fn is_option(&self, ty: TypeId) -> bool {
+        matches!(&*self.get(self.underlying(ty)), Type::Option(_))
     }
 
     pub fn is_optional(&self, param: TypeId) -> bool {

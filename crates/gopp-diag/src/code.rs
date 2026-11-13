@@ -312,6 +312,7 @@ codes! {
     450 InlineMarksConflict "err_inline_marks_conflict",
     451 UseAfterMove "err_use_after_move",
     452 OwnImplicitClone "err_own_implicit_clone",
+    453 InstImplicitClone "err_inst_implicit_clone",
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",
     456 NoteWant "note_want",

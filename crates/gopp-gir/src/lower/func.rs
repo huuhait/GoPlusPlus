@@ -1457,14 +1457,22 @@ impl FuncCx<'_, '_> {
             return false;
         };
         if self.reported.insert((span.lo, span.hi)) {
-            let part = match shared.names.get(&shared.package.name) {
-                Some(package) => shared.types.display_in(part, shared.names, package),
-                None => shared.types.display(part, shared.names),
+            let message = format!(
+                "cannot copy {what}: {}",
+                why.text(&shared.shown(part), true)
+            );
+            // In an instance the type is what a type argument makes it.
+            let instance = self.owner.filter(|(job, _)| shared.is_instance(job));
+            let code = match instance {
+                Some(_) => Code::InstImplicitClone,
+                None => Code::OwnImplicitClone,
             };
-            let message = format!("cannot copy {what}: {}", why.text(&part, true));
-            let mut diagnostic = Diagnostic::new(Code::OwnImplicitClone, span, message);
+            let mut diagnostic = Diagnostic::new(code, span, message);
             if let Some((at, note)) = note {
                 diagnostic = diagnostic.with_note(Code::NoteCapturedHere, Some(at), note);
+            }
+            if let Some((job, _)) = instance {
+                diagnostic = shared.led_to(job, diagnostic);
             }
             self.memo.diagnostics.push(diagnostic);
         }

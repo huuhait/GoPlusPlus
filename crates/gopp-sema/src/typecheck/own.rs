@@ -260,10 +260,7 @@ impl<'a> Checker<'a> {
     /// Whether the type has nil of its own, so that an option of it says
     /// nothing more (OWN-P9).
     pub(super) fn has_own_nil(&self, ty: TypeId) -> bool {
-        self.types.underlying(ty) != Types::INVALID
-            && !self.is_param(ty)
-            && (self.types.has_nil(ty, Dialect::Gopp)
-                || self.types.is_unsafe_pointer(ty, self.names))
+        self.types.has_own_nil(ty, self.names)
     }
 
     /// `Option[of]` is written at `span`. A declaration that writes it
@@ -296,6 +293,9 @@ impl<'a> Checker<'a> {
                 self.error_with_fix(Code::OptionAndRequired, span, message, fix);
             }
             Type::Struct(_) => {}
+            // What the type parameter is, each type argument says: it
+            // is held to this where the arguments are given.
+            Type::Param(_) => self.types.set_required(ty),
             _ if self.never_nil(ty) && !self.types.is_unsafe_pointer(ty, self.names) => {
                 let message = format!(
                     "cannot use @Required on a field of type {shown}: a {shown} is never nil, \

@@ -1323,11 +1323,11 @@ impl<'a> Checker<'a> {
         for (of, span, in_body) in std::mem::take(&mut self.options) {
             self.option_of(of, span, in_body);
         }
-        for instance in std::mem::take(&mut self.instances) {
-            self.verify(&instance);
-        }
         for (ty, span) in std::mem::take(&mut self.required_fields) {
             self.required_field(ty, span);
+        }
+        for instance in std::mem::take(&mut self.instances) {
+            self.verify(&instance);
         }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided

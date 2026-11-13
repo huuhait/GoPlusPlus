@@ -13813,3 +13813,42 @@ func (h *Holder[S, C]) wrong() string {
         );
     }
 }
+
+#[test]
+fn a_required_field_of_a_type_parameter_takes_no_option() {
+    let text = "package p
+
+type Box[T any] struct {
+	v T @Required
+	n int
+}
+
+type Plain[T any] struct{ v T }
+
+type Maybe Option[int]
+
+func good(p *int) {
+	a := Box[int]{v: 1}
+	b := Box[*int]{v: p}
+	c := Plain[Option[int]]{}
+	_, _, _ = a, b, c
+}
+
+func bad(o Option[int], m Maybe) {
+	a := Box[Option[int]]{v: o}
+	b := Box[Maybe]{v: m}
+	_, _ = a, b
+}
+";
+    // The field must be set and an option may be nil (ADR-0016): held
+    // where the type argument is given.
+    assert_eq!(
+        messages("a.gopp", text),
+        [
+            "a.gopp:20:11: cannot use Option[int] for T: a field of it is @Required, and an option \
+             may be nil",
+            "a.gopp:21:11: cannot use Maybe for T: a field of it is @Required, and an option may be \
+             nil",
+        ]
+    );
+}

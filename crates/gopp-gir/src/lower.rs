@@ -979,9 +979,13 @@ impl<'a> Shared<'a> {
             let mut known: FxHashMap<(Used, Vec<CheckedTypeId>), usize> = FxHashMap::default();
             let mut of_types: Vec<((CheckedTypeId, Spur), usize, bool)> = Vec::new();
             let mut steps = 0;
-            // The first use that passes a bound: what is used, the
-            // bound, and where.
-            let mut refused: Option<(String, String, (usize, Span))> = None;
+            // The first instance that is refused: the report, and the
+            // use that asks for the instance.
+            let mut refused: Option<(Code, String, (usize, Span))> = None;
+            let bounded = |used: String, bound: String| {
+                let message = format!("cannot instantiate {used}: {bound} (GEN-5)");
+                (Code::InstTooLarge, message)
+            };
             // A type argument may be a type that a function declares.
             let locals = |named: NamedId| self.local(named);
             let mut namer = Namer::new(self.types, self.names).with_locals(&locals);
@@ -1069,7 +1073,8 @@ impl<'a> Shared<'a> {
                         (Some(&job), None) => job,
                         (_, bound) => {
                             if let Some(bound) = bound.or_else(|| one_more(of)) {
-                                refused = Some((self.used_name(used), bound, by));
+                                let (code, message) = bounded(self.used_name(used), bound);
+                                refused = Some((code, message, by));
                                 break 'level;
                             }
                             let mut args = of_receiver;
@@ -1097,6 +1102,9 @@ impl<'a> Shared<'a> {
                 let mut rest: Vec<CheckedTypeId> = typed
                     .chain(body.locals.iter().map(|local| local.ty))
                     .collect();
+                // The types of a body are met in no order: of those that
+                // are refused, the one whose report comes first is.
+                let mut unfit: Vec<(String, Code, (usize, Span))> = Vec::new();
                 while let Some(ty) = rest.pop() {
                     if !seen.insert(ty) {
                         continue;
@@ -1104,6 +1112,12 @@ impl<'a> Shared<'a> {
                     steps += 1;
                     let kind = self.types.get(ty);
                     kind.each_part(&mut |part| rest.push(part));
+                    // What a type argument makes of the types of an
+                    // instance is held to what the types ask (OWN-P9,
+                    // TYP-15), at the use that asks for the instance.
+                    if let (Some(by), Some((code, message))) = (job.by, self.unfit(job, ty)) {
+                        unfit.push((message, code, by));
+                    }
                     let CheckedType::Named { id, args } = &*kind else {
                         continue;
                     };
@@ -1120,8 +1134,8 @@ impl<'a> Shared<'a> {
                         }
                         if let Some(bound) = bound {
                             let name = self.names.resolve(&self.types.home(*id).name);
-                            refused = Some((name.to_owned(), bound, (at, self.name_span(job))));
-                            break 'level;
+                            let (code, message) = bounded(name.to_owned(), bound);
+                            unfit.push((message, code, (at, self.name_span(job))));
                         }
                     }
                     if methods.contains_key(id)
@@ -1129,6 +1143,11 @@ impl<'a> Shared<'a> {
                     {
                         types.push((symbol, ty, at));
                     }
+                }
+                let first = unfit.into_iter().min_by(|a, b| a.0.cmp(&b.0));
+                if let Some((message, code, by)) = first {
+                    refused = Some((code, message, by));
+                    break 'level;
                 }
             }
             types.sort_unstable();
@@ -1159,7 +1178,8 @@ impl<'a> Shared<'a> {
                             let by = (at, self.name_span(&self.jobs[at]));
                             if let Some(bound) = one_more(of) {
                                 let used = self.used_name(Used::Method(ty, name));
-                                refused = Some((used, bound, by));
+                                let (code, message) = bounded(used, bound);
+                                refused = Some((code, message, by));
                                 break;
                             }
                             let job = self.jobs.len() + found.len();
@@ -1180,9 +1200,9 @@ impl<'a> Shared<'a> {
                 }
             }
             self.found_steps += steps;
-            if let Some((used, bound, by)) = refused {
-                let report = self.too_many(&used, &bound, by);
-                self.refused.push(report);
+            if let Some((code, message, (by, at))) = refused {
+                let report = Diagnostic::new(code, at, message);
+                self.refused.push(self.led(by, report));
                 return;
             }
             self.instance_jobs.extend(known);
@@ -1389,11 +1409,60 @@ impl<'a> Shared<'a> {
         }
     }
 
-    /// The report of the instance that passes a bound (`E0449`), at
-    /// the use that asks for it, with the uses that led there.
-    fn too_many(&self, used: &str, bound: &str, (mut job, at): (usize, Span)) -> Diagnostic {
-        let message = format!("cannot instantiate {used}: {bound} (GEN-5)");
-        let mut report = Diagnostic::new(Code::InstTooLarge, at, message);
+    /// What the type `ty` of the body of the instance `job` is refused
+    /// for: an option of a type that has nil already (`E0446`), or an
+    /// instance of a generic type with a `@Required` field of a type
+    /// parameter that is an option here (`E0363`).
+    fn unfit(&self, job: &Job, ty: CheckedTypeId) -> Option<(Code, String)> {
+        let made = job.made?;
+        let types = self.types;
+        match &*types.get(ty) {
+            CheckedType::Option(of) if types.has_own_nil(*of, self.names) => {
+                // The type parameter that the type argument is given for.
+                let generic = &self.package.files[job.file as usize].bodies[job.at];
+                let args = self.instances[made].args.iter();
+                let param = (args.zip(&generic.type_params))
+                    .find(|&(arg, _)| arg == of)
+                    .and_then(|(_, &param)| types.param_name(param));
+                let of = self.shown(*of);
+                let whose = match param {
+                    Some(param) => format!(" for {}", self.names.resolve(&param)),
+                    None => String::new(),
+                };
+                let message = format!(
+                    "cannot use {of}{whose}: an Option of it is written, and {of} has nil already"
+                );
+                Some((Code::InstOption, message))
+            }
+            CheckedType::Named { id, args } => {
+                let params = types.type_params(*id);
+                let option = (params.iter().zip(args.iter()))
+                    .find(|&(&param, &arg)| types.is_required(param) && types.is_option(arg));
+                option.map(|(&param, &arg)| {
+                    let message = format!(
+                        "cannot use {} for {}: a field of it is @Required, and an option may \
+                         be nil",
+                        self.shown(arg),
+                        self.shown(param)
+                    );
+                    (Code::OptionAndRequired, message)
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The type as a report of the package writes it.
+    pub fn shown(&self, ty: CheckedTypeId) -> String {
+        match self.names.get(&self.package.name) {
+            Some(package) => self.types.display_in(ty, self.names, package),
+            None => self.types.display(ty, self.names),
+        }
+    }
+
+    /// The report with the uses that led to the function of the job,
+    /// if it is an instance: the nearest first.
+    pub fn led(&self, mut job: usize, mut report: Diagnostic) -> Diagnostic {
         let mut led = 0;
         while let Some((before, at)) = self.jobs[job].by {
             led += 1;
@@ -1412,6 +1481,14 @@ impl<'a> Shared<'a> {
             job = before;
         }
         report
+    }
+
+    /// The report with the uses that led to the instance `job`.
+    pub fn led_to(&self, job: &Job, report: Diagnostic) -> Diagnostic {
+        match self.jobs.iter().position(|other| std::ptr::eq(other, job)) {
+            Some(at) => self.led(at, report),
+            None => report,
+        }
     }
 
     /// The function that declares the type, and which of the types of

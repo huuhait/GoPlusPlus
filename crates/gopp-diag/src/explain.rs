@@ -547,6 +547,15 @@ pub fn explain(code: Code) -> Option<Explanation> {
              more: error at the 49th\nfunc g0[T any](x T) { g1(x) }      // ok: T is passed on \
              as it is",
         ),
+        InstImplicitClone => (
+            "An instance of generic code needs a copy that is not written, of a value whose \
+             type cannot be copied: the type is a type argument, or is made of one. The generic \
+             code is right for the types that can be copied.",
+            "Give the type a `Clone()` method, or use the generic code with another type.",
+            "func each[T any](first T, n int) {\n\tfor x, i := move(first), 0; i < n; i++ \
+             {\n\t\tlater = append(later, func() { use(&x) })\n\t}\n}\n\neach(open(), 3) // \
+             error: File has no Clone()\neach(1, 3)      // ok",
+        ),
         OwnImplicitClone => (
             "The program needs a copy that is not written, of a value whose type cannot be \
              copied. A variable of a `for` loop with three clauses that a function literal \

@@ -3218,6 +3218,112 @@ func main() {
     assert_eq!(bounded("a.go", text, grown), [] as [&str; 0]);
 }
 
+/// What lowering the one file of a package reports, each report with
+/// its code and its notes.
+fn reported_with_codes(file: &str, text: &str) -> Vec<String> {
+    checked(&[(file, text)], |checked, messages| {
+        assert_eq!(messages, [] as [&str; 0], "{text}");
+        let (_, reported, _) = lower_counted(checked, TargetLayout::new(64), usize::MAX);
+        let source = checked.files[0].1;
+        let said = |diagnostic: &Diagnostic| {
+            let at = source.line_col(diagnostic.span.lo);
+            let notes = diagnostic.notes.iter().map(|note| {
+                let at = note.span.map(|span| source.line_col(span.lo));
+                let at = at.map_or(String::new(), |at| format!("{}:{}: ", at.line, at.column));
+                format!("\n    {at}{}", note.message)
+            });
+            let notes: String = notes.collect();
+            let code = diagnostic.code.number();
+            format!(
+                "{}:{}: E{code:04}: {}{notes}",
+                at.line, at.column, diagnostic.message
+            )
+        };
+        reported.iter().map(said).collect()
+    })
+}
+
+#[test]
+fn what_a_type_argument_makes_of_an_instance_is_checked() {
+    let declared = "package main
+
+type Box[T any] struct {
+	v T @Required
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+var later []func() int
+
+func optional[T Clone](xs []T) int {
+	var held Option[T]
+	_ = held
+	return len(xs)
+}
+
+func boxed[T Clone](x T) int {
+	b := Box[T]{v: x}
+	_ = b
+	return 1
+}
+
+func kept[T any](first T, n int) {
+	i := 0
+	for x := move(first); i < n; i++ {
+		later = append(later, func() int {
+			_ = &x
+			return i
+		})
+	}
+}
+
+func through[T Clone](xs []T) int { return optional(xs) + boxed(xs[0]) }
+";
+    let said = |body: &str| {
+        reported_with_codes("a.gopp", &format!("{declared}\nfunc main() {{\n{body}}}\n"))
+    };
+    // What the generic bodies are right for.
+    let good = "\tvar maybe Option[int]\n\tprintln(optional([]int{1}), boxed(1), boxed(\"s\"), \
+                through([]string{\"a\"}))\n\tkept(1, 2)\n\tkept(\"s\", 2)\n\t_ = maybe\n";
+    assert_eq!(said(good), [] as [&str; 0]);
+    // An option of a type that has nil already, which the body of an
+    // instance writes: at the use that asks for the instance.
+    assert_eq!(
+        said("\tprintln(optional([]any{}))\n"),
+        ["38:10: E0446: cannot use any for T: an Option of it is written, and any has nil already"]
+    );
+    // The same through another generic function, with the uses that
+    // led there.
+    assert_eq!(
+        said("\tprintln(through([][]int{{1}}))\n"),
+        [
+            "35:44: E0446: cannot use []int for T: an Option of it is written, and []int has nil \
+          already\n    38:10: through is instantiated here"
+        ]
+    );
+    // A `@Required` field of a type parameter that is an option in an
+    // instance which a generic body makes.
+    assert_eq!(
+        said("\tvar maybe Option[int]\n\tprintln(boxed(maybe))\n"),
+        [
+            "39:10: E0363: cannot use Option[int] for T: a field of it is @Required, and an option \
+          may be nil"
+        ]
+    );
+    // A copy that the instance does not write, of a value that has
+    // none: the plain function has `E0452` for it.
+    assert_eq!(
+        said("\tkept(File{fd: 1}, 2)\n"),
+        [
+            "27:6: E0453: cannot copy x for the next pass of the loop: File has a drop method and no \
+          Clone() File\n    28:25: this function literal uses x and may run after the pass\n    \
+          38:2: kept is instantiated here"
+        ]
+    );
+}
+
 #[test]
 fn a_method_with_type_parameters_of_its_own_is_made_for_each_use() {
     let (lowered, messages) = lowered_with(

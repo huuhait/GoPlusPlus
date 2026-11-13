@@ -411,6 +411,19 @@ impl<'a> Checker<'a> {
                 self.error(Code::InstOption, span, message);
                 return;
             }
+            // The generic type has a `@Required` field of this
+            // parameter, and an option may be nil (ADR-0016).
+            if self.types.is_required(param) && self.types.is_option(arg) {
+                let span = instance.spans.get(at).copied().unwrap_or(instance.at);
+                let shown = self.type_string(arg);
+                let message = format!(
+                    "cannot use {shown} for {}: a field of it is @Required, and an option may \
+                     be nil",
+                    self.type_string(param)
+                );
+                self.error(Code::OptionAndRequired, span, message);
+                return;
+            }
             let Some(constraint) = self.types.constraint(param) else {
                 continue;
             };
