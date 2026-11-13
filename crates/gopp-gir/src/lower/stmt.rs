@@ -1,7 +1,7 @@
 //! Statements: blocks, branches, loops and what leaves them.
 
 use gopp_sema::constant::Value;
-use gopp_sema::types::Category;
+use gopp_sema::types::{Category, Type as CheckedType};
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{
     Block, BranchKind, CaseClause, DeclId, DeclKind, ExprId, ExprKind, Ident, StmtId, StmtKind,
@@ -600,13 +600,87 @@ impl FuncCx<'_, '_> {
         Ok(())
     }
 
-    fn ret(&mut self, span: SourceSpan, values: &[ExprId]) -> Built {
+    /// The types of the results of the function, one for each; the
+    /// last is the error of a function that can fail.
+    pub fn result_parts(&mut self) -> Vec<crate::TypeId> {
         let ty = self.b.place_ty(&Place::local(self.b.result()));
-        let parts: Vec<_> = match self.kind(ty) {
+        match self.kind(ty) {
             Type::Tuple(parts) if self.results.len() > 1 => parts.to_vec(),
             _ if self.results.is_empty() => Vec::new(),
             _ => vec![ty],
+        }
+    }
+
+    fn ret(&mut self, span: SourceSpan, values: &[ExprId]) -> Built {
+        if values.is_empty() {
+            return self.leave(span, None);
+        }
+        let parts = self.result_parts();
+        // A function that can fail returns its results and no error,
+        // or one value more, which is the error (ERR-3). One call may
+        // give all of them.
+        let types = self.shared.types;
+        let all = match values {
+            [one] => match self.body.types.get(one).map(|typed| types.get(typed.ty)) {
+                Some(checked) => match &*checked {
+                    CheckedType::Tuple(given) => given.len() == parts.len(),
+                    _ => parts.len() == 1,
+                },
+                None => parts.len() == 1,
+            },
+            many => many.len() == parts.len(),
         };
+        let count = match self.fails && !all {
+            true => parts.len().saturating_sub(1),
+            false => parts.len(),
+        };
+        let wanted: Vec<_> = parts[..count].iter().map(|&part| Some(part)).collect();
+        // What is written directly in the `return` gets the places
+        // of the caller: each value that of its result, one call
+        // for all results all of them.
+        let places = self.views.iter().copied();
+        match values {
+            [call] if self.views.len() > 1 => {
+                let call = Shared::unparen(self.tree, *call);
+                self.outer.insert(call, places.flatten().collect());
+            }
+            _ => {
+                for (&value, place) in values.iter().zip(places) {
+                    let value = Shared::unparen(self.tree, value);
+                    self.outer.extend(place.map(|place| (value, vec![place])));
+                }
+            }
+        }
+        // A variable of the function that is returned ends with the
+        // function: it hands its value over, the first time that it
+        // is named.
+        let mut ended = rustc_hash::FxHashSet::default();
+        for &value in values {
+            let value = Shared::unparen(self.tree, value);
+            if let ExprKind::Name(_) = self.tree.exprs[value].kind
+                && let Some(gopp_sema::Ref::Local(local)) = self.body.uses.get(&value)
+                && let Some(var) = self.owning_var(*local)
+                && ended.insert(var)
+            {
+                self.handed.insert(value);
+            }
+        }
+        let mut given = self.owned_values(values, &wanted)?;
+        self.handed.clear();
+        self.outer.clear();
+        // No error.
+        if let Some(&error) = parts.get(count) {
+            given.push(Rvalue::Use(self.zero(error)));
+        }
+        self.leave(span, Some(given))
+    }
+
+    /// The function returns the values, one for each result, or what
+    /// its results have: the results that have variables get the
+    /// values, the deferred calls are made, and what the function owns
+    /// ends.
+    pub fn leave(&mut self, span: SourceSpan, given: Option<Vec<Rvalue>>) -> Built {
+        let parts = self.result_parts();
         let named: Vec<_> = self.results.clone();
         // A deferred call may read and write the results that have
         // names: they get the values of the `return` first, and what is
@@ -614,98 +688,62 @@ impl FuncCx<'_, '_> {
         let late = self.defers_calls() && named.iter().any(Option::is_some);
         // The values of the results that have no variable: `_`.
         let mut unnamed: Vec<Option<Operand>> = vec![None; parts.len()];
-        let mut given: Vec<Rvalue> = Vec::with_capacity(parts.len());
-        if values.is_empty() {
-            if !late {
-                given = self.results_now(&named, &parts, &unnamed)?;
+        let mut given = match given {
+            Some(given) => given,
+            None if late => Vec::new(),
+            None => self.results_now(&named, &parts, &unnamed)?,
+        };
+        if late && !given.is_empty() {
+            // Every value is read before any result is written.
+            let mut held = Vec::with_capacity(given.len());
+            for value in std::mem::take(&mut given) {
+                let value = self.operand_of(value)?;
+                held.push(self.stable(value)?);
             }
-        } else {
-            let wanted: Vec<_> = parts.iter().map(|&part| Some(part)).collect();
-            // What is written directly in the `return` gets the places
-            // of the caller: each value that of its result, one call
-            // for all results all of them.
-            let places = self.views.iter().copied();
-            match values {
-                [call] if self.views.len() > 1 => {
-                    let call = Shared::unparen(self.tree, *call);
-                    self.outer.insert(call, places.flatten().collect());
-                }
-                _ => {
-                    for (&value, place) in values.iter().zip(places) {
-                        let value = Shared::unparen(self.tree, value);
-                        self.outer.extend(place.map(|place| (value, vec![place])));
-                    }
-                }
-            }
-            // A variable of the function that is returned ends with the
-            // function: it hands its value over, the first time that it
-            // is named.
-            let mut ended = rustc_hash::FxHashSet::default();
-            for &value in values {
-                let value = Shared::unparen(self.tree, value);
-                if let ExprKind::Name(_) = self.tree.exprs[value].kind
-                    && let Some(gopp_sema::Ref::Local(local)) = self.body.uses.get(&value)
-                    && let Some(var) = self.owning_var(*local)
-                    && ended.insert(var)
-                {
-                    self.handed.insert(value);
-                }
-            }
-            given = self.owned_values(values, &wanted)?;
-            self.handed.clear();
-            self.outer.clear();
-            if late {
-                // Every value is read before any result is written.
-                let mut held = Vec::with_capacity(given.len());
-                for value in std::mem::take(&mut given) {
-                    let value = self.operand_of(value)?;
-                    held.push(self.stable(value)?);
-                }
-                for (at, (var, value)) in named.iter().zip(held).enumerate() {
-                    let Some(var) = var else {
-                        unnamed[at] = Some(value);
-                        continue;
-                    };
-                    // What the result had ends.
-                    let place = self.var_place(*var)?;
-                    let ends = match self.var_ends(*var) {
-                        Some(ends) => Some(ends),
-                        None => self.cell_ends(*var, span)?,
-                    };
-                    if let Some(ends) = ends {
-                        self.end(place.clone(), ends)?;
-                    }
-                    self.b.assign(place, Rvalue::Use(value))?;
-                }
-            } else if named.iter().any(Option::is_some) {
-                // The variables of the results have the values too: what
-                // runs after the `return` reads them. A value that holds
-                // what is freed has one owner, which is the caller.
-                // A result that is returned as it is stays where it is.
-                let itself = |var: &Option<crate::LocalId>, value: &Rvalue| {
-                    let own = var.map(|var| Rvalue::Use(Operand::Copy(Place::local(var))));
-                    own.as_ref() == Some(value)
+            for (at, (var, value)) in named.iter().zip(held).enumerate() {
+                let Some(var) = var else {
+                    unnamed[at] = Some(value);
+                    continue;
                 };
-                let mut held = Vec::with_capacity(given.len());
-                for (var, value) in named.iter().zip(given) {
-                    let own = itself(var, &value);
-                    let mut value = self.operand_of(value)?;
-                    if !own {
-                        value = self.stable(value)?;
-                    }
-                    held.push((own, value));
+                // What the result had ends.
+                let place = self.var_place(*var)?;
+                let ends = match self.var_ends(*var) {
+                    Some(ends) => Some(ends),
+                    None => self.cell_ends(*var, span)?,
+                };
+                if let Some(ends) = ends {
+                    self.end(place.clone(), ends)?;
                 }
-                for ((var, (own, value)), &part) in named.iter().zip(&held).zip(&parts) {
-                    if let (Some(var), false, true) = (var, own, self.flat(part)) {
-                        let place = self.var_place(*var)?;
-                        self.b.assign(place, Rvalue::Use(value.clone()))?;
-                    }
-                }
-                given = held
-                    .into_iter()
-                    .map(|(_, value)| Rvalue::Use(value))
-                    .collect();
+                self.b.assign(place, Rvalue::Use(value))?;
             }
+        } else if !late && named.iter().any(Option::is_some) {
+            // The variables of the results have the values too: what
+            // runs after the `return` reads them. A value that holds
+            // what is freed has one owner, which is the caller.
+            // A result that is returned as it is stays where it is.
+            let itself = |var: &Option<crate::LocalId>, value: &Rvalue| {
+                let own = var.map(|var| Rvalue::Use(Operand::Copy(Place::local(var))));
+                own.as_ref() == Some(value)
+            };
+            let mut held = Vec::with_capacity(given.len());
+            for (var, value) in named.iter().zip(given) {
+                let own = itself(var, &value);
+                let mut value = self.operand_of(value)?;
+                if !own {
+                    value = self.stable(value)?;
+                }
+                held.push((own, value));
+            }
+            for ((var, (own, value)), &part) in named.iter().zip(&held).zip(&parts) {
+                if let (Some(var), false, true) = (var, own, self.flat(part)) {
+                    let place = self.var_place(*var)?;
+                    self.b.assign(place, Rvalue::Use(value.clone()))?;
+                }
+            }
+            given = held
+                .into_iter()
+                .map(|(_, value)| Rvalue::Use(value))
+                .collect();
         }
         self.at(span);
         if late {

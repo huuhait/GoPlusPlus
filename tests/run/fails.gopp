@@ -1,0 +1,78 @@
+// exit: 2
+package main
+
+type Problem struct {
+	what string
+	code int
+}
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+// A function that can fail: its callers get `(string, error)`.
+func load!(name string) string {
+	if name == "" {
+		return "", Problem{what: "no name", code: 1}
+	}
+	return "<" + name + ">"
+}
+
+// On an error of `load`, `both` returns it too, with nothing else.
+func both!(a, b string) (string, int) {
+	first := load!(a)
+	second := load!(b)
+	return first + second, len(first) + len(second)
+}
+
+// No results but the error.
+func check!(n int) {
+	if n < 0 {
+		return Problem{what: "negative", code: n}
+	}
+}
+
+func all!(names []string) int {
+	total := 0
+	for _, name := range names {
+		check!(len(name) - 3)
+		total += len(load!(name))
+	}
+	return total
+}
+
+// The Go form of the same thing, and a function of the Go form that
+// uses `!`: it returns the error too.
+func plain(name string) (string, error) {
+	text := load!(name)
+	return text + "!", nil
+}
+
+// Results with names are set to zero when a call fails.
+func named!(name string) (text string, size int) {
+	text, size = "before", 7
+	text = load!(name)
+	size = len(text)
+	return
+}
+
+func main() {
+	text, err := load("a")
+	println(text, err == nil)
+	text, err = load("")
+	println(text, err != nil, err.Error())
+	joined, size, err := both("a", "b")
+	println(joined, size, err == nil)
+	joined, size, err = both("a", "")
+	println(joined, size, err.Error())
+	println(check(1) == nil, check(-2).Error())
+	total, err := all([]string{"abc", "defg"})
+	println(total, err == nil)
+	total, err = all([]string{"abc", "d"})
+	println(total, err.Error())
+	text, err = plain("")
+	println(text, err.Error())
+	text, size, err = named("")
+	println(text, size, err.Error())
+	// `main` cannot fail: an error is a panic there.
+	println(load!("ok"))
+	println(load!(""))
+}

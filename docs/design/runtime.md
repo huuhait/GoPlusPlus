@@ -125,7 +125,7 @@ main.main()
 ```
 
 - **The message.** The texts are those of Go's `runtime/error.go` and `runtime/panic.go`. A check of an index or of slice bounds passes its two numbers and whether the first is signed: a negative index reads `index out of range [-1]`, an unsigned one past the length reads with its length, as in Go. Go++ checks a nil pointer itself, so there is no `[signal SIGSEGV ...]` line.
-- **`_gopp_panic_must(expr, position, message)`** writes `panic: must: EXPR at POS: MESSAGE` for a failed `!` in its panic form; the caller gives the message of the error.
+- **`_gopp_panic_must(expr, position, message)`** is the panic of a failed `!` in a function that cannot fail: `panic: must: EXPR at POS: MESSAGE`. The caller gives the message of the error, which this lets go.
 - **The trace.** A unit with the start of the program carries a table of its functions: the address of each and its name as `gopp demangle` reads its symbol. The generated `main` gives the table to `_gopp_rt_funcs`. On a failure the runtime walks the stack with the unwinder of the system (`_Unwind_Backtrace` on ELF, `RtlCaptureStackBackTrace` on Windows, at most 62 frames there), takes the start of the function of each frame from the unwind tables, and prints the frames whose function is in a table: the name, and how far into the function the frame is. Frames of the runtime and of C are left out.
 - **What a trace does not have yet:** the file and the line of a frame (they come with the debug information, `P04.12`); a function whose code Clang put into its caller, above `-O0`; the frames of other packages, until several units are linked (`P04.31`).
 

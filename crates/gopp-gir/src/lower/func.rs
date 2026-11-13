@@ -253,6 +253,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The function has a label or a `goto`: a statement may run more
     /// than once outside every loop.
     pub jumps: bool,
+    /// The function is declared with `!`: its last result is the error
+    /// that the mark adds, which no result of the source is (ERR-1).
+    pub fails: bool,
     /// The function of the package that is lowered, and the function
     /// literal in it if it is one that is lowered; none for a function
     /// that the compiler makes.
@@ -324,12 +327,6 @@ pub(super) fn lower_function<'a>(
     if job.symbol.is_empty() {
         let message = "the function has no symbol".to_owned();
         let diagnostic = Diagnostic::new(Code::GirVerify, name.span, message);
-        memo.diagnostics.push(diagnostic);
-        return;
-    }
-    if let ExprKind::FuncType { fails: true, .. } = tree.exprs[*ty].kind {
-        let message = "not supported yet: a function that can fail".to_owned();
-        let diagnostic = Diagnostic::new(Code::GirUnsupported, name.span, message);
         memo.diagnostics.push(diagnostic);
         return;
     }
@@ -417,10 +414,6 @@ pub(super) fn lower_literal<'a>(
         memo.diagnostics
             .push(Diagnostic::new(code, node.span, message));
     };
-    if let ExprKind::FuncType { fails: true, .. } = tree.exprs[*ty].kind {
-        let message = "not supported yet: a function that can fail".to_owned();
-        return report(memo, Code::GirUnsupported, message);
-    }
     // The type of the code is that of the first word of the value.
     let body = &shared.package.files[job.file as usize].bodies[job.at];
     let value = body.types.get(&literal).map(|typed| typed.ty);
@@ -695,6 +688,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             handed: FxHashSet::default(),
             defers: Vec::new(),
             jumps: false,
+            fails: false,
             owner: None,
             frame: None,
             deferred: None,
@@ -729,11 +723,14 @@ impl FuncCx<'_, '_> {
         first: u32,
     ) -> Built {
         let ExprKind::FuncType {
-            params, results, ..
+            params,
+            results,
+            fails,
         } = &self.tree.exprs[ty].kind
         else {
             return Ok(());
         };
+        self.fails = *fails;
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         self.scopes.push(Scope::default());
@@ -786,13 +783,12 @@ impl FuncCx<'_, '_> {
             };
             self.results.push(var);
         }
+        // The error of a function that can fail has no variable.
+        if self.fails {
+            self.results.push(None);
+        }
         let results_to = self.scopes.last().map_or(0, |scope| scope.owned.len());
-        let whole = self.b.place_ty(&Place::local(self.b.result()));
-        let parts = match self.kind(whole) {
-            Type::Tuple(parts) if results.len() > 1 => parts.to_vec(),
-            _ if results.is_empty() => Vec::new(),
-            _ => vec![whole],
-        };
+        let parts = self.result_parts();
         let mut next = first + (usize::from(receiver.is_some()) + params.len()) as u32;
         for &part in &parts {
             let view = super::types::is_view(self.b.types(), part).then(|| {
@@ -880,6 +876,11 @@ impl FuncCx<'_, '_> {
         // here, as the checker saw.
         self.at_end(block.span);
         match results.is_empty() {
+            // A function that can fail returns no error here.
+            true if self.fails => {
+                self.leave(block.span, None)?;
+                self.b.unreachable()?;
+            }
             true => {
                 self.run_defers()?;
                 self.exit_scopes(0)?;
@@ -1803,6 +1804,18 @@ impl FuncCx<'_, '_> {
             self.end(slot, glue)?;
         }
         Ok(())
+    }
+
+    /// What `aside` writes is a way that the function may take and
+    /// what follows does not come after: the temporaries own afterwards
+    /// what they owned before, whatever that way ended.
+    pub fn aside(&mut self, way: impl FnOnce(&mut Self) -> Built) -> Built {
+        let before = (self.temps.clone(), self.owning.clone(), self.moved.clone());
+        let went = way(self);
+        (self.temps, self.owning, self.moved) = before;
+        self.temp_heads.clear();
+        self.owners += 1;
+        went
     }
 
     /// The temporary with the highest number was taken off the list:

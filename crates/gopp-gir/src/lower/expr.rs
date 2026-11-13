@@ -1237,18 +1237,12 @@ impl<'a> FuncCx<'a, '_> {
         let node = &self.tree.exprs[expr];
         let span = node.span;
         let ExprKind::Call {
-            fun,
-            args,
-            spread,
-            unwrap,
+            fun, args, spread, ..
         } = &node.kind
         else {
             return Ok(self.placeholder(span, ty, "this expression"));
         };
         let callee = Shared::unparen(self.tree, *fun);
-        if *unwrap {
-            return Ok(self.placeholder(span, ty, "a call with `!`"));
-        }
         // What is called has no type: a built-in function, or a type,
         // which converts; or the checker knows nothing of it.
         if !self.body.types.contains_key(&callee) {
@@ -1428,10 +1422,17 @@ impl<'a> FuncCx<'a, '_> {
         self.b.set_loc(around);
         // What the function gives is the caller's own: each result that
         // holds what is freed.
-        let result = Place::local(result);
+        let mut result = Place::local(result);
+        if let ExprKind::Call { unwrap: true, .. } = self.tree.exprs[expr].kind {
+            result = match self.unwrapped(expr, result, called.ret)? {
+                Some(result) => result,
+                None => return Ok(Rvalue::Use(self.zero(TypeInterner::UNIT))),
+            };
+        }
+        let ret = self.b.place_ty(&result);
         let checked = self.body.types.get(&expr).map(|typed| typed.ty);
         let several = checked.map(|checked| self.shared.types.get(checked));
-        match (several.as_deref(), self.kind(called.ret)) {
+        match (several.as_deref(), self.kind(ret)) {
             (Some(CheckedType::Tuple(checked)), Type::Tuple(parts))
                 if checked.len() == parts.len() =>
             {
@@ -1445,8 +1446,126 @@ impl<'a> FuncCx<'a, '_> {
                 }
                 Ok(Rvalue::Use(Operand::Copy(result)))
             }
-            _ => self.fresh(expr, called.ret, Rvalue::Use(Operand::Copy(result))),
+            _ => self.fresh(expr, ret, Rvalue::Use(Operand::Copy(result))),
         }
+    }
+
+    /// `call!(args)` (ERR-5): `result` has what the call gave, whose
+    /// last part is an error. If it is one, the function returns it, or
+    /// the program panics, as the checker found for the function around
+    /// (ERR-6), in a block that the function does not go through
+    /// otherwise. What is left is the value of the expression: the
+    /// other results in a place of their own, none if there are none.
+    fn unwrapped(&mut self, expr: ExprId, result: Place, ret: TypeId) -> Built<Option<Place>> {
+        let span = self.tree.exprs[expr].span;
+        let parts = match self.kind(ret) {
+            Type::Tuple(parts) => parts.to_vec(),
+            _ => Vec::new(),
+        };
+        let error = match parts.len() {
+            0 => result.clone(),
+            count => self.b.field(&result, count as u32 - 1)?,
+        };
+        if !self.is_iface(self.b.place_ty(&error)) {
+            self.unsupported(span, "a call with `!` of what gives no error");
+            return Ok(None);
+        }
+        // The address of a temporary that a call wrote is not taken:
+        // the error is in a slot of its own.
+        let error = self.slot_of(Rvalue::Use(Operand::Copy(error)))?;
+        let first = Operand::Copy(self.b.field(&error, 0)?);
+        let bytes = self.bytes_ty();
+        let failed = Rvalue::Binary(BinOp::Ne, first, self.zero(bytes));
+        let failed = Operand::Copy(Place::local(self.b.assign_temp(failed)?));
+        let [fails, goes_on] = [(); 2].map(|()| self.b.new_block());
+        self.b.switch(failed, vec![(0, goes_on)], fails)?;
+        self.b.switch_to(fails);
+        self.b.set_cold(fails);
+        match self.body.bangs.get(&expr) {
+            Some(gopp_sema::Bang::Return) => self.failed(span, error)?,
+            _ => self.must(expr, error)?,
+        }
+        self.b.switch_to(goes_on);
+        Ok(match parts.len() {
+            0 => None,
+            2 => Some(self.b.field(&result, 0)?),
+            count => {
+                let mut kept = Vec::with_capacity(count - 1);
+                for at in 0..count as u32 - 1 {
+                    kept.push(Operand::Copy(self.b.field(&result, at)?));
+                }
+                Some(self.slot_of(Rvalue::Aggregate(AggKind::Tuple, kept))?)
+            }
+        })
+    }
+
+    /// The function returns the error in the place, with a zero for
+    /// each of its other results, as `return zero..., err` does
+    /// (ERR-7). What the statement owns ends on this way; what follows
+    /// the call is written as if this way were not there.
+    fn failed(&mut self, span: SourceSpan, error: Place) -> Built {
+        let parts = self.result_parts();
+        let mut given = Vec::with_capacity(parts.len());
+        for &part in parts.iter().take(parts.len().saturating_sub(1)) {
+            given.push(Rvalue::Use(self.zero(part)));
+        }
+        given.push(Rvalue::Use(Operand::Copy(error)));
+        self.aside(|this| this.leave(span, Some(given)))
+    }
+
+    /// The program panics with the error in the place (ERR-6, ERR-9):
+    /// the runtime is given the call as the source has it, where it
+    /// is, and what the error says.
+    fn must(&mut self, expr: ExprId, error: Place) -> Built {
+        let span = self.tree.exprs[expr].span;
+        let around = self.b.loc();
+        self.at(span);
+        let string = self.b.types().intern(Type::String);
+        let bytes = self.bytes_ty();
+        // `error` has one method, the first of its table.
+        let code = self.b.types().intern(Type::Func(FuncType {
+            params: [bytes].into(),
+            ret: string,
+            has_env: false,
+            cc: CallConv::Go,
+        }));
+        let says = self.table_slot(&error, 0, code, None)?;
+        let held = self.b.field(&error, 1)?;
+        let held = self.record(held)?;
+        let message = Place::local(self.b.temp(string));
+        let unwind = self.unwind()?;
+        let next = self.b.new_block();
+        self.b
+            .call(says, vec![held], message.clone(), Some(next), unwind)?;
+        self.b.switch_to(next);
+        if let Some(ends) = self.ends_of(Some(self.shared.types.error()), span)? {
+            self.end(error, ends)?;
+        }
+        // The call without its mark, and the file, line and column.
+        let text = self.source.text();
+        let shown = match &self.tree.exprs[expr].kind {
+            ExprKind::Call { fun, .. } => {
+                let fun = self.tree.exprs[*fun].span;
+                let rest = &text[fun.hi as usize..span.hi as usize];
+                let rest = rest.trim_start().strip_prefix('!').unwrap_or(rest);
+                format!("{}{rest}", &text[span.lo as usize..fun.hi as usize])
+            }
+            _ => String::new(),
+        };
+        let at = self.source.line_col(span.lo);
+        let file = self.source.path().file_name();
+        let file = file.map(|name| name.to_string_lossy().into_owned());
+        let place = format!("{}:{}:{}", file.unwrap_or_default(), at.line, at.column);
+        let args = vec![
+            self.b.const_str(shown.as_bytes()),
+            self.b.const_str(place.as_bytes()),
+            Operand::Copy(message),
+        ];
+        self.runtime_call("_gopp_panic_must", &[string, string, string], args)?;
+        self.b.unreachable()?;
+        self.b.set_loc(around);
+        self.dead();
+        Ok(())
     }
 
     /// The function that a call of `callee` calls, and its receiver

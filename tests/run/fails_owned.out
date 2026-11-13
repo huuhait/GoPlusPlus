@@ -1,0 +1,26 @@
+xx 1
+xxx 1
+error: problem: too long
+xx 1
+xxx 1
+error: problem: too long
+xx 1
+xx+xxx 2
+error: problem: too long
+xxx+xx 2
+xxx+xxx 2
+error: problem: too long
+error: problem: too long
+error: problem: too long
+error: problem: too long
+xx!. 2
+xxx!. 3
+error: problem: too long
+error: problem: too long
+error: problem: at the end
+chain 7
+chain 12
+error: problem: too long
+error: problem: too long
+4 -1 -1
+opened 31 closed 31

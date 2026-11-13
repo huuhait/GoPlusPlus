@@ -494,5 +494,7 @@ void _gopp_panic_must(gopp_string expr, gopp_string position, gopp_string messag
   _gopp_write_string(position);
   _gopp_write_text(": ");
   _gopp_write_string(message);
+  // The message was made for this, and is in the text of the panic.
+  _gopp_string_release(message);
   raise_kept();
 }

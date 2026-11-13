@@ -1,0 +1,135 @@
+package main
+
+var opened, closed int
+
+type File struct{ fd int }
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		closed++
+	}
+}
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+func open!(fd int) File {
+	if fd < 0 {
+		return File{}, Problem{what: "no such file"}
+	}
+	opened++
+	return File{fd: fd}
+}
+
+func text!(n int) string {
+	if n > 3 {
+		return "", Problem{what: "too long"}
+	}
+	s := ""
+	for i := 0; i < n; i++ {
+		s += "x"
+	}
+	return s
+}
+
+func join(a, b string) string { return a + "+" + b }
+
+// What the function owns where a call fails ends: variables of the
+// function and of blocks, and values that wait for the other operands
+// of their expression.
+func work!(a, b int) (string, int) {
+	f := open!(1)
+	first := text!(a)
+	{
+		g := open!(2)
+		joined := join(text!(a), text!(b))
+		if len(joined) > 5 {
+			return joined, g.fd
+		}
+	}
+	names := []string{first, text!(b)}
+	return names[1], f.fd
+}
+
+// A deferred call sees the results as a failing call left them, and
+// may write them.
+func guarded!(n int) (out string) {
+	defer func() { out += "." }()
+	out = "start"
+	out = text!(n)
+	return out + "!"
+}
+
+type Reader struct{ left int }
+
+func (r *Reader) Next!() string {
+	if r.left == 0 {
+		return "", Problem{what: "at the end"}
+	}
+	r.left--
+	return text!(r.left)
+}
+
+type Source interface{ Next!() string }
+
+type Fixed struct{ size int }
+
+func (f Fixed) Next!() string { return text!(f.size) }
+
+// A method, a method of an interface value, a function literal and a
+// function value that can fail, and calls one after the other.
+func chain!(n int) int {
+	r := Reader{left: n}
+	total := len(r.Next!())
+	var s Source = Fixed{size: n + 1}
+	total += len(s.Next!())
+	twice := func!(k int) string { return text!(k) + text!(k) }
+	total += len(twice!(n))
+	again := twice
+	return total + len(again!(1)) + open!(n).fd
+}
+
+// A function that cannot fail panics on an error, and a deferred call
+// may stop that panic like any other: what the function owned ends.
+func must(n int) int {
+	f := open!(n)
+	held := text!(n)
+	return len(held) + f.fd
+}
+
+func stopped(n int) (out int) {
+	defer func() {
+		if recover() != nil {
+			out = -1
+		}
+	}()
+	return must(n)
+}
+
+func show(text string, n int, err error) {
+	if err != nil {
+		println("error:", err.Error())
+		return
+	}
+	println(text, n)
+}
+
+func main() {
+	for a := 0; a < 5; a++ {
+		for b := 2; b < 5; b++ {
+			text, n, err := work(a, b)
+			show(text, n, err)
+		}
+	}
+	for n := 2; n < 6; n++ {
+		out, err := guarded(n)
+		show(out, n, err)
+	}
+	for n := 0; n < 5; n++ {
+		total, err := chain(n)
+		show("chain", total, err)
+	}
+	println(stopped(2), stopped(-1), stopped(4))
+	println("opened", opened, "closed", closed)
+}

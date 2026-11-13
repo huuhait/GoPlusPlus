@@ -1,0 +1,28 @@
+// A function that can fail gives its result and the two words of the
+// error back in registers: three in all. A call with `!` in a function
+// that can fail is the call and one compare of the first word of the
+// error; what follows either goes on or returns the error, here
+// without a branch.
+//
+// asm linux/amd64 half: %rax; %rdx; %ecx; ! (%rdi)
+// asm linux/amd64 twice: callq *%rax; testq %rdx, %rdx; ! cmpq; ! _gopp
+// asm windows/amd64 twice: callq *%rax; testq %rdx, %rdx; ! cmpq; ! _gopp
+// asm linux/arm64 twice: blr x8; cmp x1, #0; ! _gopp
+package main
+
+type none struct{}
+
+func (none) Error() string { return "none" }
+
+func half!(x int) int {
+	if x < 0 {
+		return 0, none{}
+	}
+	return x / 2
+}
+
+func twice!(f func!(int) int, x int) int {
+	return f!(x) * 4
+}
+
+func main() {}

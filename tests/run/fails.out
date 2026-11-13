@@ -1,0 +1,15 @@
+<a> true
+ true problem: no name
+<a><b> 6 true
+ 0 problem: no name
+true problem: negative
+11 true
+0 problem: negative
+ problem: no name
+ 0 problem: no name
+<ok>
+panic: must: load("") at fails.gopp:77:10: problem: no name
+
+goroutine 1 [running]:
+main.main()
+	+0x?

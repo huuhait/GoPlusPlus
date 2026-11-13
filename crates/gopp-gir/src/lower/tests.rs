@@ -1663,6 +1663,74 @@ func guarded(n int) (out string) {
 }
 
 #[test]
+fn a_function_that_can_fail_returns_an_error_too_and_a_call_with_a_mark_passes_it_on() {
+    let text = "package main
+
+type Problem struct{ code int }
+
+func (p Problem) Error() string { return \"problem\" }
+
+func half!(n int) int {
+	if n < 0 {
+		return 0, Problem{n}
+	}
+	return n / 2
+}
+
+func name!(n int) string {
+	if n > 9 {
+		return \"\", Problem{n}
+	}
+	return \"n\"
+}
+
+func both!(n int) (string, int) {
+	held := name!(n)
+	return held, half!(n)
+}
+
+func check!(n int) {
+	half!(n)
+}
+
+func plain(n int) int {
+	return half!(n) + 1
+}
+";
+    let module = gir(text);
+    let body = |symbol: &str| {
+        let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    // The error is one more result, an interface value: none where the
+    // function returns its results.
+    assert!(module.contains("\nfn _GPF4mainE4half(_1: i64) -> (i64, gopp.iface) [go, external]"));
+    assert!(module.contains("\nfn _GPF4mainE5check(_1: i64) -> gopp.iface [go, external]"));
+    let half = without_cleanup(body("_GPF4mainE4half"));
+    assert!(half.contains("const zero: gopp.iface}"), "{half}");
+    // In a function that can fail, an error of a call with the mark is
+    // returned: what the function owns there ends first, here `held`.
+    // The way is one that the function does not go otherwise.
+    let both = without_cleanup(body("_GPF4mainE4both"));
+    assert_eq!(both.matches("[cold]").count(), 2, "{both}");
+    assert_eq!(both.matches("@_gopp_panic_must(").count(), 0, "{both}");
+    assert_eq!(both.matches("\n    return").count(), 3, "{both}");
+    // The second way ends the value of `held`, which the `return` had
+    // taken already, and `held` itself, which is empty by then.
+    assert_eq!(both.matches("@_gopp_string_release(").count(), 3, "{both}");
+    // A function that cannot fail panics: the runtime is given the
+    // call as it is written, where it is, and what the error says.
+    let plain = without_cleanup(body("_GPF4mainE5plain"));
+    assert_eq!(plain.matches("@_gopp_panic_must(").count(), 1, "{plain}");
+    assert!(module.contains("\"half(n)\""), "{module}");
+    assert!(module.contains("\"a.gopp:31:9\""), "{module}");
+    insta::assert_snapshot!(module);
+    // A Go file has no such mark.
+    let (_, messages) = lowered_with(&[("a.go", text)], usize::MAX);
+    assert!(!messages.is_empty());
+}
+
+#[test]
 fn defer_statements_that_are_not_supported_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
@@ -3264,6 +3332,22 @@ fn the_steps_grow_with_the_glue_of_types() {
             .collect();
         steps_of(&format!(
             "package main\n\nfunc keep(xs []int) {{}}\n\nfunc f(x int) {{\n{body}}}\n"
+        ))
+    });
+    // Many calls that can fail, one after the other and each in the
+    // arguments of the next.
+    assert_near_linear(&sizes, |n| {
+        let calls = "\tx += half!(x)\n".repeat(n);
+        steps_of(&format!(
+            "package main\n\nfunc half!(n int) int {{ return n / 2 }}\n\n\
+             func f!(x int) int {{\n{calls}\treturn x\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let inside = format!("{}x{}", "half!(".repeat(n), ")".repeat(n));
+        steps_of(&format!(
+            "package main\n\nfunc half!(n int) int {{ return n / 2 }}\n\n\
+             func f(x int) int {{\n\treturn {inside}\n}}\n"
         ))
     });
     // Many `defer` statements in loops in loops, and many loops with
