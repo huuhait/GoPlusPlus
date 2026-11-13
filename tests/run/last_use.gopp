@@ -1,0 +1,143 @@
+package main
+
+type doc struct {
+	title string
+	tags  []string
+}
+
+var lists [][]int
+var shelf []doc
+
+func keep(xs []int) {
+	xs[0] += 100
+	lists = append(lists, xs)
+}
+
+func file(d doc) {
+	d.tags[0] = "filed"
+	shelf = append(shelf, d)
+}
+
+func first(xs []int) int { return xs[0] }
+
+func pair(x, y []int) {
+	x[0] = 10
+	y[0] += 5
+	println(x[0], y[0])
+}
+
+func both(xs []int, n int) int {
+	xs[0] += n
+	return xs[0]
+}
+
+func grown(xs []int) []int {
+	xs[0]++
+	return append(xs, 0)
+}
+
+// A copy is made while the variable is read again, and the last use
+// gives the value itself: what keep writes is never seen here.
+func copies() {
+	a := []int{1, 2}
+	keep(a)
+	println(a[0])
+	keep(a)
+	b := []int{3}
+	c := b
+	c[0] = 30
+	println(b[0], c[0])
+	d := b
+	d[0] = 300
+	println(d[0], c[0])
+}
+
+// What one statement reads twice is copied each time.
+func sameStatement() {
+	a := []int{1}
+	pair(a, a)
+	b := []int{2}
+	println(both(b, first(b)))
+	c := []int{3}
+	c = grown(c)
+	println(len(c), c[0])
+}
+
+// A variable that something else reads keeps its value.
+func reached() {
+	a := []int{1}
+	p := &a
+	keep(a)
+	println(p[0])
+	b := []int{2}
+	for _, x := range b {
+		keep(b)
+		println(x, b[0])
+	}
+	d := doc{title: "t", tags: []string{"new"}}
+	switch d.title {
+	case "t":
+		file(d)
+	}
+	e := doc{title: "u", tags: []string{"new"}}
+	file(e)
+	println(e.tags[0])
+}
+
+func moved(n int) {
+	a := []int{1}
+	keep(move(a))
+	a = []int{2}
+	keep(a)
+	b := []int{5}
+	if n > 0 {
+		keep(move(b))
+		b = nil
+	}
+	println(len(b))
+	for i := 0; i < n; i++ {
+		w := []int{i}
+		if i == 1 {
+			keep(move(w))
+			continue
+		}
+		println(w[0])
+	}
+}
+
+func count(m map[string][]int) int {
+	m["more"] = []int{1}
+	return len(m)
+}
+
+// move gives a struct, a map and a string as it gives a slice.
+func movedValues() {
+	d := doc{title: "moved", tags: []string{"new"}}
+	file(move(d))
+	d = doc{title: "again", tags: []string{"new", "two"}}
+	println(d.title, len(d.tags))
+	m := map[string][]int{"a": {1, 2}}
+	println(count(move(m)))
+	m = map[string][]int{}
+	println(len(m))
+	s := "one"
+	s += "-two"
+	t := move(s)
+	println(t, len(t))
+}
+
+func main() {
+	movedValues()
+	copies()
+	sameStatement()
+	reached()
+	moved(0)
+	moved(3)
+	println(len(lists), len(shelf))
+	for _, xs := range lists {
+		println(xs[0])
+	}
+	for _, d := range shelf {
+		println(d.title, d.tags[0])
+	}
+}

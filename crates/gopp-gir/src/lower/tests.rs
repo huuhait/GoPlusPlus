@@ -966,6 +966,52 @@ func calls(xs []int, name string) int {
 }
 
 #[test]
+fn the_last_use_of_a_variable_gives_its_value_and_makes_no_copy() {
+    let text = "package main
+
+var kept [][]int
+
+func keep(xs []int) {
+	xs[0] = 1
+	kept = append(kept, xs)
+}
+
+func uses(c bool) int {
+	a := []int{1}
+	keep(a)
+	keep(a)
+	b := []int{2}
+	if c {
+		keep(b)
+	}
+	return len(b)
+}
+
+func taken(c bool) int {
+	a := []int{1}
+	keep(move(a))
+	a = []int{2}
+	p := &a
+	keep(a)
+	return len(p)
+}
+";
+    // A copy where the variable is read again: the first `keep(a)` and
+    // `keep(b)` of `uses`. And where its address is taken: in `taken`.
+    let copies = |text: &str, name: &str| {
+        let (lowered, messages) = lowered_with(&[(name, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0]);
+        let module = print_module(&lowered.module);
+        module.matches("call const fn @_gopp_slice_copy").count()
+    };
+    assert_eq!(copies(text, "a.gopp"), 3);
+    // A Go file has no `move` and takes addresses as Go does.
+    let plain = text.replace("move(a)", "a").replace("len(p)", "len(*p)");
+    assert_eq!(copies(&plain, "a.go"), 4);
+    insta::assert_snapshot!(gir(text));
+}
+
+#[test]
 fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
     let (_, messages) = lowered_with(
         &[(

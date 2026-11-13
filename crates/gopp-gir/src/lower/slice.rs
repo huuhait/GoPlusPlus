@@ -3,7 +3,7 @@
 //! copy, the same elements in place, or a view of them, and the runtime
 //! makes, grows and copies the buffers.
 
-use gopp_sema::Transfer;
+use gopp_sema::{Ref, Transfer};
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{ExprId, ExprKind, UnaryOp};
 
@@ -148,6 +148,15 @@ impl FuncCx<'_, '_> {
         }
     }
 
+    /// Whether the name is the last that is read of its variable, and
+    /// the variable can give its value up: it owns the value, and
+    /// nothing else reaches it.
+    fn last_use(&self, name: ExprId) -> bool {
+        self.body.last_uses.contains(&name)
+            && matches!(self.denoted(name), Some(Ref::Local(local))
+                if self.owning_var(*local).is_some() && self.quiet_var(*local))
+    }
+
     /// The value of the expression for its new owner. A place whose
     /// value the checker says is copied gets the copy of its type:
     /// nothing for a string, a new buffer for a slice, a new table for a
@@ -160,13 +169,17 @@ impl FuncCx<'_, '_> {
         }
         let span = self.tree.exprs[expr].span;
         let mark = self.body.var_modes.get(&inner);
-        let handed = self.handed.contains(&inner);
+        let handed = self.handed.contains(&inner) || self.last_use(inner);
         if mark.is_none() && !handed {
             return Ok(value);
         }
         // Nothing is moved out of a map: the value of an entry is read
-        // into a slot, and the map keeps its own.
-        let moved = (mark == Some(&Transfer::Move) || handed) && self.map_index(inner).is_none();
+        // into a slot, and the map keeps its own. Nor out of a variable
+        // that reads the value of another owner.
+        let reads =
+            matches!(self.denoted(inner), Some(Ref::Local(local)) if self.reads_only(*local));
+        let moved =
+            (mark == Some(&Transfer::Move) || handed) && self.map_index(inner).is_none() && !reads;
         let own = match &value {
             // The place gives its value up and is empty then.
             Rvalue::Use(Operand::Copy(from)) if moved => {

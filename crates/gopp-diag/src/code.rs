@@ -308,6 +308,7 @@ codes! {
     445 GirExportBad "err_gir_export_bad",
     446 InstOption "err_inst_option",
     450 InlineMarksConflict "err_inline_marks_conflict",
+    451 UseAfterMove "err_use_after_move",
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",
     456 NoteWant "note_want",
@@ -357,6 +358,7 @@ codes! {
     503 ForeignReadOnly "err_foreign_read_only",
     504 TypeParamRhs "err_type_param_rhs",
     505 GenericNoBody "err_generic_no_body",
+    506 NoteMovedHere "note_moved_here",
 }
 
 impl Code {

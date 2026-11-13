@@ -2823,7 +2823,8 @@ fn closures(checked: &Checked, names: &ThreadedRodeo) -> Vec<String> {
 
 /// How the places of the first file give their values, in the order in
 /// which they are written: `line:col place: copy`, with `over` for a
-/// place that is assigned over; then the places that swaps assign to.
+/// place that is assigned over and `last` for the last use of a
+/// variable; then the places that swaps assign to.
 fn transfers(checked: &Checked) -> Vec<String> {
     let file = &checked.files[0];
     let shown = |expr: ExprId| {
@@ -2845,7 +2846,11 @@ fn transfers(checked: &Checked) -> Vec<String> {
                 true => ", over",
                 false => "",
             };
-            all.push((at, format!("{place}: {mode}{over}")));
+            let last = match body.last_uses.contains(&expr) {
+                true => ", last",
+                false => "",
+            };
+            all.push((at, format!("{place}: {mode}{over}{last}")));
         }
         for &expr in &body.swaps {
             let (at, place) = shown(expr);
@@ -2861,6 +2866,390 @@ fn transfers(checked: &Checked) -> Vec<String> {
     }
     all.sort();
     all.into_iter().map(|(_, line)| line).collect()
+}
+
+// rule: OWN-R5, EXP-3
+#[test]
+fn a_variable_is_not_read_after_move_took_its_value() {
+    let text = "package p
+
+type T struct {
+	name string
+	xs   []int
+}
+
+func keep(xs []int)         {}
+func keep2(xs []int, n int) {}
+func keep3(n int, xs []int) {}
+func read(xs []int) int     { return len(xs) }
+func hold(t T)              {}
+
+func straight(xs []int, t T, n int) {
+	keep(move(xs))
+	_ = len(xs)
+	xs = nil
+	_ = len(xs)
+	hold(move(t))
+	t.name = \"a\"
+	t = T{}
+	t.name = \"b\"
+	_ = move(n)
+	_ = n
+}
+
+func branches(xs, ys, zs []int, c bool) {
+	if c {
+		keep(move(xs))
+	}
+	_ = len(xs)
+	if c {
+		keep(move(ys))
+		ys = nil
+	} else {
+		keep(move(ys))
+		ys = []int{1}
+	}
+	_ = len(ys)
+	if c {
+		keep(move(zs))
+		return
+	}
+	_ = len(zs)
+}
+
+func loops(xs, ys, zs []int, n int) {
+	for i := 0; i < n; i++ {
+		keep(move(xs))
+	}
+	for i := 0; i < n; i++ {
+		keep(move(ys))
+		ys = nil
+	}
+	for i := 0; i < n; i++ {
+		if i == 3 {
+			keep(move(zs))
+			break
+		}
+		_ = len(zs)
+	}
+	for i := range n {
+		w := []int{i}
+		keep(move(w))
+	}
+}
+
+func order(xs, ys, zs []int) {
+	keep2(move(xs), len(xs))
+	keep3(len(ys), move(ys))
+	keep(move(zs))
+	keep(move(zs))
+}
+
+func jumps(xs, ys []int, n int) {
+	i := 0
+again:
+	_ = len(xs)
+	if i < n {
+		i++
+		keep(move(xs))
+		goto again
+	}
+	switch n {
+	case 1:
+		keep(move(ys))
+		fallthrough
+	case 2:
+		_ = len(ys)
+	case 3:
+		_ = len(ys)
+	}
+}
+
+func named(n int) (xs []int, ys []int) {
+	keep(move(xs))
+	if n > 0 {
+		return
+	}
+	keep(move(ys))
+	return nil, nil
+}
+
+func literals(xs, ys []int) {
+	f := func() int { return len(ys) }
+	keep(move(xs))
+	g := func() int { return len(xs) }
+	h := func(zs []int) {
+		keep(move(zs))
+		_ = len(zs)
+	}
+	_, _, _ = f, g, h
+	p := &xs
+	_ = p
+}
+";
+    let expected = [
+        "a.gopp:16:10: xs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:15:7: xs is moved here",
+        "a.gopp:20:2: t is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:19:7: t is moved here",
+        "a.gopp:24:6: n is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:23:6: n is moved here",
+        "a.gopp:31:10: xs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:29:8: xs is moved here",
+        "a.gopp:49:8: xs is moved again where it was moved before: it has no value until it is \
+         assigned again",
+        "a.gopp:69:22: xs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:69:8: xs is moved here",
+        "a.gopp:72:7: zs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:71:7: zs is moved here",
+        "a.gopp:78:10: xs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:81:8: xs is moved here",
+        "a.gopp:81:8: xs is moved again where it was moved before: it has no value until it is \
+         assigned again",
+        "a.gopp:89:11: ys is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:86:8: ys is moved here",
+        "a.gopp:98:3: xs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:96:7: xs is moved here",
+        "a.gopp:107:7: xs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:106:7: xs is moved here",
+        "a.gopp:110:11: zs is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:109:8: zs is moved here",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+// rule: OWN-R3
+#[test]
+fn the_last_copy_of_a_variable_is_marked_in_both_dialects() {
+    let text = "package p
+
+type T struct {
+	name string
+	xs   []int
+}
+
+var all [][]int
+
+func keep(xs []int)            {}
+func keep2(xs []int, ys []int) {}
+func keep3(n int, xs []int)    {}
+func hold(t T)                 {}
+func make1() []int             { return nil }
+
+func straight(xs []int, s string) []int {
+	a := xs
+	b := xs
+	keep(a)
+	keep(a)
+	t := s
+	u := s
+	_, _ = t, u
+	return b
+}
+
+func branches(xs, ys []int, c bool) {
+	if c {
+		keep(xs)
+	} else {
+		keep(xs)
+	}
+	if c {
+		keep(ys)
+	}
+	keep(ys)
+}
+
+func loops(xs, ys []int, n int) {
+	for i := 0; i < n; i++ {
+		keep(xs)
+	}
+	for i := 0; i < n; i++ {
+		w := make1()
+		keep(w)
+	}
+	for i := 0; i < n; i++ {
+		if i == 3 {
+			keep(ys)
+			break
+		}
+	}
+}
+
+func again(xs []int, n int) {
+	keep(xs)
+	xs = make1()
+	keep(xs)
+	xs = make1()
+	for i := 0; i < n; i++ {
+		keep(xs)
+		xs = make1()
+	}
+}
+
+func units(xs, ys, zs []int, t T) {
+	keep2(xs, xs)
+	keep3(len(ys), ys)
+	zs = append(make1(), zs...)
+	all = append(all, zs)
+	t.xs = t.xs
+	hold(t)
+}
+
+func ranged(xs []int, m map[string][]int, t T) {
+	for _, x := range xs {
+		if x == 3 {
+			keep(xs)
+			return
+		}
+	}
+	for k, v := range m {
+		keep(v)
+		_ = k
+	}
+	switch t.name {
+	case \"a\":
+		hold(t)
+	default:
+		hold(t)
+	}
+}
+
+func named() (xs []int, ys []int) {
+	xs = make1()
+	keep(xs)
+	ys = make1()
+	keep(ys)
+	xs = nil
+	return
+}
+
+func literals(xs, ys []int) {
+	keep(xs)
+	f := func() { keep(ys) }
+	f()
+	keep(ys)
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let expected = [
+        "17:7 xs: copy",
+        "18:7 xs: copy, last",
+        "19:7 a: copy",
+        "20:7 a: copy, last",
+        "21:7 s: copy",
+        "22:7 s: copy, last",
+        "24:9 b: copy, last",
+        "29:8 xs: copy, last",
+        "31:8 xs: copy, last",
+        "34:8 ys: copy",
+        "36:7 ys: copy, last",
+        "41:8 xs: copy",
+        "45:8 w: copy, last",
+        "49:9 ys: copy, last",
+        "56:7 xs: copy, last",
+        "58:7 xs: copy, last",
+        "61:8 xs: copy, last",
+        "67:8 xs: copy",
+        "67:12 xs: copy",
+        "68:17 ys: copy",
+        "69:23 zs: copy, over, last",
+        "70:15 all: copy, over",
+        "70:20 zs: copy, last",
+        "71:9 t.xs: copy, over",
+        "72:7 t: copy, last",
+        "78:9 xs: copy",
+        "83:8 v: copy, last",
+        "88:8 t: copy, last",
+        "90:8 t: copy, last",
+        "96:7 xs: copy, last",
+        "98:7 ys: copy",
+        "104:7 xs: copy, last",
+        "105:21 ys: copy",
+        "107:7 ys: copy",
+    ];
+    assert_eq!(transfers(&checked), expected);
+    // A Go file has the same copies and the same last uses; nothing is
+    // assigned over in it.
+    let checked = check_texts("p", &[("a.go", text)], &Loader::default(), &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let plain: Vec<String> = expected
+        .iter()
+        .map(|line| line.replace(", over", ""))
+        .collect();
+    assert_eq!(transfers(&checked), plain);
+}
+
+#[test]
+fn the_steps_of_moves_and_last_uses_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    let head = "package p\nfunc keep(xs []int) {}\nfunc f(c bool, n int) {\n";
+    // Many variables, each given away and moved in a block of its own.
+    let siblings = |count: usize| {
+        let blocks: String = (0..count)
+            .map(|i| {
+                format!(
+                    "if c {{\nv{i} := []int{{{i}}}\nkeep(v{i})\nw{i} := v{i}\nkeep(move(w{i}))\n}}\n"
+                )
+            })
+            .collect();
+        format!("{head}{blocks}}}\n")
+    };
+    // Many variables that live across many branches before each is
+    // given away, moved, and set again.
+    let long_lived = |count: usize| {
+        let declared: String = (0..count)
+            .map(|i| format!("v{i} := []int{{{i}}}\n"))
+            .collect();
+        let between = "if c {\nn++\n}\n".repeat(count);
+        let used: String = (0..count)
+            .map(|i| format!("keep(v{i})\nkeep(move(v{i}))\nv{i} = nil\n"))
+            .collect();
+        format!("{head}{declared}{between}{used}}}\n")
+    };
+    // Loops in loops and branches in branches: every level gives a
+    // variable of its own away and moves one, and the innermost gives
+    // away a variable of every level.
+    let nested = |open: &str, depth: usize| {
+        let opened: String = (0..depth)
+            .map(|i| {
+                format!(
+                    "v{i} := []int{{{i}}}\nw{i} := v{i}\nkeep(move(w{i}))\nw{i} = nil\n{open} \
+                     {{\nkeep(v{i})\n"
+                )
+            })
+            .collect();
+        let inner: String = (0..depth).map(|i| format!("keep(v{i})\n")).collect();
+        format!("{head}{opened}{inner}{}}}\n", "}\n".repeat(depth))
+    };
+    // Jumps back to many labels.
+    let jumps = |count: usize| {
+        let labels: String = (0..count)
+            .map(|i| {
+                format!(
+                    "l{i}:\nv{i} := []int{{{i}}}\nkeep(v{i})\nif n == {i} {{\nn++\ngoto \
+                     l{i}\n}}\nkeep(move(v{i}))\n"
+                )
+            })
+            .collect();
+        format!("{head}{labels}}}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(long_lived(n)));
+    linear::assert_near_linear(&sizes, |n| steps(jumps(n)));
+    // The parser takes no deeper nesting, and a set of more than 64
+    // variables is one level higher, which costs a step more.
+    let depths = [100, 200, 400];
+    linear::assert_near_linear(&depths, |n| steps(nested("for c", n)));
+    linear::assert_near_linear(&depths, |n| steps(nested("if c", n)));
 }
 
 // rule: ERR-1, ERR-2, ERR-5, ERR-6, ERR-11a
@@ -5865,6 +6254,8 @@ func use(f lib.File, h Handle, m Mutex, n N, d Doc, p Point, s []lib.File, k M, 
         "a.gopp:31:50: U does not satisfy Copy (U is not constrained by Copy)",
         "a.gopp:46:2: N does not satisfy Copy, which the type set of T (~int) implies: N has a drop \
          method",
+        "a.gopp:46:10: n is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:42:8: n is moved here",
         "a.gopp:47:2: lib.Count does not satisfy Copy, which the type set of T (~int) implies: \
          lib.Count has a drop method",
         "a.gopp:48:2: Doc does not satisfy Copy (a copy of string is more than its bytes)",
@@ -5872,11 +6263,15 @@ func use(f lib.File, h Handle, m Mutex, n N, d Doc, p Point, s []lib.File, k M, 
         "a.gopp:50:2: []int does not satisfy Copy (a copy of []int is more than its bytes)",
         "a.gopp:51:2: lib.File does not satisfy Clone (lib.File has a drop method and no Clone() \
          lib.File)",
+        "a.gopp:51:12: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:43:7: f is moved here",
         "a.gopp:52:2: Mutex does not satisfy Clone (Mutex is @Pinned)",
         "a.gopp:53:2: []lib.File does not satisfy Clone (lib.File has a drop method and no Clone() \
          lib.File)",
         "a.gopp:54:2: N does not satisfy Clone, which the type set of T (~string | ~int) implies: N \
          has a drop method and no Clone() N",
+        "a.gopp:54:7: n is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:46:10: n is moved here",
         "a.gopp:55:13: lib.File does not satisfy Clone (lib.File has a drop method and no Clone() \
          lib.File)",
         "a.gopp:56:4: cannot use h.drop: drop runs when a value ends, and is not called",
@@ -5975,6 +6370,8 @@ func channel(ch chan File, f File) {
         &ThreadedRodeo::new(),
     );
     let expected = [
+        "a.gopp:26:9: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:23:7: f is moved here",
         "a.gopp:35:7: cannot copy f (variable of struct type File): File has a drop method and no \
          Clone() File",
         "    use move(f) to give the value, or &f to lend it",
@@ -5987,6 +6384,8 @@ func channel(ch chan File, f File) {
         "a.gopp:38:7: cannot copy files[0] (variable of struct type File) out of its place: File \
          has a drop method and no Clone() File",
         "    use &files[0], mem.Take(&files[0]) or mem.Replace(&files[0], v)",
+        "a.gopp:38:7: files is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:32:16: files is moved here",
         "a.gopp:39:7: cannot copy m[\"a\"] (map index expression of struct type File) out of its \
          place: File has a drop method and no Clone() File",
         "a.gopp:40:7: cannot copy global (variable of struct type File) out of its place: File has \
@@ -6006,6 +6405,8 @@ func channel(ch chan File, f File) {
         "a.gopp:45:14: cannot copy files (variable of type []File): File has a drop method and no \
          Clone() File",
         "    use move(files) to give the value, or &files to lend it",
+        "a.gopp:46:23: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:44:24: f is moved here",
         "a.gopp:46:23: cannot copy f (variable of struct type File): File has a drop method and no \
          Clone() File",
         "    use move(f) to give the value, or &f to lend it",
@@ -6101,21 +6502,23 @@ func use(h *Holder, xs []int, d Doc, fs []File, f File, n int, name string) (Doc
         "a.gopp:46:12: cannot move fs[0] (variable of struct type File): move takes a local \
          variable or a parameter",
         "    use mem.Take(&fs[0])",
+        "a.gopp:47:12: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:38:18: f is moved here",
     ];
     assert_eq!(checked.messages, expected);
     let expected = [
         "12:38 d.Title: copy",
-        "13:41 t: copy",
-        "20:36 xs: copy",
+        "13:41 t: copy, last",
+        "20:36 xs: copy, last",
         "25:7 d: copy",
         "26:11 d.Title: copy",
         "27:10 d: copy",
         "28:6 d: copy",
         "29:6 d: copy",
         "30:8 name: copy",
-        "33:14 xs: copy, over",
+        "33:14 xs: copy, over, last",
         "34:7 xs: over",
-        "35:12 xs: copy, over",
+        "35:12 xs: copy, over, last",
         "36:18 h.Docs: copy, over",
         "36:26 d: copy",
         "37:20 h.M[\"a\"]: copy, over",
@@ -6136,7 +6539,7 @@ func use(h *Holder, xs []int, d Doc, fs []File, f File, n int, name string) (Doc
         "43:17 fs[1]: move",
         "43:24 fs[0]: move",
         "44:27 e: copy",
-        "47:9 d: copy",
+        "47:9 d: copy, last",
         "47:12 f: move",
     ];
     assert_eq!(transfers(&checked), expected);
@@ -6183,8 +6586,8 @@ func use(t Table, n int, text string) ([]int, map[string]int) {
         "12:11 t.names: copy",
         "14:10 names: copy",
         "15:7 rows: copy",
-        "15:13 names: copy",
-        "18:10 text: copy",
+        "15:13 names: copy, last",
+        "18:10 text: copy, last",
         "24:9 rows: copy",
         "24:15 t.names: copy",
     ];
@@ -6752,6 +7155,8 @@ func values(f File) {
          Option[func()] is not a function",
         "a.gopp:33:3: invalid operation: cannot call s.OnStop (variable of type Option[func()]): \
          Option[func()] is not a function",
+        "a.gopp:41:7: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:40:7: f is moved here",
         "a.gopp:41:7: cannot copy f (variable of struct type File): File has a drop method and no \
          Clone() File",
         "    use move(f) to give the value, or &f to lend it",
@@ -8528,6 +8933,8 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
     let names = ThreadedRodeo::new();
     let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
     let expected = [
+        "a.gopp:34:21: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:30:24: f is moved here",
         "a.gopp:52:14: cannot convert f (variable of struct type File) to any: an interface value \
          holds a copy, and File has a drop method and no Clone() File",
         "    put it in a Shared, or pass &f for the length of a call",
@@ -8540,6 +8947,8 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
         "a.gopp:55:10: cannot convert f (variable of struct type File) to any: an interface value \
          holds a copy, and File has a drop method and no Clone() File",
         "    put it in a Shared, or pass &f for the length of a call",
+        "a.gopp:55:10: f is used after it was moved: it has no value until it is assigned again",
+        "    a.gopp:53:14: f is moved here",
         "a.gopp:56:6: cannot convert move(f) (value of struct type File) to any: an interface \
          value holds a copy, and File has a drop method and no Clone() File",
         "    put it in a Shared: NewShared(move(f))",

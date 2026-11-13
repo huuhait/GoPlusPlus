@@ -156,6 +156,12 @@ pub struct Body {
     /// value is assigned over, so the one that is evaluated last may be
     /// given as it is.
     pub self_moves: FxHashSet<ExprId>,
+    /// The names of variables in `var_modes` whose copy is the last
+    /// that is read of the variable on every way from there: nothing
+    /// reads the variable again before it is assigned. The value itself
+    /// may be given, if the variable owns it and nothing else reaches
+    /// it.
+    pub last_uses: FxHashSet<ExprId>,
     /// The expressions that an `@Operator` or a `@Convert` method stands
     /// for, each with the method: `a + b`, `-a`, `a == b`, `a < b`, `a[i]`
     /// that is read, `T(a)`, and what a `range` clause ranges over.

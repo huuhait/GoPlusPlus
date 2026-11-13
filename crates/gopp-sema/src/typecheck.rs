@@ -23,6 +23,7 @@ mod inherit;
 mod literal;
 mod methods;
 mod mono;
+mod moves;
 mod operators;
 mod ops;
 mod own;
@@ -508,6 +509,7 @@ struct BodyTypes {
     var_modes: FxHashMap<ExprId, crate::object::Transfer>,
     swaps: FxHashSet<ExprId>,
     self_moves: FxHashSet<ExprId>,
+    last_uses: FxHashSet<ExprId>,
     captures: FxHashMap<ExprId, Vec<crate::object::Capture>>,
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     narrowed: FxHashSet<ExprId>,
@@ -702,6 +704,7 @@ pub fn declarations(
             body.var_modes = found.var_modes;
             body.swaps = found.swaps;
             body.self_moves = found.self_moves;
+            body.last_uses = found.last_uses;
             body.captures = found.captures;
             body.method_values = found.method_values;
             body.narrowed = found.narrowed;
@@ -3597,6 +3600,8 @@ impl<'a> Checker<'a> {
             ))
         };
         self.addresses_of_required(&cx);
+        let captures = self.captured_by_literal();
+        let last_uses = self.moves(&cx, &captures, &tree.decl_nodes[decl]);
         let memo = self.memo.take().unwrap_or_default();
         let exprs = memo.into_iter().filter_map(typed).collect();
         self.validate();
@@ -3613,7 +3618,8 @@ impl<'a> Checker<'a> {
             var_modes: std::mem::take(&mut self.var_modes),
             swaps: std::mem::take(&mut self.swaps),
             self_moves: std::mem::take(&mut self.self_moves),
-            captures: self.captured_by_literal(),
+            last_uses,
+            captures,
             method_values: std::mem::take(&mut self.method_values),
             narrowed: std::mem::take(&mut self.narrowed),
             iface_args: std::mem::take(&mut self.iface_args),

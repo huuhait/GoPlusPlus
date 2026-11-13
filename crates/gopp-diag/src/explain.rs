@@ -508,6 +508,14 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Keep one of them.",
             "@Inline\n@NoInline\nfunc f() {} // error",
         ),
+        UseAfterMove => (
+            "A variable is read after `move` took its value. The variable has no value from \
+             the `move` on, on every way that leads from it, until it is assigned again.",
+            "Assign a new value to the variable first, or do not move it: pass `&x` to lend \
+             the value, or `x` to give a copy.",
+            "func f(xs []int) {\n\tkeep(move(xs))\n\tprintln(len(xs)) // error\n\txs = \
+             nil\n\tprintln(len(xs)) // ok\n}",
+        ),
         OwnStarOnLeft => (
             "In a .gopp file a pointer is written through without a star: assigning a `T` to a \
              `*T` variable changes what it points to.",
@@ -1914,7 +1922,7 @@ mod tests {
         );
         let note = lock.number("note_have").unwrap();
         assert_eq!(status(&lock, note), Some(Status::Note(Code::NoteHave)));
-        let reserved = lock.number("err_use_after_move").unwrap();
+        let reserved = lock.number("err_gir_no_main").unwrap();
         assert_eq!(status(&lock, reserved), Some(Status::Reserved));
     }
 
@@ -1928,9 +1936,9 @@ mod tests {
         }
         let note = "E0455 note_have\n\nA note: it is printed under the error that it belongs to.\n";
         assert_eq!(explained("E0455").as_deref(), Ok(note));
-        let reserved = "E0451 err_use_after_move\n\nReserved: this version of gopp reports \
+        let reserved = "E0443 err_gir_no_main\n\nReserved: this version of gopp reports \
                         nothing with this code.\n";
-        assert_eq!(explained("E0451").as_deref(), Ok(reserved));
+        assert_eq!(explained("E0443").as_deref(), Ok(reserved));
         let retired = "E0421 err_unit_in_func\n\nRetired: the language no longer has what this \
                        code was for.\n";
         assert_eq!(explained("E0421").as_deref(), Ok(retired));
@@ -1947,6 +1955,6 @@ mod tests {
         assert_eq!(listed.lines().count(), lock.len());
         assert!(listed.starts_with("E0001 err_too_many_errors\nE0002 err_lex_illegal_nul\n"));
         assert!(listed.contains("\nE0421 err_unit_in_func (retired)\n"));
-        assert!(listed.contains("\nE0451 err_use_after_move (reserved)\n"));
+        assert!(listed.contains("\nE0443 err_gir_no_main (reserved)\n"));
     }
 }

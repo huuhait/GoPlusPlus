@@ -646,6 +646,13 @@ impl FuncCx<'_, '_> {
         own.then_some(var)
     }
 
+    /// Whether the variable of the local reads a value that another
+    /// owns: an element as it is, an argument that was lent.
+    pub fn reads_only(&self, local: CheckedLocalId) -> bool {
+        let var = self.vars.get(&local);
+        var.is_some_and(|var| self.borrowed.contains(var) || self.lent_params.contains(var))
+    }
+
     /// Whether the value of the variable cannot change while a call
     /// runs: nothing but this function reaches the variable, and it is
     /// no other name of an element, which its collection may change.

@@ -124,6 +124,7 @@ impl Writer<'_> {
         let marked = [
             ("swap", &body.swaps),
             ("self move", &body.self_moves),
+            ("last use", &body.last_uses),
             ("narrowed", &body.narrowed),
             ("interface argument", &body.iface_args),
             ("writes through", &body.writes_through),

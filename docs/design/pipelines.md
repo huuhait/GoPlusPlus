@@ -29,7 +29,7 @@ Optimization settings change compile time, binary size, and run-time speed — n
 Each stage records wall and CPU timing in `PipelineTimes` (`-pipeline-times` prints `stage=wall/cpu`):
 
 1. **`gir-lower` & `gir-verify`:** Lowers `gopp_sema::CheckedPackage` to `gopp_gir::Module` and runs `verify_module` (`V001`–`V085`). (`-emit=gir` prints the module here.)
-2. **`gir-safety`:** Runs `MoveCheck`, `BorrowCheck`, and `ConcurrencyCheck` over the GIR CFG. Always runs unconditionally before any plugin or optimization pass.
+2. **`gir-safety`:** Runs `MoveCheck`, `BorrowCheck`, and `ConcurrencyCheck` over the GIR CFG. Always runs unconditionally before any plugin or optimization pass. Today the move check (`E0451`) and the last uses are worked out earlier, by the checker on the syntax tree ([gir.md](gir.md) §7), and the other two are not built.
 3. **`plugin-pre-drop`:** Runs registered `PassStage::PreDropElab` plugins (`-fpass-plugin`), executing `verify_module` after each plugin.
 4. **`drop-elab` & `gir-inline`:** Elaborates moves and drops (`elaborate_drops`), runs `inline_trivial` (section 3), and re-verifies with `verify_module`.
 5. **`plugin-post-drop`:** Runs registered `PassStage::PostDropElab` plugins (`-fpass-plugin`), executing `verify_module` after each plugin.

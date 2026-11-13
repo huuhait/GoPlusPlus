@@ -103,7 +103,7 @@ impl<'a> FuncCx<'a, '_> {
     /// What a name denotes. The key of a literal that is a name is
     /// kept apart by the checker: only the type of the literal says
     /// that it is no field.
-    fn denoted(&self, name: ExprId) -> Option<&'a Ref> {
+    pub(super) fn denoted(&self, name: ExprId) -> Option<&'a Ref> {
         let body = self.body;
         body.uses.get(&name).or_else(|| body.keys.get(&name))
     }
@@ -1425,6 +1425,8 @@ impl FuncCx<'_, '_> {
                 return self.fresh(expr, ty, grown);
             }
             (Predeclared::CopyFunc, [_, _], _) => return self.copy_into(span, ty, args),
+            // The variable gives its value up where it is named.
+            (Predeclared::Move, [of], _) => return self.rvalue_as(*of, ty),
             (Predeclared::Clear, [of], _) if self.clear_slice(span, *of)? => {
                 return Ok(Rvalue::Use(self.zero(ty)));
             }
