@@ -110,15 +110,6 @@ fn _GPF4mainE6copies(_1: _GPTiN4mainE5Table, _2: [][]i64, _3: _GPTiN4mainE4Tree)
   let _100: *_GPTiN4mainE5Table
   let _101: *u8
   let _102: ()
-  let _103: *_GPTiN4mainE4Tree
-  let _104: *u8
-  let _105: ()
-  let _106: *[][]i64
-  let _107: *u8
-  let _108: ()
-  let _109: *_GPTiN4mainE5Table
-  let _110: *u8
-  let _111: ()
   bb0:
     _4 = copy _1  ; a.gopp:15:2
     _5 = &mut _4  ; a.gopp:15:2
@@ -259,18 +250,6 @@ fn _GPF4mainE6copies(_1: _GPTiN4mainE5Table, _2: [][]i64, _3: _GPTiN4mainE4Tree)
     _101 = ptr_to_ptr(copy _100) as *u8  ; a.gopp:23:2
     _102 = call const fn @_GPTdN4mainE5Table(copy _101) -> [return: bb22, unwind: continue]  ; a.gopp:23:2
   bb22:
-    _103 = &mut _3  ; a.gopp:23:2
-    _104 = ptr_to_ptr(copy _103) as *u8  ; a.gopp:23:2
-    _105 = call const fn @_GPTdN4mainE4Tree(copy _104) -> [return: bb23, unwind: continue]  ; a.gopp:23:2
-  bb23:
-    _106 = &mut _2  ; a.gopp:23:2
-    _107 = ptr_to_ptr(copy _106) as *u8  ; a.gopp:23:2
-    _108 = call const fn @_GPTdSSi(copy _107) -> [return: bb24, unwind: continue]  ; a.gopp:23:2
-  bb24:
-    _109 = &mut _1  ; a.gopp:23:2
-    _110 = ptr_to_ptr(copy _109) as *u8  ; a.gopp:23:2
-    _111 = call const fn @_GPTdN4mainE5Table(copy _110) -> [return: bb25, unwind: continue]  ; a.gopp:23:2
-  bb25:
     storage_dead(_50)  ; a.gopp:23:2
     storage_dead(_45)  ; a.gopp:23:2
     storage_dead(_28)  ; a.gopp:23:2

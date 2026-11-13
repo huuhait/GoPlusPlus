@@ -9,6 +9,7 @@ use gopp_syntax::ast::{Block, DeclKind, ExprId, ExprKind, File, Param};
 use lasso::Spur;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::facts::Facts;
 use super::glue::{Ends, Glue};
 use super::{Job, Memo, Shared};
 use crate::{
@@ -75,6 +76,14 @@ pub(super) struct FuncCx<'a, 'm> {
     /// Which file of the package.
     file: u32,
     pub body: &'a Body,
+    /// What the function does to its parameters and its variables.
+    facts: &'a Facts,
+    /// The arguments of the call that is lowered which are lent: each
+    /// is read where it is, and no copy of it is made.
+    pub lent: FxHashSet<ExprId>,
+    /// The parameters that the function only reads: its caller owns
+    /// their values.
+    lent_params: FxHashSet<LocalId>,
     vars: FxHashMap<CheckedLocalId, LocalId>,
     scopes: Vec<Scope>,
     pub labels: FxHashMap<Spur, Label>,
@@ -122,7 +131,7 @@ pub(super) fn lower_function<'a>(
     shared: &'a Shared<'a>,
     module: &mut Module,
     memo: &mut Memo<'a>,
-    job: &Job,
+    job: &'a Job,
 ) {
     let (tree, source) = shared.files[job.file as usize];
     let DeclKind::Func {
@@ -164,7 +173,7 @@ pub(super) fn lower_function<'a>(
     };
     let built = FuncBuilder::new(module, &job.symbol, sig, Linkage::External, loc).and_then(|b| {
         let body = &shared.package.files[job.file as usize].bodies[job.at];
-        let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, body);
+        let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
         cx.function(receiver.as_ref(), *ty, block)?;
         cx.b.drop_unreached();
         cx.b.finish()
@@ -189,7 +198,13 @@ pub(super) fn lower_glue<'a>(
     let sig = super::glue::sig(&mut module.types, kind);
     let link = Linkage::LinkOnceOdr;
     let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
-        let mut cx = FuncCx::new(shared, &mut *memo, b, 0, &shared.no_body);
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
         let made = match kind {
             Glue::Clone | Glue::Drop => cx.walk_body(kind, ty)?,
             Glue::Eq => cx.eq_body(ty)?,
@@ -236,7 +251,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
         memo: &'m mut Memo<'a>,
         b: FuncBuilder<'m>,
         file: u32,
-        body: &'a Body,
+        (body, facts): (&'a Body, &'a Facts),
     ) -> Self {
         let (tree, source) = shared.files[file as usize];
         Self {
@@ -247,6 +262,9 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             source,
             file,
             body,
+            facts,
+            lent: FxHashSet::default(),
+            lent_params: FxHashSet::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
             labels: FxHashMap::default(),
@@ -288,9 +306,13 @@ impl FuncCx<'_, '_> {
                 self.b
                     .set_name(slot, self.memo.name(self.shared, name.name));
                 self.vars.insert(local, slot);
-                // A parameter by value is the function's own: the caller
+                // A parameter that the function only reads is the
+                // caller's; any other is the function's own: the caller
                 // gave a copy or the value itself.
-                self.owns(local, slot)?;
+                match self.facts.lent.get(at) {
+                    Some(true) => drop(self.lent_params.insert(slot)),
+                    _ => self.owns(local, slot)?,
+                }
             }
         }
         for result in results {
@@ -618,7 +640,20 @@ impl FuncCx<'_, '_> {
     /// value: no other name of an element, and no element as it is.
     pub fn owning_var(&self, local: CheckedLocalId) -> Option<LocalId> {
         let var = *self.vars.get(&local)?;
-        (!self.aliases.contains(&var) && !self.borrowed.contains(&var)).then_some(var)
+        let own = !self.aliases.contains(&var)
+            && !self.borrowed.contains(&var)
+            && !self.lent_params.contains(&var);
+        own.then_some(var)
+    }
+
+    /// Whether the value of the variable cannot change while a call
+    /// runs: nothing but this function reaches the variable, and it is
+    /// no other name of an element, which its collection may change.
+    pub fn quiet_var(&self, local: CheckedLocalId) -> bool {
+        let Some(var) = self.vars.get(&local) else {
+            return false;
+        };
+        self.facts.quiet(local) && !self.aliases.contains(var) && !self.borrowed.contains(var)
     }
 
     /// A new variable for the local that is another name of a place of

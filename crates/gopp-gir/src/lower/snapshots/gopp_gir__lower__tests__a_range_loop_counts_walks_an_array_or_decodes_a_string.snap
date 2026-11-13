@@ -67,9 +67,6 @@ fn _GPF4mainE4walk(_1: [3]i64, _2: [2]string, _3: *[3]i64) -> i64 [go, external]
   let _21: i64 "i"
   let _22: i64 "cell"
   let _23: i64
-  let _24: *[2]string
-  let _25: *u8
-  let _26: ()
   bb0:
     storage_live(_4)  ; a.gopp:12:2
     _4 = const 0: i64  ; a.gopp:12:2
@@ -145,10 +142,6 @@ fn _GPF4mainE4walk(_1: [3]i64, _2: [2]string, _3: *[3]i64) -> i64 [go, external]
     goto bb13  ; a.gopp:24:2
   bb16:
     _0 = copy _4  ; a.gopp:25:2
-    _24 = &mut _2  ; a.gopp:25:2
-    _25 = ptr_to_ptr(copy _24) as *u8  ; a.gopp:25:2
-    _26 = call const fn @_GPTdA2_r(copy _25) -> [return: bb17, unwind: continue]  ; a.gopp:25:2
-  bb17:
     storage_dead(_4)  ; a.gopp:25:2
     return  ; a.gopp:25:2
 }
@@ -182,8 +175,6 @@ fn _GPF4mainE5runes(_1: string) -> i64 [go, external] {
   let _25: bool
   let _26: ()
   let _27: i64
-  let _28: bool
-  let _29: ()
   bb0:
     storage_live(_2)  ; a.gopp:29:2
     _2 = const zero: i64  ; a.gopp:29:2
@@ -249,44 +240,9 @@ fn _GPF4mainE5runes(_1: string) -> i64 [go, external] {
   bb18:
     _27 = int_to_int(copy _3) as i64  ; a.gopp:39:2
     _0 = add(copy _2, copy _27)  ; a.gopp:39:2
-    _28 = ne(copy _1.2, const zero: *u8)  ; a.gopp:39:2
-    switch copy _28 [0: bb20, otherwise: bb19]  ; a.gopp:39:2
-  bb19:
-    _29 = call const fn @_gopp_string_release(copy _1) -> [return: bb20, unwind: continue]  ; a.gopp:39:2
-  bb20:
     storage_dead(_3)  ; a.gopp:39:2
     storage_dead(_2)  ; a.gopp:39:2
     return  ; a.gopp:39:2
-}
-
-fn _GPTdA2_r(_1: *u8) -> () [c, linkonce_odr] {
-  let _0: ()
-  let _2: *[2]string
-  let _3: *string
-  let _4: *u8
-  let _5: ()
-  bb0:
-    _2 = ptr_to_ptr(copy _1) as *[2]string
-    _3 = &mut (*_2)[0]
-    _4 = ptr_to_ptr(copy _3) as *u8
-    _5 = call const fn @_gopp_each(copy _4, const 2: u64, const 24: u64, const fn @_GPTdr) -> [return: bb1, unwind: continue]
-  bb1:
-    return
-}
-
-fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
-  let _0: ()
-  let _2: *string
-  let _3: bool
-  let _4: ()
-  bb0:
-    _2 = ptr_to_ptr(copy _1) as *string
-    _3 = ne(copy (*_2).2, const zero: *u8)
-    switch copy _3 [0: bb2, otherwise: bb1]
-  bb1:
-    _4 = call const fn @_gopp_string_release(copy (*_2)) -> [return: bb2, unwind: continue]
-  bb2:
-    return
 }
 
 declare fn _gopp_string_retain(_1: string) -> () [c, external]
@@ -294,5 +250,3 @@ declare fn _gopp_string_retain(_1: string) -> () [c, external]
 declare fn _gopp_string_decode(_1: string, _2: u64) -> u64 [c, external]
 
 declare fn _gopp_string_release(_1: string) -> () [c, external]
-
-declare fn _gopp_each(_1: *u8, _2: u64, _3: u64, _4: fn "C"(*u8) -> ()) -> () [c, external]

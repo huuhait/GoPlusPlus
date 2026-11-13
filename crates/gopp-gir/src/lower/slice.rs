@@ -155,7 +155,7 @@ impl FuncCx<'_, '_> {
     /// such values.
     pub fn given(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
         let inner = Shared::unparen(self.tree, expr);
-        if self.flat(ty) || self.reused == Some(inner) {
+        if self.flat(ty) || self.reused == Some(inner) || self.lent.contains(&inner) {
             return Ok(value);
         }
         let span = self.tree.exprs[expr].span;
@@ -242,6 +242,25 @@ impl FuncCx<'_, '_> {
         }
         let checked = self.checked_as(expr, ty);
         self.cloned_value(self.tree.exprs[expr].span, checked, value)
+    }
+
+    /// The value for a parameter that its function only reads: the
+    /// caller stays the owner. A temporary keeps the value until its
+    /// statement ends, and a place that cannot change during the call
+    /// is read where it is (`lent`); of any other place a copy is made
+    /// first, which the call cannot change (PAR-1).
+    pub fn lent_value(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
+        if self.flat(ty) || self.lent.contains(&Shared::unparen(self.tree, expr)) {
+            return Ok(value);
+        }
+        match &value {
+            Rvalue::Use(Operand::Const(_)) => return Ok(value),
+            Rvalue::Use(Operand::Copy(place)) if self.owns_temp(place) => return Ok(value),
+            _ => {}
+        }
+        let checked = self.checked_as(expr, ty);
+        let copy = self.cloned_value(self.tree.exprs[expr].span, checked, value)?;
+        self.fresh(expr, ty, copy)
     }
 
     /// The values of the expressions for new owners (see `values`).

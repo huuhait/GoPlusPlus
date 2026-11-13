@@ -259,11 +259,6 @@ fn _GPF4mainE5bytes(_1: string, _2: []u8) -> (string, []u8) [go, external] {
   let _8: *[]u8
   let _9: *u8
   let _10: ()
-  let _11: *[]u8
-  let _12: *u8
-  let _13: ()
-  let _14: bool
-  let _15: ()
   bb0:
     _3 = copy _2  ; a.gopp:13:2
     _4 = &mut _3  ; a.gopp:13:2
@@ -276,15 +271,6 @@ fn _GPF4mainE5bytes(_1: string, _2: []u8) -> (string, []u8) [go, external] {
     _10 = call const fn @_gopp_bytes_from_string(copy _9, copy _1) -> [return: bb2, unwind: continue]  ; a.gopp:13:2
   bb2:
     _0 = tuple {copy _6, copy _7}  ; a.gopp:13:2
-    _11 = &mut _2  ; a.gopp:13:2
-    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:13:2
-    _13 = call const fn @_GPTdSh(copy _12) -> [return: bb3, unwind: continue]  ; a.gopp:13:2
-  bb3:
-    _14 = ne(copy _1.2, const zero: *u8)  ; a.gopp:13:2
-    switch copy _14 [0: bb5, otherwise: bb4]  ; a.gopp:13:2
-  bb4:
-    _15 = call const fn @_gopp_string_release(copy _1) -> [return: bb5, unwind: continue]  ; a.gopp:13:2
-  bb5:
     return  ; a.gopp:13:2
 }
 
@@ -302,9 +288,6 @@ fn _GPF4mainE4walk(_1: []string) -> i64 [go, external] {
   let _9: u64
   let _10: i64
   let _11: i64
-  let _12: *[]string
-  let _13: *u8
-  let _14: ()
   bb0:
     storage_live(_2)  ; a.gopp:17:2
     _2 = const 0: i64  ; a.gopp:17:2
@@ -332,10 +315,6 @@ fn _GPF4mainE4walk(_1: []string) -> i64 [go, external] {
     goto bb1  ; a.gopp:20:2
   bb4:
     _0 = copy _2  ; a.gopp:21:2
-    _12 = &mut _1  ; a.gopp:21:2
-    _13 = ptr_to_ptr(copy _12) as *u8  ; a.gopp:21:2
-    _14 = call const fn @_GPTdSr(copy _13) -> [return: bb5, unwind: continue]  ; a.gopp:21:2
-  bb5:
     storage_dead(_2)  ; a.gopp:21:2
     return  ; a.gopp:21:2
 }
@@ -362,51 +341,10 @@ fn _GPTdSi(_1: *u8) -> () [c, linkonce_odr] {
     return
 }
 
-fn _GPTdSr(_1: *u8) -> () [c, linkonce_odr] {
-  let _0: ()
-  let _2: *[]string
-  let _3: u64
-  let _4: u64
-  let _5: *string
-  let _6: *u8
-  let _7: ()
-  let _8: ()
-  bb0:
-    _2 = ptr_to_ptr(copy _1) as *[]string
-    _3 = const zero: u64
-    _4 = len((*_2))
-    _5 = &mut (*_2)[_3]
-    _6 = ptr_to_ptr(copy _5) as *u8
-    _7 = call const fn @_gopp_each(copy _6, copy _4, const 24: u64, const fn @_GPTdr) -> [return: bb1, unwind: continue]
-  bb1:
-    _8 = call const fn @_gopp_slice_free(copy _1) -> [return: bb2, unwind: continue]
-  bb2:
-    return
-}
-
-fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
-  let _0: ()
-  let _2: *string
-  let _3: bool
-  let _4: ()
-  bb0:
-    _2 = ptr_to_ptr(copy _1) as *string
-    _3 = ne(copy (*_2).2, const zero: *u8)
-    switch copy _3 [0: bb2, otherwise: bb1]
-  bb1:
-    _4 = call const fn @_gopp_string_release(copy (*_2)) -> [return: bb2, unwind: continue]
-  bb2:
-    return
-}
-
 declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
 
 declare fn _gopp_string_from_bytes(_1: *u8) -> string [c, external]
 
 declare fn _gopp_bytes_from_string(_1: *u8, _2: string) -> () [c, external]
 
-declare fn _gopp_string_release(_1: string) -> () [c, external]
-
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]
-
-declare fn _gopp_each(_1: *u8, _2: u64, _3: u64, _4: fn "C"(*u8) -> ()) -> () [c, external]

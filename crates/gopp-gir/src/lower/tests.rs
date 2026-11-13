@@ -9,7 +9,7 @@ use gopp_syntax::parser::parse;
 use gopp_target::TargetLayout;
 use lasso::ThreadedRodeo;
 
-use super::{Checked, lower_counted};
+use super::{Checked, Shared, lower_counted};
 use crate::Module;
 use gopp_testutil::linear::assert_near_linear;
 
@@ -859,6 +859,125 @@ func keys(a named) int {
 	return len(seen) + len(loose)
 }
 "));
+}
+
+/// For each function of the first file, in the order of the source:
+/// its name and which of its parameters it only reads.
+fn lent(text: &str) -> Vec<String> {
+    checked(&[("a.gopp", text)], |checked, messages| {
+        assert_eq!(messages, [] as [&str; 0]);
+        let shared = Shared::new(checked, TargetLayout::new(64));
+        let named = shared.jobs.iter().map(|job| {
+            let flags: Vec<&str> = (job.facts.lent.iter())
+                .map(|&lent| if lent { "lent" } else { "own" })
+                .collect();
+            let name = gopp_mangle::demangle(job.symbol.as_bytes(), 64).unwrap();
+            format!("{name}: {}", flags.join(" "))
+        });
+        named.collect()
+    })
+}
+
+#[test]
+fn a_parameter_that_is_only_read_is_lent() {
+    let facts = lent(
+        "package main
+
+type box struct{ items []int }
+
+func (b box) size() int   { return len(b.items) }
+func (b *box) add(n int)  { b.items = append(b.items, n) }
+func (b box) grown() box  { b.add(1); return b }
+
+func reads(xs []int, m map[string]int, s string, b box, _ []int) int {
+	kept := xs
+	for _, x := range xs {
+		kept = append(kept, x+m[s])
+	}
+	return len(kept) + b.size() + reads(b.items, m, s[1:], b, kept)
+}
+
+func writes(xs []int, m map[string]int, b box, s string) {
+	xs[0] = 1
+	m[\"k\"]++
+	b.items = nil
+	s += \"x\"
+}
+
+func more(a, b, c, d, e []int, f map[int]int, g box) []int {
+	p := &a
+	_ = p
+	for _, &x := range b {
+		x++
+	}
+	clear(c)
+	copy(&d, e)
+	delete(f, 1)
+	g.add(2)
+	return e
+}
+
+func later(xs []int, ys []int) int {
+	defer println(len(xs))
+	return len(ys)
+}
+
+func swaps(a, b []int) int {
+	a, b = b, a
+	return len(a)
+}
+",
+    );
+    assert_eq!(
+        facts,
+        [
+            "main.box.size: lent",
+            "main.box.add: own lent",
+            "main.box.grown: own",
+            "main.reads: lent lent lent lent lent",
+            "main.writes: own own own own",
+            "main.more: own own own own own own own",
+            "main.later: own own",
+            "main.swaps: own own",
+        ]
+    );
+}
+
+#[test]
+fn an_argument_is_lent_or_given_as_its_parameter_asks() {
+    insta::assert_snapshot!(gir("package main
+
+var shared []int
+
+func total(xs []int, name string) int {
+	return len(xs) + len(name)
+}
+
+func grown(xs []int) []int {
+	return append(xs, 1)
+}
+
+func calls(xs []int, name string) int {
+	local := []int{1}
+	n := total(xs, name) + total(local, name[1:]) + total(shared, \"lit\")
+	return n + len(grown(xs)) + total(grown(local), name)
+}
+"));
+}
+
+#[test]
+fn a_first_value_of_a_package_variable_is_reported_until_it_is_run() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main\n\nvar count = 5\n\nvar name string\n\nfunc main() {}\n",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        ["a.gopp:3:13: not supported yet: a first value of a variable of the package"]
+    );
 }
 
 #[test]

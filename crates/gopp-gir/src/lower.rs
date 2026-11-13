@@ -8,6 +8,7 @@
 mod assign;
 mod equal;
 mod expr;
+mod facts;
 mod func;
 mod glue;
 mod map;
@@ -67,6 +68,7 @@ pub(crate) fn lower_counted(
 ) -> (Module, Vec<Diagnostic>, u64) {
     let shared = Shared::new(checked, layout);
     let source: usize = shared.jobs.iter().map(|job| job.source).sum();
+    let known: u64 = shared.jobs.iter().map(|job| job.facts.steps).sum();
     let runs = rayon::current_num_threads().min(source / source_each.max(1));
     // Runs of about as much source each, in the order of the source.
     let mut cut: Vec<&[Job]> = Vec::new();
@@ -96,7 +98,7 @@ pub(crate) fn lower_counted(
         parts.push(shared.glue(asked));
     }
     let mut diagnostics = Vec::new();
-    let mut steps = 0;
+    let mut steps = known;
     for part in &mut parts {
         diagnostics.append(&mut part.diagnostics);
         steps += part.steps;
@@ -138,6 +140,8 @@ pub(crate) struct Job {
     sig: CheckedTypeId,
     /// How many bytes of source it is.
     source: usize,
+    /// Which parameters it only reads, and which variables are reached.
+    facts: facts::Facts,
 }
 
 /// What a function with a body is, for its symbol.
@@ -178,6 +182,11 @@ pub(crate) struct Shared<'a> {
     /// What the checker found in no function: for the glue, which is
     /// lowered from no source.
     no_body: Body,
+    no_facts: facts::Facts,
+    /// For the symbol of each function of the package: which of its
+    /// parameters it only reads, the receiver first. A caller lends its
+    /// arguments to those.
+    pub lent: FxHashMap<String, Vec<bool>>,
 }
 
 /// A function that is called or a variable that is used, as the source
@@ -202,6 +211,9 @@ pub(crate) struct Callee {
     /// How many of the last parameters are places for views that the
     /// results may be.
     pub views: usize,
+    /// Which of the parameters the function only reads: it is lent
+    /// those. Empty for a function whose body is not known here.
+    pub lent: std::rc::Rc<[bool]>,
     pub ret: TypeId,
 }
 
@@ -305,6 +317,8 @@ impl<'a> Shared<'a> {
             methods: FxHashMap::default(),
             locals: FxHashMap::default(),
             no_body: Body::default(),
+            no_facts: facts::Facts::default(),
+            lent: FxHashMap::default(),
         };
         // The `init` functions count in the order of the names of their
         // files, then of the source.
@@ -353,6 +367,17 @@ impl<'a> Shared<'a> {
                     *ordinal += 1;
                 }
             }
+        }
+        // What each function does to its parameters and its variables,
+        // which every caller of it reads.
+        let facts: Vec<_> = (shared.jobs.par_iter())
+            .map(|job| facts::of(&shared, job))
+            .collect();
+        for (job, facts) in shared.jobs.iter_mut().zip(facts) {
+            if !job.symbol.is_empty() {
+                shared.lent.insert(job.symbol.clone(), facts.lent.clone());
+            }
+            job.facts = facts;
         }
         shared
     }
@@ -405,6 +430,7 @@ impl<'a> Shared<'a> {
             receiver,
             sig,
             source,
+            facts: facts::Facts::default(),
         };
         let Some(receiver) = receiver else {
             if text == "init" {
@@ -488,6 +514,19 @@ impl<'a> Shared<'a> {
                     link: Linkage::External,
                     mutable: true,
                 });
+            }
+        }
+        // No function runs the first values of the variables yet: a
+        // variable would silently start as zero.
+        for first in &self.package.init_order {
+            if let Some((tree, _)) = self.files.get(first.file as usize) {
+                let span = tree.exprs[first.value].span;
+                let message = "not supported yet: a first value of a variable of the package";
+                memo.diagnostics.push(Diagnostic::new(
+                    Code::GirUnsupported,
+                    span,
+                    message.to_owned(),
+                ));
             }
         }
         Part {

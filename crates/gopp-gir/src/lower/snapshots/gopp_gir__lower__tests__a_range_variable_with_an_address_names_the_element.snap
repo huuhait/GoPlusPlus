@@ -188,11 +188,6 @@ fn _GPF4mainE5runes(_1: string, _2: []i32) -> ([]i32, string) [go, external] {
   let _8: *[]i32
   let _9: *u8
   let _10: string
-  let _11: *[]i32
-  let _12: *u8
-  let _13: ()
-  let _14: bool
-  let _15: ()
   bb0:
     _3 = const zero: []i32  ; a.gopp:20:2
     _4 = &mut _3  ; a.gopp:20:2
@@ -205,15 +200,6 @@ fn _GPF4mainE5runes(_1: string, _2: []i32) -> ([]i32, string) [go, external] {
     _10 = call const fn @_gopp_string_from_runes(copy _9) -> [return: bb2, unwind: continue]  ; a.gopp:20:2
   bb2:
     _0 = tuple {copy _3, copy _10}  ; a.gopp:20:2
-    _11 = &mut _2  ; a.gopp:20:2
-    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:20:2
-    _13 = call const fn @_GPTdSl(copy _12) -> [return: bb3, unwind: continue]  ; a.gopp:20:2
-  bb3:
-    _14 = ne(copy _1.2, const zero: *u8)  ; a.gopp:20:2
-    switch copy _14 [0: bb5, otherwise: bb4]  ; a.gopp:20:2
-  bb4:
-    _15 = call const fn @_gopp_string_release(copy _1) -> [return: bb5, unwind: continue]  ; a.gopp:20:2
-  bb5:
     return  ; a.gopp:20:2
 }
 
@@ -320,8 +306,6 @@ declare fn _gopp_runes_from_string(_1: *u8, _2: string) -> () [c, external]
 
 declare fn _gopp_string_from_runes(_1: *u8) -> string [c, external]
 
-declare fn _gopp_string_release(_1: string) -> () [c, external]
-
 declare fn _gopp_string_retain(_1: string) -> () [c, external]
 
 declare fn _gopp_map_drop(_1: *gopp.map, _2: *u8) -> () [c, external]
@@ -329,3 +313,5 @@ declare fn _gopp_map_drop(_1: *gopp.map, _2: *u8) -> () [c, external]
 declare fn _gopp_each(_1: *u8, _2: u64, _3: u64, _4: fn "C"(*u8) -> ()) -> () [c, external]
 
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]

@@ -1,0 +1,86 @@
+package main
+
+type table struct {
+	name string
+	rows []int
+	seen map[string]int
+}
+
+var shared []int
+var names map[string][]int
+
+func sum(xs []int) int {
+	total := 0
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func size(t table) int { return len(t.name) + sum(t.rows) + len(t.seen) }
+
+func (t table) first() int { return t.rows[0] }
+
+func depth(xs []int, n int) int {
+	if n == 0 {
+		return sum(xs)
+	}
+	return depth(xs, n-1) + 1
+}
+
+func widen(xs []int) int {
+	xs[0] = 100
+	xs = append(xs, 1)
+	return sum(xs)
+}
+
+func whileShared(xs []int) int {
+	shared = append(shared, 1, 2, 3, 4, 5, 6, 7, 8)
+	shared[0] = -1
+	return xs[0]
+}
+
+func grow(p *[]int) {
+	p = append(p, 1, 2, 3, 4, 5, 6, 7, 8)
+	p[0] = -1
+}
+
+func whileGrown(xs []int, p *[]int) int {
+	grow(p)
+	return xs[0]
+}
+
+func whileNamed(xs []int, key string) int {
+	names[key] = nil
+	delete(names, "a")
+	return xs[0] + len(key)
+}
+
+func longer(a, b string) string {
+	if len(a) > len(b) {
+		return a
+	}
+	return b + "!"
+}
+
+// A function that only reads a parameter is lent the argument: nothing
+// is copied. What the call could change is copied first, so that the
+// function reads what was passed.
+func main() {
+	nums := []int{1, 2, 3}
+	t := table{"t", nums, map[string]int{"k": 1}}
+	println(sum(nums), size(t), t.first(), depth(t.rows, 3), sum([]int{4, 5}))
+	println(widen(nums), nums[0], len(nums))
+
+	shared = []int{7}
+	println(whileShared(shared), shared[0], len(shared))
+	local := []int{8}
+	println(whileGrown(local, &local), local[0], len(local))
+	rows := [][]int{{9}}
+	println(whileGrown(rows[0], &rows[0]), rows[0][0])
+	names["a"] = []int{5}
+	println(whileNamed(names["a"], "a"), len(names))
+
+	word := "long" + "er"
+	println(longer(word, "x"), longer("x", word), longer(word[:2], word[2:]))
+}

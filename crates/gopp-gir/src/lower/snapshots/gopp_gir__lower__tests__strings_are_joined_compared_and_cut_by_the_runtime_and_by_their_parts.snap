@@ -40,10 +40,6 @@ fn _GPF4mainE3ops(_1: string, _2: string, _3: i64, _4: i64) -> (string, bool, u8
   let _31: bool
   let _32: bool
   let _33: ()
-  let _34: bool
-  let _35: ()
-  let _36: bool
-  let _37: ()
   bb0:
     _5 = call const fn @_gopp_string_concat(copy _1, copy _2) -> [return: bb1, unwind: continue]  ; a.gopp:4:2
   bb1:
@@ -102,16 +98,6 @@ fn _GPF4mainE3ops(_1: string, _2: string, _3: i64, _4: i64) -> (string, bool, u8
   bb14:
     _33 = call const fn @_gopp_string_release(copy _6) -> [return: bb15, unwind: continue]  ; a.gopp:10:2
   bb15:
-    _34 = ne(copy _2.2, const zero: *u8)  ; a.gopp:10:2
-    switch copy _34 [0: bb17, otherwise: bb16]  ; a.gopp:10:2
-  bb16:
-    _35 = call const fn @_gopp_string_release(copy _2) -> [return: bb17, unwind: continue]  ; a.gopp:10:2
-  bb17:
-    _36 = ne(copy _1.2, const zero: *u8)  ; a.gopp:10:2
-    switch copy _36 [0: bb19, otherwise: bb18]  ; a.gopp:10:2
-  bb18:
-    _37 = call const fn @_gopp_string_release(copy _1) -> [return: bb19, unwind: continue]  ; a.gopp:10:2
-  bb19:
     storage_dead(_11)  ; a.gopp:10:2
     storage_dead(_6)  ; a.gopp:10:2
     return  ; a.gopp:10:2
@@ -157,8 +143,6 @@ fn _GPF4mainE4ends(_1: string, _2: i32, _3: u64) -> (string, string, string) [go
   let _36: string
   let _37: bool
   let _38: ()
-  let _39: bool
-  let _40: ()
   bb0:
     _4 = copy _1  ; a.gopp:14:2
     _5 = len(_4)  ; a.gopp:14:2
@@ -219,11 +203,6 @@ fn _GPF4mainE4ends(_1: string, _2: i32, _3: u64) -> (string, string, string) [go
   bb14:
     _38 = call const fn @_gopp_string_release(copy _36) -> [return: bb15, unwind: continue]  ; a.gopp:14:2
   bb15:
-    _39 = ne(copy _1.2, const zero: *u8)  ; a.gopp:14:2
-    switch copy _39 [0: bb17, otherwise: bb16]  ; a.gopp:14:2
-  bb16:
-    _40 = call const fn @_gopp_string_release(copy _1) -> [return: bb17, unwind: continue]  ; a.gopp:14:2
-  bb17:
     return  ; a.gopp:14:2
 }
 

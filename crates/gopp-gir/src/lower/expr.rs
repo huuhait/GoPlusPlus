@@ -50,6 +50,56 @@ pub(super) struct PlaceMode {
 }
 
 impl<'a> FuncCx<'a, '_> {
+    /// Whether what the expression names cannot change while a call
+    /// runs: a variable of the function that nothing else reaches, or a
+    /// part of one that is reached through no pointer. Only the
+    /// function can get to such a value, and it is in the call.
+    pub fn quiet(&self, expr: ExprId) -> bool {
+        let types = self.shared.types;
+        let mut at = Shared::unparen(self.tree, expr);
+        loop {
+            let base = match &self.tree.exprs[at].kind {
+                ExprKind::Name(_) => {
+                    return match self.denoted(at) {
+                        Some(Ref::Local(local)) => self.quiet_var(*local),
+                        _ => false,
+                    };
+                }
+                ExprKind::Selector { x, .. } => {
+                    let field = self.body.selections.get(&at).is_some_and(|selection| {
+                        selection.kind == SelectionKind::Field && selection.path.len() == 1
+                    });
+                    if !field {
+                        return false;
+                    }
+                    *x
+                }
+                ExprKind::Index { x, indices } if indices.len() == 1 => *x,
+                _ => return false,
+            };
+            // A part behind a pointer is a part of what something else
+            // may hold too.
+            let held = self
+                .body
+                .types
+                .get(&base)
+                .map(|typed| types.underlying(typed.ty));
+            let inside = held.is_some_and(|held| {
+                matches!(
+                    &*types.get(held),
+                    CheckedType::Struct(_)
+                        | CheckedType::Array { .. }
+                        | CheckedType::Slice(_)
+                        | CheckedType::Map { .. }
+                )
+            });
+            if !inside {
+                return false;
+            }
+            at = Shared::unparen(self.tree, base);
+        }
+    }
+
     /// What a name denotes. The key of a literal that is a name is
     /// kept apart by the checker: only the type of the literal says
     /// that it is no field.
@@ -1131,10 +1181,21 @@ impl FuncCx<'_, '_> {
         };
         let mut given = Vec::with_capacity(called.params.len());
         if let (Some((x, path)), Some(&wanted)) = (receiver, called.params.first()) {
+            // A receiver by value is like an argument: lent to a method
+            // that only reads it, the method's own otherwise.
+            let lent = called.lent.first() == Some(&true);
+            let direct = lent && path.is_empty() && self.quiet(x);
+            let inner = Shared::unparen(self.tree, x);
+            if direct {
+                self.lent.insert(inner);
+            }
             let value = self.receiver(span, x, path, wanted)?;
-            // A receiver by value is the method's own, like an argument.
             let value = self.given(x, wanted, Rvalue::Use(value))?;
-            let value = self.taken(x, wanted, value)?;
+            let value = match lent {
+                true => self.lent_value(x, wanted, value)?,
+                false => self.taken(x, wanted, value)?,
+            };
+            self.lent.remove(&inner);
             let mut value = self.operand_of(value)?;
             if args.iter().any(|&arg| self.has_effects(arg)) {
                 value = self.stable(value)?;
@@ -1146,10 +1207,36 @@ impl FuncCx<'_, '_> {
             .iter()
             .map(|&param| Some(param))
             .collect();
-        // The function owns its parameters: each argument is a value of
-        // its own.
-        for value in self.owned_values(args, &wanted)? {
+        // An argument for a parameter that the function only reads is
+        // lent; any other is a value of its own, which the function
+        // owns.
+        let lent: Vec<bool> = (given.len()..declared)
+            .map(|at| called.lent.get(at) == Some(&true))
+            .collect();
+        // An argument that a call inside another argument cannot change
+        // either is read where it is.
+        let mut direct = Vec::new();
+        for (&arg, _) in args.iter().zip(&lent).filter(|&(_, &lent)| lent) {
+            if self.quiet(arg) {
+                direct.push(Shared::unparen(self.tree, arg));
+            }
+        }
+        self.lent.extend(direct.iter().copied());
+        let values = self.values(args, &wanted)?;
+        for (at, value) in values.into_iter().enumerate() {
+            // One call gives all of them: each is a part of what it gave.
+            let of = args.get(at).or(args.first());
+            let value = match (wanted.get(at).copied().flatten(), of) {
+                (Some(ty), Some(&arg)) if lent.get(at) == Some(&true) => {
+                    self.lent_value(arg, ty, value)?
+                }
+                (Some(ty), Some(&arg)) => self.taken(arg, ty, value)?,
+                _ => value,
+            };
             given.push(self.operand_of(value)?);
+        }
+        for arg in direct {
+            self.lent.remove(&arg);
         }
         // A place for each view that a result may be: one of this
         // frame, or the place that the caller of this function gave.
@@ -1264,6 +1351,10 @@ impl FuncCx<'_, '_> {
                         func: self.function_named(&symbol, sig)?,
                         sig,
                         views: func.params.len() - declared(receiver, checked),
+                        lent: shared.lent.get(&symbol).map_or_else(
+                            || std::rc::Rc::from([]),
+                            |lent| std::rc::Rc::from(&lent[..]),
+                        ),
                         params: func.params.iter().copied().collect(),
                         ret: func.ret,
                     }),
