@@ -1,0 +1,58 @@
+package main
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Animal struct {
+	name string
+	held Res
+}
+
+@Virtual
+func (a *Animal) Sound() string { return "..." }
+
+type Tagged struct{ tag string }
+
+@Virtual
+func (t *Tagged) Tag() string { return t.tag }
+
+@Extends(Animal)
+@Extends(Tagged)
+type Dog struct{ toy Res }
+
+@Override
+func (d *Dog) Sound() string { return "woof" }
+
+func dog(name string) Dog {
+	return Dog{name: name, held: Res{name + ".held"}, tag: "t-" + name, toy: Res{name + ".toy"}}
+}
+
+func speak(a Unique[Animal]) string { return a.name + " " + a.Sound() }
+
+func main() {
+	var a Unique[Animal] = NewUnique(dog("uni"))
+	println(a.Sound(), a.name)
+	b := a
+	println(b.Sound(), b.name, b.held.name)
+	println(speak(move(a)))
+	println("shared")
+	s := NewShared(dog("sha"))
+	var sa Shared[Animal] = s
+	var st Shared[Tagged] = s
+	println(sa.Sound(), st.Tag())
+	w := NewWeak(st)
+	if l := w.Lock(); l != nil {
+		println("alive", l.Tag())
+	}
+	if d, ok := sa.(*Dog); ok {
+		println(d.toy.name)
+	}
+	zoo := []Unique[Animal]{NewUnique(dog("z1")), NewUnique(Animal{name: "z2", held: Res{"z2.held"}})}
+	for i := range zoo {
+		println(zoo[i].Sound())
+	}
+	println("ends")
+}

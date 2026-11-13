@@ -287,6 +287,14 @@ impl<'a> FuncCx<'a, '_> {
             let handle = self.operand_of(value)?;
             return Ok(Rvalue::Cast(CastKind::PtrToPtr, handle, ty));
         }
+        match self.handle_upcast(expr, ty, &value)? {
+            Some(Ok(made)) => return Ok(made),
+            Some(Err(what)) => {
+                let span = self.tree.exprs[expr].span;
+                return Ok(self.placeholder(span, ty, what));
+            }
+            None => {}
+        }
         // A pointer to a value where one to a part of a parent of it
         // fits is the address of that part (EXP-13).
         if let (Type::Ptr(_), Type::Ptr(_)) = (self.kind(own), self.kind(ty)) {
@@ -1951,8 +1959,27 @@ impl<'a> FuncCx<'a, '_> {
         let place = self.place(of, &mut PlaceMode::default())?;
         let handle = self.handle_at(place)?;
         let bytes = self.bytes_ty();
-        self.runtime_call("_gopp_weak_retain", &[bytes], vec![handle.clone()])?;
+        // The counts of a handle of a type with a table are those of
+        // the whole value that it may be a part of.
+        let counted = match self.tabled_handle(of) {
+            true => "_gopp_part_weak_retain",
+            false => "_gopp_weak_retain",
+        };
+        self.runtime_call(counted, &[bytes], vec![handle.clone()])?;
         Ok(Rvalue::Cast(CastKind::PtrToPtr, handle, ty))
+    }
+
+    /// Whether the expression is a `Shared` or a `Weak` of a type with
+    /// a type table, which may hold a child of the type.
+    fn tabled_handle(&self, expr: ExprId) -> bool {
+        let types = self.shared.types;
+        let Some(typed) = self.body.types.get(&expr) else {
+            return false;
+        };
+        match &*types.get(types.underlying(typed.ty)) {
+            CheckedType::Shared(to) | CheckedType::Weak(to) => types.has_table(*to),
+            _ => false,
+        }
     }
 
     /// The `Weak` handle that the call `w.Lock()` asks, if `callee` is
@@ -1974,7 +2001,11 @@ impl<'a> FuncCx<'a, '_> {
         let place = self.place(weak, &mut PlaceMode::default())?;
         let handle = self.handle_at(place)?;
         let bytes = self.bytes_ty();
-        let locked = self.runtime("_gopp_weak_lock", &[bytes], bytes, vec![handle])?;
+        let lock = match self.tabled_handle(weak) {
+            true => "_gopp_part_lock",
+            false => "_gopp_weak_lock",
+        };
+        let locked = self.runtime(lock, &[bytes], bytes, vec![handle])?;
         Ok(Rvalue::Cast(CastKind::PtrToPtr, locked, ty))
     }
 
@@ -2751,11 +2782,15 @@ impl<'a> FuncCx<'a, '_> {
             (Predeclared::Recover, [], _) => return self.recover(expr, ty),
             // The variable gives its value up where it is named.
             (Predeclared::Move, [of], _) => return self.rvalue_as(*of, ty),
+            // The handle is of the type of the value, whatever its place
+            // takes: a handle of a parent is made of it there (EXP-13).
             (Predeclared::NewUnique, [value], _) if self.memo.uniques.contains_key(&ty) => {
+                let ty = self.ty_of(expr);
                 let made = self.on_heap(ty, *value, "_gopp_iface_box")?;
                 return self.fresh(expr, ty, made);
             }
             (Predeclared::NewShared, [value], _) if self.memo.shareds.contains_key(&ty) => {
+                let ty = self.ty_of(expr);
                 let made = self.on_heap(ty, *value, "_gopp_shared_new")?;
                 return self.fresh(expr, ty, made);
             }

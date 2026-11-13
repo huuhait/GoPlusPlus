@@ -531,6 +531,18 @@ impl FuncCx<'_, '_> {
             Ok(how) => how,
             Err(what) => return Ok(Err(what)),
         };
+        // Whether the value is a handle of a type with a table.
+        let types = shared.types;
+        let mut of = types.underlying(ty);
+        while let CheckedType::Option(held) = &*types.get(of) {
+            of = types.underlying(*held);
+        }
+        let tabled = match &*types.get(of) {
+            CheckedType::Unique(to) | CheckedType::Shared(to) | CheckedType::Weak(to) => {
+                types.has_table(*to)
+            }
+            _ => false,
+        };
         let given = Operand::Copy(Place::local(self.b.param(0)));
         let to = self.b.types().ptr(lowered);
         let typed = self
@@ -647,6 +659,32 @@ impl FuncCx<'_, '_> {
                 self.b
                     .switch(Operand::Copy(Place::local(set)), vec![(0, done)], held)?;
                 self.b.switch_to(held);
+                // A handle of a type with a table may hold a child: the
+                // runtime ends or copies the whole value by its table,
+                // and leaves a value without one to this code.
+                if tabled && ends {
+                    let bool = TypeInterner::BOOL;
+                    let args = vec![boxed.clone()];
+                    let plain = self.runtime("_gopp_whole_end", &[bytes], bool, args)?;
+                    let here = self.b.new_block();
+                    self.b.switch(plain, vec![(0, done)], here)?;
+                    self.b.switch_to(here);
+                }
+                if tabled && !ends {
+                    let args = vec![boxed.clone()];
+                    let copy = self.runtime("_gopp_whole_copy", &[bytes], bytes, args)?;
+                    let copy = self.stable(copy)?;
+                    let none = self.zero(bytes);
+                    let made = Rvalue::Binary(crate::BinOp::Ne, copy.clone(), none);
+                    let made = Operand::Copy(Place::local(self.b.assign_temp(made)?));
+                    let [whole, here] = [(); 2].map(|()| self.b.new_block());
+                    self.b.switch(made, vec![(0, here)], whole)?;
+                    self.b.switch_to(whole);
+                    let copy = Rvalue::Cast(CastKind::PtrToPtr, copy, lowered);
+                    self.b.assign(value.clone(), copy)?;
+                    self.b.goto(done)?;
+                    self.b.switch_to(here);
+                }
                 match ends {
                     // The value ends, then its box.
                     true => {
@@ -692,16 +730,29 @@ impl FuncCx<'_, '_> {
                 self.b
                     .switch(Operand::Copy(Place::local(set)), vec![(0, done)], held)?;
                 self.b.switch_to(held);
+                // The counts of a handle of a type with a table are those
+                // of the whole value that it may be a part of.
+                let counts = match tabled {
+                    true => [
+                        "_gopp_part_retain",
+                        "_gopp_part_weak_retain",
+                        "_gopp_part_weak_release",
+                        "_gopp_part_release",
+                    ],
+                    false => [
+                        "_gopp_shared_retain",
+                        "_gopp_weak_retain",
+                        "_gopp_weak_release",
+                        "_gopp_shared_release",
+                    ],
+                };
                 match (matches!(how, Cloned::Weak), ends) {
-                    (false, false) => {
-                        self.runtime_call("_gopp_shared_retain", &[bytes], vec![at])?
-                    }
-                    (true, false) => self.runtime_call("_gopp_weak_retain", &[bytes], vec![at])?,
-                    (true, true) => self.runtime_call("_gopp_weak_release", &[bytes], vec![at])?,
+                    (false, false) => self.runtime_call(counts[0], &[bytes], vec![at])?,
+                    (true, false) => self.runtime_call(counts[1], &[bytes], vec![at])?,
+                    (true, true) => self.runtime_call(counts[2], &[bytes], vec![at])?,
                     (false, true) => {
                         let bool = TypeInterner::BOOL;
-                        let last =
-                            self.runtime("_gopp_shared_release", &[bytes], bool, vec![at.clone()])?;
+                        let last = self.runtime(counts[3], &[bytes], bool, vec![at.clone()])?;
                         let ended = self.b.new_block();
                         self.b.switch(last, vec![(0, done)], ended)?;
                         self.b.switch_to(ended);

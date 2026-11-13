@@ -12,13 +12,16 @@
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::SelectionKind;
-use gopp_sema::types::{Marks, Member, PARENT, Type as CheckedType, TypeId as CheckedTypeId};
+use gopp_sema::types::{
+    CopyRule, Marks, Member, PARENT, Type as CheckedType, TypeId as CheckedTypeId,
+};
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{ExprId, ExprKind};
 use lasso::Spur;
 
 use super::expr::{Called, Code, PlaceMode, Target};
 use super::func::{Built, FuncCx};
+use super::glue::Glue;
 use super::iface::{Looked, Switched};
 use super::{CalleeKey, Made, Memo, Shared};
 use crate::{
@@ -206,10 +209,12 @@ impl FuncCx<'_, '_> {
         Ok(offset)
     }
 
-    /// The record of a type with a table: its name, and the parts of
-    /// its ancestors that a pointer to a value of it may be turned
-    /// into, each by the record of its type and by where it starts.
-    /// The address of the record says the type where the program runs.
+    /// The record of a type with a table: its name, the size of a
+    /// value and the glue that ends it and makes it a copy of its own,
+    /// and the parts of its ancestors that a pointer to a value of it
+    /// may be turned into, each by the record of its type and by where
+    /// it starts. The address of the record says the type where the
+    /// program runs.
     pub(super) fn whole(&mut self, ty: CheckedTypeId) -> Built<Result<GlobalId, &'static str>> {
         let shared = self.shared;
         let entity = Entity::PartTable {
@@ -232,11 +237,34 @@ impl FuncCx<'_, '_> {
         let Operand::Const(name) = self.b.const_str(name.as_bytes()) else {
             return Ok(Err("a name of a type"));
         };
-        let count = Constant {
-            kind: ConstantKind::Int(found.len() as u64 - 1),
+        let int = |value: u64| Constant {
+            kind: ConstantKind::Int(value),
             ty: word,
         };
-        let mut parts = vec![name, count];
+        // No value is of a type that leaves a method open: nothing asks
+        // what ends one.
+        let open = shared.types.is_abstract(ty, shared.names);
+        let size = self.b.types().layout(lowered, shared.layout);
+        let mut parts = vec![name, int(size.map_or(0, |size| size.size))];
+        for kind in [Glue::Drop, Glue::Clone] {
+            let copied = shared.types.copy_rule(ty);
+            let by_bytes = match kind {
+                Glue::Clone => matches!(copied, None | Some(CopyRule::Bytes)),
+                _ => false,
+            };
+            let made = match open || by_bytes || self.flat(lowered) {
+                true => None,
+                false => match self.glue(kind, ty)? {
+                    Ok(glue) => Some(glue),
+                    Err(what) => return Ok(Err(what)),
+                },
+            };
+            parts.push(Constant {
+                kind: made.map_or(ConstantKind::Zero, ConstantKind::Func),
+                ty: self.glue_sig(kind),
+            });
+        }
+        parts.push(int(found.len() as u64 - 1));
         // The type itself comes first in `found`, and has no entry.
         for (way, part) in found.iter().skip(1) {
             self.memo.steps += 1;
@@ -742,6 +770,108 @@ impl FuncCx<'_, '_> {
             part = self.b.field(&part, step)?;
         }
         Ok(Some(Ok(Rvalue::AddrOf(part, Mutability::Mut))))
+    }
+
+    /// A `Unique`, a `Shared` or a `Weak` of a child where the same
+    /// handle of a parent is wanted (EXP-13): the handle as its new
+    /// owner's own, with the address of the part of the parent. `None`
+    /// if the types are not those of such handles.
+    pub(super) fn handle_upcast(
+        &mut self,
+        expr: ExprId,
+        ty: TypeId,
+        value: &Rvalue,
+    ) -> Built<Option<Result<Rvalue, &'static str>>> {
+        let Ok(own) = self.b.rvalue_ty(value) else {
+            return Ok(None);
+        };
+        let kind_of = |memo: &Memo<'_>, ty: TypeId| {
+            let all = [&memo.uniques, &memo.shareds, &memo.weaks];
+            let at = all.iter().position(|handles| handles.contains_key(&ty))?;
+            Some((at, all[at][&ty]))
+        };
+        let (Some((kind, child)), Some((wanted, parent))) =
+            (kind_of(self.memo, own), kind_of(self.memo, ty))
+        else {
+            return Ok(None);
+        };
+        let Some(way) = self.way_to(child, parent).filter(|way| !way.is_empty()) else {
+            return Ok(None);
+        };
+        if kind != wanted {
+            return Ok(None);
+        }
+        let types = self.shared.types;
+        let span = self.tree.exprs[expr].span;
+        let held = self.checked_as(expr, own).and_then(|handle| {
+            match &*types.get(types.underlying(handle)) {
+                CheckedType::Unique(to) | CheckedType::Shared(to) | CheckedType::Weak(to) => {
+                    Some(*to)
+                }
+                _ => None,
+            }
+        });
+        let Some(held) = held else {
+            return Ok(Some(Err("a handle of a value whose type is not known")));
+        };
+        // The type of the part, by the same way through the parents.
+        let (mut of, mut at) = (held, child);
+        for &step in &way {
+            let before = usize::from(self.memo.tabled.contains(&at));
+            let parents = types.parents(of);
+            let Type::Struct(id) = self.kind(at) else {
+                return Ok(Some(Err("a part of what is no struct")));
+            };
+            let part = self
+                .b
+                .types()
+                .struct_fields(id)
+                .and_then(|all| all.get(step as usize));
+            let parent = (step as usize)
+                .checked_sub(before)
+                .and_then(|at| parents.get(at));
+            let (Some(&part), Some(&parent)) = (part, parent) else {
+                return Ok(Some(Err("a part of a parent that the type does not have")));
+            };
+            (of, at) = (parent, part);
+        }
+        let make = [CheckedType::Unique, CheckedType::Shared, CheckedType::Weak][kind];
+        let Ok(handle) = types.handle(make, of) else {
+            return Ok(Some(Err("a handle of this type")));
+        };
+        // The handle is the new owner's own: a copy if the checker says
+        // so, the value itself otherwise.
+        let value = self.given(expr, own, value.clone())?;
+        let value = self.taken(expr, own, value)?;
+        let from = self.operand_of(value)?;
+        let from = self.stable(from)?;
+        let made = self.slot_of(Rvalue::Use(self.zero(ty)))?;
+        // An option of a handle that is unset has no part.
+        let none = self.zero(own);
+        let set = Rvalue::Binary(BinOp::Ne, from.clone(), none);
+        let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
+        let [some, done] = [(); 2].map(|()| self.b.new_block());
+        self.b.switch(set, vec![(0, done)], some)?;
+        self.b.switch_to(some);
+        let to = self.b.types().ptr(child);
+        let whole = self.slot_of(Rvalue::Cast(CastKind::PtrToPtr, from, to))?;
+        let whole = self.b.deref(&whole)?;
+        if let Err(what) = self.set_tables(&whole, held)? {
+            return Ok(Some(Err(what)));
+        }
+        let mut part = whole;
+        for &step in &way {
+            part = self.b.field(&part, step)?;
+        }
+        let part = self.b.assign_temp(Rvalue::AddrOf(part, Mutability::Mut))?;
+        let part = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(Place::local(part)), ty);
+        self.b.assign(made.clone(), part)?;
+        self.b.goto(done)?;
+        self.b.switch_to(done);
+        if let Some(ends) = self.ends_of(Some(handle), span)? {
+            self.own_temp(made.clone(), ends);
+        }
+        Ok(Some(Ok(Rvalue::Use(Operand::Copy(made)))))
     }
 
     /// The body of what a table has for the method `name` of the type

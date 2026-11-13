@@ -3782,12 +3782,24 @@ func main() {
     let part = "    const -16: i64\n    const global @_GPTsN4mainE6SquareB5_\n    \
                 const fn @_GPTtn16_M3TagN4mainE6Square";
     assert_eq!(said("_GPTsN4mainE6SquareN4mainE6Tagged"), part);
-    // The record of the type has its name and the parts of its parents
-    // that a pointer to a value may become, which `t.(*Square)` asks.
-    let record = "    const str#1 \"main.Square\"\n    const 2: u64\n    \
-                  const global @_GPTsN4mainE5ShapeB5_\n    const 0: i64\n    \
-                  const global @_GPTsN4mainE6TaggedB5_\n    const 16: i64";
-    assert_eq!(said("_GPTsN4mainE6SquareB5_"), record);
+    // The record of the type has its name, the size of a value, what
+    // ends and copies one (nothing: it owns nothing), and the parts of
+    // its parents that a pointer to a value may become, which
+    // `t.(*Square)` asks.
+    let record = said("_GPTsN4mainE6SquareB5_");
+    let lines: Vec<&str> = record.lines().map(str::trim).collect();
+    assert_eq!(lines[0], "const str#1 \"main.Square\"", "{record}");
+    assert_eq!(lines[1], "const 40: u64", "{record}");
+    assert!(lines[2].starts_with("const zero"), "{record}");
+    assert!(lines[3].starts_with("const zero"), "{record}");
+    let parts = [
+        "const 2: u64",
+        "const global @_GPTsN4mainE5ShapeB5_",
+        "const 0: i64",
+        "const global @_GPTsN4mainE6TaggedB5_",
+        "const 16: i64",
+    ];
+    assert_eq!(lines[4..], parts, "{record}");
     let body = |name: &str| {
         let start = module.find(&format!("\nfn {name}(")).unwrap();
         &module[start..][..module[start..].find("\n}\n").unwrap()]
