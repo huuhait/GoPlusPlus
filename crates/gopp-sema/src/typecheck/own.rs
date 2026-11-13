@@ -94,12 +94,15 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether `nil` is a value of a place of the type `to`.
+    /// Whether `nil` is a value of a place of the type `to`. It is one
+    /// of a type parameter if it is one of every type that the parameter
+    /// may be.
     pub(super) fn takes_nil(&self, to: TypeId, writes: bool) -> bool {
         self.takes(to, writes).into_iter().any(|to| {
-            self.types.has_nil(to)
-                || self.types.is_unsafe_pointer(to, self.names)
-                || self.types.has_param(to)
+            let has_nil = |this: &Self, ty: TypeId| {
+                this.types.has_nil(ty) || this.types.is_unsafe_pointer(ty, this.names)
+            };
+            self.open(to) || self.all_types(to, has_nil)
         })
     }
 

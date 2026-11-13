@@ -5076,6 +5076,9 @@ func chans[C chan int, D Chans, E chan int | chan string, F chan<- int | <-chan 
         "a.gopp:38:6: cannot use 1.5 (untyped float constant) as N value in assignment",
         "a.gopp:40:6: cannot use 1.5 (untyped float constant) as I value in assignment",
         "a.gopp:41:6: cannot use \"s\" (untyped string constant) as N value in assignment",
+        "a.gopp:42:6: cannot use nil as P value in assignment",
+        "a.gopp:43:6: cannot use nil as N value in assignment",
+        "a.gopp:44:6: cannot use nil as A value in assignment",
         "a.gopp:46:6: cannot use i (variable of type I constrained by ~int) as N value in assignment",
         "a.gopp:47:6: cannot use i (variable of type I constrained by ~int) as int value in assignment",
         "a.gopp:48:6: cannot use n (variable of type N constrained by Num) as int value in assignment",
@@ -5096,6 +5099,11 @@ func chans[C chan int, D Chans, E chan int | chan string, F chan<- int | <-chan 
         "a.gopp:76:4: invalid operation: cannot receive from z (variable of type Z constrained by Empty with empty type set): no specific channel type",
     ];
     assert_eq!(messages("a.gopp", text), expected);
+    // `nil` is a value of a type parameter if it is one of every type
+    // that the parameter may be.
+    let good = "package p\nfunc clear[S ~[]int | ~[]string, M ~map[string]int](s S, m M) (S, M) \
+                {\n\ts = nil\n\tm = nil\n\treturn s, m\n}\n";
+    assert_eq!(messages("a.gopp", good), [] as [&str; 0]);
 }
 
 #[test]
