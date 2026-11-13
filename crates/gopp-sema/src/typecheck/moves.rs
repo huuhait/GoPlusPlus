@@ -1035,16 +1035,10 @@ impl<'a> Walk<'a> {
                 | StmtKind::Switch { .. }
                 | StmtKind::Select { .. }
         );
-        if scoped && self.places.is_some() {
+        let scoped = scoped && self.places.is_some();
+        if scoped {
             self.frames.push(Vec::new());
-            self.stmt_in(stmt);
-            self.ends(self.tree.stmts[stmt].span);
-            return;
         }
-        self.stmt_in(stmt);
-    }
-
-    fn stmt_in(&mut self, stmt: StmtId) {
         self.found.steps += 1;
         let tree = self.tree;
         let label = self.label.take();
@@ -1315,6 +1309,9 @@ impl<'a> Walk<'a> {
                 self.breaks.pop();
                 self.start(after);
             }
+        }
+        if scoped {
+            self.ends(tree.stmts[stmt].span);
         }
     }
 
