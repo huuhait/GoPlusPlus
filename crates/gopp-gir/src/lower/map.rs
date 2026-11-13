@@ -10,7 +10,8 @@ use lasso::Spur;
 
 use super::Shared;
 use super::expr::PlaceMode;
-use super::func::{Built, FuncCx, Target};
+use super::func::{Built, FuncCx, Target, deeper};
+use super::glue::Glue;
 use crate::{
     AggKind, BinOp, CastKind, Constant, ConstantKind, Mutability, Operand, Place, Rvalue, Type,
     TypeId, TypeInterner,
@@ -26,14 +27,19 @@ pub(crate) struct MapOf {
     shape: [u64; 5],
     /// The clone glue of a value whose copy is more than its bytes.
     copy: Option<crate::FuncId>,
+    /// The hash and the equality glue of keys that the runtime cannot
+    /// compare itself.
+    compare: Option<[crate::FuncId; 2]>,
 }
 
 /// How the runtime hashes and compares keys: by their bytes, as
-/// strings, or as floats of 32 or of 64 bits.
+/// strings, as floats of 32 or of 64 bits, or by the glue of their
+/// type.
 const KEY_BYTES: u64 = 0;
 const KEY_STRING: u64 = 1;
 const KEY_FLOAT32: u64 = 2;
 const KEY_FLOAT64: u64 = 3;
+const KEY_GLUE: u64 = 4;
 
 fn slot(local: crate::LocalId) -> Operand {
     Operand::Copy(Place::local(local))
@@ -111,18 +117,26 @@ impl FuncCx<'_, '_> {
         let shared = self.shared;
         let key_ty = self.memo.lower_type(shared, self.b.types(), key)?;
         let value_ty = self.memo.lower_type(shared, self.b.types(), value)?;
+        let mut compare = None;
         let kind = match self.kind(key_ty) {
             Type::String => KEY_STRING,
             Type::Float { bits: 32 } => KEY_FLOAT32,
             Type::Float { .. } => KEY_FLOAT64,
             _ if self.equal_by_bytes(key, key_ty) => KEY_BYTES,
-            _ => return Err("a map whose keys are compared by a function"),
+            _ => {
+                let glue = |this: &mut Self, kind| match this.glue(kind, key) {
+                    Ok(glue) => glue,
+                    Err(_) => Err("a map whose keys cannot be compared"),
+                };
+                compare = Some([glue(self, Glue::Hash)?, glue(self, Glue::Eq)?]);
+                KEY_GLUE
+            }
         };
         // A value whose copy is more than its bytes is copied by its
         // glue when the map is.
         let copy = match self.flat(value_ty) {
             true => None,
-            false => match self.clone_glue(value) {
+            false => match self.glue(Glue::Clone, value) {
                 Ok(Ok(glue)) => Some(glue),
                 Ok(Err(what)) => return Err(what),
                 Err(_) => return Err("a map whose values cannot be copied"),
@@ -143,40 +157,51 @@ impl FuncCx<'_, '_> {
             value: value_ty,
             shape: [key_size, value_size, value_offset, slot, kind],
             copy,
+            compare,
         })
     }
 
-    /// Whether two keys of the type are equal exactly when their bytes
-    /// are: integers, booleans and pointers, with no room between them.
-    fn equal_by_bytes(&mut self, key: CheckedTypeId, lowered: TypeId) -> bool {
+    /// Whether two values of the type are equal exactly when their
+    /// bytes are: integers, booleans and pointers, with no room between
+    /// them and no field without a name, which a comparison leaves out.
+    pub fn equal_by_bytes(&mut self, key: CheckedTypeId, lowered: TypeId) -> bool {
+        if let Some(&known) = self.memo.by_bytes.get(&key) {
+            return known;
+        }
+        let known = deeper(|| self.bytes_say_all(key, lowered));
+        self.memo.by_bytes.insert(key, known);
+        known
+    }
+
+    fn bytes_say_all(&mut self, ty: CheckedTypeId, lowered: TypeId) -> bool {
+        self.memo.steps += 1;
         let shared = self.shared;
         let size = |this: &mut Self, ty: TypeId| {
             let layout = this.b.types().layout(ty, shared.layout);
             layout.map_or(0, |layout| layout.size)
         };
-        let mut filled = 0u64;
-        let mut rest = vec![(key, 1u64)];
-        while let Some((ty, count)) = rest.pop() {
-            self.memo.steps += 1;
-            match &*shared.types.get(shared.types.underlying(ty)) {
-                CheckedType::Array { len, elem } => rest.push((*elem, count.saturating_mul(*len))),
-                CheckedType::Struct(fields) => {
-                    rest.extend(fields.iter().map(|field| (field.ty, count)));
-                }
-                _ => {
-                    let Ok(part) = self.memo.lower_type(shared, self.b.types(), ty) else {
-                        return false;
-                    };
-                    let (Type::Unit | Type::Bool | Type::Int { .. } | Type::Ptr(_)) =
-                        self.kind(part)
+        let lower = |this: &mut Self, part| this.memo.lower_type(shared, this.b.types(), part).ok();
+        match &*shared.types.get(shared.types.underlying(ty)) {
+            CheckedType::Array { elem, .. } => {
+                lower(self, *elem).is_some_and(|of| self.equal_by_bytes(*elem, of))
+            }
+            CheckedType::Struct(fields) => {
+                let mut filled = 0u64;
+                for field in fields.iter() {
+                    let part = lower(self, field.ty).filter(|_| field.name != shared.blank);
+                    let Some(part) = part.filter(|&part| self.equal_by_bytes(field.ty, part))
                     else {
                         return false;
                     };
-                    filled = filled.saturating_add(count.saturating_mul(size(self, part)));
+                    filled += size(self, part);
                 }
+                filled == size(self, lowered)
             }
+            _ => matches!(
+                self.kind(lowered),
+                Type::Unit | Type::Bool | Type::Int { .. } | Type::Ptr(_)
+            ),
         }
-        filled == size(self, lowered)
     }
 
     /// The record of the map type for the runtime, by its address.
@@ -186,12 +211,20 @@ impl FuncCx<'_, '_> {
         for number in of.shape {
             parts.push(self.b.const_int(wide, number)?);
         }
-        let ty = self.glue_sig();
-        let kind = match of.copy {
-            Some(glue) => ConstantKind::Func(glue),
-            None => ConstantKind::Null,
+        // The glue of the values and of the keys, each or null.
+        let [hash, eq] = match of.compare {
+            Some([hash, eq]) => [Some(hash), Some(eq)],
+            None => [None, None],
         };
-        parts.push(Operand::Const(Constant { kind, ty }));
+        for (kind, glue) in [(Glue::Clone, of.copy), (Glue::Hash, hash), (Glue::Eq, eq)] {
+            parts.push(match glue {
+                Some(glue) => self.glue_value(kind, glue),
+                None => {
+                    let (kind, ty) = (ConstantKind::Null, self.glue_sig(kind));
+                    Operand::Const(Constant { kind, ty })
+                }
+            });
+        }
         let record = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;
         self.record(record)
     }

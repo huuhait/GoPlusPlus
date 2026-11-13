@@ -488,24 +488,23 @@ impl FuncCx<'_, '_> {
             }
             return self.b.switch(on, table, otherwise);
         }
+        let by_parts = matches!(self.kind(ty), Type::Struct(_) | Type::Array(..));
         let compared = matches!(
             self.kind(ty),
             Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_) | Type::String
         );
         for &(case, body) in cases {
             let span = self.tree.exprs[case].span;
-            if !compared || self.body.case_operators.contains_key(&case) {
+            if !(compared || by_parts) || self.body.case_operators.contains_key(&case) {
                 self.unsupported(span, "a case that is compared by a function");
                 continue;
             }
             let value = self.operand_as(case, ty)?;
-            let equal = self.arith(
-                span,
-                gopp_syntax::ast::BinaryOp::Eq,
-                on.clone(),
-                value,
-                false,
-            )?;
+            let eq = gopp_syntax::ast::BinaryOp::Eq;
+            let equal = match by_parts {
+                true => self.equal(span, eq, tag, on.clone(), value)?,
+                false => self.arith(span, eq, on.clone(), value, false)?,
+            };
             let equal = self.b.assign_temp(equal)?;
             let next = self.b.new_block();
             let equal = Operand::Copy(Place::local(equal));

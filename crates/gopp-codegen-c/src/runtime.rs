@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 50] = [
+pub const FUNCS: [RuntimeFunc; 56] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -111,6 +111,37 @@ pub const FUNCS: [RuntimeFunc; 50] = [
     returns(
         "_gopp_each",
         "void *first, uint64_t count, uint64_t size, void (*each)(uint8_t *value)",
+    ),
+    gives(
+        "uint64_t",
+        "_gopp_hash_bytes",
+        "const void *first, uint64_t count, uint64_t seed",
+    ),
+    gives(
+        "uint64_t",
+        "_gopp_hash_string",
+        "gopp_string text, uint64_t seed",
+    ),
+    gives(
+        "uint64_t",
+        "_gopp_hash_float",
+        "double value, uint64_t seed",
+    ),
+    gives(
+        "uint64_t",
+        "_gopp_hash_each",
+        "void *first, uint64_t count, uint64_t size, uint64_t seed, \
+         uint64_t (*hash)(uint8_t *value, uint64_t seed)",
+    ),
+    gives(
+        "bool",
+        "_gopp_mem_eq",
+        "const void *a, const void *b, uint64_t size",
+    ),
+    gives(
+        "bool",
+        "_gopp_each_eq",
+        "void *a, void *b, uint64_t count, uint64_t size, bool (*eq)(uint8_t *a, uint8_t *b)",
     ),
     gives(
         "void *",

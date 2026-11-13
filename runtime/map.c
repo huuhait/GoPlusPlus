@@ -23,9 +23,13 @@ typedef struct gopp_mapinfo {
   // Makes the value at the address a copy of its own; null for a value
   // that is copied by its bytes.
   void (*copy_value)(uint8_t *value);
+  // The hash and the equality of keys of the last kind: the glue of
+  // their type.
+  uint64_t (*hash)(uint8_t *key, uint64_t seed);
+  bool (*eq)(uint8_t *a, uint8_t *b);
 } gopp_mapinfo;
 
-enum { KEY_BYTES = 0, KEY_STRING = 1, KEY_FLOAT32 = 2, KEY_FLOAT64 = 3 };
+enum { KEY_BYTES = 0, KEY_STRING = 1, KEY_FLOAT32 = 2, KEY_FLOAT64 = 3, KEY_GLUE = 4 };
 
 typedef struct gopp_map {
   void *allocator;
@@ -72,7 +76,10 @@ static uint64_t random_bits(void) {
   return mixed(state ^ (uintptr_t)&state);
 }
 
-static uint64_t hash_bytes(const uint8_t *bytes, uint64_t count, uint64_t seed) {
+// The hash of `count` bytes. The hash glue of a type gives each part of
+// a value the hash of the parts before it as its seed.
+uint64_t _gopp_hash_bytes(const void *first, uint64_t count, uint64_t seed) {
+  const uint8_t *bytes = first;
   uint64_t hash = seed ^ 0xcbf29ce484222325ull;
   // Eight bytes at a time, then the rest.
   for (; count >= 8; bytes += 8, count -= 8) {
@@ -87,34 +94,66 @@ static uint64_t hash_bytes(const uint8_t *bytes, uint64_t count, uint64_t seed) 
   return mixed(hash ^ rest ^ (count << 56));
 }
 
+uint64_t _gopp_hash_string(gopp_string text, uint64_t seed) {
+  return _gopp_hash_bytes(text.ptr, text.len, seed);
+}
+
+// The two zeros are equal, so they have one hash. What is no number is
+// equal to nothing, itself too: each has a hash of its own, and a key
+// that holds one is never found again.
+uint64_t _gopp_hash_float(double value, uint64_t seed) {
+  if (value == 0) {
+    value = 0;
+  }
+  if (value != value) {
+    return random_bits();
+  }
+  return _gopp_hash_bytes(&value, sizeof value, seed);
+}
+
+// The hash of `count` values of `size` bytes, each by the glue `hash`.
+uint64_t _gopp_hash_each(void *first, uint64_t count, uint64_t size, uint64_t seed,
+                         uint64_t (*hash)(uint8_t *value, uint64_t seed)) {
+  for (uint8_t *at = first; count > 0; count--, at += size) {
+    seed = hash(at, seed);
+  }
+  return seed;
+}
+
+bool _gopp_mem_eq(const void *a, const void *b, uint64_t size) {
+  return size == 0 || __builtin_memcmp(a, b, size) == 0;
+}
+
+// Whether each of `count` values of `size` bytes from `a` on is equal to
+// the one from `b` on, by the glue `eq`.
+bool _gopp_each_eq(void *a, void *b, uint64_t count, uint64_t size,
+                   bool (*eq)(uint8_t *a, uint8_t *b)) {
+  for (uint8_t *first = a, *second = b; count > 0; count--, first += size, second += size) {
+    if (!eq(first, second)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static uint64_t hash_key(const gopp_mapinfo *info, const void *key, uint64_t seed) {
   switch (info->key_kind) {
-  case KEY_STRING: {
-    const gopp_string *text = key;
-    return hash_bytes(text->ptr, text->len, seed);
+  case KEY_STRING:
+    return _gopp_hash_string(*(const gopp_string *)key, seed);
+  case KEY_FLOAT32: {
+    float narrow;
+    __builtin_memcpy(&narrow, key, sizeof narrow);
+    return _gopp_hash_float(narrow, seed);
   }
-  case KEY_FLOAT32:
   case KEY_FLOAT64: {
     double value;
-    if (info->key_kind == KEY_FLOAT32) {
-      float narrow;
-      __builtin_memcpy(&narrow, key, sizeof narrow);
-      value = narrow;
-    } else {
-      __builtin_memcpy(&value, key, sizeof value);
-    }
-    // The two zeros are one key. What is no number is no key that is
-    // found again, so each has a hash of its own.
-    if (value == 0) {
-      value = 0;
-    }
-    if (value != value) {
-      return random_bits();
-    }
-    return hash_bytes((const uint8_t *)&value, sizeof value, seed);
+    __builtin_memcpy(&value, key, sizeof value);
+    return _gopp_hash_float(value, seed);
   }
+  case KEY_GLUE:
+    return info->hash((uint8_t *)key, seed);
   default:
-    return hash_bytes(key, info->key_size, seed);
+    return _gopp_hash_bytes(key, info->key_size, seed);
   }
 }
 
@@ -137,8 +176,10 @@ static bool same_key(const gopp_mapinfo *info, const void *a, const void *b) {
     __builtin_memcpy(&second, b, sizeof second);
     return first == second;
   }
+  case KEY_GLUE:
+    return info->eq((uint8_t *)a, (uint8_t *)b);
   default:
-    return info->key_size == 0 || __builtin_memcmp(a, b, info->key_size) == 0;
+    return _gopp_mem_eq(a, b, info->key_size);
   }
 }
 

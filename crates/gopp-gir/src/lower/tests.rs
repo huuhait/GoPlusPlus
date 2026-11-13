@@ -799,49 +799,67 @@ func all(xs *[]int) (*[]int, int, *[]int) {
 }
 
 #[test]
-fn a_map_whose_keys_need_a_function_is_not_supported_yet() {
-    let (_, messages) = lowered_with(
-        &[(
-            "a.gopp",
-            "package main
+fn structs_and_arrays_are_compared_and_hashed_by_the_glue_of_their_types() {
+    insta::assert_snapshot!(gir("package main
 
-type padded struct {
-	small int8
-	wide  int64
-}
+type point struct{ x, y int32 }
 
 type named struct {
 	name string
-	at   int
+	at   point
+	_    int
+	tags [2]string
+	rate float32
 }
 
-type packed struct {
-	a, b int32
-	c    [2]*int
-	d    bool
-	e    [7]uint8
+func same(a, b named, grid [2][3]int16) bool {
+	if a == b {
+		return grid != [2][3]int16{}
+	}
+	switch a.at {
+	case point{1, 2}, b.at:
+		return true
+	}
+	return false
 }
 
-func maps() int {
-	a := map[padded]int{}
-	b := map[named]int{}
-	c := map[[2]float64]int{}
-	d := map[int][]int{}
-	e := map[int]map[int]int{}
-	f := map[packed]named{}
-	return len(a) + len(b) + len(c) + len(d) + len(e) + len(f)
+func keys(a named) int {
+	seen := map[named]int{a: 1}
+	seen[a]++
+	loose := map[[2]float64]bool{}
+	return len(seen) + len(loose)
+}
+"));
+}
+
+#[test]
+fn values_that_cannot_be_compared_yet_say_so() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.go",
+            "package main
+
+type boxed struct {
+	n int
+	v any
+}
+
+func f(a, b boxed) int {
+	m := map[boxed]int{}
+	if a == b {
+		return len(m)
+	}
+	return 0
 }
 ",
         )],
         usize::MAX,
     );
-    let keys = "not supported yet: a map whose keys are compared by a function";
     assert_eq!(
         messages,
         [
-            format!("a.gopp:21:7: {keys}"),
-            format!("a.gopp:22:7: {keys}"),
-            format!("a.gopp:23:7: {keys}"),
+            "a.go:9:7: not supported yet: a comparison of interface values",
+            "a.go:10:5: not supported yet: a comparison of interface values",
         ]
     );
 }
@@ -940,7 +958,7 @@ func f{at}(n int, p Pair) (int, string) {{
 		l Local
 		p *Pair
 	}}{{l, &p}}
-	if n > {at} {{
+	if n > {at} && p != (Pair{{n, {at}}}) {{
 		m, _ := f{next}(n-1, Pair{{n, int(l.v)}})
 		total += m
 	}}
@@ -1105,37 +1123,6 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
             .collect();
         steps_of(&function(&format!("\tvar xs []int\n{grown}")))
     });
-    // Values in values: slices of slices, a struct of many slices, and
-    // many types that each hold the one before, all copied by glue.
-    assert_near_linear(&sizes, |n| {
-        let deep = format!("{}int", "[]".repeat(n));
-        steps_of(&format!(
-            "package main\n\nfunc f(xs {deep}) int {{\n\tys := xs\n\treturn len(ys)\n}}\n"
-        ))
-    });
-    assert_near_linear(&sizes, |n| {
-        let fields: String = (0..n).map(|at| format!("\tf{at} []int\n")).collect();
-        steps_of(&format!(
-            "package main\n\ntype Wide struct {{\n{fields}}}\n\n\
-             func f(w Wide) int {{\n\tv := w\n\treturn len(v.f0)\n}}\n"
-        ))
-    });
-    assert_near_linear(&sizes, |n| {
-        let chain: String = (1..n)
-            .map(|at| {
-                format!(
-                    "type T{at} struct {{\n\tinner []T{}\n\tm map[int]T{}\n}}\n\n",
-                    at - 1,
-                    at - 1
-                )
-            })
-            .collect();
-        steps_of(&format!(
-            "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
-             func f(t T{}) int {{\n\tu := t\n\treturn len(u.inner)\n}}\n",
-            n - 1
-        ))
-    });
     // Functions that pass the place of a view on to the next, and make
     // views in it.
     assert_near_linear(&sizes, |n| {
@@ -1193,6 +1180,74 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
         steps_of(&function(&format!(
             "\ts := \"text\"\n\tif s{joined} < s {{\n\t\tx++\n\t}}\n"
         )))
+    });
+}
+
+#[test]
+fn the_steps_grow_with_the_glue_of_types() {
+    let sizes = [100, 200, 400, 800];
+    // Values in values: slices of slices, a struct of many slices, and
+    // many types that each hold the one before, all copied by glue.
+    assert_near_linear(&sizes, |n| {
+        let deep = format!("{}int", "[]".repeat(n));
+        steps_of(&format!(
+            "package main\n\nfunc f(xs {deep}) int {{\n\tys := xs\n\treturn len(ys)\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let fields: String = (0..n).map(|at| format!("\tf{at} []int\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype Wide struct {{\n{fields}}}\n\n\
+             func f(w Wide) int {{\n\tv := w\n\treturn len(v.f0)\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (1..n)
+            .map(|at| {
+                format!(
+                    "type T{at} struct {{\n\tinner []T{}\n\tm map[int]T{}\n}}\n\n",
+                    at - 1,
+                    at - 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\ntype T0 struct{{ rows []int }}\n\n{chain}\
+             func f(t T{}) int {{\n\tu := t\n\treturn len(u.inner)\n}}\n",
+            n - 1
+        ))
+    });
+    // Values that are compared and hashed by glue: a chain of types that
+    // each hold the one before, a struct of many strings, and arrays in
+    // arrays.
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (1..n)
+            .map(|at| {
+                format!(
+                    "type T{at} struct {{\n\tname string\n\tinner T{}\n}}\n\n",
+                    at - 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\ntype T0 struct{{ f float64 }}\n\n{chain}\
+             func f(a, b T{last}) int {{\n\tm := map[T{last}]int{{a: 1}}\n\t\
+             if a == b {{\n\t\treturn 1\n\t}}\n\treturn len(m)\n}}\n",
+            last = n - 1
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let fields: String = (0..n).map(|at| format!("\tf{at} string\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype Wide struct {{\n{fields}}}\n\n\
+             func f(a, b Wide) bool {{\n\tm := map[Wide]bool{{}}\n\treturn a == b || m[a]\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let deep = format!("{}string", "[1]".repeat(n));
+        steps_of(&format!(
+            "package main\n\nfunc f(a, b *{deep}) bool {{\n\treturn *a == *b\n}}\n"
+        ))
     });
 }
 

@@ -37,6 +37,10 @@ pub enum Entity<'a> {
     TypeInfo(TypeId),
     /// The function that makes a value of the type a copy of its own.
     CloneGlue(TypeId),
+    /// The function that says whether two values of the type are equal.
+    EqGlue(TypeId),
+    /// The function that gives a value of the type its hash.
+    HashGlue(TypeId),
 }
 
 /// For a type that is declared in a function: the function, and which
@@ -220,6 +224,8 @@ impl<'a> Namer<'a> {
             },
             Entity::TypeInfo(ty) => Node::Wrap(Wrap::TypeInfo, self.ty(ty)?),
             Entity::CloneGlue(ty) => Node::Wrap(Wrap::CloneGlue, self.ty(ty)?),
+            Entity::EqGlue(ty) => Node::Wrap(Wrap::EqGlue, self.ty(ty)?),
+            Entity::HashGlue(ty) => Node::Wrap(Wrap::HashGlue, self.ty(ty)?),
         };
         self.add(node)
     }

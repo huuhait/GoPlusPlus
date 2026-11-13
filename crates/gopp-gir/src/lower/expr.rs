@@ -50,6 +50,14 @@ pub(super) struct PlaceMode {
 }
 
 impl<'a> FuncCx<'a, '_> {
+    /// What a name denotes. The key of a literal that is a name is
+    /// kept apart by the checker: only the type of the literal says
+    /// that it is no field.
+    fn denoted(&self, name: ExprId) -> Option<&'a Ref> {
+        let body = self.body;
+        body.uses.get(&name).or_else(|| body.keys.get(&name))
+    }
+
     /// The object of an imported package that `pkg.Name` names.
     fn member(
         &self,
@@ -325,7 +333,7 @@ impl FuncCx<'_, '_> {
 
     fn name(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
-        let what = match self.body.uses.get(&expr) {
+        let what = match self.denoted(expr) {
             Some(Ref::Local(local)) => match self.body.locals[local.0 as usize].kind {
                 LocalKind::Var | LocalKind::Param | LocalKind::Result | LocalKind::Receiver => {
                     let place = self.place(expr, &mut PlaceMode::default())?;
@@ -392,7 +400,7 @@ impl FuncCx<'_, '_> {
         let span = node.span;
         match &node.kind {
             ExprKind::Paren(inner) => return self.place(*inner, mode),
-            ExprKind::Name(_) => match self.body.uses.get(&expr) {
+            ExprKind::Name(_) => match self.denoted(expr) {
                 Some(Ref::Local(local)) => {
                     let var = self.var(*local)?;
                     let mut place = Place::local(var);
@@ -890,6 +898,17 @@ impl FuncCx<'_, '_> {
             first = self.stable(first)?;
         }
         let second = self.operand_as(y, right)?;
+        // Two structs or two arrays are compared part by part.
+        if let (BinaryOp::Eq | BinaryOp::Ne, Type::Struct(_) | Type::Array(..)) =
+            (op, self.kind(left))
+        {
+            let of = if self.checked_as(x, left).is_some() {
+                x
+            } else {
+                y
+            };
+            return self.equal(span, op, of, first, second);
+        }
         let nonzero = self
             .body
             .types

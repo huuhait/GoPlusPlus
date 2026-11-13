@@ -6,6 +6,7 @@
 //! gives it. So the module is the same for any number of threads.
 
 mod assign;
+mod equal;
 mod expr;
 mod func;
 mod glue;
@@ -89,7 +90,7 @@ pub(crate) fn lower_counted(
     // The glue that the functions ask for is made last, each once.
     let asked: Vec<_> = parts
         .iter_mut()
-        .flat_map(|part| part.clones.drain(..))
+        .flat_map(|part| part.glues.drain(..))
         .collect();
     if !asked.is_empty() {
         parts.push(shared.glue(asked));
@@ -210,9 +211,12 @@ pub(crate) struct Part {
     source: merge::Source,
     diagnostics: Vec<Diagnostic>,
     steps: u64,
-    /// The clone glue that its functions ask for.
-    clones: Vec<(String, CheckedTypeId)>,
+    /// The glue that its functions ask for.
+    glues: Vec<Asked>,
 }
+
+/// Glue that is asked for: its symbol, its kind and its type.
+pub(crate) type Asked = (String, glue::Glue, CheckedTypeId);
 
 /// What a run keeps beside its module: what it has lowered and declared
 /// already.
@@ -224,12 +228,15 @@ pub(crate) struct Memo<'a> {
     pub map: Option<TypeId>,
     /// What is known of each map type that the run has used.
     pub maps: FxHashMap<CheckedTypeId, Result<map::MapOf, &'static str>>,
-    /// The clone glue of each type that the run has asked for, as it is
-    /// declared in the module of the run.
-    pub clone_of: FxHashMap<CheckedTypeId, Result<crate::FuncId, &'static str>>,
-    /// The clone glue that the package is to make: the symbol and the
-    /// type.
-    pub clones: Vec<(String, CheckedTypeId)>,
+    /// Whether two values of a type are equal exactly when their bytes
+    /// are.
+    pub by_bytes: FxHashMap<CheckedTypeId, bool>,
+    /// The glue of each kind and type that the run has asked for, as
+    /// it is declared in the module of the run.
+    pub glue_of: FxHashMap<(glue::Glue, CheckedTypeId), Result<crate::FuncId, &'static str>>,
+    /// The glue that the package is to make: the symbol, the kind and
+    /// the type.
+    pub glues: Vec<Asked>,
     /// The types that are being lowered: one that is met again holds
     /// itself.
     pub open: Vec<CheckedTypeId>,
@@ -257,8 +264,9 @@ impl<'a> Memo<'a> {
             types: FxHashMap::default(),
             map: None,
             maps: FxHashMap::default(),
-            clone_of: FxHashMap::default(),
-            clones: Vec::new(),
+            by_bytes: FxHashMap::default(),
+            glue_of: FxHashMap::default(),
+            glues: Vec::new(),
             open: Vec::new(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),
@@ -483,7 +491,7 @@ impl<'a> Shared<'a> {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,
             steps: memo.steps,
-            clones: Vec::new(),
+            glues: Vec::new(),
         }
     }
 
@@ -512,14 +520,14 @@ impl<'a> Shared<'a> {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,
             steps: memo.steps,
-            clones: memo.clones,
+            glues: memo.glues,
         }
     }
 
     /// The glue that the functions of the package asked for, and what
     /// that glue asks for itself, in a module of its own: each once, in
     /// the order of the symbols.
-    fn glue(&self, mut asked: Vec<(String, CheckedTypeId)>) -> Part {
+    fn glue(&self, mut asked: Vec<Asked>) -> Part {
         let mut module = self.module();
         let locals = |named: NamedId| self.local(named);
         let mut memo = Memo::new(self, &locals);
@@ -527,18 +535,18 @@ impl<'a> Shared<'a> {
         let mut made = rustc_hash::FxHashSet::default();
         let mut at = 0;
         while at < asked.len() {
-            let (symbol, ty) = asked[at].clone();
+            let (symbol, kind, ty) = asked[at].clone();
             at += 1;
             if made.insert(symbol.clone()) {
-                func::lower_glue(self, &mut module, &mut memo, &symbol, ty);
-                asked.append(&mut memo.clones);
+                func::lower_glue(self, &mut module, &mut memo, &symbol, kind, ty);
+                asked.append(&mut memo.glues);
             }
         }
         Part {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,
             steps: memo.steps,
-            clones: Vec::new(),
+            glues: Vec::new(),
         }
     }
 

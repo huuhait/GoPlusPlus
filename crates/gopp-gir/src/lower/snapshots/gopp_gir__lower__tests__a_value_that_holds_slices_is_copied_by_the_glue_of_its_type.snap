@@ -239,13 +239,13 @@ fn _GPTcA2_Si(_1: *u8) -> () [c, linkonce_odr] {
 fn _GPTcHrSi(_1: *u8) -> () [c, linkonce_odr] {
   let _0: ()
   let _2: **gopp.map
-  let _3: (u64, u64, u64, u64, u64, fn "C"(*u8) -> ())
-  let _4: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> ())
+  let _3: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool)
+  let _4: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool)
   let _5: *u8
   let _6: *gopp.map
   bb0:
     _2 = ptr_to_ptr(copy _1) as **gopp.map
-    _3 = tuple {const 24: u64, const 32: u64, const 24: u64, const 56: u64, const 1: u64, const fn @_GPTcSi}
+    _3 = tuple {const 24: u64, const 32: u64, const 24: u64, const 56: u64, const 1: u64, const fn @_GPTcSi, const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool}
     _4 = &mut _3
     _5 = ptr_to_ptr(copy _4) as *u8
     _6 = call const fn @_gopp_map_copy(copy (*_2), copy _5) -> [return: bb1, unwind: continue]

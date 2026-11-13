@@ -9,6 +9,7 @@ use gopp_syntax::ast::{Block, DeclKind, ExprId, ExprKind, File, Param};
 use lasso::Spur;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::glue::Glue;
 use super::{Job, Memo, Shared};
 use crate::{
     BlockId, BuildError, Constant, ConstantKind, FuncBuilder, FuncId, Linkage, LocalId, Module,
@@ -154,20 +155,25 @@ pub(super) fn lower_function<'a>(
     }
 }
 
-/// Adds the clone glue of the type to the module, under its symbol: one
-/// for all the packages that need it.
+/// Adds the glue of a kind for the type to the module, under its
+/// symbol: one for all the packages that need it.
 pub(super) fn lower_glue<'a>(
     shared: &'a Shared<'a>,
     module: &mut Module,
     memo: &mut Memo<'a>,
     symbol: &str,
+    kind: Glue,
     ty: CheckedTypeId,
 ) {
-    let sig = super::glue::sig(&mut module.types);
+    let sig = super::glue::sig(&mut module.types, kind);
     let link = Linkage::LinkOnceOdr;
     let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
         let mut cx = FuncCx::new(shared, &mut *memo, b, 0, &shared.no_body);
-        let made = cx.clone_body(ty)?;
+        let made = match kind {
+            Glue::Clone => cx.clone_body(ty)?,
+            Glue::Eq => cx.eq_body(ty)?,
+            Glue::Hash => cx.hash_body(ty)?,
+        };
         cx.b.drop_unreached();
         cx.b.finish()?;
         Ok(made)

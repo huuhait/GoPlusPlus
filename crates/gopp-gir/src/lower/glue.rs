@@ -1,10 +1,11 @@
 //! The functions that the compiler makes for a type (gir.md §7). The
 //! clone glue of a type makes the value at an address a copy of its
 //! own: a slice gets a buffer of its own, a map a table of its own, and
-//! what holds such values has each of them copied. A function asks for
-//! the glue of a type by its symbol; the glue of a package is made
-//! once, after its functions are lowered, so that the module does not
-//! depend on which function asked first.
+//! what holds such values has each of them copied. The equality and the
+//! hash glue are in `equal.rs`. A function asks for the glue of a type
+//! by its symbol; the glue of a package is made once, after its
+//! functions are lowered, so that the module does not depend on which
+//! function asked first.
 
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::types::{CopyRule, Type as CheckedType, TypeId as CheckedTypeId};
@@ -32,22 +33,47 @@ enum Cloned {
     Held(CheckedTypeId),
 }
 
-/// The type of every clone glue: it takes the address of the value and
-/// is called as a function of C, also by the runtime.
-pub(super) fn sig(types: &mut TypeInterner) -> TypeId {
+/// A function that the compiler makes for a type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum Glue {
+    /// Makes the value at an address a copy of its own.
+    Clone,
+    /// Says whether the values at two addresses are equal.
+    Eq,
+    /// Gives the value at an address its hash, from a seed.
+    Hash,
+}
+
+/// The type of the glue of a kind. Glue takes values by their
+/// addresses and is called as a function of C, also by the runtime.
+pub(super) fn sig(types: &mut TypeInterner, glue: Glue) -> TypeId {
     let byte = types.int(8, false);
     let bytes = types.ptr(byte);
+    let word = types.int(64, false);
+    let (params, ret) = match glue {
+        Glue::Clone => (vec![bytes], TypeInterner::UNIT),
+        Glue::Eq => (vec![bytes, bytes], TypeInterner::BOOL),
+        Glue::Hash => (vec![bytes, word], word),
+    };
     types.intern(Type::Func(FuncType {
-        params: [bytes].into(),
-        ret: TypeInterner::UNIT,
+        params: params.into(),
+        ret,
         has_env: false,
         cc: CallConv::C,
     }))
 }
 
 impl FuncCx<'_, '_> {
-    pub fn glue_sig(&mut self) -> TypeId {
-        sig(self.b.types())
+    pub fn glue_sig(&mut self, glue: Glue) -> TypeId {
+        sig(self.b.types(), glue)
+    }
+
+    /// The function of the glue as a value: what the runtime is given
+    /// to call.
+    pub fn glue_value(&mut self, kind: Glue, glue: FuncId) -> Operand {
+        let ty = self.glue_sig(kind);
+        let kind = ConstantKind::Func(glue);
+        Operand::Const(Constant { kind, ty })
     }
 
     fn cloned(&mut self, ty: CheckedTypeId) -> Result<Cloned, &'static str> {
@@ -82,39 +108,51 @@ impl FuncCx<'_, '_> {
         })
     }
 
-    /// The clone glue of the type, declared in the module of the run
-    /// and asked of the package; or why the type has none yet. Only a
-    /// type whose copy is more than its bytes has one.
-    pub fn clone_glue(&mut self, ty: CheckedTypeId) -> Built<Result<FuncId, &'static str>> {
-        if let Some(&known) = self.memo.clone_of.get(&ty) {
+    /// The parts of the type that have clone glue of their own, which
+    /// the glue of the type calls.
+    fn cloned_parts(&mut self, ty: CheckedTypeId) -> Result<Vec<CheckedTypeId>, &'static str> {
+        Ok(match self.cloned(ty)? {
+            Cloned::Slice(_, each) => each.into_iter().collect(),
+            Cloned::Map => self.map_of_type(ty).map(|_| Vec::new())?,
+            Cloned::Fields(fields) => fields.iter().map(|&(_, part)| part).collect(),
+            Cloned::Elements(_, _, part) | Cloned::Held(part) => vec![part],
+        })
+    }
+
+    /// The glue of a kind for the type, declared in the module of the
+    /// run and asked of the package; or why the type has none yet.
+    pub fn glue(&mut self, kind: Glue, ty: CheckedTypeId) -> Built<Result<FuncId, &'static str>> {
+        if let Some(&known) = self.memo.glue_of.get(&(kind, ty)) {
             return Ok(known);
         }
-        let Ok(symbol) = symbol_of(&mut self.memo.namer, Entity::CloneGlue(ty)) else {
-            let none = Err("a copy of a value of a type without a symbol");
-            self.memo.clone_of.insert(ty, none);
+        let entity = match kind {
+            Glue::Clone => Entity::CloneGlue(ty),
+            Glue::Eq => Entity::EqGlue(ty),
+            Glue::Hash => Entity::HashGlue(ty),
+        };
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
+            let none = Err("a function for a type without a symbol");
+            self.memo.glue_of.insert((kind, ty), none);
             return Ok(none);
         };
-        let sig = self.glue_sig();
+        let sig = self.glue_sig(kind);
         let glue = self.function_named(&symbol, sig)?;
         // Known before its parts are: a type may hold itself in a slice.
-        self.memo.clone_of.insert(ty, Ok(glue));
+        self.memo.glue_of.insert((kind, ty), Ok(glue));
         // The parts that have glue of their own, which this one calls.
-        let parts = match self.cloned(ty) {
-            Ok(Cloned::Slice(_, each)) => Ok(each.into_iter().collect()),
-            Ok(Cloned::Map) => self.map_of_type(ty).map(|_| Vec::new()),
-            Ok(Cloned::Fields(fields)) => Ok(fields.iter().map(|&(_, part)| part).collect()),
-            Ok(Cloned::Elements(_, _, part) | Cloned::Held(part)) => Ok(vec![part]),
-            Err(what) => Err(what),
+        let parts = match kind {
+            Glue::Clone => self.cloned_parts(ty),
+            Glue::Eq | Glue::Hash => self.compared_parts(ty),
         };
         let mut made = parts.as_ref().map(|_| glue).map_err(|&what| what);
         for part in parts.unwrap_or_default() {
-            if let Err(what) = deeper(|| self.clone_glue(part))? {
+            if let Err(what) = deeper(|| self.glue(kind, part))? {
                 made = Err(what);
             }
         }
         match made {
-            Ok(_) => self.memo.clones.push((symbol, ty)),
-            Err(_) => drop(self.memo.clone_of.insert(ty, made)),
+            Ok(_) => self.memo.glues.push((symbol, kind, ty)),
+            Err(_) => drop(self.memo.glue_of.insert((kind, ty), made)),
         }
         Ok(made)
     }
@@ -157,7 +195,7 @@ impl FuncCx<'_, '_> {
     ) -> Built<Rvalue> {
         let copy = self.slot_of(value)?;
         let glue = match checked {
-            Some(checked) => self.clone_glue(checked)?,
+            Some(checked) => self.glue(Glue::Clone, checked)?,
             None => Err("a copy of a value whose type is not known"),
         };
         match glue {
@@ -181,7 +219,7 @@ impl FuncCx<'_, '_> {
         checked: Option<CheckedTypeId>,
     ) -> Built {
         let glue = match checked {
-            Some(checked) => self.clone_glue(checked)?,
+            Some(checked) => self.glue(Glue::Clone, checked)?,
             None => Err("a copy of a value whose type is not known"),
         };
         match glue {
@@ -194,9 +232,7 @@ impl FuncCx<'_, '_> {
     }
 
     fn call_glue(&mut self, glue: FuncId, at: Operand) -> Built {
-        let ty = self.glue_sig();
-        let kind = ConstantKind::Func(glue);
-        let callee = Operand::Const(Constant { kind, ty });
+        let callee = self.glue_value(Glue::Clone, glue);
         let nothing = Place::local(self.b.temp(TypeInterner::UNIT));
         let next = self.b.new_block();
         let unwind = UnwindAction::Continue;
@@ -213,9 +249,8 @@ impl FuncCx<'_, '_> {
         let size = self
             .b
             .const_int(word, layout.map_or(0, |layout| layout.size))?;
-        let sig = self.glue_sig();
-        let kind = ConstantKind::Func(glue);
-        let glue = Operand::Const(Constant { kind, ty: sig });
+        let sig = self.glue_sig(Glue::Clone);
+        let glue = self.glue_value(Glue::Clone, glue);
         let params = [self.bytes_ty(), word, word, sig];
         let args = vec![self.record(first)?, count, size, glue];
         self.runtime_call("_gopp_each", &params, args)
@@ -251,7 +286,7 @@ impl FuncCx<'_, '_> {
                 let params = [self.bytes_ty(), word];
                 self.runtime_call("_gopp_slice_copy", &params, vec![given, size])?;
                 if let Some(part) = each {
-                    let glue = match self.clone_glue(part)? {
+                    let glue = match self.glue(Glue::Clone, part)? {
                         Ok(glue) => glue,
                         Err(what) => return Ok(Err(what)),
                     };
@@ -272,7 +307,7 @@ impl FuncCx<'_, '_> {
             }
             Cloned::Fields(fields) => {
                 for (at, part) in fields {
-                    let glue = match self.clone_glue(part)? {
+                    let glue = match self.glue(Glue::Clone, part)? {
                         Ok(glue) => glue,
                         Err(what) => return Ok(Err(what)),
                     };
@@ -282,7 +317,7 @@ impl FuncCx<'_, '_> {
                 }
             }
             Cloned::Elements(count, of, part) => {
-                let glue = match self.clone_glue(part)? {
+                let glue = match self.glue(Glue::Clone, part)? {
                     Ok(glue) => glue,
                     Err(what) => return Ok(Err(what)),
                 };
@@ -293,7 +328,7 @@ impl FuncCx<'_, '_> {
                 }
             }
             Cloned::Held(part) => {
-                let glue = match self.clone_glue(part)? {
+                let glue = match self.glue(Glue::Clone, part)? {
                     Ok(glue) => glue,
                     Err(what) => return Ok(Err(what)),
                 };
