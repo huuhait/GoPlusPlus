@@ -1731,6 +1731,56 @@ func plain(n int) int {
 }
 
 #[test]
+fn the_error_of_a_deferred_call_with_a_mark_becomes_that_of_its_function_or_a_panic() {
+    let text = "package main
+
+type Problem struct{ code int }
+
+func (p Problem) Error() string { return \"problem\" }
+
+func cleanup!(n int) {
+	if n > 0 {
+		return Problem{n}
+	}
+}
+
+func run!(n int) int {
+	defer cleanup!(n)
+	return n
+}
+
+func must(n int) {
+	defer cleanup!(n)
+}
+";
+    let module = gir(text);
+    let body = |symbol: &str| {
+        let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+        without_cleanup(&module[start..][..module[start..].find("\n}\n").unwrap()])
+    };
+    let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+    // In a function that can fail, the statement keeps the address of
+    // the result with the error after its argument, and the function
+    // of the deferred calls writes the error there if no panic runs
+    // the call and the function has none yet; else the error ends.
+    let run = body("_GPF4mainE3run");
+    assert!(run.contains(": (bool, i64, *gopp.iface)\n"), "{run}");
+    let deferred = body("_GPC0_F4mainE3run");
+    assert_eq!(calls(&deferred, "_gopp_panicking"), 1, "{deferred}");
+    assert_eq!(calls(&deferred, "_gopp_iface_drop"), 1, "{deferred}");
+    assert_eq!(calls(&deferred, "_gopp_panic_must"), 0, "{deferred}");
+    assert!(deferred.contains("(*(*_3).2) = copy "), "{deferred}");
+    // In a function that cannot fail, the error is a panic that names
+    // the call.
+    let deferred = body("_GPC0_F4mainE4must");
+    assert_eq!(calls(&deferred, "_gopp_panic_must"), 1, "{deferred}");
+    assert_eq!(calls(&deferred, "_gopp_panicking"), 0, "{deferred}");
+    assert!(module.contains("\"cleanup(n)\""), "{module}");
+    assert!(module.contains("\"a.gopp:19:8\""), "{module}");
+    insta::assert_snapshot!(module);
+}
+
+#[test]
 fn defer_statements_that_are_not_supported_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(

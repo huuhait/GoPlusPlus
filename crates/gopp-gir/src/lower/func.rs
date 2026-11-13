@@ -117,7 +117,25 @@ pub(super) struct Pending {
     pub slots: Vec<Option<Ends>>,
     /// How what the call gives ends: nothing takes it.
     pub result: Option<Ends>,
+    /// The call has `!`.
+    pub marked: Option<Marked>,
     pub span: SourceSpan,
+}
+
+/// What a deferred call with `!` does with an error (ERR-11a).
+#[derive(Clone)]
+pub(super) struct Marked {
+    /// The function can fail: the error becomes its own if it has none
+    /// and no panic runs the call. The last that the record keeps is
+    /// the address of the result with the error then, which is no
+    /// argument of the call. In any other function the error is a
+    /// panic.
+    pub sets: bool,
+    /// The call as it is written, and where: what a panic names.
+    pub shown: String,
+    pub place: String,
+    /// How the error ends where nothing takes it.
+    pub ends: Option<Ends>,
 }
 
 /// What the runtime knows a function with `defer` statements by, from
@@ -1229,6 +1247,12 @@ impl FuncCx<'_, '_> {
         for slot in 0..pending.slots.len() {
             slots.push(self.b.field(record, slot as u32 + first)?);
         }
+        // The address of the result with the error is no argument.
+        let sets = pending.marked.as_ref().is_some_and(|marked| marked.sets);
+        let error_at = match sets {
+            true => slots.pop(),
+            false => None,
+        };
         let given: Vec<Operand> = slots.iter().cloned().map(Operand::Copy).collect();
         let around = self.b.loc();
         self.at(pending.span);
@@ -1265,7 +1289,9 @@ impl FuncCx<'_, '_> {
                 self.b.switch_to(after);
                 // The address of a temporary that a call wrote is not
                 // taken: its value ends in a slot of its own.
-                if let Some(ends) = pending.result {
+                if let Some(marked) = &pending.marked {
+                    self.deferred_error(pending.span, marked, &result, error_at)?;
+                } else if let Some(ends) = pending.result {
                     let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
                     self.end(slot, ends)?;
                 }
@@ -1281,7 +1307,10 @@ impl FuncCx<'_, '_> {
                 self.b.switch_to(after);
                 if let Some(value) = slots.first() {
                     let (ret, result) = self.call_value(pending.span, value, *code_ty, given)?;
-                    if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT) {
+                    if let Some(marked) = &pending.marked {
+                        self.deferred_error(pending.span, marked, &result, error_at)?;
+                    } else if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT)
+                    {
                         let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
                         self.end(slot, ends)?;
                     }
@@ -1315,6 +1344,59 @@ impl FuncCx<'_, '_> {
         }
         self.close_scope(pending.span)?;
         self.b.set_loc(around);
+        Ok(())
+    }
+
+    /// What a deferred call with `!` gave, in `result`, ends with an
+    /// error or without (ERR-11a). In a function that can fail the
+    /// error becomes that of the function, whose result is at the
+    /// address in `error_at`, if the function has none yet and no panic
+    /// runs the call; in any other function the error is a panic.
+    fn deferred_error(
+        &mut self,
+        span: SourceSpan,
+        marked: &Marked,
+        result: &Place,
+        error_at: Option<Place>,
+    ) -> Built {
+        let error = match self.kind(self.b.place_ty(result)) {
+            Type::Tuple(parts) => self.b.field(result, parts.len() as u32 - 1)?,
+            _ => result.clone(),
+        };
+        let error = self.slot_of(Rvalue::Use(Operand::Copy(error)))?;
+        let bytes = self.bytes_ty();
+        let set = |this: &mut Self, value: &Place| -> Built<Operand> {
+            let first = Operand::Copy(this.b.field(value, 0)?);
+            let set = Rvalue::Binary(crate::BinOp::Ne, first, this.zero(bytes));
+            Ok(Operand::Copy(Place::local(this.b.assign_temp(set)?)))
+        };
+        let failed = set(self, &error)?;
+        let [fails, done] = [(); 2].map(|()| self.b.new_block());
+        self.b.switch(failed, vec![(0, done)], fails)?;
+        self.b.switch_to(fails);
+        self.b.set_cold(fails);
+        match error_at {
+            None => self.must_with(span, &marked.shown, &marked.place, error)?,
+            Some(at) => {
+                let own = self.b.deref(&at)?;
+                let [asks, stores, drops] = [(); 3].map(|()| self.b.new_block());
+                let panics = self.runtime("_gopp_panicking", &[], TypeInterner::BOOL, vec![])?;
+                self.b.switch(panics, vec![(0, asks)], drops)?;
+                self.b.switch_to(asks);
+                let has = set(self, &own)?;
+                self.b.switch(has, vec![(0, stores)], drops)?;
+                self.b.switch_to(stores);
+                self.b
+                    .assign(own, Rvalue::Use(Operand::Copy(error.clone())))?;
+                self.b.goto(done)?;
+                self.b.switch_to(drops);
+                if let Some(ends) = marked.ends {
+                    self.end(error, ends)?;
+                }
+            }
+        }
+        self.b.goto(done)?;
+        self.b.switch_to(done);
         Ok(())
     }
 

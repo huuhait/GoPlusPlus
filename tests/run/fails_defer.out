@@ -1,0 +1,28 @@
+cleanup 
+2 no error
+cleanup late
+2 problem: late
+cleanup late
+0 problem: body
+cleanup second
+cleanup first
+done problem: second
+cleanup 
+named true
+cleanup value
+named problem: value
+cleanup ignored
+in the body
+in must
+cleanup 
+in must
+cleanup fatal
+panic: must: cleanup(what) at fails_defer.gopp:77:8: problem: fatal
+
+goroutine 1 [running]:
+main.must.func0()
+	+0x?
+main.must()
+	+0x?
+main.main()
+	+0x?

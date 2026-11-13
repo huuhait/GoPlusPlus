@@ -1518,6 +1518,39 @@ impl<'a> FuncCx<'a, '_> {
     /// is, and what the error says.
     fn must(&mut self, expr: ExprId, error: Place) -> Built {
         let span = self.tree.exprs[expr].span;
+        let (shown, place) = self.must_texts(expr);
+        self.must_with(span, &shown, &place, error)
+    }
+
+    /// The call without its mark, and its file, line and column.
+    pub(super) fn must_texts(&self, expr: ExprId) -> (String, String) {
+        let span = self.tree.exprs[expr].span;
+        let text = self.source.text();
+        let shown = match &self.tree.exprs[expr].kind {
+            ExprKind::Call { fun, .. } => {
+                let fun = self.tree.exprs[*fun].span;
+                let rest = &text[fun.hi as usize..span.hi as usize];
+                let rest = rest.trim_start().strip_prefix('!').unwrap_or(rest);
+                format!("{}{rest}", &text[span.lo as usize..fun.hi as usize])
+            }
+            _ => String::new(),
+        };
+        let at = self.source.line_col(span.lo);
+        let file = self.source.path().file_name();
+        let file = file.map(|name| name.to_string_lossy().into_owned());
+        let place = format!("{}:{}:{}", file.unwrap_or_default(), at.line, at.column);
+        (shown, place)
+    }
+
+    /// The panic of a call with `!` that is written as `shown` at
+    /// `place`, with the error in the place.
+    pub(super) fn must_with(
+        &mut self,
+        span: SourceSpan,
+        shown: &str,
+        place: &str,
+        error: Place,
+    ) -> Built {
         let around = self.b.loc();
         self.at(span);
         let string = self.b.types().intern(Type::String);
@@ -1541,21 +1574,6 @@ impl<'a> FuncCx<'a, '_> {
         if let Some(ends) = self.ends_of(Some(self.shared.types.error()), span)? {
             self.end(error, ends)?;
         }
-        // The call without its mark, and the file, line and column.
-        let text = self.source.text();
-        let shown = match &self.tree.exprs[expr].kind {
-            ExprKind::Call { fun, .. } => {
-                let fun = self.tree.exprs[*fun].span;
-                let rest = &text[fun.hi as usize..span.hi as usize];
-                let rest = rest.trim_start().strip_prefix('!').unwrap_or(rest);
-                format!("{}{rest}", &text[span.lo as usize..fun.hi as usize])
-            }
-            _ => String::new(),
-        };
-        let at = self.source.line_col(span.lo);
-        let file = self.source.path().file_name();
-        let file = file.map(|name| name.to_string_lossy().into_owned());
-        let place = format!("{}:{}:{}", file.unwrap_or_default(), at.line, at.column);
         let args = vec![
             self.b.const_str(shown.as_bytes()),
             self.b.const_str(place.as_bytes()),
@@ -1649,7 +1667,6 @@ impl<'a> FuncCx<'a, '_> {
         let refused = match () {
             // Its deferred calls would have no function to make them.
             () if !self.defers_calls() => Some("a defer statement in a function without a symbol"),
-            () if *unwrap => Some("a call with `!`"),
             () if !known && prints.is_none() && !other => {
                 Some("a defer statement of this built-in function or of a conversion")
             }
@@ -1673,7 +1690,7 @@ impl<'a> FuncCx<'a, '_> {
             }
             self.empty_moved()?;
             let waits = super::func::Waits::Print(line);
-            return self.waits(at, waits, slots, None, (span, Vec::new()));
+            return self.waits(at, waits, slots, None, (span, Vec::new(), None));
         }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
@@ -1713,9 +1730,15 @@ impl<'a> FuncCx<'a, '_> {
                     slots.push(self.kept(part, ty, value)?);
                 }
                 self.empty_moved()?;
-                let result = self.deferred_result(span, expr, sig.ret)?;
+                let (result, marked) = match *unwrap {
+                    true => (None, self.marked(expr, sig.ret, &mut slots)?),
+                    false => (self.deferred_result(span, expr, sig.ret)?, None),
+                };
+                if *unwrap && marked.is_none() {
+                    return Ok(());
+                }
                 let waits = super::func::Waits::Value(code_ty);
-                return self.waits(at, waits, slots, result, (span, borrowed));
+                return self.waits(at, waits, slots, result, (span, borrowed, marked));
             }
         };
         if called.views > 0 {
@@ -1754,9 +1777,57 @@ impl<'a> FuncCx<'a, '_> {
             }
         }
         self.empty_moved()?;
-        let result = self.deferred_result(span, expr, called.ret)?;
+        let (result, marked) = match *unwrap {
+            true => (None, self.marked(expr, called.ret, &mut slots)?),
+            false => (self.deferred_result(span, expr, called.ret)?, None),
+        };
+        if *unwrap && marked.is_none() {
+            return Ok(());
+        }
         let waits = super::func::Waits::Call(called);
-        self.waits(at, waits, slots, result, (span, borrowed))
+        self.waits(at, waits, slots, result, (span, borrowed, marked))
+    }
+
+    /// What a deferred call with `!` that gives a `ret` does with an
+    /// error (ERR-11a); none, with a report, for a call that is not
+    /// supported. In a function that can fail the statement keeps the
+    /// address of the result with the error, after everything else.
+    fn marked(
+        &mut self,
+        expr: ExprId,
+        ret: TypeId,
+        slots: &mut Vec<(LocalId, Option<super::glue::Ends>)>,
+    ) -> Built<Option<super::func::Marked>> {
+        let span = self.tree.exprs[expr].span;
+        let others = match self.kind(ret) {
+            Type::Tuple(parts) => parts[..parts.len() - 1].to_vec(),
+            _ => Vec::new(),
+        };
+        if others.into_iter().any(|part| !self.flat(part)) {
+            self.unsupported(
+                span,
+                "a deferred call with `!` whose other results are freed",
+            );
+            return Ok(None);
+        }
+        let sets = self.body.bangs.get(&expr) == Some(&gopp_sema::Bang::SetError);
+        if sets {
+            let Some(own) = self.results.last().copied().flatten() else {
+                self.unsupported(span, "a deferred call with `!` in this function");
+                return Ok(None);
+            };
+            let own = self.var_place(own)?;
+            let at = self.b.assign_temp(Rvalue::AddrOf(own, Mutability::Mut))?;
+            slots.push((at, None));
+        }
+        let (shown, place) = self.must_texts(expr);
+        let ends = self.ends_of(Some(self.shared.types.error()), span)?;
+        Ok(Some(super::func::Marked {
+            sets,
+            shown,
+            place,
+            ends,
+        }))
     }
 
     /// `defer` of `panic`, `recover`, and `delete` or `clear` of a map.
@@ -1805,7 +1876,7 @@ impl<'a> FuncCx<'a, '_> {
             _ => Waits::Nothing,
         };
         self.empty_moved()?;
-        self.waits(at, waits, slots, None, (span, borrowed))
+        self.waits(at, waits, slots, None, (span, borrowed, None))
     }
 
     /// The variables that a deferred call has the address of: of its
@@ -1871,7 +1942,11 @@ impl<'a> FuncCx<'a, '_> {
         what: super::func::Waits,
         slots: Vec<(LocalId, Option<super::glue::Ends>)>,
         result: Option<super::glue::Ends>,
-        (span, borrowed): (SourceSpan, Vec<gopp_sema::LocalId>),
+        (span, borrowed, marked): (
+            SourceSpan,
+            Vec<gopp_sema::LocalId>,
+            Option<super::func::Marked>,
+        ),
     ) -> Built {
         // The record owns what the slots had.
         for &(slot, _) in &slots {
@@ -1931,6 +2006,7 @@ impl<'a> FuncCx<'a, '_> {
             ty,
             slots: slots.into_iter().map(|(_, ends)| ends).collect(),
             result,
+            marked,
             span,
         });
         for local in borrowed {

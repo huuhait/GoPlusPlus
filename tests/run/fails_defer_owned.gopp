@@ -1,0 +1,64 @@
+package main
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+func text(n int) string {
+	s := "t"
+	for i := 0; i < n; i++ {
+		s += "x"
+	}
+	return s
+}
+
+func cleanup!(what string) {
+	if what != "t" {
+		return Problem{what: what}
+	}
+}
+
+func run!(n int) string {
+	defer cleanup!(text(n))
+	defer cleanup!(text(n + 1))
+	if n > 2 {
+		return "", Problem{what: text(n)}
+	}
+	return text(n)
+}
+
+func during!(n int) string {
+	defer cleanup!(text(n))
+	held := text(n)
+	if n > 0 {
+		panic(held)
+	}
+	return held
+}
+
+func stopped(n int) (out string) {
+	defer func() {
+		r := recover()
+		out, _ = r.(string)
+	}()
+	out, _ = during(n)
+	return out
+}
+
+func must(n int) int {
+	defer cleanup!(text(n))
+	return n
+}
+
+func safe(n int) (ok bool) {
+	defer func() { ok = recover() == nil }()
+	must(n)
+	return true
+}
+
+func main() {
+	for n := 0; n < 5; n++ {
+		out, err := run(n)
+		println(out, err == nil, stopped(n), safe(n))
+	}
+}

@@ -221,6 +221,7 @@ void _gopp_defer_pop(uint8_t *frame);
 bool _gopp_defer_enter(uint8_t *frame);
 [[noreturn]] void _gopp_panic(uint8_t *value, gopp_string error_key, gopp_string string_key);
 void _gopp_recover(uint8_t *value);
+bool _gopp_panicking();
 void _gopp_panic_aborts();
 bool _gopp_defer_left(uint8_t *frame);
 void _gopp_defer_owns(uint8_t *owned);

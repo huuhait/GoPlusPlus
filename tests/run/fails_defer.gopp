@@ -1,0 +1,98 @@
+// exit: 2
+package main
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+func cleanup!(what string) {
+	println("cleanup", what)
+	if what != "" {
+		return Problem{what: what}
+	}
+}
+
+func count!(n int) int {
+	if n < 0 {
+		return 0, Problem{what: "count"}
+	}
+	return n
+}
+
+// In a function that can fail, the error of a deferred call becomes
+// that of the function if the function has none; its other results
+// stay as they are.
+func run!(n int, last string) int {
+	defer cleanup!(last)
+	if n < 0 {
+		return 0, Problem{what: "body"}
+	}
+	return n * 2
+}
+
+// The call that runs first sets the error; one that runs later does
+// not change it. What a deferred call gives beside the error is not
+// kept.
+func several!(a, b string) string {
+	defer cleanup!(a)
+	defer cleanup!(b)
+	defer count!(1)
+	return "done"
+}
+
+// The same for a function of the Go form, and for a function value.
+func named(what string) (text string, err error) {
+	check := func!(note string) { cleanup!(note) }
+	defer check!(what)
+	return "named", nil
+}
+
+// While a panic runs the deferred calls, their errors are ignored.
+func panics!(what string) int {
+	defer cleanup!(what)
+	panic("in the body")
+}
+
+func stopped(what string) (text string) {
+	defer func() {
+		r := recover()
+		text, _ = r.(string)
+	}()
+	n, err := panics(what)
+	println(n, err == nil)
+	return "not reached"
+}
+
+func show(n int, err error) {
+	if err != nil {
+		println(n, err.Error())
+		return
+	}
+	println(n, "no error")
+}
+
+// In a function that cannot fail, the error of a deferred call is a
+// panic when the function is left.
+func must(what string) {
+	defer cleanup!(what)
+	println("in must")
+}
+
+func main() {
+	n, err := run(1, "")
+	show(n, err)
+	n, err = run(1, "late")
+	show(n, err)
+	n, err = run(-1, "late")
+	show(n, err)
+	text, err := several("first", "second")
+	println(text, err.Error())
+	text, err = named("")
+	println(text, err == nil)
+	text, err = named("value")
+	println(text, err.Error())
+	println(stopped("ignored"))
+	must("")
+	must("fatal")
+	println("not reached")
+}

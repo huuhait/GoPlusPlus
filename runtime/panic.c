@@ -108,6 +108,12 @@ bool _gopp_defer_left(uint8_t *frame) {
 // function reads it there when it goes on.
 void _gopp_defer_owns(uint8_t *owned) { (void)owned; }
 
+// Whether a panic is making the deferred calls of the innermost
+// function that has any, and none of them has stopped it.
+bool _gopp_panicking(void) {
+  return panics != 0 && !panics->recovered && panics->at != 0 && panics->at == frames;
+}
+
 void _gopp_defer_push(uint8_t *frame) {
   gopp_frame *pushed = (gopp_frame *)frame;
   pushed->next = frames;
