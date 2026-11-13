@@ -5,7 +5,9 @@ use lasso::{Spur, ThreadedRodeo};
 use rustc_hash::FxHashMap;
 
 use crate::foreign::TemplateArg;
-use crate::object::{Body, ExprType, ForeignUse, Instance, Local, OperatorUse, Selection};
+use crate::object::{
+    Body, ExprType, ForeignUse, Instance, Local, LocalKind, OperatorUse, Selection,
+};
 use crate::types::{IntoInterface, Marks, Member, TypeId, Types};
 
 /// Where a generic body is written.
@@ -32,13 +34,31 @@ impl Body {
             own_rules,
         } = written;
         let from = &self.type_params[..];
+        // A type that the body declares is a type of its own in each
+        // instance: a new type that is declared as the type of the
+        // generic body is, read with the type arguments.
+        let mut replacing = types.replacing(from, to);
+        let mut declared = Vec::new();
+        for local in &self.locals {
+            let named = match local.kind {
+                LocalKind::Type => types.local_type(local.ty),
+                _ => None,
+            };
+            if let Some(named) = named {
+                declared.push((named, types.local_copy(named)));
+            }
+        }
+        for &(old, new) in &declared {
+            replacing.rename(old, new);
+        }
+        for &(old, new) in &declared {
+            if let Some(declared_as) = types.declared_as(old) {
+                types.set_underlying(new, replacing.ty(declared_as));
+            }
+        }
         // A type stands in many places of a body, and is worked out once.
         let mut made: FxHashMap<TypeId, TypeId> = FxHashMap::default();
-        let mut ty = |ty: TypeId| {
-            *made
-                .entry(ty)
-                .or_insert_with(|| types.substitute(ty, from, to))
-        };
+        let mut ty = |ty: TypeId| *made.entry(ty).or_insert_with(|| replacing.ty(ty));
         let locals = (self.locals.iter())
             .map(|local| Local {
                 name: local.name,

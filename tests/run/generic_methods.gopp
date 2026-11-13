@@ -1,0 +1,68 @@
+package main
+
+type Number interface{ ~int | ~float64 }
+
+type List[T Clone] struct{ items []T }
+
+func (l List[T]) Len() int { return len(l.items) }
+
+func (l *List[T]) Add(x T) { l.items = append(l.items, x) }
+
+// A method with a type parameter of its own, of a generic type.
+func (l *List[T]) Map[U Clone](f func(T) U) List[U] {
+	var out List[U]
+	for i := range l.items {
+		out.Add(f(l.items[i]))
+	}
+	return out
+}
+
+func (l *List[T]) Fold[A Clone](start A, step func(A, T) A) A {
+	acc := start
+	for i := range l.items {
+		acc = step(acc, l.items[i])
+	}
+	return acc
+}
+
+// One that uses another with its own type parameter.
+func (l *List[T]) Sizes[N Number](size func(T) N) N {
+	sizes := l.Map(size)
+	return sizes.Fold[N](0, func(sum N, n N) N { return sum + n })
+}
+
+type Counter struct{ n int }
+
+// And of a type that is not generic.
+func (c *Counter) Add[T Number](x T) int {
+	c.n += int(x)
+	return c.n
+}
+
+func (c Counter) Scaled[T Number](by T) T { return T(c.n) * by }
+
+func through[T Clone, U Clone](l *List[T], f func(T) U) int {
+	mapped := l.Map(f)
+	return mapped.Len()
+}
+
+func digits(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+func main() {
+	var l List[int]
+	l.Add(7)
+	l.Add(42)
+	words := l.Map(digits)
+	halves := l.Map[float64](func(n int) float64 { return float64(n) / 2 })
+	println(words.Len(), words.items[1], halves.items[0], halves.items[1])
+	println(l.Fold("", func(acc string, n int) string { return acc + digits(n) }), l.Fold(0, func(a, n int) int { return a + n }))
+	println(l.Sizes(func(n int) int { return n * 2 }), l.Sizes(func(n int) float64 { return 0.5 }))
+	println(words.Sizes(func(s string) int { return len(s) }), through(&l, digits), through(&words, func(s string) bool { return s == "7" }))
+	var c Counter
+	println(c.Add(2), c.Add(2.5), c.Add[int](1), c.Scaled(2), c.Scaled(0.5))
+}

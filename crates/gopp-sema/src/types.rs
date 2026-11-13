@@ -802,6 +802,41 @@ pub enum IntoInterface {
     Changed,
 }
 
+/// Type parameters that are replaced by types, in many types: a type
+/// that stands in several of them is walked once. Declared types may
+/// be replaced by others too (`rename`).
+pub struct Replacing<'a> {
+    types: &'a Types,
+    from: &'a [TypeId],
+    to: &'a [TypeId],
+    renamed: FxHashMap<NamedId, NamedId>,
+    steps: Cell<u64>,
+    done: RefCell<FxHashMap<(u32, u32), TypeId>>,
+}
+
+impl Replacing<'_> {
+    /// From here on the declared type `old` is replaced by `new`.
+    pub fn rename(&mut self, old: NamedId, new: NamedId) {
+        self.renamed.insert(old, new);
+        self.done.borrow_mut().clear();
+    }
+
+    /// The type with what is replaced in it.
+    pub fn ty(&self, ty: TypeId) -> TypeId {
+        let both = (self.from, self.to);
+        self.types
+            .substitute_counted(ty, both, &self.renamed, &self.steps, &self.done)
+    }
+}
+
+impl Drop for Replacing<'_> {
+    fn drop(&mut self) {
+        self.types
+            .steps
+            .fetch_add(self.steps.get(), Ordering::Relaxed);
+    }
+}
+
 impl Types {
     /// `names` is the interner of the compilation.
     pub fn new(names: &ThreadedRodeo) -> Self {
@@ -1347,20 +1382,75 @@ impl Types {
         if from.is_empty() {
             return ty;
         }
-        let (steps, done) = (Cell::new(0), RefCell::default());
-        let replaced = self.substitute_counted(ty, from, to, &steps, &done);
-        self.steps.fetch_add(steps.get(), Ordering::Relaxed);
-        replaced
+        self.replacing(from, to).ty(ty)
+    }
+
+    /// What replaces the type parameters `from` by the types `to` in
+    /// many types.
+    pub fn replacing<'a>(&'a self, from: &'a [TypeId], to: &'a [TypeId]) -> Replacing<'a> {
+        Replacing {
+            types: self,
+            from,
+            to,
+            renamed: FxHashMap::default(),
+            steps: Cell::new(0),
+            done: RefCell::default(),
+        }
+    }
+
+    /// The type that a function declares and that is no alias and has
+    /// no type parameters, if `ty` is one.
+    pub fn local_type(&self, ty: TypeId) -> Option<NamedId> {
+        let Type::Named { id, args } = &*self.get(ty) else {
+            return None;
+        };
+        let plain = self.read(|inner| {
+            let named = &inner.named[id.0 as usize];
+            named.local && named.alias.is_none() && named.params.is_empty()
+        });
+        (args.is_empty() && plain).then_some(*id)
+    }
+
+    /// A new type with the name and the home of `named`, for a copy of
+    /// a type that a generic function declares: each instance of the
+    /// function has its own. What it is declared as is set next.
+    pub fn local_copy(&self, named: NamedId) -> NamedId {
+        self.write(|inner| {
+            let of = &inner.named[named.0 as usize];
+            let copy = Named {
+                name: of.name,
+                package: of.package,
+                path: of.path,
+                local: of.local,
+                underlying: None,
+                declared_as: None,
+                invalid: of.invalid,
+                params: Vec::new(),
+                methods: Vec::new(),
+                method_index: FxHashMap::default(),
+                operators: Vec::new(),
+                extends: false,
+                parents: Vec::new(),
+                abstract_marked: false,
+                expanding: false,
+                pinned: of.pinned,
+                drops: false,
+                alias: None,
+            };
+            inner.named.push(copy);
+            NamedId(inner.named.len() as u32 - 1)
+        })
     }
 
     /// `done` is what was replaced already, by how it is written: a type
     /// that is met again, as one that stands in several places of an
     /// alias is, is not walked again.
+    /// `renamed` has the declared types that are replaced by others.
     fn substitute_counted(
         &self,
         ty: TypeId,
-        from: &[TypeId],
-        to: &[TypeId],
+        (from, to): (&[TypeId], &[TypeId]),
+        renamed: &FxHashMap<NamedId, NamedId>,
         steps: &Cell<u64>,
         done: &RefCell<FxHashMap<(u32, u32), TypeId>>,
     ) -> TypeId {
@@ -1368,15 +1458,24 @@ impl Types {
         if let Some(&replaced) = done.borrow().get(&ty.spelled()) {
             return replaced;
         }
-        let mut sub = |ty: TypeId| deep(|| self.substitute_counted(ty, from, to, steps, done));
+        let mut sub =
+            |ty: TypeId| deep(|| self.substitute_counted(ty, (from, to), renamed, steps, done));
         let node = self.get(ty);
         // A generic function becomes a plain one also where its type
         // parameters are written nowhere in it.
         let generic = matches!(&*node, Type::Func { type_params, .. } if !type_params.is_empty());
-        if !generic && !self.has_param(ty) {
+        // A declared type that is replaced may be anywhere in a type.
+        if !generic && !self.has_param(ty) && renamed.is_empty() {
             return ty;
         }
         let replaced = match (self.alias_of(ty), &*node) {
+            (None, Type::Named { id, args }) if renamed.contains_key(id) => {
+                let args = args.iter().map(|&arg| sub(arg)).collect();
+                self.intern(Type::Named {
+                    id: renamed[id],
+                    args,
+                })
+            }
             // An alias stays an alias, with its type arguments replaced.
             (Some((named, args)), _) => {
                 let args: Vec<TypeId> = args.into_iter().map(&mut sub).collect();

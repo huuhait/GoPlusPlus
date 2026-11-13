@@ -1785,8 +1785,8 @@ impl<'a> FuncCx<'a, '_> {
     pub(super) fn instance_named(&self, expr: ExprId) -> Option<CalleeKey> {
         let instance = self.body.instances.get(&expr)?;
         let shared = self.shared;
-        let object = shared.generic_named(self.tree, self.body, expr)?;
-        let job = shared.instance(object, &instance.args)?;
+        let (used, _) = shared.generic_named(self.tree, self.body, expr)?;
+        let job = shared.instance(used, &instance.args)?;
         Some(CalleeKey::Instance(job))
     }
 
@@ -1812,6 +1812,15 @@ impl<'a> FuncCx<'a, '_> {
             },
             false => None,
         };
+        // A method with type arguments of its own is called on its
+        // receiver.
+        if instance.is_some()
+            && let Some((_, Some(selector))) = self.shared.generic_named(self.tree, body, callee)
+            && let ExprKind::Selector { x, .. } = self.tree.exprs[selector].kind
+            && let Some(selection) = body.selections.get(&selector)
+        {
+            receiver = Some((x, &selection.path[..]));
+        }
         let key = match (&self.tree.exprs[callee].kind, body.uses.get(&callee)) {
             _ if instance.is_some() => instance,
             (ExprKind::Name(_), Some(Ref::Object(object))) => Some(CalleeKey::Object(*object)),

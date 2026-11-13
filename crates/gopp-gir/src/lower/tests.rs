@@ -2979,12 +2979,115 @@ func main() {
 }
 
 #[test]
-fn generic_code_that_is_not_supported_yet_says_so() {
+fn a_method_with_type_parameters_of_its_own_is_made_for_each_use() {
+    let (lowered, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main
+
+type Alias = int
+
+type Box[T any] struct{ items []T }
+
+func (b *Box[T]) count[U any](more []U) int { return len(b.items) + len(more) }
+
+type Plain struct{ n int }
+
+func (p Plain) add[N ~int | ~float64](x N) N { return N(p.n) + x }
+
+func (p Plain) unused[N any]() int { return p.n }
+
+func main() {
+	var b Box[string]
+	var p Plain
+	println(b.count([]int{1}), b.count[Alias](nil), b.count([]bool{true}))
+	println(p.add(1), p.add(1.5), p.add[int](2))
+}
+",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    // An instance for each list of type arguments of the method
+    // itself, in the order of the uses, each once; the type arguments
+    // of the receiver are in the type of the receiver.
+    let functions: Vec<&str> = (module.lines())
+        .filter(|line| line.starts_with("fn _GPIM"))
+        .map(|line| &line["fn ".len()..line.find('(').unwrap()])
+        .collect();
+    assert_eq!(
+        functions,
+        [
+            "_GPIM5countIN4mainE3BoxrEiE",
+            "_GPIM5countIN4mainE3BoxrEbE",
+            "_GPIM3addN4mainE5PlainiE",
+            "_GPIM3addN4mainE5PlaindE",
+        ]
+    );
+    let odr = module.lines().filter(|line| line.starts_with("fn _GPIM"));
+    assert!(
+        odr.clone()
+            .all(|line| line.ends_with("[go, linkonce_odr] {"))
+    );
+}
+
+#[test]
+fn a_type_that_a_generic_function_declares_is_one_of_each_instance() {
     let text = "package main
 
 func local[T any](n int) int {
 	type pair struct{ a, b []T }
-	var p pair
+	type node struct {
+		of   pair
+		rest []node
+	}
+	var tree node
+	return len(tree.of.a) + len(tree.rest) + n
+}
+
+type Box[T any] struct{ items []T }
+
+func (b *Box[T]) size() int {
+	type sized struct{ items []T }
+	var s sized
+	return len(s.items) + len(b.items)
+}
+
+func main() {
+	var b Box[string]
+	println(local[int](1), local[string](2), b.size())
+}
+";
+    for file in ["a.go", "a.gopp"] {
+        let (lowered, messages) = lowered_with(&[(file, text)], usize::MAX);
+        assert_eq!(messages, [] as [&str; 0], "{file}");
+        let module = print_module(&lowered.module);
+        // The type is declared in the instance, by its symbol too: two
+        // instances have two types.
+        for ty in [
+            "_GPTig0_4pairIF4mainE5localiE",
+            "_GPTig0_4pairIF4mainE5localrE",
+            "_GPTig0_4nodeIF4mainE5localiE",
+            "_GPTig0_4nodeIF4mainE5localrE",
+            "_GPTig0_5sizedM4sizeIN4mainE3BoxrE",
+        ] {
+            assert!(module.contains(ty), "{file}: {ty}\n{module}");
+        }
+    }
+}
+
+#[test]
+fn generic_code_that_is_not_supported_yet_says_so() {
+    // A generic type that a generic function declares.
+    let text = "package main
+
+func local[T any](n int) int {
+	type pair[U any] struct {
+		a []T
+		b []U
+	}
+	var p pair[int]
 	return len(p.a) + n
 }
 
@@ -2992,21 +3095,40 @@ func main() {
 	println(local[int](1))
 }
 ";
-    for file in ["a.go", "a.gopp"] {
+    let said = |file: &str, text: &str| {
         let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
-        let messages: Vec<&str> = messages
-            .iter()
-            .map(|message| message.split_once(": ").map_or("", |(_, what)| what))
-            .collect();
+        let said = messages.iter();
+        let said = said.map(|message| message.split_once(": ").map_or("", |(_, what)| what));
+        said.map(str::to_owned).collect::<Vec<String>>()
+    };
+    for file in ["a.go", "a.gopp"] {
         assert_eq!(
-            messages,
+            said(file, text),
             [
-                "not supported yet: a type that has no symbol",
+                "not supported yet: a type parameter",
                 "not supported yet: the built-in function len",
             ],
             "{file}"
         );
     }
+    // A method with type parameters of its own as a value, which only
+    // a Go++ file has.
+    let text = "package main
+
+type List[T any] struct{ items []T }
+
+func (l *List[T]) Len[U any]() int { return len(l.items) }
+
+func main() {
+	var l List[int]
+	size := l.Len[string]
+	println(size())
+}
+";
+    assert_eq!(
+        said("a.gopp", text),
+        ["not supported yet: a function as a value"]
+    );
 }
 
 /// The body of the function whose symbol starts with `symbol`, with
@@ -3535,7 +3657,10 @@ fn many_functions(count: usize) -> String {
                     return or\n}\n\n\
                     func twice[T Clone](x T) []T { return []T{first([]T{x}, x), x} }\n\n\
                     type Cell[T Clone] struct{ v T }\n\n\
-                    func (c Cell[T]) get() T { return c.v }\n"
+                    func (c Cell[T]) get() T { return c.v }\n\n\
+                    func (c Cell[T]) with[U Clone](u U) int { return len([]U{u, u}) }\n\n\
+                    func wrap[T Clone](x T) int {\n\ttype held struct{ v []T }\n\t\
+                    h := held{v: []T{x}}\n\treturn len(h.v)\n}\n"
         .to_owned();
     for at in 0..count {
         let next = (at + 7) % count;
@@ -3569,6 +3694,7 @@ func f{at}(n int, p Pair) (int, string) {{
 	total += next(n)
 	total += len(twice(l)) + first([]int{{n}}, {at}) + len(twice(p))
 	total += int(Cell[Local]{{v: l}}.get().v) + Cell[Pair]{{v: p}}.get().a
+	total += wrap(l) + wrap(n) + Cell[Pair]{{v: p}}.with(l)
 	go println(total)
 	return total + p.b, \"f{at}\"
 }}

@@ -178,6 +178,36 @@ func Pick[T Number](twice bool) func(T) T {
 	return func(x T) T { return x }
 }
 
+// A type that a generic function declares is a type of its own in each
+// instance.
+func Tagged[T any](x T) any {
+	type tagged struct{ v T }
+	return tagged{x}
+}
+
+func Chain[T any](x T, n int) int {
+	type node struct {
+		value T
+		rest  []node
+	}
+	type pair struct{ a, b []T }
+	tree := node{value: x}
+	for i := 0; i < n; i++ {
+		tree = node{value: x, rest: []node{tree, tree}}
+	}
+	p := pair{a: []T{x}, b: []T{x, tree.value}}
+	var held any = p
+	_, same := held.(pair)
+	if !same {
+		return -1
+	}
+	depth := 0
+	for at := tree; len(at.rest) > 0; at = at.rest[0] {
+		depth++
+	}
+	return depth*10 + len(p.a) + len(p.b)
+}
+
 type Pair[K comparable, V any] struct {
 	key K
 	val V
@@ -214,4 +244,6 @@ func main() {
 	var twice func(float64) float64 = Double
 	println(double(4), twice(1.25), len(Map([]int{1, 2}, Double[int])), Map([]ID{3}, Double)[0])
 	println(Apply(1, double, Double[int], Pick[int](true), Pick[int](false)), Apply("x"), Pick[float64](true)(0.5))
+	one, other, text := Tagged(1), Tagged(2), Tagged("s")
+	println(one == other, one == Tagged(1), one == text, Chain(1, 3), Chain("s", 0))
 }

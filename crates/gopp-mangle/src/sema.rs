@@ -24,6 +24,13 @@ pub enum Entity<'a> {
     /// The method `name` of the declared type `receiver`, or of an
     /// instance of one.
     Method { receiver: TypeId, name: Spur },
+    /// A method with type parameters of its own, with its type
+    /// arguments.
+    MethodInstance {
+        receiver: TypeId,
+        name: Spur,
+        args: &'a [TypeId],
+    },
     /// An `@Operator` method, as its type declares it.
     Operator {
         receiver: TypeId,
@@ -242,6 +249,16 @@ impl<'a> Namer<'a> {
                 }
                 let receiver = self.ty(receiver)?;
                 Node::Method { name, receiver }
+            }
+            Entity::MethodInstance {
+                receiver,
+                name,
+                args,
+            } => {
+                let of = self.entity(Entity::Method { receiver, name })?;
+                let args: Result<Box<[NodeId]>, NoSymbol> =
+                    args.iter().map(|&arg| self.ty(arg)).collect();
+                Node::Instance { of, args: args? }
             }
             Entity::Operator { receiver, method } => {
                 let receiver = self.ty(receiver)?;
