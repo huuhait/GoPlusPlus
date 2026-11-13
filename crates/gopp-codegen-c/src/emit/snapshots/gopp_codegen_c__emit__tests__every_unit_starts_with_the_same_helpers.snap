@@ -68,6 +68,8 @@ void _gopp_print_pointer(uint8_t *value);
 void _gopp_print_space(void);
 void _gopp_print_newline(void);
 gopp_string _gopp_string_concat(gopp_string a, gopp_string b);
+void _gopp_string_retain(gopp_string text);
+void _gopp_string_release(gopp_string text);
 bool _gopp_string_eq(gopp_string a, gopp_string b);
 int64_t _gopp_string_compare(gopp_string a, gopp_string b);
 gopp_string _gopp_string_from_rune(int64_t rune);

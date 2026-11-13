@@ -323,7 +323,16 @@ impl FuncCx<'_, '_> {
                         let made = self.slice_part(expr, ty, *x, bounds, part)?;
                         self.fresh(expr, ty, made)
                     }
-                    _ => self.substring(expr, ty, *x, bounds),
+                    // A part of a string shares its bytes, which are
+                    // counted once more.
+                    _ => {
+                        let part = self.substring(expr, ty, *x, bounds)?;
+                        let part = self.slot_of(part)?;
+                        if let Type::String = self.kind(ty) {
+                            self.counted(part.clone(), true)?;
+                        }
+                        self.fresh(expr, ty, Rvalue::Use(Operand::Copy(part)))
+                    }
                 }
             }
             ExprKind::Assert { .. } => Ok(self.placeholder(span, ty, "a type assertion")),
@@ -915,7 +924,12 @@ impl FuncCx<'_, '_> {
             .types
             .get(&y)
             .is_some_and(|typed| typed.value != Value::Unknown && typed.value.sign() != 0);
-        self.arith(span, op, first, second, nonzero)
+        // Two strings that are joined make a new one.
+        let value = self.arith(span, op, first, second, nonzero)?;
+        match op {
+            BinaryOp::Add => self.fresh(expr, result, value),
+            _ => Ok(value),
+        }
     }
 
     /// `first op second`, with the checks of the operator. `nonzero`
@@ -1184,10 +1198,10 @@ impl FuncCx<'_, '_> {
             {
                 for (at, (&checked, &part)) in checked.iter().zip(parts.iter()).enumerate() {
                     if !self.flat(part)
-                        && let Some(glue) = self.drop_glue(Some(checked), span)?
+                        && let Some(ends) = self.ends_of(Some(checked), span)?
                     {
                         let part = self.b.field(&result, at as u32)?;
-                        self.own_temp(part, glue);
+                        self.own_temp(part, ends);
                     }
                 }
                 Ok(Rvalue::Use(Operand::Copy(result)))
@@ -1512,10 +1526,12 @@ impl FuncCx<'_, '_> {
                 return self.fresh(expr, to, made);
             }
             (Type::Slice(of), Type::String) if of == byte => {
-                return self.text_of_slice("_gopp_string_from_bytes", to, given);
+                let made = self.text_of_slice("_gopp_string_from_bytes", to, given)?;
+                return self.fresh(expr, to, made);
             }
             (Type::Slice(of), Type::String) if of == rune => {
-                return self.text_of_slice("_gopp_string_from_runes", to, given);
+                let made = self.text_of_slice("_gopp_string_from_runes", to, given)?;
+                return self.fresh(expr, to, made);
             }
             // `string(r)`: the text of one code point.
             (Type::Int { signed, .. }, Type::String) => {
@@ -1538,7 +1554,7 @@ impl FuncCx<'_, '_> {
                     }
                 };
                 let text = self.runtime("_gopp_string_from_rune", &[wide], to, vec![rune])?;
-                return Ok(Rvalue::Use(text));
+                return self.fresh(expr, to, Rvalue::Use(text));
             }
             (Type::Int { .. }, Type::Int { .. }) => CastKind::IntToInt,
             (Type::Int { .. }, Type::Float { .. }) => CastKind::IntToFloat,

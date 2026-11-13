@@ -9,7 +9,7 @@ use gopp_syntax::ast::{ExprId, ExprKind, UnaryOp};
 
 use super::Shared;
 use super::expr::PlaceMode;
-use super::func::{Built, FuncCx};
+use super::func::{Built, FuncCx, deeper};
 use super::glue::Glue;
 use crate::{
     AggKind, AssertKind, BinOp, CastKind, LocalId, LocalKind, Mutability, Operand, Place, Rvalue,
@@ -32,26 +32,34 @@ fn slot(local: LocalId) -> Operand {
 }
 
 impl FuncCx<'_, '_> {
-    /// Whether a value of the type is copied by its bytes for now: no
-    /// slice and no map is in it, behind no pointer. A string is: its
-    /// bytes are shared, and no count is kept yet.
+    /// Whether a value of the type is copied by its bytes and owns
+    /// nothing that is freed: no string, no slice and no map is in it,
+    /// behind no pointer.
     pub fn flat(&mut self, ty: TypeId) -> bool {
-        let mut rest = vec![ty];
-        while let Some(ty) = rest.pop() {
-            self.memo.steps += 1;
-            match self.kind(ty) {
-                Type::Slice(_) => return false,
-                Type::Ptr(_) if self.is_map(ty) => return false,
-                Type::Array(of, _) | Type::Option(of) => rest.push(of),
-                Type::Tuple(parts) => rest.extend(parts.iter()),
-                Type::Struct(id) => {
-                    let fields = self.b.types().struct_fields(id).unwrap_or_default();
-                    rest.extend(fields.to_vec());
-                }
-                _ => {}
-            }
+        if let Some(&known) = self.memo.flat.get(&ty) {
+            return known;
         }
-        true
+        let known = deeper(|| self.owns_nothing(ty));
+        self.memo.flat.insert(ty, known);
+        known
+    }
+
+    /// Each type is asked once: a type that holds many others asks them,
+    /// and does not walk down to their parts itself.
+    fn owns_nothing(&mut self, ty: TypeId) -> bool {
+        self.memo.steps += 1;
+        let parts = match self.kind(ty) {
+            Type::String | Type::Slice(_) => return false,
+            Type::Ptr(_) => return !self.is_map(ty),
+            Type::Array(of, _) | Type::Option(of) => vec![of],
+            Type::Tuple(parts) => parts.to_vec(),
+            Type::Struct(id) => {
+                let fields = self.b.types().struct_fields(id).unwrap_or_default();
+                fields.to_vec()
+            }
+            _ => return true,
+        };
+        parts.into_iter().all(|part| self.flat(part))
     }
 
     /// Whether Go finds a pointer in a value of the type: its
@@ -166,6 +174,13 @@ impl FuncCx<'_, '_> {
                 Rvalue::Use(Operand::Copy(self.slot_of(value)?))
             }
             _ => match self.kind(ty) {
+                // A copy of a string shares its bytes, which are
+                // counted once more.
+                Type::String => {
+                    let copy = self.slot_of(value)?;
+                    self.counted(copy.clone(), true)?;
+                    Rvalue::Use(Operand::Copy(copy))
+                }
                 Type::Slice(of) if self.flat(of) => {
                     let copy = self.slot_of(value)?;
                     let [size, _] = self.element_facts(of)?;
@@ -203,8 +218,8 @@ impl FuncCx<'_, '_> {
         };
         if !self.owns_temp(&place) {
             let checked = self.checked_as(expr, ty);
-            if let Some(glue) = self.drop_glue(checked, self.tree.exprs[expr].span)? {
-                self.own_temp(place.clone(), glue);
+            if let Some(ends) = self.ends_of(checked, self.tree.exprs[expr].span)? {
+                self.own_temp(place.clone(), ends);
             }
         }
         Ok(Rvalue::Use(Operand::Copy(place)))
@@ -361,7 +376,10 @@ impl FuncCx<'_, '_> {
             let from = self.header(*from, span)?;
             // Where the elements that come start, and how many come: for
             // elements whose copy is more than their bytes.
-            let lens = match self.flat(of) {
+            // What is appended may be of a type that is not known,
+            // which was said: nothing of it is copied then.
+            let known = matches!(self.kind(self.b.place_ty(&from)), Type::Slice(_));
+            let lens = match self.flat(of) || !known {
                 true => None,
                 false => {
                     let before = self.b.assign_temp(Rvalue::Len(own.clone()))?;

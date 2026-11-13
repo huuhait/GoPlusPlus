@@ -862,6 +862,31 @@ func keys(a named) int {
 }
 
 #[test]
+fn what_is_appended_from_a_value_of_no_known_type_is_no_fault() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.go",
+            "package main
+
+import \"other\"
+
+func f(names []string) []string {
+	return append(names, other.More()...)
+}
+",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        [
+            "a.go:6:23: not supported yet: a call of what is not known",
+            "a.go:6:9: not supported yet: the end of a value whose type is not known",
+        ]
+    );
+}
+
+#[test]
 fn values_that_cannot_be_compared_yet_say_so() {
     let (_, messages) = lowered_with(
         &[(
@@ -1270,6 +1295,11 @@ fn the_steps_grow_with_the_glue_of_types() {
              func f() int {{\n\treturn many({args})\n}}\n"
         ))
     });
+}
+
+#[test]
+fn the_steps_grow_with_values_compared_by_glue() {
+    let sizes = [100, 200, 400, 800];
     // Values that are compared and hashed by glue: a chain of types that
     // each hold the one before, a struct of many strings, and arrays in
     // arrays.

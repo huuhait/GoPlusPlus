@@ -231,6 +231,8 @@ pub(crate) struct Memo<'a> {
     /// Whether two values of a type are equal exactly when their bytes
     /// are.
     pub by_bytes: FxHashMap<CheckedTypeId, bool>,
+    /// Whether a value of a type of the module owns nothing.
+    pub flat: FxHashMap<TypeId, bool>,
     /// The glue of each kind and type that the run has asked for, as
     /// it is declared in the module of the run.
     pub glue_of: FxHashMap<(glue::Glue, CheckedTypeId), Result<crate::FuncId, &'static str>>,
@@ -265,6 +267,7 @@ impl<'a> Memo<'a> {
             map: None,
             maps: FxHashMap::default(),
             by_bytes: FxHashMap::default(),
+            flat: FxHashMap::default(),
             glue_of: FxHashMap::default(),
             glues: Vec::new(),
             open: Vec::new(),

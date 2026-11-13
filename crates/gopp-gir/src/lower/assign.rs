@@ -9,8 +9,9 @@ use gopp_syntax::ast::{AssignOp, BinaryOp, ExprId, ExprKind};
 use super::Shared;
 use super::expr::{Check, PlaceMode};
 use super::func::{Built, FuncCx};
+use super::glue::Ends;
 use super::map::Way;
-use crate::{CastKind, Constant, ConstantKind, FuncId, Operand, Place, Rvalue, Type, TypeId};
+use crate::{CastKind, Constant, ConstantKind, Operand, Place, Rvalue, Type, TypeId};
 
 /// What one expression on the left of an assignment takes a value for.
 enum Dest {
@@ -20,7 +21,7 @@ enum Dest {
     New(CheckedLocalId, TypeId),
     /// A place, the checks that it needs before it is written, and the
     /// drop glue for the value that it has, if that holds what is freed.
-    Place(Place, Vec<Check>, Option<FuncId>),
+    Place(Place, Vec<Check>, Option<Ends>),
     /// `m[k]`, `m[a][b]`: the place that holds the outermost map, and
     /// each map on the way with its key by its address.
     Entry(Place, Vec<Check>, Way),
@@ -96,15 +97,14 @@ impl FuncCx<'_, '_> {
                     self.checked(check)?;
                 }
                 let old = way.last().and_then(|(of, _)| of.drop);
-                (self.entry_at(map, &way)?, old)
+                (self.entry_at(map, &way)?, old.map(Ends::Glue))
             }
         };
         // The value that the place has ends before the new one is
         // there.
         let (place, old) = place;
-        if let Some(glue) = old {
-            let at = self.record(place.clone())?;
-            self.call_glue(glue, at)?;
+        if let Some(ends) = old {
+            self.end(place.clone(), ends)?;
         }
         self.store(place, value)
     }
@@ -229,7 +229,7 @@ impl FuncCx<'_, '_> {
             true => None,
             false => {
                 let checked = self.checked_as(left, ty);
-                self.drop_glue(checked, node.span)?
+                self.ends_of(checked, node.span)?
             }
         };
         Ok(Dest::Place(place, mode.later.unwrap_or_default(), old))
@@ -265,8 +265,9 @@ impl FuncCx<'_, '_> {
             }
             let (second, nonzero) = self.second(op, y, last.value)?;
             let value = self.arith(span, op, first, second, nonzero)?;
+            let value = self.stored(value)?;
             let entry = self.entry_at(map, &way)?;
-            return self.b.assign(entry, value);
+            return self.put_over(entry, value);
         }
         let mut place = self.place(x, &mut mode)?;
         if self.body.writes_through.contains(&inner) {
@@ -279,6 +280,27 @@ impl FuncCx<'_, '_> {
         }
         let (second, nonzero) = self.second(op, y, ty)?;
         let value = self.arith(span, op, first, second, nonzero)?;
+        let value = self.stored(value)?;
+        self.put_over(place, value)
+    }
+
+    /// The value of `x op= y` before it is stored: a string that was
+    /// joined is in a slot, since the old one ends first.
+    fn stored(&mut self, value: Rvalue) -> Built<Rvalue> {
+        let ty = self.b.rvalue_ty(&value)?;
+        match self.flat(ty) {
+            true => Ok(value),
+            false => Ok(Rvalue::Use(self.operand_of(value)?)),
+        }
+    }
+
+    /// `place = value` for `x op= y`: a string that the place has ends,
+    /// after the new one was made of it.
+    fn put_over(&mut self, place: Place, value: Rvalue) -> Built {
+        self.empty_moved()?;
+        if let Type::String = self.kind(self.b.place_ty(&place)) {
+            self.end(place.clone(), Ends::Text)?;
+        }
         self.b.assign(place, value)
     }
 

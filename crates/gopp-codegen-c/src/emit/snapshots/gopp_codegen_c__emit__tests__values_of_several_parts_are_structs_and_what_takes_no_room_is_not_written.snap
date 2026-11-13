@@ -12,7 +12,9 @@ typedef struct T18 T18; /* [2][2]f32 */
 typedef GOPP_CALL T5 (*T6)(T3); /* fn(_GPTiN4mainE5Point) -> (i64, _GPTiN4mainE5Point) */
 typedef GOPP_CALL void (*T12)(T8 *, int8_t, int64_t); /* fn(*_GPTiN4mainE3Box, i8, i64) -> _GPTiN4mainE7Nothing */
 typedef GOPP_CALL T8 (*T19)(T8 *, T18); /* fn(*_GPTiN4mainE3Box, [2][2]f32) -> _GPTiN4mainE3Box */
-typedef GOPP_CALL void (*T21)(void); /* fn() -> () */
+typedef void (*T23)(uint8_t *); /* fn "C"(*u8) -> () */
+typedef GOPP_CALL void (*T24)(void); /* fn() -> () */
+typedef void (*T26)(gopp_string); /* fn "C"(string) -> () */
 struct T3 {
   int64_t f0;
   int64_t f1;
@@ -52,6 +54,8 @@ GOPP_CALL void gopp_f1(T8 * _1, int8_t _2, int64_t _3) __asm__("_GPM4growN4mainE
 GOPP_CALL T8 gopp_f2(T8 * _1, T18 _2) __asm__("_GPF4mainE5build");
 GOPP_CALL void gopp_f3(void) __asm__("_GPK4mainE0_");
 GOPP_CALL void gopp_f4(void) __asm__("_GPF4mainE4main");
+__attribute__((weak)) void gopp_f5(uint8_t * _1) __asm__("_GPTdN4mainE3Box");
+__attribute__((weak)) void gopp_f6(uint8_t * _1) __asm__("_GPTdr");
 
 GOPP_CALL T5 gopp_f0(T3 _1) {
   [[maybe_unused]] T5 _0;
@@ -89,12 +93,16 @@ GOPP_CALL T8 gopp_f2(T8 * _1, T18 _2) {
   [[maybe_unused]] T3 _6;
   [[maybe_unused]] T11 _7;
   [[maybe_unused]] T8 _8;
-  [[maybe_unused]] T8 * _9;
-  [[maybe_unused]] int8_t _10;
-  [[maybe_unused]] uint64_t _11;
-  [[maybe_unused]] int64_t _12;
-  [[maybe_unused]] void * _14;
+  [[maybe_unused]] T8 _9;
+  [[maybe_unused]] T8 * _10;
+  [[maybe_unused]] int8_t _11;
+  [[maybe_unused]] uint64_t _12;
+  [[maybe_unused]] int64_t _13;
   [[maybe_unused]] void * _15;
+  [[maybe_unused]] void * _16;
+  [[maybe_unused]] T8 _17;
+  [[maybe_unused]] T8 * _18;
+  [[maybe_unused]] uint8_t * _19;
   _3 = ((T3){1ll, 2ll});
   _4 = gopp_f0(_3);
   goto bb1;
@@ -103,17 +111,25 @@ bb1:
   _6 = _4.f1;
   _7 = ((T11){{((int8_t)1), ((int8_t)0), ((int8_t)3)}});
   _8 = ((T8){_6, _7, ((gopp_string){(uint8_t *)gopp_s0, 4, 0}), _1});
-  _9 = (&_8);
-  _10 = ((int8_t)_5);
-  _11 = _8.f2.len;
-  _12 = ((int64_t)_11);
-  gopp_f1(_9, _10, _12);
+  _9 = _8;
+  _10 = (&_9);
+  _11 = ((int8_t)_5);
+  _12 = _9.f2.len;
+  _13 = ((int64_t)_12);
+  gopp_f1(_10, _11, _13);
   goto bb2;
 bb2:
-  _14 = ((void *)&gopp_empty);
   _15 = ((void *)&gopp_empty);
+  _16 = ((void *)&gopp_empty);
   _2.a[1].a[0] = _2.a[0].a[1];
-  _0 = _8;
+  _17 = _9;
+  _9 = ((T8){});
+  _0 = _17;
+  _18 = (&_9);
+  _19 = ((uint8_t *)_18);
+  gopp_f5(_19);
+  goto bb3;
+bb3:
   return _0;
 }
 
@@ -128,14 +144,43 @@ GOPP_CALL void gopp_f4(void) {
   return;
 }
 
+__attribute__((weak)) void gopp_f5(uint8_t * _1) {
+  [[maybe_unused]] T8 * _2;
+  [[maybe_unused]] gopp_string * _3;
+  [[maybe_unused]] uint8_t * _4;
+  _2 = ((T8 *)_1);
+  _3 = (&(*_2).f2);
+  _4 = ((uint8_t *)_3);
+  gopp_f6(_4);
+  goto bb1;
+bb1:
+  return;
+}
+
+__attribute__((weak)) void gopp_f6(uint8_t * _1) {
+  [[maybe_unused]] gopp_string * _2;
+  [[maybe_unused]] bool _3;
+  _2 = ((gopp_string *)_1);
+  _3 = ((*_2).backing != ((uint8_t *)0));
+  if (!_3) goto bb2;
+  goto bb1;
+bb1:
+  _gopp_string_release((*_2));
+  goto bb2;
+bb2:
+  return;
+}
+
 static const gopp_func_name gopp_funcs[] = {
   {(void *)gopp_f0, "main.pair"},
   {(void *)gopp_f1, "main.Box.grow"},
   {(void *)gopp_f2, "main.build"},
   {(void *)gopp_f3, "main.init.0"},
   {(void *)gopp_f4, "main.main"},
+  {(void *)gopp_f5, "drop glue for main.Box"},
+  {(void *)gopp_f6, "drop glue for string"},
 };
-static gopp_func_table gopp_table = {gopp_funcs, 5, 0};
+static gopp_func_table gopp_table = {gopp_funcs, 7, 0};
 
 int main(int argc, char **argv) {
   _gopp_rt_init(argc, argv);

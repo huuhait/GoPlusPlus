@@ -43,6 +43,8 @@ fn _GPF4mainE4show(_1: i8, _2: u64, _3: f32, _4: bool, _5: string) -> () [go, ex
   let _26: ()
   let _27: ()
   let _28: ()
+  let _29: bool
+  let _30: ()
   bb0:
     _6 = int_to_int(copy _1) as i64  ; a.gopp:6:2
     _7 = call const fn @_gopp_print_int(copy _6) -> [return: bb1, unwind: continue]  ; a.gopp:6:2
@@ -85,6 +87,11 @@ fn _GPF4mainE4show(_1: i8, _2: u64, _3: f32, _4: bool, _5: string) -> () [go, ex
   bb17:
     _28 = call const fn @_gopp_print_newline() -> [return: bb18, unwind: continue]  ; a.gopp:8:2
   bb18:
+    _29 = ne(copy _5.2, const zero: *u8)  ; a.gopp:9:1
+    switch copy _29 [0: bb20, otherwise: bb19]  ; a.gopp:9:1
+  bb19:
+    _30 = call const fn @_gopp_string_release(copy _5) -> [return: bb20, unwind: continue]  ; a.gopp:9:1
+  bb20:
     return  ; a.gopp:9:1
 }
 
@@ -101,3 +108,5 @@ declare fn _gopp_print_space() -> () [c, external]
 declare fn _gopp_print_bool(_1: bool) -> () [c, external]
 
 declare fn _gopp_print_newline() -> () [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]

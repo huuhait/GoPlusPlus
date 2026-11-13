@@ -291,9 +291,13 @@ impl FuncCx<'_, '_> {
                 };
                 (source, limit, word)
             }
+            // The loop counts the bytes that it walks once more, so that
+            // they stay when the variable gets another string (RNG-3a).
             Type::String => {
                 let whole = self.operand(x)?;
                 let whole = Place::local(self.b.assign_temp(Rvalue::Use(whole))?);
+                self.counted(whole.clone(), true)?;
+                self.hold(whole.clone(), super::glue::Ends::Text);
                 let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
                 (Walked::Text(whole), slot(len), word)
             }
@@ -470,8 +474,11 @@ impl FuncCx<'_, '_> {
     /// comparison after another if not.
     fn switch_on(&mut self, tag: ExprId, cases: &[(ExprId, BlockId)], otherwise: BlockId) -> Built {
         let ty = self.ty_of(tag);
+        // What the tag makes lives as long as the switch.
+        let mark = self.temps.len();
         let on = self.operand_as(tag, ty)?;
         let on = self.stable(on)?;
+        self.keep_temps(mark)?;
         let known = |this: &Self, case: ExprId| match this.body.types.get(&case) {
             Some(typed) if !this.body.case_operators.contains_key(&case) => {
                 typed.value.to_int().low_bits()

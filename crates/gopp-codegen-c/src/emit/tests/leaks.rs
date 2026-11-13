@@ -8,17 +8,11 @@ use std::path::Path;
 
 use super::*;
 
-/// What the leak sanitizer does not report: the buffers of strings,
-/// which no count frees yet.
-const NOT_FREED_YET: &str = "leak:_gopp_string_\n";
-
 #[test]
 #[ignore = "long: builds every run test with the sanitizers of Clang"]
 fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
     let toolchain = HostToolchain::discover().unwrap();
     let target = TargetSpec::named("linux/amd64").unwrap();
-    // The leak sanitizer knows a function by its name through this.
-    let symbolizer = which::which("addr2line").expect("addr2line names the functions of a leak");
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/run");
     let mut programs: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
@@ -47,7 +41,6 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
                 &crate::runtime::header(target.layout()),
             )
             .unwrap();
-            write("not_freed_yet.txt", NOT_FREED_YET).unwrap();
             let sources = crate::runtime::sources(target.os);
             for (name, text) in sources.iter().chain([&crate::runtime::INTERNAL]) {
                 write(name, text).unwrap();
@@ -71,18 +64,7 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
                 return Some(format!("{name}: {error}"));
             }
             let ran = std::process::Command::new(dir.path().join("program"))
-                .current_dir(dir.path())
-                .env(
-                    "ASAN_OPTIONS",
-                    format!(
-                        "detect_leaks=1:external_symbolizer_path={}",
-                        symbolizer.display()
-                    ),
-                )
-                .env(
-                    "LSAN_OPTIONS",
-                    "suppressions=not_freed_yet.txt:print_suppressions=0",
-                )
+                .env("ASAN_OPTIONS", "detect_leaks=1")
                 .output()
                 .unwrap();
             if ran.status.success() {

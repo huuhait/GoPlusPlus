@@ -31,6 +31,18 @@ enum Cloned {
     Elements(u64, TypeId, CheckedTypeId),
     /// What an option holds, if it is set.
     Held(CheckedTypeId),
+    /// A string: its bytes are counted once more, or once less.
+    Text,
+}
+
+/// How a place ends its value.
+#[derive(Clone, Copy)]
+pub(super) enum Ends {
+    /// By the drop glue of its type.
+    Glue(FuncId),
+    /// As a string: its bytes are counted once less, which is written
+    /// where the string ends and calls nothing for a literal.
+    Text,
 }
 
 /// A function that the compiler makes for a type.
@@ -83,6 +95,7 @@ impl FuncCx<'_, '_> {
         let types = shared.types;
         match types.copy_rule(ty) {
             Some(CopyRule::Elements | CopyRule::Parts) => {}
+            Some(CopyRule::SameBytes) => return Ok(Cloned::Text),
             Some(CopyRule::Method) => return Err("a value of a type with a `Clone` method"),
             _ => return Err("a value of a type that is not copied by its parts"),
         }
@@ -114,6 +127,7 @@ impl FuncCx<'_, '_> {
     /// the glue of the type calls.
     fn cloned_parts(&mut self, ty: CheckedTypeId) -> Result<Vec<CheckedTypeId>, &'static str> {
         Ok(match self.cloned(ty)? {
+            Cloned::Text => Vec::new(),
             Cloned::Slice(_, each) => each.into_iter().collect(),
             Cloned::Map => self.map_of_type(ty).map(|_| Vec::new())?,
             Cloned::Fields(fields) => fields.iter().map(|&(_, part)| part).collect(),
@@ -234,6 +248,39 @@ impl FuncCx<'_, '_> {
         }
     }
 
+    /// The bytes of the string in the place are counted once more, or
+    /// once less; the last string that shares them frees them. A string
+    /// without a buffer of its own, which a literal is, calls nothing.
+    pub fn counted(&mut self, text: Place, more: bool) -> Built {
+        let bytes = self.bytes_ty();
+        let string = self.b.place_ty(&text);
+        let backing = Operand::Copy(self.b.field(&text, 2)?);
+        let own = Rvalue::Binary(crate::BinOp::Ne, backing, self.zero(bytes));
+        let own = Operand::Copy(Place::local(self.b.assign_temp(own)?));
+        let [counts, done] = [(); 2].map(|()| self.b.new_block());
+        self.b.switch(own, vec![(0, done)], counts)?;
+        self.b.switch_to(counts);
+        let name = match more {
+            true => "_gopp_string_retain",
+            false => "_gopp_string_release",
+        };
+        self.runtime_call(name, &[string], vec![Operand::Copy(text)])?;
+        self.b.goto(done)?;
+        self.b.switch_to(done);
+        Ok(())
+    }
+
+    /// The value in the place ends.
+    pub fn end(&mut self, place: Place, ends: Ends) -> Built {
+        match ends {
+            Ends::Text => self.counted(place, false),
+            Ends::Glue(glue) => {
+                let at = self.record(place)?;
+                self.call_glue(glue, at)
+            }
+        }
+    }
+
     /// A call of clone or drop glue with the address of a value.
     pub fn call_glue(&mut self, glue: FuncId, at: Operand) -> Built {
         let callee = self.glue_value(Glue::Clone, glue);
@@ -287,8 +334,7 @@ impl FuncCx<'_, '_> {
         // The glue of the parts that this one calls.
         let part = match &how {
             Cloned::Slice(_, each) => *each,
-            Cloned::Map => None,
-            Cloned::Fields(_) => None,
+            Cloned::Map | Cloned::Fields(_) | Cloned::Text => None,
             Cloned::Elements(_, _, part) | Cloned::Held(part) => Some(*part),
         };
         let of_part = match part.map(|part| self.glue(kind, part)).transpose()? {
@@ -297,6 +343,7 @@ impl FuncCx<'_, '_> {
             None => None,
         };
         match how {
+            Cloned::Text => self.counted(value, !ends)?,
             Cloned::Slice(of, _) => {
                 let layout = self.b.types().layout(of, shared.layout);
                 let size = self

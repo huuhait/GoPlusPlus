@@ -9,7 +9,7 @@ use gopp_syntax::ast::{Block, DeclKind, ExprId, ExprKind, File, Param};
 use lasso::Spur;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::glue::Glue;
+use super::glue::{Ends, Glue};
 use super::{Job, Memo, Shared};
 use crate::{
     BlockId, BuildError, Constant, ConstantKind, FuncBuilder, FuncId, Linkage, LocalId, Module,
@@ -35,7 +35,7 @@ pub(super) struct Scope {
     /// The places of the block that own what is freed, each with the
     /// drop glue of its type: variables, parameters, and what a loop
     /// walks. They end where the block is left, the last first.
-    owned: Vec<(Place, FuncId)>,
+    owned: Vec<(Place, Ends)>,
     /// The walks of the range loops over maps that the block has: what
     /// the runtime keeps of each, by its address.
     walks: Vec<Operand>,
@@ -103,7 +103,7 @@ pub(super) struct FuncCx<'a, 'm> {
     /// each with the drop glue of its type: what is left of them when
     /// their statement ends is freed. They are listed in the order in
     /// which they were made; `owning` says which of them still own.
-    pub temps: Vec<(Place, FuncId)>,
+    pub temps: Vec<(Place, Ends)>,
     owning: FxHashSet<(LocalId, u32)>,
     /// The variables that do not own their values: a plain range
     /// variable of a Go++ file is the element as it is.
@@ -455,9 +455,8 @@ impl FuncCx<'_, '_> {
     /// freed, the last first.
     fn end_owned(&mut self, scope: usize, from: usize) -> Built {
         for at in (from..self.scopes[scope].owned.len()).rev() {
-            let (place, glue) = self.scopes[scope].owned[at].clone();
-            let at = self.record(place)?;
-            self.call_glue(glue, at)?;
+            let (place, ends) = self.scopes[scope].owned[at].clone();
+            self.end(place, ends)?;
         }
         Ok(())
     }
@@ -471,16 +470,33 @@ impl FuncCx<'_, '_> {
         }
         let declared = &self.body.locals[local.0 as usize];
         let (checked, span) = (declared.ty, declared.span);
-        if let Some(glue) = self.drop_glue(Some(checked), span)?
+        if let Some(ends) = self.ends_of(Some(checked), span)?
             && let Some(scope) = self.scopes.last_mut()
         {
-            scope.owned.push((Place::local(var), glue));
+            scope.owned.push((Place::local(var), ends));
         }
         Ok(())
     }
 
-    /// The drop glue of the type; none, with a report, for a type that
-    /// has none yet.
+    /// How a place of the type ends its value; none, with a report, for
+    /// a type that has no drop glue yet.
+    pub fn ends_of(
+        &mut self,
+        checked: Option<CheckedTypeId>,
+        span: SourceSpan,
+    ) -> Built<Option<Ends>> {
+        if let Some(checked) = checked
+            && let Ok(lowered) = self.memo.lower_type(self.shared, self.b.types(), checked)
+            && matches!(self.kind(lowered), Type::String)
+        {
+            return Ok(Some(Ends::Text));
+        }
+        Ok(self.drop_glue(checked, span)?.map(Ends::Glue))
+    }
+
+    /// The drop glue of the type, which the runtime is given for the
+    /// elements of a slice; none, with a report, for a type that has
+    /// none yet.
     pub fn drop_glue(
         &mut self,
         checked: Option<CheckedTypeId>,
@@ -501,7 +517,7 @@ impl FuncCx<'_, '_> {
 
     /// The temporary, or the part of a temporary that a call gave,
     /// owns its value from here on.
-    pub fn own_temp(&mut self, place: Place, glue: FuncId) {
+    pub fn own_temp(&mut self, place: Place, glue: Ends) {
         if let Some(key) = temp_key(&place)
             && self.owning.insert(key)
         {
@@ -541,10 +557,17 @@ impl FuncCx<'_, '_> {
             // The address of a temporary that a call wrote is not
             // taken: its value ends in a slot of its own.
             let slot = self.slot_of(Rvalue::Use(Operand::Copy(place)))?;
-            let at = self.record(slot)?;
-            self.call_glue(glue, at)?;
+            self.end(slot, glue)?;
         }
         Ok(())
+    }
+
+    /// The innermost scope ends the value in the place where it is
+    /// left.
+    pub fn hold(&mut self, place: Place, ends: Ends) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.owned.push((place, ends));
+        }
     }
 
     /// The temporaries from `mark` on live as long as the innermost

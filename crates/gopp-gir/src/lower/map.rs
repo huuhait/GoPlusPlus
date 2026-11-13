@@ -32,6 +32,8 @@ pub(crate) struct MapOf {
     compare: Option<[crate::FuncId; 2]>,
     /// The drop glue of a value that holds what is freed.
     pub drop: Option<crate::FuncId>,
+    /// The clone and the drop glue of a key that holds what is freed.
+    keys: Option<[crate::FuncId; 2]>,
 }
 
 /// The maps on the way to an entry `m[a][b]`, the outermost first: what
@@ -140,15 +142,21 @@ impl FuncCx<'_, '_> {
         };
         // A value whose copy is more than its bytes is copied by its
         // glue when the map is.
-        let glue = |this: &mut Self, kind| match this.flat(value_ty) {
+        let glue = |this: &mut Self, kind, of, checked| match this.flat(of) {
             true => Ok(None),
-            false => match this.glue(kind, value) {
+            false => match this.glue(kind, checked) {
                 Ok(Ok(glue)) => Ok(Some(glue)),
                 Ok(Err(what)) => Err(what),
-                Err(_) => Err("a map whose values cannot be copied"),
+                Err(_) => Err("a map whose entries cannot be copied"),
             },
         };
-        let (copy, drop) = (glue(self, Glue::Clone)?, glue(self, Glue::Drop)?);
+        let copy = glue(self, Glue::Clone, value_ty, value)?;
+        let drop = glue(self, Glue::Drop, value_ty, value)?;
+        // A key that is put into the map is a copy of its own too.
+        let keys = match glue(self, Glue::Clone, key_ty, key)? {
+            Some(copy) => glue(self, Glue::Drop, key_ty, key)?.map(|drop| [copy, drop]),
+            None => None,
+        };
         let mut layout = |ty: TypeId| {
             let layout = self.b.types().layout(ty, shared.layout);
             layout.map_or((0, 1), |layout| (layout.size, layout.align))
@@ -166,6 +174,7 @@ impl FuncCx<'_, '_> {
             copy,
             compare,
             drop,
+            keys,
         })
     }
 
@@ -224,11 +233,17 @@ impl FuncCx<'_, '_> {
             Some([hash, eq]) => [Some(hash), Some(eq)],
             None => [None, None],
         };
+        let [copy_key, drop_key] = match of.keys {
+            Some([copy, drop]) => [Some(copy), Some(drop)],
+            None => [None, None],
+        };
         let glues = [
             (Glue::Clone, of.copy),
             (Glue::Hash, hash),
             (Glue::Eq, eq),
             (Glue::Drop, of.drop),
+            (Glue::Clone, copy_key),
+            (Glue::Drop, drop_key),
         ];
         for (kind, glue) in glues {
             parts.push(match glue {
@@ -374,7 +389,13 @@ impl FuncCx<'_, '_> {
                 wanted.extend([Some(of.key), Some(of.value)]);
             }
         }
-        let values = self.owned_each(&exprs, &wanted)?;
+        // The map takes the values; of a key it makes a copy of its own.
+        let mut values = self.values_each(&exprs, &wanted)?;
+        for (at, value) in values.iter_mut().enumerate().skip(1).step_by(2) {
+            let taken = self.taken(exprs[at], of.value, Rvalue::Use(value.clone()))?;
+            *value = self.operand_of(taken)?;
+        }
+        self.empty_moved()?;
         let wide = self.b.types().int(64, true);
         let count = self.b.const_int(wide, elems.len() as u64)?;
         let made = self.made_map(ty, &of, count)?;

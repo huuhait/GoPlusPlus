@@ -35,9 +35,11 @@ fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, ext
   let _21: bool
   let _22: i64
   let _23: string
-  let _24: *[]i64
-  let _25: *u8
-  let _26: ()
+  let _24: bool
+  let _25: ()
+  let _26: *[]i64
+  let _27: *u8
+  let _28: ()
   bb0:
     storage_live(_4)  ; a.gopp:6:2
     _4 = const 0: i64  ; a.gopp:6:2
@@ -81,10 +83,15 @@ fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, ext
     _23 = call const fn @_gopp_string_concat(copy _3, const str#0 "!") -> [return: bb8, unwind: continue]  ; a.gopp:17:2
   bb8:
     _0 = tuple {copy _22, copy _23}  ; a.gopp:17:2
-    _24 = &mut _1  ; a.gopp:17:2
-    _25 = ptr_to_ptr(copy _24) as *u8  ; a.gopp:17:2
-    _26 = call const fn @_GPTdSi(copy _25) -> [return: bb9, unwind: continue]  ; a.gopp:17:2
+    _24 = ne(copy _3.2, const zero: *u8)  ; a.gopp:17:2
+    switch copy _24 [0: bb10, otherwise: bb9]  ; a.gopp:17:2
   bb9:
+    _25 = call const fn @_gopp_string_release(copy _3) -> [return: bb10, unwind: continue]  ; a.gopp:17:2
+  bb10:
+    _26 = &mut _1  ; a.gopp:17:2
+    _27 = ptr_to_ptr(copy _26) as *u8  ; a.gopp:17:2
+    _28 = call const fn @_GPTdSi(copy _27) -> [return: bb11, unwind: continue]  ; a.gopp:17:2
+  bb11:
     storage_dead(_14)  ; a.gopp:17:2
     storage_dead(_13)  ; a.gopp:17:2
     storage_dead(_10)  ; a.gopp:17:2
@@ -108,5 +115,7 @@ declare fn _gopp_print_int(_1: i64) -> () [c, external]
 declare fn _gopp_print_newline() -> () [c, external]
 
 declare fn _gopp_string_concat(_1: string, _2: string) -> string [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]
 
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]

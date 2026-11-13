@@ -6,6 +6,7 @@
 #include "internal.h"
 
 void *malloc(__SIZE_TYPE__ size);
+void free(void *room);
 
 typedef struct gopp_string_buffer {
   uint64_t refcount;
@@ -35,6 +36,23 @@ static gopp_string fresh(uint64_t len) {
   uint8_t *bytes = (uint8_t *)(buffer + 1);
   bytes[len] = 0;
   return (gopp_string){bytes, len, (uint8_t *)buffer};
+}
+
+// One more string shares the bytes: a copy of a string. A string
+// without a buffer of its own, which a literal is, has no count.
+void _gopp_string_retain(gopp_string text) {
+  gopp_string_buffer *buffer = (gopp_string_buffer *)text.backing;
+  if (buffer) {
+    __atomic_fetch_add(&buffer->refcount, 1, __ATOMIC_RELAXED);
+  }
+}
+
+// One string less shares the bytes: the last one frees them.
+void _gopp_string_release(gopp_string text) {
+  gopp_string_buffer *buffer = (gopp_string_buffer *)text.backing;
+  if (buffer && __atomic_fetch_sub(&buffer->refcount, 1, __ATOMIC_ACQ_REL) == 1) {
+    free(buffer);
+  }
 }
 
 gopp_string _gopp_string_concat(gopp_string a, gopp_string b) {

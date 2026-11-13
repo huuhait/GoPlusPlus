@@ -43,8 +43,8 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
   let _30: *u8
   let _31: ()
   let _32: string
-  let _33: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> ())
-  let _34: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> ())
+  let _33: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _34: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
   let _35: *u8
   let _36: *string
   let _37: *u8
@@ -134,7 +134,7 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
     _30 = ptr_to_ptr(copy _29) as *u8  ; a.gopp:13:25
     _31 = call const fn @_gopp_map_iter_start(copy _30, copy _27) -> [return: bb14, unwind: continue]  ; a.gopp:13:25
   bb14:
-    _33 = tuple {const 24: u64, const 8: u64, const 24: u64, const 32: u64, const 1: u64, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool, const null: fn "C"(*u8) -> ()}  ; a.gopp:13:25
+    _33 = tuple {const 24: u64, const 8: u64, const 24: u64, const 32: u64, const 1: u64, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool, const null: fn "C"(*u8) -> (), const fn @_GPTcr, const fn @_GPTdr}  ; a.gopp:13:25
     _34 = &mut _33  ; a.gopp:13:25
     _35 = ptr_to_ptr(copy _34) as *u8  ; a.gopp:13:25
     _36 = &mut _32  ; a.gopp:13:25
@@ -191,6 +191,8 @@ fn _GPF4mainE5runes(_1: string, _2: []i32) -> ([]i32, string) [go, external] {
   let _11: *[]i32
   let _12: *u8
   let _13: ()
+  let _14: bool
+  let _15: ()
   bb0:
     _3 = const zero: []i32  ; a.gopp:20:2
     _4 = &mut _3  ; a.gopp:20:2
@@ -207,19 +209,39 @@ fn _GPF4mainE5runes(_1: string, _2: []i32) -> ([]i32, string) [go, external] {
     _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:20:2
     _13 = call const fn @_GPTdSl(copy _12) -> [return: bb3, unwind: continue]  ; a.gopp:20:2
   bb3:
+    _14 = ne(copy _1.2, const zero: *u8)  ; a.gopp:20:2
+    switch copy _14 [0: bb5, otherwise: bb4]  ; a.gopp:20:2
+  bb4:
+    _15 = call const fn @_gopp_string_release(copy _1) -> [return: bb5, unwind: continue]  ; a.gopp:20:2
+  bb5:
     return  ; a.gopp:20:2
+}
+
+fn _GPTcr(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *string
+  let _3: bool
+  let _4: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *string
+    _3 = ne(copy (*_2).2, const zero: *u8)
+    switch copy _3 [0: bb2, otherwise: bb1]
+  bb1:
+    _4 = call const fn @_gopp_string_retain(copy (*_2)) -> [return: bb2, unwind: continue]
+  bb2:
+    return
 }
 
 fn _GPTdHri(_1: *u8) -> () [c, linkonce_odr] {
   let _0: ()
   let _2: **gopp.map
-  let _3: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> ())
-  let _4: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> ())
+  let _3: (u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
+  let _4: *(u64, u64, u64, u64, u64, fn "C"(*u8) -> (), fn "C"(*u8, u64) -> u64, fn "C"(*u8, *u8) -> bool, fn "C"(*u8) -> (), fn "C"(*u8) -> (), fn "C"(*u8) -> ())
   let _5: *u8
   let _6: ()
   bb0:
     _2 = ptr_to_ptr(copy _1) as **gopp.map
-    _3 = tuple {const 24: u64, const 8: u64, const 24: u64, const 32: u64, const 1: u64, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool, const null: fn "C"(*u8) -> ()}
+    _3 = tuple {const 24: u64, const 8: u64, const 24: u64, const 32: u64, const 1: u64, const null: fn "C"(*u8) -> (), const null: fn "C"(*u8, u64) -> u64, const null: fn "C"(*u8, *u8) -> bool, const null: fn "C"(*u8) -> (), const fn @_GPTcr, const fn @_GPTdr}
     _4 = &mut _3
     _5 = ptr_to_ptr(copy _4) as *u8
     _6 = call const fn @_gopp_map_drop(copy (*_2), copy _5) -> [return: bb1, unwind: continue]
@@ -271,6 +293,21 @@ fn _GPTdSl(_1: *u8) -> () [c, linkonce_odr] {
     return
 }
 
+fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
+  let _0: ()
+  let _2: *string
+  let _3: bool
+  let _4: ()
+  bb0:
+    _2 = ptr_to_ptr(copy _1) as *string
+    _3 = ne(copy (*_2).2, const zero: *u8)
+    switch copy _3 [0: bb2, otherwise: bb1]
+  bb1:
+    _4 = call const fn @_gopp_string_release(copy (*_2)) -> [return: bb2, unwind: continue]
+  bb2:
+    return
+}
+
 declare fn _gopp_slice_grow(_1: *u8, _2: u64, _3: u64, _4: bool) -> () [c, external]
 
 declare fn _gopp_map_iter_start(_1: *u8, _2: *gopp.map) -> () [c, external]
@@ -282,6 +319,10 @@ declare fn _gopp_map_iter_end(_1: *u8) -> () [c, external]
 declare fn _gopp_runes_from_string(_1: *u8, _2: string) -> () [c, external]
 
 declare fn _gopp_string_from_runes(_1: *u8) -> string [c, external]
+
+declare fn _gopp_string_release(_1: string) -> () [c, external]
+
+declare fn _gopp_string_retain(_1: string) -> () [c, external]
 
 declare fn _gopp_map_drop(_1: *gopp.map, _2: *u8) -> () [c, external]
 

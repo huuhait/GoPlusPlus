@@ -30,6 +30,11 @@ typedef struct gopp_mapinfo {
   // Ends the value at the address; null for a value that holds nothing
   // that is freed.
   void (*drop_value)(uint8_t *value);
+  // The same two for a key that holds what is freed, as a string does:
+  // a key that is put into the map is a copy, which ends with its
+  // entry.
+  void (*copy_key)(uint8_t *key);
+  void (*drop_key)(uint8_t *key);
 } gopp_mapinfo;
 
 enum { KEY_BYTES = 0, KEY_STRING = 1, KEY_FLOAT32 = 2, KEY_FLOAT64 = 3, KEY_GLUE = 4 };
@@ -345,6 +350,9 @@ void *_gopp_map_set(void *place_of_map, const void *shape, const void *key) {
   }
   slot = place(map, info, hash);
   __builtin_memcpy(slot, key, info->key_size);
+  if (info->copy_key) {
+    info->copy_key(slot);
+  }
   __builtin_memset(slot + info->value_offset, 0, info->value_size);
   map->count++;
   return slot + info->value_offset;
@@ -368,20 +376,29 @@ void _gopp_map_delete(void *map, const void *shape, const void *key) {
   if (info->drop_value) {
     info->drop_value(slot + info->value_offset);
   }
+  if (info->drop_key) {
+    info->drop_key(slot);
+  }
   set_control(of, group, index % SLOTS, passed ? DELETED : EMPTY);
   of->growth_left += !passed;
   of->deleted += passed;
   of->count--;
 }
 
-// Ends every value of the map, if values hold what is freed.
+// Ends every key and value of the map that holds what is freed.
 static void drop_values(const gopp_map *map, const gopp_mapinfo *info) {
-  if (!info->drop_value) {
+  if (!info->drop_value && !info->drop_key) {
     return;
   }
   for (uint64_t group = 0; group < map->groups; group++) {
     for (uint64_t full = ~map->control[group] & HIGH_BITS; full; full &= full - 1) {
-      info->drop_value(slot_of(map, info, group, first_of(full)) + info->value_offset);
+      uint8_t *slot = slot_of(map, info, group, first_of(full));
+      if (info->drop_value) {
+        info->drop_value(slot + info->value_offset);
+      }
+      if (info->drop_key) {
+        info->drop_key(slot);
+      }
     }
   }
 }
@@ -436,10 +453,16 @@ void *_gopp_map_copy(const void *map, const void *shape) {
   copy->count = of->count;
   copy->deleted = of->deleted;
   copy->growth_left = of->growth_left;
-  if (info->copy_value) {
+  if (info->copy_value || info->copy_key) {
     for (uint64_t group = 0; group < copy->groups; group++) {
       for (uint64_t full = ~copy->control[group] & HIGH_BITS; full; full &= full - 1) {
-        info->copy_value(slot_of(copy, info, group, first_of(full)) + info->value_offset);
+        uint8_t *slot = slot_of(copy, info, group, first_of(full));
+        if (info->copy_value) {
+          info->copy_value(slot + info->value_offset);
+        }
+        if (info->copy_key) {
+          info->copy_key(slot);
+        }
       }
     }
   }
