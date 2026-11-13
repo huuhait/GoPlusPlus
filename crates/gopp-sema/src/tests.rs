@@ -3182,6 +3182,212 @@ func literals(xs, ys []int) {
     assert_eq!(transfers(&checked), plain);
 }
 
+// rule: PAR-1
+#[test]
+fn a_write_to_the_function_s_own_slice_or_map_that_nothing_reads_is_lost() {
+    let text = "package p
+
+type List []int
+
+type Doc struct{ Title string }
+
+var all [][]int
+
+func keep(xs []int) {}
+
+func zero(xs []int)         { xs[0] = 0 }
+func zeroed(xs []int) []int { xs[0] = 0; return xs }
+func zeroP(xs *[]int)       { xs[0] = 0 }
+
+func fill(xs []int) {
+	for i := range xs {
+		xs[i] = 1
+	}
+}
+
+func filled(xs []int) int {
+	for i := range xs {
+		xs[i] = 1
+	}
+	return len(xs)
+}
+
+func inc(xs []int, m map[string]int) {
+	for i := range xs {
+		xs[i]++
+	}
+	m[\"a\"]++
+}
+
+func sums(xs []int) int {
+	total := 0
+	for i, x := range xs {
+		if i > 0 {
+			xs[i] += xs[i-1]
+		}
+		total += x
+	}
+	return total
+}
+
+func entries(m map[string]int, n map[string]int, o map[string][]int) int {
+	m[\"a\"] = 1
+	delete(m, \"b\")
+	clear(n)
+	o[\"k\"][0] = 1
+	o = nil
+	return 0
+}
+
+func grow(xs []int, ys []int, zs []int) []int {
+	xs = append(xs, 1)
+	for i := 0; i < 3; i++ {
+		ys = append(ys, i)
+	}
+	zs = append(zs, 1)
+	return zs
+}
+
+func passed(xs []int, ys []int, c bool) {
+	xs[0] = 1
+	keep(xs)
+	ys[0] = 2
+	if c {
+		all = append(all, ys)
+	}
+}
+
+func (l List) Clear()     { l[0] = 0 }
+func (l List) First() int { l[0]++; return l[0] }
+
+func other(d Doc, a [3]int, xs []int, n int) {
+	d.Title = \"local\"
+	a[0] = 1
+	ys := xs
+	ys[0] = 1
+	n++
+}
+
+func generic[S ~[]int](xs S, ys S) S {
+	xs[0] = 1
+	ys[0] = 2
+	return ys
+}
+
+func literal() {
+	_ = func(xs []int) { xs[0] = 1 }
+	_ = func(xs []int) int { xs[0] = 1; return xs[0] }
+}
+
+func seen(xs []int, ys []int, zs []int, m map[string]int) int {
+	f := func() int { return xs[0] }
+	xs[0] = 1
+	p := &ys
+	ys[0] = 2
+	for i, z := range zs {
+		zs[i] = 5
+		println(z)
+	}
+	for k, v := range m {
+		m[k] = v + 1
+	}
+	return f() + len(p)
+}
+";
+    let expected = [
+        "a.gopp:11:31: this write to xs is lost: xs is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare xs *[]int to change the value of the caller, or return xs",
+        "a.gopp:17:3: this write to xs is lost: xs is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare xs *[]int to change the value of the caller, or return xs",
+        "a.gopp:30:3: this write to xs is lost: xs is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare xs *[]int to change the value of the caller, or return xs",
+        "a.gopp:32:2: this write to m is lost: m is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare m *map[string]int to change the value of the caller, or return m",
+        "a.gopp:47:2: this write to m is lost: m is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare m *map[string]int to change the value of the caller, or return m",
+        "a.gopp:49:2: this write to n is lost: n is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare n *map[string]int to change the value of the caller, or return n",
+        "a.gopp:50:2: this write to o is lost: o is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare o *map[string][]int to change the value of the caller, or return o",
+        "a.gopp:56:2: this write to xs is lost: xs is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare xs *[]int to change the value of the caller, or return xs",
+        "a.gopp:58:3: this write to ys is lost: ys is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare ys *[]int to change the value of the caller, or return ys",
+        "a.gopp:73:29: this write to l is lost: l is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare l *List to change the value of the caller, or return l",
+        "a.gopp:85:2: this write to xs is lost: xs is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare xs *S to change the value of the caller, or return xs",
+        "a.gopp:91:23: this write to xs is lost: xs is the function's own copy, and nothing reads \
+         it afterwards",
+        "    declare xs *[]int to change the value of the caller, or return xs",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // A Go file has no such rule.
+    let text = "package p
+
+type List []int
+
+func zero(xs []int, m map[string]int) {
+	xs[0] = 0
+	m[\"a\"] = 1
+	delete(m, \"b\")
+	xs = append(xs, 1)
+}
+
+func (l List) Clear() { l[0] = 0 }
+";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+// rule: OWN-B2
+#[test]
+fn a_variable_is_not_moved_while_a_statement_around_reads_it() {
+    let text = "package p
+
+func keep(xs []int) {}
+
+func holds(xs []int, m map[string]int, v any) {
+	for _, x := range xs {
+		keep(move(xs))
+		_ = x
+	}
+	keep(move(xs))
+	for k := range m {
+		if k == \"a\" {
+			_ = move(m)
+			break
+		}
+	}
+	switch w := v.(type) {
+	case int:
+		_ = move(v)
+		_ = w
+	}
+	_ = move(v)
+}
+";
+    let expected = [
+        "a.gopp:7:8: cannot move xs: the loop that ranges over it, or the switch on it, still \
+         reads it",
+        "a.gopp:13:8: cannot move m: the loop that ranges over it, or the switch on it, still \
+         reads it",
+        "a.gopp:19:7: cannot move v: the loop that ranges over it, or the switch on it, still \
+         reads it",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 #[test]
 fn the_steps_of_moves_and_last_uses_grow_with_the_input_not_faster() {
     let steps = |text: String| {
@@ -3241,10 +3447,21 @@ fn the_steps_of_moves_and_last_uses_grow_with_the_input_not_faster() {
             .collect();
         format!("{head}{labels}}}\n")
     };
+    // Many parameters that are written in many loops and read at the
+    // end.
+    let written = |count: usize| {
+        let params: String = (0..count).map(|i| format!(", p{i} []int")).collect();
+        let writes: String = (0..count)
+            .map(|i| format!("for i := range p{i} {{\np{i}[i]++\n}}\np{i} = append(p{i}, {i})\n"))
+            .collect();
+        let reads: String = (0..count).map(|i| format!("n += len(p{i})\n")).collect();
+        format!("package p\nfunc f(c bool, n int{params}) int {{\n{writes}{reads}return n\n}}\n")
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(long_lived(n)));
     linear::assert_near_linear(&sizes, |n| steps(jumps(n)));
+    linear::assert_near_linear(&sizes, |n| steps(written(n)));
     // The parser takes no deeper nesting, and a set of more than 64
     // variables is one level higher, which costs a step more.
     let depths = [100, 200, 400];
@@ -6516,7 +6733,7 @@ func use(h *Holder, xs []int, d Doc, fs []File, f File, n int, name string) (Doc
         "28:6 d: copy",
         "29:6 d: copy",
         "30:8 name: copy",
-        "33:14 xs: copy, over, last",
+        "33:14 xs: copy, over",
         "34:7 xs: over",
         "35:12 xs: copy, over, last",
         "36:18 h.Docs: copy, over",
@@ -6894,7 +7111,7 @@ fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
         "a := v; _ = a",
         "keep(v)",
         "xs = append(xs, v); _ = xs",
-        "m[\"a\"] = v",
+        "m[\"a\"] = v; _ = len(m)",
         "_ = Cell[X]{f: v}",
         "ch <- v",
         "b := xs[0]; _ = b",
@@ -6910,7 +7127,7 @@ fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
         "xs = append(xs, move(v)); _ = xs",
         "_ = &v",
         "borrow(&v); borrow(p); borrow(&xs[0])",
-        "xs[0], xs[1] = xs[1], xs[0]",
+        "xs[0], xs[1] = xs[1], xs[0]; _ = len(xs)",
         "for _, &e := range xs { borrow(&e) }",
         "xs = xs[1:]; xs = append(xs, zero()); _ = len(xs)",
     ];
@@ -7753,6 +7970,9 @@ func generic[T any, N ~int | ~string](n int) {
         "a.gopp:34:5: cannot declare boxed without a value: Box[User] has no zero value (the field \
          ID of User is @Required)",
         "    give boxed a value, or declare it as Option[Box[User]]",
+        "a.gopp:49:2: this write to m is lost: m is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare m *map[string]User to change the value of the caller, or return m",
         "a.gopp:62:65: cannot name the result named: User has no zero value (the field ID of User \
          is @Required)",
         "    declare the result without a name",
@@ -7796,6 +8016,9 @@ func generic[T any, N ~int | ~string](n int) {
         "a.gopp:78:6: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
          value (the field ID of User is @Required)",
         "    use v, ok := m[\"a\"]",
+        "a.gopp:79:2: this write to users is lost: users is the function's own copy, and nothing \
+         reads it afterwards",
+        "    declare users *[]User to change the value of the caller, or return users",
         "a.gopp:79:8: cannot clear users: User has no zero value (the field ID of User is \
          @Required)",
         "    use users = users[:0], which drops the elements",
@@ -8532,6 +8755,9 @@ Again:
 }
 ";
     let expected = [
+        "a.gopp:24:2: this write to m is lost: m is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare m *map[string]int to change the value of the caller, or return m",
         "a.gopp:39:6: invalid operation: p == nil (a *Node is never nil: use Option[*Node])",
         "a.gopp:40:13: invalid operation: nil != u (a Unique[Node] is never nil: use \
          Option[Unique[Node]])",
@@ -11572,7 +11798,7 @@ fn the_steps_of_places_grow_with_the_input_not_faster() {
         let uses: String = (0..count)
             .map(|i| format!("\tshow(d)\n\tt{i} := docs[{i}].Title\n\tdocs[{i}].Tags = append(docs[{i}].Tags, t{i})\n"))
             .collect();
-        format!("{header}func f(d Doc, docs []Doc) {{\n{uses}}}\n")
+        format!("{header}func f(d Doc, docs []Doc) []Doc {{\n{uses}\treturn docs\n}}\n")
     };
     // One place under many fields, each in a struct of its own.
     let deep = |depth: usize| {
@@ -11592,7 +11818,7 @@ fn the_steps_of_places_grow_with_the_input_not_faster() {
         let left: Vec<String> = (0..count).map(|i| format!("docs[{i}]")).collect();
         let right: Vec<String> = (0..count).rev().map(|i| format!("docs[{i}]")).collect();
         format!(
-            "{header}func f(docs []Doc) {{\n\t{} = {}\n}}\n",
+            "{header}func f(docs []Doc) []Doc {{\n\t{} = {}\n\treturn docs\n}}\n",
             left.join(", "),
             right.join(", ")
         )

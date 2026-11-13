@@ -225,6 +225,7 @@ codes! {
     256 NoteOwnFixMove "note_own_fix_move",
     258 NoteOwnFixAlias "note_own_fix_alias",
     262 OwnBorrowedAddress "err_own_borrowed_address",
+    264 OwnBorrowedMove "err_own_borrowed_move",
     266 OwnMoveNotPlace "err_own_move_not_place",
     270 DuplicateMethodIface "err_duplicate_method_iface",
     272 OwnDropSignature "err_own_drop_signature",
@@ -344,6 +345,7 @@ codes! {
     487 OwnCopyLocal "err_own_copy_local",
     488 AttrPlacement "err_attr_placement",
     489 AttrArgs "err_attr_args",
+    490 OwnLostWrite "err_own_lost_write",
     492 OwnSharedWrite "err_own_shared_write",
     493 ValueUnchecked "err_value_unchecked",
     494 InvalidHandleType "err_invalid_handle_type",
@@ -359,6 +361,7 @@ codes! {
     504 TypeParamRhs "err_type_param_rhs",
     505 GenericNoBody "err_generic_no_body",
     506 NoteMovedHere "note_moved_here",
+    507 NoteOwnFixPointer "note_own_fix_pointer",
 }
 
 impl Code {

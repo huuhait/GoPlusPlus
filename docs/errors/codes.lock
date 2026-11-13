@@ -509,3 +509,4 @@ E0503 err_foreign_read_only
 E0504 err_type_param_rhs
 E0505 err_generic_no_body
 E0506 note_moved_here
+E0507 note_own_fix_pointer

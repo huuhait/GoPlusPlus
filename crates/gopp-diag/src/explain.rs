@@ -508,6 +508,24 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Keep one of them.",
             "@Inline\n@NoInline\nfunc f() {} // error",
         ),
+        OwnBorrowedMove => (
+            "A variable is moved while a statement around the `move` still reads it where it \
+             is: a `range` loop over it, or a `switch` on it. The statement would go on with \
+             a value that the variable no longer has.",
+            "Move the variable after the statement, or give a copy.",
+            "for _, x := range xs {\n\tkeep(move(xs)) // error\n}\nkeep(move(xs)) // ok",
+        ),
+        OwnLostWrite => (
+            "A slice or a map that is a parameter by value is the function's own copy. The \
+             function writes to an element or an entry of it (an assignment, `delete`, \
+             `clear`, or `append` assigned back to the parameter), and nothing reads the \
+             parameter afterwards: the write changes nothing that anyone sees, and the \
+             caller keeps its own value.",
+            "Take a pointer to change the value of the caller, or return the changed value.",
+            "func zero(xs []int)         { xs[0] = 0 }            // error\nfunc zero(xs \
+             *[]int)        { xs[0] = 0 }            // ok: zero(&nums)\nfunc zeroed(xs []int) \
+             []int { xs[0] = 0; return xs } // ok",
+        ),
         UseAfterMove => (
             "A variable is read after `move` took its value. The variable has no value from \
              the `move` on, on every way that leads from it, until it is assigned again.",

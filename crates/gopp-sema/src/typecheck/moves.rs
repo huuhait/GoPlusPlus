@@ -1,13 +1,15 @@
-//! Where a variable is read after `move` took its value (OWN-R5), and
-//! where a copy of a variable is the last that is read of it (ADR-0041
-//! rule 4).
+//! Where a variable is read after `move` took its value (OWN-R5), where
+//! a copy of a variable is the last that is read of it (ADR-0041 rule
+//! 4), and where a write to the function's own copy of a slice or a map
+//! is lost (rule 9).
 //!
 //! A function is a graph of blocks, and a block is a run of events: a
-//! variable is read, given away as a copy, set, or moved. Two passes go
-//! over the graph. Forward: the variables that may be moved; a read of
-//! one is an error. Backward: the variables that are read later; a copy
-//! of a variable that is not read later is its last use, and the value
-//! itself may be given instead.
+//! variable is read, given away as a copy, set, moved, or an element of
+//! it is written. Passes go over the graph. Forward: the variables that
+//! may be moved; a read of one is an error. Backward: the variables that
+//! are read later; a copy of a variable that is not read later is its
+//! last use, and the value itself may be given instead; a write to an
+//! element of a parameter that is not read later is lost.
 //!
 //! The sets of both passes share what they have in common, so a join
 //! costs as much as its two sides differ.
@@ -29,6 +31,10 @@ enum Event {
     Set(LocalId),
     /// `move` takes its value.
     Moved(LocalId, Span),
+    /// An element or an entry of a parameter that is a slice or a map
+    /// by value is written: the variable is used, and nothing of it is
+    /// read.
+    Wrote(LocalId, Span),
 }
 
 /// A variable that is read where it may hold no value.
@@ -44,6 +50,12 @@ pub(super) struct Found {
     /// The copies after which their variables are not read again.
     pub last: FxHashSet<ExprId>,
     pub errors: Vec<Reused>,
+    /// For each parameter with a write that nothing reads: the first
+    /// such write.
+    pub lost: Vec<(LocalId, Span)>,
+    /// Each `move` of a variable that a statement around it still
+    /// reads where it is.
+    pub held: Vec<(LocalId, Span)>,
     pub steps: u64,
 }
 
@@ -201,6 +213,8 @@ enum Todo {
     Part(ExprId),
     /// `move` has evaluated its operand.
     Moved(LocalId, Span),
+    /// A built-in function has evaluated its operands and writes.
+    Wrote(LocalId, Span),
 }
 
 struct Walk<'a> {
@@ -208,6 +222,9 @@ struct Walk<'a> {
     body: &'a Body,
     modes: &'a FxHashMap<ExprId, Transfer>,
     captures: &'a FxHashMap<ExprId, Vec<Capture>>,
+    /// The parameters and receivers by value that are slices or maps,
+    /// in a file with the rules of Go++.
+    watched: &'a FxHashSet<LocalId>,
     /// The function that is walked: what is declared in it is its own.
     within: Span,
     events: Vec<Event>,
@@ -231,6 +248,9 @@ struct Walk<'a> {
     /// statement runs: what a loop ranges over, what is switched on. No
     /// copy of one is its last use there.
     held: FxHashMap<LocalId, u32>,
+    /// The variables that a loop ranges over with a variable for the
+    /// elements: what is written to an element may be read through it.
+    viewed: FxHashMap<LocalId, u32>,
     seen: FxHashMap<LocalId, u32>,
     /// The variables that a function literal uses or whose address is
     /// taken: they may be read at any time, and have no last use.
@@ -247,6 +267,7 @@ pub(super) fn of(
     body: &Body,
     modes: &FxHashMap<ExprId, Transfer>,
     captures: &FxHashMap<ExprId, Vec<Capture>>,
+    watched: &FxHashSet<LocalId>,
     decl: &ast::Decl,
 ) -> Found {
     let mut walk = Walk {
@@ -254,6 +275,7 @@ pub(super) fn of(
         body,
         modes,
         captures,
+        watched,
         within: decl.span,
         events: Vec::new(),
         blocks: Vec::new(),
@@ -267,6 +289,7 @@ pub(super) fn of(
         label: None,
         falls: None,
         held: FxHashMap::default(),
+        viewed: FxHashMap::default(),
         seen: FxHashMap::default(),
         reached: FxHashSet::default(),
         literals: Vec::new(),
@@ -293,28 +316,94 @@ pub(super) fn of(
     }
     walk.found.errors.sort_by_key(|reused| reused.at.lo);
     walk.found.errors.dedup_by_key(|reused| reused.at);
+    walk.found.lost.sort_by_key(|&(local, at)| (local, at.lo));
+    walk.found.lost.dedup_by_key(|&mut (local, _)| local);
+    walk.found.lost.sort_by_key(|&(_, at)| at.lo);
     walk.found
 }
 
 impl<'a> Checker<'a> {
+    /// The parameters and receivers by value of the body that are
+    /// slices or maps: what a function writes to the elements of one is
+    /// written to its own copy (PAR-1). A Go file has no such rule.
+    fn own_collections(&mut self, cx: &Cx<'a>) -> FxHashSet<LocalId> {
+        let mut found = FxHashSet::default();
+        if !self.own_rules(cx) {
+            return found;
+        }
+        for (at, declared) in cx.body.locals.iter().enumerate() {
+            self.steps += 1;
+            if !matches!(declared.kind, LocalKind::Param | LocalKind::Receiver) {
+                continue;
+            }
+            let local = LocalId(at as u32);
+            let Some(ty) = self.locals.get(&local).map(|x| x.ty) else {
+                continue;
+            };
+            let Ok(under) = self.types.common_under(ty) else {
+                continue;
+            };
+            if let Type::Slice(_) | Type::Map { .. } = &*self.types.get(under) {
+                found.insert(local);
+            }
+        }
+        found
+    }
+
     /// Reports each read of a variable that `move` may have emptied
-    /// (OWN-R5), and gives the copies that are last uses.
+    /// (OWN-R5), each `move` of what a statement around it still reads
+    /// (OWN-B2) and each write to a parameter that is lost (PAR-1), and
+    /// gives the copies that are last uses.
     pub(super) fn moves(
         &mut self,
         cx: &Cx<'a>,
         captures: &FxHashMap<ExprId, Vec<Capture>>,
         decl: &ast::Decl,
     ) -> FxHashSet<ExprId> {
-        // Nothing is given or moved in most bodies.
-        if self.var_modes.is_empty() {
+        let watched = self.own_collections(cx);
+        // Nothing is given, moved or written so in most bodies.
+        if self.var_modes.is_empty() && watched.is_empty() {
             return FxHashSet::default();
         }
-        let found = of(cx.tree, cx.body, &self.var_modes, captures, decl);
+        let found = of(cx.tree, cx.body, &self.var_modes, captures, &watched, decl);
         self.steps += found.steps;
+        let named = |this: &Self, local: LocalId| {
+            let name = cx.body.locals[local.0 as usize].name;
+            this.names.resolve(&name).to_owned()
+        };
+        // What follows of a move that is refused is said once.
+        let refused: FxHashSet<Span> = found.held.iter().map(|&(_, at)| at).collect();
+        for (local, at) in found.held {
+            let name = named(self, local);
+            let message = format!(
+                "cannot move {name}: the loop that ranges over it, or the switch on it, still \
+                 reads it"
+            );
+            self.error(Code::OwnBorrowedMove, at, message);
+        }
+        for (local, at) in found.lost {
+            let name = named(self, local);
+            let ty = self.locals.get(&local).map_or(Types::INVALID, |x| x.ty);
+            let message = format!(
+                "this write to {name} is lost: {name} is the function's own copy, and nothing \
+                 reads it afterwards"
+            );
+            let fix = format!(
+                "declare {name} *{} to change the value of the caller, or return {name}",
+                self.type_string(ty)
+            );
+            self.error_with_fix(
+                Code::OwnLostWrite,
+                at,
+                message,
+                (Code::NoteOwnFixPointer, fix),
+            );
+        }
         for reused in found.errors {
             let name = cx.body.locals[reused.local.0 as usize].name;
             let name = self.names.resolve(&name).to_owned();
-            if !self.report_once((reused.at, Code::UseAfterMove)) {
+            if refused.contains(&reused.moved) || !self.report_once((reused.at, Code::UseAfterMove))
+            {
                 continue;
             }
             // A move that comes around a loop to itself.
@@ -431,6 +520,7 @@ impl<'a> Walk<'a> {
         self.edges.clear();
         self.labels.clear();
         self.held.clear();
+        self.viewed.clear();
         self.results.clear();
         self.current = self.block();
         self.exit = self.block();
@@ -472,7 +562,11 @@ impl<'a> Walk<'a> {
         self.seen.clear();
         for event in &self.events[from..] {
             self.found.steps += 1;
-            if let Event::Read(local, _) | Event::Given(local, _) | Event::Moved(local, _) = event {
+            if let Event::Read(local, _)
+            | Event::Given(local, _)
+            | Event::Moved(local, _)
+            | Event::Wrote(local, _) = event
+            {
                 *self.seen.entry(*local).or_default() += 1;
             }
         }
@@ -499,6 +593,7 @@ impl<'a> Walk<'a> {
             self.found.steps += 1;
             match todo {
                 Todo::Moved(local, span) => self.events.push(Event::Moved(local, span)),
+                Todo::Wrote(local, span) => self.wrote(local, span),
                 Todo::Value(expr) => self.expr(expr, false, &mut rest),
                 Todo::Part(expr) => self.expr(expr, true, &mut rest),
             }
@@ -574,9 +669,30 @@ impl<'a> Walk<'a> {
                     let accepted = self.modes.get(&name) == Some(&Transfer::Move);
                     self.local(name).filter(|_| accepted)
                 });
-                match taken {
-                    Some(local) => rest.push(Todo::Moved(local, span)),
-                    None => {
+                if let Some(local) = taken {
+                    if self.held.get(&local).is_some_and(|&count| count > 0) {
+                        self.found.held.push((local, span));
+                    }
+                    rest.push(Todo::Moved(local, span));
+                    return;
+                }
+                // `delete` and `clear` write what their first operand
+                // names.
+                let empties = matches!(
+                    self.body.uses.get(&callee),
+                    Some(Ref::Universe(Predeclared::Delete | Predeclared::Clear))
+                );
+                let written = operand.filter(|_| empties).and_then(|first| {
+                    let root = self.root(first);
+                    root.filter(|root| self.watched.contains(root))
+                });
+                match (written, operand) {
+                    (Some(local), Some(first)) => {
+                        rest.push(Todo::Wrote(local, span));
+                        values(rest, &args[1..]);
+                        values(rest, &self.indexes(first));
+                    }
+                    _ => {
                         values(rest, args);
                         rest.push(Todo::Part(*fun));
                     }
@@ -609,8 +725,70 @@ impl<'a> Walk<'a> {
                 self.events.push(Event::Set(local));
             }
         } else if let Some(local) = self.root(inner) {
-            self.events.push(Event::Read(local, span));
+            self.wrote(local, span);
         }
+    }
+
+    /// A part of the variable is written. For a parameter that is
+    /// watched the write is one that may be lost, unless a loop around
+    /// it has a variable for the elements, which sees it.
+    fn wrote(&mut self, local: LocalId, span: Span) {
+        let viewed = self.viewed.get(&local).is_some_and(|&count| count > 0);
+        self.events
+            .push(match self.watched.contains(&local) && !viewed {
+                true => Event::Wrote(local, span),
+                false => Event::Read(local, span),
+            });
+    }
+
+    /// The indexes on the way to the place, in the order in which they
+    /// are evaluated. The variable at the root is not read for them.
+    fn indexes(&self, mut place: ExprId) -> Vec<ExprId> {
+        let mut found = Vec::new();
+        loop {
+            place = match &self.tree.exprs[place].kind {
+                ExprKind::Paren(x) | ExprKind::Selector { x, .. } | ExprKind::Unary { x, .. } => *x,
+                ExprKind::Index { x, indices } => {
+                    found.extend(indices.iter().rev());
+                    *x
+                }
+                ExprKind::Slice { x, lo, hi, max, .. } => {
+                    found.extend([max, hi, lo].into_iter().flatten());
+                    *x
+                }
+                _ => break,
+            };
+        }
+        found.reverse();
+        found
+    }
+
+    /// `p = append(p, more...)` for a parameter `p` that is a slice by
+    /// value: the parameter, and what is appended.
+    fn grown(
+        &self,
+        op: AssignOp,
+        lhs: &[ExprId],
+        rhs: &'a [ExprId],
+    ) -> Option<(LocalId, &'a [ExprId])> {
+        let (AssignOp::Assign, [place], [value]) = (op, lhs, rhs) else {
+            return None;
+        };
+        let place = self.unparen(*place);
+        let named = matches!(self.tree.exprs[place].kind, ExprKind::Name(_));
+        let local = self
+            .local(place)
+            .filter(|local| named && self.watched.contains(local))?;
+        let ExprKind::Call { fun, args, .. } = &self.tree.exprs[self.unparen(*value)].kind else {
+            return None;
+        };
+        let appends =
+            self.body.uses.get(&self.unparen(*fun)) == Some(&Ref::Universe(Predeclared::Append));
+        let (first, more) = args.split_first()?;
+        let first = self.unparen(*first);
+        let same = matches!(self.tree.exprs[first].kind, ExprKind::Name(_))
+            && self.local(first) == Some(local);
+        (appends && same).then_some((local, more))
     }
 
     /// What is evaluated of the places before their values are: all of
@@ -619,8 +797,16 @@ impl<'a> Walk<'a> {
     fn places(&mut self, places: &[ExprId], read: bool) {
         for &place in places {
             let inner = self.unparen(place);
-            if read || !matches!(self.tree.exprs[inner].kind, ExprKind::Name(_)) {
-                self.parts(&[inner]);
+            let named = matches!(self.tree.exprs[inner].kind, ExprKind::Name(_));
+            if named && !read {
+                continue;
+            }
+            // A write to an element of a parameter reads its indexes
+            // only: what was written before is not seen by it.
+            let written = self.root(inner).filter(|root| self.watched.contains(root));
+            match written.filter(|_| !named) {
+                Some(_) => self.values(&self.indexes(inner)),
+                None => self.parts(&[inner]),
             }
         }
     }
@@ -664,6 +850,14 @@ impl<'a> Walk<'a> {
             }
             StmtKind::Assign { op, lhs, rhs } => {
                 let from = self.events.len();
+                // The parameter grows by what it has: it is used, and
+                // nothing of it is read for anything else.
+                if let Some((local, more)) = self.grown(*op, lhs, rhs) {
+                    self.values(more);
+                    self.wrote(local, tree.stmts[stmt].span);
+                    self.settle(from);
+                    return;
+                }
                 self.places(lhs, matches!(op, AssignOp::Op(_)));
                 self.values(rhs);
                 for &place in lhs {
@@ -740,10 +934,12 @@ impl<'a> Walk<'a> {
                 body,
             } => {
                 self.parts(&[*x]);
+                let ranged = self.root(*x);
                 let [head, turn, after] = [(); 3].map(|()| self.block());
                 self.jump(head);
                 self.start(head);
-                for &left in lhs {
+                let mut elements = false;
+                for (at, &left) in lhs.iter().enumerate() {
                     let mut left = self.unparen(left);
                     // `&v` is a variable too.
                     if let ExprKind::Unary {
@@ -756,20 +952,29 @@ impl<'a> Walk<'a> {
                     if !define {
                         self.places(&[left], false);
                     }
+                    let before = self.events.len();
                     self.stored(left);
+                    // A second variable is each element in its turn.
+                    elements |= at == 1 && self.events.len() > before;
                 }
                 self.jump(after);
                 self.jump(turn);
                 self.start(turn);
                 // The loop reads what it ranges over where it is, until
                 // it is left by any way.
-                let ranged = self.root(*x);
                 self.hold(ranged);
+                let viewed = ranged.filter(|_| elements);
+                if let Some(viewed) = viewed {
+                    *self.viewed.entry(viewed).or_default() += 1;
+                }
                 self.breaks.push((label, after));
                 self.continues.push((label, head));
                 self.stmts(&body.stmts);
                 self.breaks.pop();
                 self.continues.pop();
+                if let Some(count) = viewed.and_then(|viewed| self.viewed.get_mut(&viewed)) {
+                    *count -= 1;
+                }
                 self.release(ranged);
                 self.jump(head);
                 self.start(after);
@@ -917,7 +1122,11 @@ impl<'a> Walk<'a> {
             .events
             .iter()
             .any(|event| matches!(event, Event::Moved(..)));
-        if !given && !moved {
+        let wrote = self
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Wrote(..)));
+        if !given && !moved && !wrote {
             return;
         }
         self.blocks[self.current as usize].1 = self.events.len() as u32;
@@ -952,6 +1161,9 @@ impl<'a> Walk<'a> {
         }
         if given {
             self.last(&before, &after);
+        }
+        if wrote {
+            self.lost(&before, &after);
         }
     }
 
@@ -1024,7 +1236,7 @@ impl<'a> Walk<'a> {
             let (first, last) = self.blocks[block];
             for at in first as usize..last as usize {
                 let (local, span, moves_it) = match self.events[at] {
-                    Event::Read(local, span) => (local, span, false),
+                    Event::Read(local, span) | Event::Wrote(local, span) => (local, span, false),
                     Event::Given(local, expr) => (local, self.tree.exprs[expr].span, false),
                     Event::Moved(local, span) => (local, span, true),
                     Event::Set(local) => {
@@ -1059,10 +1271,65 @@ impl<'a> Walk<'a> {
     /// Backward: the variables that are read later. A copy of a
     /// variable that is not is its last use.
     fn last(&mut self, before: &Lists, after: &Lists) {
-        let members = self.members(|event| match event {
+        let asked = |event: &Event| match event {
             Event::Given(local, _) => Some(*local),
             _ => None,
-        });
+        };
+        let effect = |event: &Event| match *event {
+            Event::Read(local, _)
+            | Event::Given(local, _)
+            | Event::Moved(local, _)
+            | Event::Wrote(local, _) => Some((local, true)),
+            Event::Set(local) => Some((local, false)),
+        };
+        for at in self.not_read_later(before, after, asked, effect) {
+            if let Event::Given(local, expr) = self.events[at]
+                && !self.reached.contains(&local)
+            {
+                self.found.last.insert(expr);
+            }
+        }
+    }
+
+    /// Backward: the parameters that are read later. A write to an
+    /// element of one that is not is lost: nothing sees it, and the
+    /// caller has its own value.
+    fn lost(&mut self, before: &Lists, after: &Lists) {
+        let asked = |event: &Event| match event {
+            Event::Wrote(local, _) => Some(*local),
+            _ => None,
+        };
+        // A new value ends what was written; a write reads nothing
+        // and ends nothing.
+        let effect = |event: &Event| match *event {
+            Event::Read(local, _) | Event::Given(local, _) | Event::Moved(local, _) => {
+                Some((local, true))
+            }
+            Event::Set(local) => Some((local, false)),
+            Event::Wrote(..) => None,
+        };
+        // What a function literal uses or a pointer leads to may be read
+        // at any time.
+        for at in self.not_read_later(before, after, asked, effect) {
+            if let Event::Wrote(local, span) = self.events[at]
+                && !self.reached.contains(&local)
+            {
+                self.found.lost.push((local, span));
+            }
+        }
+    }
+
+    /// The events that `asked` names a variable for after which the
+    /// variable is not read on any way. `effect` says of an event
+    /// whether its variable is read by it, or is not read before it.
+    fn not_read_later(
+        &mut self,
+        before: &Lists,
+        after: &Lists,
+        asked: fn(&Event) -> Option<LocalId>,
+        effect: fn(&Event) -> Option<(LocalId, bool)>,
+    ) -> Vec<usize> {
+        let members = self.members(asked);
         let mut sets = Sets::new(members.len());
         let count = self.blocks.len();
         let mut entering = vec![EMPTY; count];
@@ -1075,21 +1342,21 @@ impl<'a> Walk<'a> {
             }
             set
         };
+        let step = |sets: &mut Sets, set: u32, event: &Event| {
+            let member =
+                effect(event).and_then(|(local, read)| Some((*members.get(&local)?, read)));
+            match member {
+                Some((member, read)) => sets.put(set, member, read),
+                None => set,
+            }
+        };
         while let Some(block) = queue.pop() {
             let block = block as usize;
             queued[block] = false;
             let mut set = leaving(&mut sets, &entering, block);
             let (first, last) = self.blocks[block];
             for event in self.events[first as usize..last as usize].iter().rev() {
-                let (local, read) = match event {
-                    Event::Read(local, _) | Event::Given(local, _) | Event::Moved(local, _) => {
-                        (local, true)
-                    }
-                    Event::Set(local) => (local, false),
-                };
-                if let Some(&member) = members.get(local) {
-                    set = sets.put(set, member, read);
-                }
+                set = step(&mut sets, set, event);
             }
             if set != entering[block] {
                 entering[block] = set;
@@ -1100,26 +1367,22 @@ impl<'a> Walk<'a> {
                 }
             }
         }
+        let mut found = Vec::new();
         for block in 0..count {
             let mut set = leaving(&mut sets, &entering, block);
             let (first, last) = self.blocks[block];
-            for event in self.events[first as usize..last as usize].iter().rev() {
-                let (local, read) = match event {
-                    Event::Given(local, expr) => {
-                        if !sets.has(set, members[local]) && !self.reached.contains(local) {
-                            self.found.last.insert(*expr);
-                        }
-                        (local, true)
-                    }
-                    Event::Read(local, _) | Event::Moved(local, _) => (local, true),
-                    Event::Set(local) => (local, false),
-                };
-                if let Some(&member) = members.get(local) {
-                    set = sets.put(set, member, read);
+            for at in (first as usize..last as usize).rev() {
+                let event = &self.events[at];
+                if let Some(local) = asked(event)
+                    && !sets.has(set, members[&local])
+                {
+                    found.push(at);
                 }
+                set = step(&mut sets, set, event);
             }
         }
         self.found.steps += sets.steps;
+        found
     }
 }
 

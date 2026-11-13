@@ -902,6 +902,7 @@ func writes(xs []int, m map[string]int, b box, s string) {
 	m[\"k\"]++
 	b.items = nil
 	s += \"x\"
+	println(len(xs), len(m))
 }
 
 func more(a, b, c, d, e []int, f map[int]int, g box) []int {
@@ -914,6 +915,7 @@ func more(a, b, c, d, e []int, f map[int]int, g box) []int {
 	copy(&d, e)
 	delete(f, 1)
 	g.add(2)
+	println(len(c), len(f))
 	return e
 }
 
