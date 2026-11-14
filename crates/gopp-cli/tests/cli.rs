@@ -1941,8 +1941,8 @@ func main() {
         "continue",
         "p linux",
         "p name.len",
-        "p gopp_own->text.len",
-        "p *gopp_own->text.ptr@6",
+        "p text.len",
+        "p *text.ptr@6",
     ];
     let said = debugged(&dir, text, &[], &commands);
     assert!(said.contains("\na = 3\nb = 4\n"), "{said}");
@@ -1957,7 +1957,8 @@ func main() {
         "{said}"
     );
     // A parameter under a name that a header has a macro for, a
-    // string, and what the function ends when a panic leaves it.
+    // string, and a variable that the function ends when a panic
+    // leaves it: found by its name like any other.
     assert!(said.contains("\n$3 = 5\n"), "{said}");
     assert!(said.contains("\n$4 = 3\n"), "{said}");
     assert!(said.contains("\n$5 = 6\n"), "{said}");
@@ -2381,4 +2382,64 @@ func main() {
     // Without debug information nothing is named so.
     let said = debugged(&dir, text, &["-no-debug"], &["break main__add"]);
     assert!(said.contains("\"main__add\" not defined"), "{said}");
+}
+
+/// A variable that owns what is freed, which the function ends when a
+/// panic leaves it, is found by its name like any other, in its own
+/// scope: two of one name are two variables.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_debugger_finds_a_variable_that_owns_memory_by_its_name() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main
+
+func mark() string { return \"!\" }
+
+func build(name string, n int) int {
+	text := name + mark()
+	total := 0
+	for i := 0; i < n; i++ {
+		text := \"in\" + mark()
+		total += len(text)
+	}
+	return total + len(text)
+}
+
+func main() {
+	println(build(\"outer\", 2))
+}
+";
+    let commands = [
+        "break steps.gopp:10",
+        "break steps.gopp:12",
+        "run",
+        "p text.len",
+        "p *text.ptr@text.len",
+        "info locals",
+        "delete 1",
+        "continue",
+        "p *text.ptr@text.len",
+        "p name.len",
+    ];
+    let said = debugged(&dir, text, &[], &commands);
+    // In the loop the inner one, after it the outer one.
+    assert!(said.contains("\n$1 = 3\n"), "{said}");
+    assert!(said.contains("\n$2 = \"in!\"\n"), "{said}");
+    assert!(said.contains("\n$3 = \"outer!\"\n"), "{said}");
+    assert!(said.contains("\n$4 = 5\n"), "{said}");
+    // Both are among the variables of the function, the inner first.
+    let locals: Vec<&str> = (said.lines())
+        .filter(|line| line.starts_with("text = "))
+        .collect();
+    assert_eq!(locals.len(), 2, "{said}");
+    assert!(
+        locals[0].contains("\"in!\"") && locals[1].contains("\"outer!\""),
+        "{said}"
+    );
+    // The program does what it does without a debugger.
+    let ran = run_beside(&mut Command::new(dir.path().join("steps.bin")));
+    assert_eq!(
+        (stderr(&ran).as_str(), ran.status.code()),
+        ("12\n", Some(0))
+    );
 }

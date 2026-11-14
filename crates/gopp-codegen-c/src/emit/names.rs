@@ -285,6 +285,10 @@ pub(super) struct Names {
     /// The scopes that have a block of C, each with the scope of the
     /// block around it, the outer before the inner.
     pub blocks: Vec<(u32, u32)>,
+    /// The variables that a cleanup block uses and that are variables
+    /// of C all the same, under their names: the record of the cleanup
+    /// blocks has the address of each, and not its value.
+    pub kept: Vec<bool>,
 }
 
 impl Names {
@@ -296,12 +300,16 @@ impl Names {
             block: vec![None; count],
             home: vec![0; func.scopes().len() + 1],
             blocks: Vec::new(),
+            kept: vec![false; count],
         }
     }
 
     /// The names of a function of the source. `shared` says which
-    /// locals the record of the cleanup blocks holds: their names are
-    /// the names of its fields.
+    /// locals the cleanup blocks use. A variable among them stays a
+    /// variable of C, which a debugger finds by its name, and the
+    /// record of the cleanup blocks gets its address where the
+    /// variable starts; the other locals among them are fields of the
+    /// record, under their names.
     pub fn of_source(cx: &Cx<'_>, func: &Function, shared: &[bool], steps: &mut u64) -> Self {
         let mut names = Self::plain(func);
         let locals: Vec<_> = func.locals().iter().map(|(_, local)| local).collect();
@@ -350,12 +358,27 @@ impl Names {
             let name = local.name.as_deref().filter(|name| usable(name))?;
             (of_source && !cx.empty(local.ty)).then_some(name)
         };
+        // A variable has a statement that says where it starts, and a
+        // parameter starts with the function: the record can be given
+        // the address of either there.
+        let mut starts = vec![false; locals.len()];
+        for (_, block) in func.blocks().iter().filter(|(_, block)| !block.cleanup) {
+            for stmt in &block.stmts {
+                *steps += 1;
+                if let StatementKind::StorageLive(local) = stmt.kind {
+                    starts[index(local)] = true;
+                }
+            }
+        }
+        let pointed = |at: usize| shared[at] && (locals[at].kind == LocalKind::Arg || starts[at]);
+        // What the record holds itself.
+        let held = |at: usize| shared[at] && !pointed(at);
         let in_block = |at: usize| {
             let local = locals[at];
             let block = (local.scope.0 as usize)
                 .checked_sub(1)
                 .is_some_and(|scope| scopes[scope].kind == ScopeKind::Block);
-            local.kind == LocalKind::Var && !shared[at] && block
+            local.kind == LocalKind::Var && !held(at) && block
         };
         let mut wanted: Vec<bool> = (0..locals.len()).map(|at| named(at).is_some()).collect();
         // A variable is declared in the block of its scope only if
@@ -405,7 +428,7 @@ impl Names {
             let Some(name) = named(at).filter(|_| wanted[at]) else {
                 continue;
             };
-            let block = match (shared[at], in_block(at)) {
+            let block = match (held(at), in_block(at)) {
                 (true, _) => RECORD,
                 (false, true) => names.home[locals[at].scope.0 as usize],
                 (false, false) => 0,
@@ -429,7 +452,7 @@ impl Names {
         let mut hidden = |scope: u32, place: &Place| {
             locals_of(place, |local| {
                 let at = index(local);
-                let Some(name) = named(at).filter(|_| wanted[at] && !shared[at]) else {
+                let Some(name) = named(at).filter(|_| wanted[at] && !held(at)) else {
                     return;
                 };
                 let declared = block[at].unwrap_or(0);
@@ -456,6 +479,7 @@ impl Names {
         for at in (0..locals.len()).filter(|&at| wanted[at]) {
             if let Some(name) = named(at) {
                 names.of[at] = name.to_owned();
+                names.kept[at] = pointed(at);
             }
         }
         names

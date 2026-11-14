@@ -221,8 +221,15 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         for (id, local) in func.locals().iter() {
             let shared = guard.shared[id.into_raw().into_u32() as usize];
             if shared && !cx.empty(local.ty) {
-                let field = &writer.names.of[id.into_raw().into_u32() as usize];
-                let _ = writeln!(writer.out, "  {} {field};", cx.spelled(local.ty));
+                let at = id.into_raw().into_u32() as usize;
+                // The address of a variable that is one of C too.
+                let _ = match writer.names.kept[at] {
+                    true => writeln!(writer.out, "  {} *_{at};", cx.spelled(local.ty)),
+                    false => {
+                        let field = &writer.names.of[at];
+                        writeln!(writer.out, "  {} {field};", cx.spelled(local.ty))
+                    }
+                };
             }
         }
         let _ = writeln!(
@@ -256,8 +263,9 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
     writer.line = (0, 0);
     writer.at(func.loc());
     // A parameter that a cleanup block uses is copied into the record
-    // under its name, so it has none of its own.
-    let param = |number: usize| match writer.shared_at(number) {
+    // under its name, so it has none of its own, unless the record
+    // has its address.
+    let param = |number: usize| match writer.shared_at(number) && !writer.names.kept[number] {
         true => format!("_{number}"),
         false => writer.names.of[number].clone(),
     };
@@ -271,7 +279,17 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         }
         let param = (1..=sig.params.len()).contains(&number);
         let in_block = writer.names.block[number].is_some();
-        match (writer.shared(id), param) {
+        // A variable that the record points to is a variable of the
+        // function like one that no cleanup block uses.
+        let kept = writer.names.kept[number];
+        match (writer.shared(id) && !kept, param) {
+            (false, true) if kept => {
+                let _ = writeln!(
+                    given,
+                    "  gopp_own->_{number} = &{};",
+                    writer.names.of[number]
+                );
+            }
             (false, true) | (true, false) => {}
             (false, false) if in_block => {}
             (false, false) => {
@@ -358,6 +376,14 @@ struct Writer<'c, 'm> {
     names: Names,
 }
 
+/// A part of a block that is written in the block of C of its scope.
+enum Step<'s> {
+    Assigns(&'s (Place, Rvalue)),
+    /// The variable starts here.
+    Starts(LocalId),
+    Ends,
+}
+
 /// Whether the end of a block is the call by which a function with
 /// `defer` statements tells the runtime of itself.
 fn entered(cx: &Cx<'_>, term: &TerminatorKind) -> bool {
@@ -394,12 +420,24 @@ impl Writer<'_, '_> {
         (self.guard.as_ref()).is_some_and(|guard| guard.shared[at])
     }
 
-    /// The local as an expression of C.
+    /// The local as an expression of C. A cleanup block reaches a
+    /// variable of the function through its address in the record.
     fn local(&self, local: LocalId) -> String {
-        let name = &self.names.of[local.into_raw().into_u32() as usize];
-        match self.shared(local) {
-            true => format!("gopp_own->{name}"),
-            false => name.clone(),
+        let at = local.into_raw().into_u32() as usize;
+        let name = &self.names.of[at];
+        match (self.shared(local), self.names.kept[at]) {
+            (true, true) if self.unwinding => format!("(*gopp_own->_{at})"),
+            (true, false) => format!("gopp_own->{name}"),
+            _ => name.clone(),
+        }
+    }
+
+    /// Where a variable starts that the record points to: the record
+    /// gets its address.
+    fn starts(&mut self, local: LocalId) {
+        let at = local.into_raw().into_u32() as usize;
+        if self.shared(local) && self.names.kept[at] && !self.unwinding {
+            let _ = writeln!(self.out, "  gopp_own->_{at} = &{};", self.names.of[at]);
         }
     }
 
@@ -421,12 +459,23 @@ impl Writer<'_, '_> {
             let label = block_name(id);
             let mut open: Option<usize> = None;
             let mut parts = 0;
-            let assigned = block.stmts.iter().filter_map(|stmt| match &stmt.kind {
-                StatementKind::Assign(assigned) => Some((stmt.loc, stmt.scope, Some(&**assigned))),
+            // What is written of the block: its assignments, where a
+            // variable starts that the record points to, and its end.
+            let pointed = |local: LocalId| {
+                self.shared(local) && self.names.kept[local.into_raw().into_u32() as usize]
+            };
+            let written = block.stmts.iter().filter_map(|stmt| match &stmt.kind {
+                StatementKind::Assign(assigned) => {
+                    Some((stmt.loc, stmt.scope, Step::Assigns(assigned)))
+                }
+                StatementKind::StorageLive(local) if pointed(*local) => {
+                    Some((stmt.loc, stmt.scope, Step::Starts(*local)))
+                }
                 _ => None,
             });
-            let end = (block.term.loc, block.term.scope, None);
-            for (loc, scope, assigned) in assigned.chain([end]) {
+            let end = (block.term.loc, block.term.scope, Step::Ends);
+            let written: Vec<_> = written.chain([end]).collect();
+            for (loc, scope, what) in written {
                 self.steps += 1;
                 let home = self.names.home[scope.0 as usize] as usize;
                 match open {
@@ -449,9 +498,10 @@ impl Writer<'_, '_> {
                     self.line = (0, 0);
                 }
                 self.at(loc);
-                match assigned {
-                    Some((dest, value)) => self.assign(dest, value)?,
-                    None => self.end(&block.term.kind)?,
+                match what {
+                    Step::Assigns((dest, value)) => self.assign(dest, value)?,
+                    Step::Starts(local) => self.starts(local),
+                    Step::Ends => self.end(&block.term.kind)?,
                 }
             }
             if let Some(at) = open {
@@ -519,10 +569,14 @@ impl Writer<'_, '_> {
             }
             for stmt in &block.stmts {
                 self.steps += 1;
-                if let StatementKind::Assign(assigned) = &stmt.kind {
-                    let (dest, value) = &**assigned;
-                    self.at(stmt.loc);
-                    self.assign(dest, value)?;
+                match &stmt.kind {
+                    StatementKind::Assign(assigned) => {
+                        let (dest, value) = &**assigned;
+                        self.at(stmt.loc);
+                        self.assign(dest, value)?;
+                    }
+                    StatementKind::StorageLive(local) => self.starts(*local),
+                    _ => {}
                 }
             }
             self.steps += 1;

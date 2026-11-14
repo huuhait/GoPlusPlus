@@ -177,15 +177,45 @@ fn a_name_that_c_takes_for_something_else_is_not_used() {
         "{greet}"
     );
     assert!(unit.contains("\n#undef linux\n") && unit.contains("\n#undef name\n"));
-    for (name, _) in declared(&greet) {
-        assert!(name.starts_with('_'), "{name}\n{greet}");
-    }
-    // What a cleanup block ends is a field of the record of the
-    // function, under its name.
+    // `text` is the one variable whose name C leaves to it.
+    let named: Vec<String> = (declared(&greet).into_iter())
+        .map(|(name, _)| name)
+        .filter(|name| !name.starts_with('_'))
+        .collect();
+    assert_eq!(named, ["text"], "{greet}");
+    // A cleanup block ends `text`, and it is a variable of the function
+    // all the same: the record of the cleanup blocks has its address
+    // from where the variable starts, and the cleanup blocks reach it
+    // through that.
     let record = unit.find("struct main__greet_own {\n").unwrap();
-    let record = &unit[record..record + unit[record..].find("};").unwrap()];
-    assert!(record.contains("  gopp_string text;\n"), "{record}");
-    assert!(greet.contains("gopp_own->text = "), "{greet}");
+    let rest = &unit[record..];
+    let record = &rest[..rest.find("};").unwrap()];
+    let pointer = record
+        .lines()
+        .find(|line| line.starts_with("  gopp_string *_"));
+    let field = pointer.unwrap_or_else(|| panic!("{record}"));
+    let field = field
+        .trim_start_matches("  gopp_string *")
+        .trim_end_matches(';');
+    assert!(
+        greet.contains(&format!("  gopp_own->{field} = &text;\n")),
+        "{greet}"
+    );
+    assert!(
+        greet.contains("  text = ") && !greet.contains("gopp_own->text"),
+        "{greet}"
+    );
+    let cleanup = &rest[..rest.find("\n}\n").unwrap()];
+    assert!(
+        cleanup.contains(&format!("(*gopp_own->{field})")),
+        "{cleanup}"
+    );
+    // Without debug information the record holds the value itself.
+    let plain = emit_c23(&module("a.gopp", SCOPES), &options(Entry::Main)).unwrap();
+    assert!(
+        !plain.contains(" = &_") && !plain.contains("(*gopp_own->"),
+        "{plain}"
+    );
 }
 
 const TYPES: &str = "package main
