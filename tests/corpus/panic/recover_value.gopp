@@ -1,0 +1,54 @@
+package main
+
+import "fmt"
+
+type Problem struct{ code int }
+
+func (p Problem) Error() string { return "problem" }
+
+func try(f func()) (out string) {
+	defer func() {
+		switch r := recover().(type) {
+		case nil:
+			out = "fine"
+		case string:
+			out = "string " + r
+		case int:
+			out = "int"
+			if r > 10 {
+				out = "big int"
+			}
+		case Problem:
+			out = "problem"
+			if r.code == 7 {
+				out = "lucky problem"
+			}
+		case error:
+			out = "error " + r.Error()
+		default:
+			out = "other"
+		}
+	}()
+	f()
+	return "returned"
+}
+
+type plain string
+
+func (p plain) Error() string { return string(p) }
+
+func main() {
+	fmt.Println(try(func() {}))
+	fmt.Println(try(func() { panic("s") }))
+	fmt.Println(try(func() { panic(3) }))
+	fmt.Println(try(func() { panic(30) }))
+	fmt.Println(try(func() { panic(Problem{7}) }))
+	fmt.Println(try(func() { panic(Problem{1}) }))
+	fmt.Println(try(func() { panic(plain("p")) }))
+	fmt.Println(try(func() { panic(1.5) }))
+	fmt.Println(try(func() {
+		var xs [3]int
+		i := 5
+		xs[i%8] = 1
+	}))
+}

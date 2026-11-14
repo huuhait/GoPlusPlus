@@ -1,0 +1,16 @@
+package main
+
+type code int
+
+func check(n int) {
+	if n > 2 {
+		panic(n)
+	}
+	println("ok", n)
+}
+
+func main() {
+	for i := 0; ; i++ {
+		check(i)
+	}
+}

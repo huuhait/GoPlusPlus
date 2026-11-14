@@ -1,0 +1,60 @@
+package main
+
+func minmax(xs []int) (lo, hi int) {
+	lo, hi = xs[0], xs[0]
+	for _, x := range xs[1:] {
+		if x < lo {
+			lo = x
+		}
+		if x > hi {
+			hi = x
+		}
+	}
+	return
+}
+
+func parse(s string) (n int, ok bool) {
+	if s == "" {
+		return 0, false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return n, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
+}
+
+func three() (int, string, bool) { return 1, "two", true }
+
+func pass(a int, b string, c bool) (bool, string, int) { return c, b, a }
+
+func swap(a, b string) (string, string) { return b, a }
+
+func named() (x, y int) {
+	defer func() { x *= 2 }()
+	x, y = 1, 2
+	return y, x
+}
+
+func main() {
+	lo, hi := minmax([]int{3, -1, 9, 4})
+	println(lo, hi)
+	for _, s := range []string{"123", "", "12a", "007"} {
+		n, ok := parse(s)
+		println(n, ok)
+	}
+	a, b, c := three()
+	println(a, b, c)
+	println(pass(three()))
+	_, s, _ := three()
+	x, y := swap("left", s)
+	x, y = y, x
+	println(x, y)
+	println(named())
+	i, j, k := 1, 2, 3
+	i, j, k = k, i, j
+	println(i, j, k)
+}

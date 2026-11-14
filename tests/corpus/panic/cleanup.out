@@ -1,0 +1,12 @@
+true
+false
+open a
+open b
+open c
+close c
+close b
+close a
+open a
+open b
+close b
+close a

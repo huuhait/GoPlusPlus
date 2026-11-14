@@ -1,0 +1,4 @@
+d
+panic: runtime error: index out of range [-1]
+
+exit status 2

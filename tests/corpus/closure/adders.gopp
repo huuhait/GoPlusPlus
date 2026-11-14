@@ -1,0 +1,49 @@
+package main
+
+func adder(by int) func(int) int {
+	return func(x int) int { return x + by }
+}
+
+func multiplier(by int) func(int) int {
+	return func(x int) int { return x * by }
+}
+
+func compose(f, g func(int) int) func(int) int {
+	return func(x int) int { return g(f(x)) }
+}
+
+func repeat(f func(int) int, times int) func(int) int {
+	return func(x int) int {
+		for i := 0; i < times; i++ {
+			x = f(x)
+		}
+		return x
+	}
+}
+
+func constant(s string) func() string {
+	return func() string { return s }
+}
+
+func prefixer(prefix string) func(string) string {
+	return func(s string) string { return prefix + s }
+}
+
+func main() {
+	add5 := adder(5)
+	double := multiplier(2)
+	println(add5(1), double(21), add5(double(add5(0))))
+	both := compose(add5, double)
+	other := compose(double, add5)
+	println(both(1), other(1), compose(both, other)(0))
+	println(repeat(double, 10)(1), repeat(add5, 0)(7), repeat(repeat(add5, 3), 3)(0))
+	hello := constant("hello")
+	greet := prefixer(hello() + ", ")
+	println(hello(), greet("world"), prefixer("")("x"))
+	adders := []func(int) int{adder(1), adder(10), adder(100)}
+	total := 0
+	for _, a := range adders {
+		total = a(total)
+	}
+	println(total, adders[1](adders[2](0)))
+}

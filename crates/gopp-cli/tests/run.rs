@@ -9,6 +9,13 @@
 //! status that it ends with, which is 0 without one. The offsets of a
 //! trace are written `+0x?`. `GOPP_RUN_UPDATE=1` writes the `.out`
 //! files anew.
+//!
+//! The programs of `tests/corpus` are Go programs too, and do what Go
+//! does: the `.out` file of each has what the program writes when Go
+//! builds it, up to the trace of a panic, and a last line
+//! `exit status N` if it ends with another status than 0. Go writes
+//! these files (`GOPP_CORPUS_UPDATE=1` with the long test that asks
+//! Go), never Go++.
 
 #![allow(clippy::unwrap_used, reason = "test helpers outside #[test] functions")]
 
@@ -101,17 +108,17 @@ fn wrong_among(programs: &[PathBuf], flags: &[&str]) -> Vec<String> {
     wrong_by(programs, flags, |written, expected| written == expected)
 }
 
-/// `wrong_among`, with what says whether what a program wrote is what
-/// its file has.
-fn wrong_by(programs: &[PathBuf], flags: &[&str], same: fn(&str, &str) -> bool) -> Vec<String> {
+/// Builds and runs the programs, each with its name, in one
+/// `gopp test-run` with the flags: how each ended and what it wrote.
+fn results(programs: &[(String, PathBuf)], flags: &[&str]) -> BTreeMap<String, Value> {
     let manifest: String = programs
         .iter()
-        .map(|program| {
+        .map(|(id, program)| {
             // A file of C beside a program is the C that it calls.
             let of_c = program.with_extension("c");
             let mut inputs = vec![program.clone()];
             inputs.extend(of_c.exists().then_some(of_c));
-            let job = json!({"v": 1, "id": id(program), "inputs": inputs, "merge_output": true});
+            let job = json!({"v": 1, "id": id, "inputs": inputs, "merge_output": true});
             format!("{job}\n")
         })
         .collect();
@@ -134,6 +141,16 @@ fn wrong_by(programs: &[PathBuf], flags: &[&str], same: fn(&str, &str) -> bool) 
         .map(|result| (result["id"].as_str().unwrap().to_owned(), result))
         .collect();
     assert_eq!(results.len(), programs.len(), "two programs of one name");
+    results
+}
+
+/// `wrong_among`, with what says whether what a program wrote is what
+/// its file has.
+fn wrong_by(programs: &[PathBuf], flags: &[&str], same: fn(&str, &str) -> bool) -> Vec<String> {
+    let named: Vec<(String, PathBuf)> = (programs.iter())
+        .map(|program| (id(program), program.clone()))
+        .collect();
+    let results = results(&named, flags);
     let update = std::env::var_os("GOPP_RUN_UPDATE").is_some();
     let mut wrong = Vec::new();
     for program in programs {
@@ -173,11 +190,154 @@ fn wrong_by(programs: &[PathBuf], flags: &[&str], same: fn(&str, &str) -> bool) 
     wrong
 }
 
+/// The groups of the programs of `tests/corpus`, a directory each.
+const GROUPS: [&str; 6] = [
+    "scalar",
+    "collection",
+    "generic",
+    "closure",
+    "interface",
+    "panic",
+];
+
+/// The programs of `tests/corpus`, each with its group and its name.
+fn corpus() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/corpus"));
+    let mut programs = Vec::new();
+    for group in GROUPS {
+        let mut of_group: Vec<PathBuf> = fs::read_dir(dir.join(group))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "gopp"))
+            .collect();
+        of_group.sort();
+        let named = |program: PathBuf| (format!("{group}-{}", id(&program)), program);
+        programs.extend(of_group.into_iter().map(named));
+    }
+    programs
+}
+
+/// What a program wrote and the status that it ended with, as the
+/// files of the corpus have it: without the trace of a panic, which is
+/// no part of what a program means, and with the status that is not 0
+/// in a last line.
+fn as_go_says(written: &str, status: i64) -> String {
+    let mut said = match written.split_once(TRACE) {
+        Some((before, _)) => format!("{before}\n"),
+        None => written.to_owned(),
+    };
+    if status != 0 {
+        said.push_str(&format!("exit status {status}\n"));
+    }
+    said
+}
+
+/// The programs of the corpus that, built with the flags, do not do
+/// what their files say that Go does.
+fn unlike_go(flags: &[&str]) -> Vec<String> {
+    let programs = corpus();
+    let results = results(&programs, flags);
+    let mut wrong = Vec::new();
+    for (id, program) in &programs {
+        let result = &results[id];
+        let (Some("exited"), Some(status)) = (result["outcome"].as_str(), result["exit"].as_i64())
+        else {
+            let message = result["message"].as_str().unwrap_or_default();
+            wrong.push(format!("{id}: {}\n{message}", result["outcome"]));
+            continue;
+        };
+        let said = as_go_says(&written(result), status);
+        let expected = fs::read_to_string(program.with_extension("out")).unwrap_or_default();
+        if said != expected {
+            wrong.push(format!("{id}: did\n{said}--- and Go does\n{expected}---"));
+        }
+    }
+    wrong
+}
+
 #[test]
 fn every_program_of_tests_run_does_what_its_files_say() {
     let programs = programs(|_| true);
     assert!(programs.len() >= 8);
     let wrong = wrong_among(&programs, &[]);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A program that is written as in Go does what it does in Go
+/// (`docs/design/differences-from-go.md`).
+#[test]
+fn every_program_of_the_corpus_does_what_go_does() {
+    let programs = corpus();
+    assert!(programs.len() >= 100);
+    for group in GROUPS {
+        let of_group = |(id, _): &&(String, PathBuf)| id.starts_with(&format!("{group}-"));
+        assert!(programs.iter().filter(of_group).count() >= 15, "{group}");
+    }
+    let wrong = unlike_go(&[]);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The files of the corpus have what Go does: each program is built by
+/// the `go` of the development shell and run. `GOPP_CORPUS_UPDATE=1`
+/// writes the files anew.
+#[test]
+#[ignore = "long: builds every program of the corpus with Go"]
+fn the_files_of_the_corpus_say_what_go_does() {
+    let programs = corpus();
+    let work = tempfile::tempdir().unwrap();
+    let cache = Path::new(env!("CARGO_TARGET_TMPDIR")).join("go-cache");
+    let by_go = |(id, program): &(String, PathBuf)| {
+        // Go builds a file whose name ends in `.go`.
+        let dir = work.path().join(id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::copy(program, dir.join("main.go")).unwrap();
+        let built = Command::new("go")
+            .args(["build", "-o", "program", "main.go"])
+            .current_dir(&dir)
+            .env("GOCACHE", &cache)
+            .env("GO111MODULE", "off")
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{id}: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        // Both streams in one file, in the order of the writes.
+        let wrote = dir.join("wrote");
+        let both = fs::File::create(&wrote).unwrap();
+        let status = Command::new(dir.join("program"))
+            .stdout(both.try_clone().unwrap())
+            .stderr(both)
+            .status()
+            .unwrap();
+        let wrote = fs::read(&wrote).unwrap();
+        let status = i64::from(status.code().unwrap());
+        as_go_says(&String::from_utf8_lossy(&wrote), status)
+    };
+    let said: Vec<String> = std::thread::scope(|scope| {
+        let chunks = programs.chunks(programs.len().div_ceil(16));
+        let running: Vec<_> = chunks
+            .map(|chunk| scope.spawn(|| chunk.iter().map(by_go).collect::<Vec<_>>()))
+            .collect();
+        (running.into_iter())
+            .flat_map(|chunk| chunk.join().unwrap())
+            .collect()
+    });
+    let update = std::env::var_os("GOPP_CORPUS_UPDATE").is_some();
+    let mut wrong = Vec::new();
+    for ((id, program), said) in programs.iter().zip(said) {
+        let golden = program.with_extension("out");
+        if update {
+            fs::write(&golden, &said).unwrap();
+        }
+        let expected = fs::read_to_string(&golden).unwrap_or_default();
+        if said != expected {
+            wrong.push(format!(
+                "{id}: Go does\n{said}--- and its file says\n{expected}---"
+            ));
+        }
+    }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
@@ -233,6 +393,9 @@ fn every_program_does_the_same_at_every_level() {
                 _ => same_but_inlined,
             };
             let wrong = wrong_by(&programs, &flags, same);
+            assert!(wrong.is_empty(), "{flags:?}\n{}", wrong.join("\n"));
+            // And what Go does: the files of the corpus have no trace.
+            let wrong = unlike_go(&flags);
             assert!(wrong.is_empty(), "{flags:?}\n{}", wrong.join("\n"));
         }
     }

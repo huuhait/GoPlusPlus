@@ -1,0 +1,30 @@
+package main
+
+func divide(a, b int) (q int, err string) {
+	defer func() {
+		if r := recover(); r != nil {
+			q, err = -1, "failed"
+		}
+	}()
+	q = a / b
+	return q, "ok"
+}
+
+func total(xs []int, n int) (sum int) {
+	defer func() {
+		recover()
+		sum *= 10
+	}()
+	for i := 0; i < n; i++ {
+		sum += xs[i]
+	}
+	return sum
+}
+
+func main() {
+	q, err := divide(7, 2)
+	println(q, err)
+	q, err = divide(7, 0)
+	println(q, err)
+	println(total([]int{1, 2, 3}, 3), total([]int{1, 2, 3}, 5), total(nil, 0))
+}

@@ -1,0 +1,10 @@
+line one
+partial to stderr
+wrote 0
+wrote 1
+wrote 2
+deferred func
+deferred print
+panic: runtime error: index out of range [3] with length 3
+
+exit status 2

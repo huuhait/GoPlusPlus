@@ -1,0 +1,58 @@
+package main
+
+func repeat(s string, n int) string {
+	out := ""
+	for i := 0; i < n; i++ {
+		out += s
+	}
+	return out
+}
+
+func reverse(s string) string {
+	b := []byte(s)
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return string(b)
+}
+
+func index(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func upper(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+func main() {
+	s := "hello, world"
+	println(len(s), s[0], s[len(s)-1], s[7:], s[:5], s[3:8])
+	println(repeat("ab", 4), reverse(s), upper(s))
+	println(index(s, "world"), index(s, "o"), index(s, "xyz"), index(s, ""))
+	println("a" < "b", "ab" < "a", "abc" == "ab"+"c", "" == "", "Z" < "a", "apple" >= "apple")
+	t := s
+	t += "!"
+	println(s, t, len(t))
+	empty := ""
+	println(len(empty), empty == "", empty+"x", "tab\there", "quote\"q", `raw\n`)
+	words := []string{"one", "two", "three"}
+	joined := ""
+	for i, w := range words {
+		if i > 0 {
+			joined += "-"
+		}
+		joined += w
+	}
+	println(joined, len(joined))
+}

@@ -1,0 +1,12 @@
+package main
+
+func ratio(a, b int) int { return a / b }
+
+func main() {
+	println(ratio(10, 3), ratio(-10, 3))
+	total := 0
+	for d := 3; d >= 0; d-- {
+		total += ratio(12, d)
+		println(total)
+	}
+}

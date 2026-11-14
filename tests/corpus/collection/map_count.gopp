@@ -1,0 +1,63 @@
+package main
+
+func words(text string) []string {
+	var out []string
+	start := -1
+	for i := 0; i <= len(text); i++ {
+		letter := i < len(text) && text[i] != ' ' && text[i] != ',' && text[i] != '.'
+		if letter && start < 0 {
+			start = i
+		}
+		if !letter && start >= 0 {
+			out = append(out, text[start:i])
+			start = -1
+		}
+	}
+	return out
+}
+
+func sortedKeys(m map[string]int) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+func main() {
+	text := "the cat and the dog, and the bird. the end"
+	counts := map[string]int{}
+	for _, w := range words(text) {
+		counts[w]++
+	}
+	for _, k := range sortedKeys(counts) {
+		println(k, counts[k])
+	}
+	byLen := map[int][]string{}
+	for _, k := range sortedKeys(counts) {
+		byLen[len(k)] = append(byLen[len(k)], k)
+	}
+	for n := 1; n < 6; n++ {
+		print(n, ":")
+		for _, w := range byLen[n] {
+			print(" ", w)
+		}
+		println()
+	}
+	letters := map[byte]int{}
+	for i := 0; i < len(text); i++ {
+		letters[text[i]]++
+	}
+	best, most := byte(0), 0
+	for c := byte('a'); c <= 'z'; c++ {
+		if letters[c] > most {
+			best, most = c, letters[c]
+		}
+	}
+	println(string(best), most, letters[' '], len(letters))
+}

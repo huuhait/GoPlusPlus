@@ -1,0 +1,66 @@
+package main
+
+type Op struct {
+	name  string
+	apply func(int, int) int
+}
+
+type Rule struct {
+	test func(int) bool
+	say  string
+}
+
+type Shape struct {
+	area func() int
+	name string
+}
+
+func square(side int) Shape {
+	return Shape{func() int { return side * side }, "square"}
+}
+
+func rect(w, h int) Shape {
+	return Shape{name: "rect", area: func() int { return w * h }}
+}
+
+func main() {
+	ops := []Op{
+		{"add", func(a, b int) int { return a + b }},
+		{"sub", func(a, b int) int { return a - b }},
+		{"mul", func(a, b int) int { return a * b }},
+	}
+	acc := 10
+	for _, op := range ops {
+		acc = op.apply(acc, 3)
+		println(op.name, acc)
+	}
+	table := map[string]func(int, int) int{}
+	for _, op := range ops {
+		table[op.name] = op.apply
+	}
+	println(table["mul"](6, 7), table["sub"](1, 2), len(table))
+	rules := []Rule{
+		{func(n int) bool { return n%15 == 0 }, "fizzbuzz"},
+		{func(n int) bool { return n%5 == 0 }, "buzz"},
+		{func(n int) bool { return n%3 == 0 }, "fizz"},
+	}
+	for n := 9; n <= 15; n++ {
+		said := false
+		for _, r := range rules {
+			if r.test(n) {
+				println(n, r.say)
+				said = true
+				break
+			}
+		}
+		if !said {
+			println(n)
+		}
+	}
+	shapes := []Shape{square(3), rect(2, 5), square(1)}
+	total := 0
+	for _, s := range shapes {
+		total += s.area()
+	}
+	println(total, shapes[1].name, shapes[1].area())
+}

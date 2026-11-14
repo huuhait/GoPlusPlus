@@ -1,0 +1,10 @@
+package main
+
+func buffer(n int) []byte { return make([]byte, n) }
+
+func main() {
+	println(len(buffer(4)), len(buffer(0)))
+	n := 3
+	n -= 5
+	println(len(buffer(n)))
+}

@@ -1,0 +1,22 @@
+package main
+
+// A constant of a function is a value where it is indexed or sliced.
+func hex(b byte) string {
+	const digits = "0123456789abcdef"
+	return string(rune(digits[b>>4])) + string(rune(digits[b&15]))
+}
+
+func part(from, to int) string {
+	const text = "constant"
+	return text[from:to]
+}
+
+func main() {
+	println(hex(0), hex(0x4f), hex(255))
+	println(part(0, 3), part(3, 8), len(part(2, 2)))
+	const local = "xyz"
+	for i := range 3 {
+		print(local[i], " ")
+	}
+	println(len(local))
+}

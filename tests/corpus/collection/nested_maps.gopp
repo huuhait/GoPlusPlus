@@ -1,0 +1,50 @@
+package main
+
+func main() {
+	graph := map[string][]string{}
+	edges := [][2]string{{"a", "b"}, {"a", "c"}, {"b", "d"}, {"c", "d"}, {"d", "e"}}
+	for _, e := range edges {
+		graph[e[0]] = append(graph[e[0]], e[1])
+		graph[e[1]] = append(graph[e[1]], e[0])
+	}
+	println(len(graph), len(graph["a"]), len(graph["d"]), graph["d"][2])
+	dist := map[string]int{"a": 0}
+	queue := []string{"a"}
+	for len(queue) > 0 {
+		at := queue[0]
+		queue = queue[1:]
+		for _, next := range graph[at] {
+			if _, seen := dist[next]; !seen {
+				dist[next] = dist[at] + 1
+				queue = append(queue, next)
+			}
+		}
+	}
+	println(dist["a"], dist["b"], dist["d"], dist["e"], len(dist))
+	table := map[string]map[string]int{}
+	rows := []string{"x", "y"}
+	for i, r := range rows {
+		table[r] = map[string]int{}
+		for j, c := range rows {
+			table[r][c] = i*10 + j
+		}
+	}
+	table["y"]["x"]++
+	println(table["x"]["y"], table["y"]["x"], table["z"]["x"], len(table["y"]), len(table["z"]))
+	index := map[byte]map[int]bool{}
+	text := "abracadabra"
+	for i := 0; i < len(text); i++ {
+		if index[text[i]] == nil {
+			index[text[i]] = map[int]bool{}
+		}
+		index[text[i]][i] = true
+	}
+	println(len(index), len(index['a']), index['b'][8], index['c'][0])
+	total := 0
+	for _, row := range table {
+		for _, v := range row {
+			total += v
+		}
+	}
+	println(total)
+}

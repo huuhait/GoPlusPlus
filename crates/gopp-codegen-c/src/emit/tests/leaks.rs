@@ -1,20 +1,27 @@
-//! What a program frees. Every program of `tests/run` that ends well is
-//! built with the address, the leak and the undefined-behaviour
-//! sanitizers of Clang, the runtime too, and must run without a report:
-//! nothing is read after it is freed, nothing is freed twice, and what
-//! is made is freed.
+//! What a program frees. Every program of `tests/run` and of
+//! `tests/corpus` that ends well is built with the address, the leak
+//! and the undefined-behaviour sanitizers of Clang, the runtime too,
+//! and must run without a report: nothing is read after it is freed,
+//! nothing is freed twice, and what is made is freed.
 
 use std::path::Path;
 
 use super::*;
 
 #[test]
-#[ignore = "long: builds every run test with the sanitizers of Clang"]
+#[ignore = "long: builds every run test and the corpus with the sanitizers of Clang"]
 fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
     let toolchain = HostToolchain::discover().unwrap();
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/run");
-    let mut programs: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
+    let mut dirs = vec![tests.join("run")];
+    dirs.extend(
+        std::fs::read_dir(tests.join("corpus"))
+            .unwrap()
+            .map(|group| group.unwrap().path()),
+    );
+    let mut programs: Vec<_> = dirs
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).unwrap())
         .map(|entry| entry.unwrap().path())
         .filter(|path| gopp_span::is_source_path(path))
         .collect();
@@ -27,6 +34,15 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
             // one that imports a package is built by the tool, whose
             // tests have it.
             if text.starts_with("// exit:") || text.contains("\nimport ") {
+                return None;
+            }
+            // The file of a program of the corpus says how it ends.
+            let wrote = std::fs::read_to_string(path.with_extension("out")).unwrap_or_default();
+            if wrote
+                .lines()
+                .last()
+                .is_some_and(|line| line.starts_with("exit status "))
+            {
                 return None;
             }
             let name = path.file_name().unwrap().to_string_lossy().into_owned();

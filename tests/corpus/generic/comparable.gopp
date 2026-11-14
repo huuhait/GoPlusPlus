@@ -1,0 +1,68 @@
+package main
+
+type Point struct{ x, y int }
+
+func Index[T comparable](xs []T, want T) int {
+	for i := range xs {
+		if xs[i] == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func Contains[T comparable](xs []T, want T) bool {
+	for i := range xs {
+		if xs[i] == want {
+			return true
+		}
+	}
+	return false
+}
+
+func Count[T comparable](xs []T, want T) int {
+	n := 0
+	for i := range xs {
+		if xs[i] == want {
+			n++
+		}
+	}
+	return n
+}
+
+func Equal[T comparable](a, b []T) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func Same[T comparable](a, b T) bool { return a == b }
+
+func AllSame[T comparable](xs []T) bool {
+	for i := 1; i < len(xs); i++ {
+		if xs[i] != xs[0] {
+			return false
+		}
+	}
+	return true
+}
+
+func main() {
+	ints := []int{4, 8, 15, 16, 23, 42, 8}
+	println(Index(ints, 15), Index(ints, 5), Contains(ints, 42), Count(ints, 8))
+	words := []string{"a", "b", "a"}
+	println(Index(words, "b"), Count(words, "a"), Contains(words, ""))
+	points := []Point{{1, 2}, {3, 4}}
+	println(Index(points, Point{3, 4}), Contains(points, Point{4, 3}), Same(points[0], Point{1, 2}))
+	println(Equal(ints, ints), Equal(words, []string{"a", "b"}), Equal([]bool{}, nil))
+	println(Same(1.5, 1.5), Same("x", "y"), Same([2]int{1, 2}, [2]int{1, 2}), Same(true, false))
+	println(AllSame([]int{7, 7, 7}), AllSame(words), AllSame([]Point{}))
+	var a, b interface{} = 1, 1
+	println(Same(a, b), Same[interface{}](1, "1"))
+}

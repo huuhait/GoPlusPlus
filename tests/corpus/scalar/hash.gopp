@@ -1,0 +1,69 @@
+package main
+
+func fnv(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
+}
+
+func adler(data []byte) uint32 {
+	a, b := uint32(1), uint32(0)
+	for _, d := range data {
+		a = (a + uint32(d)) % 65521
+		b = (b + a) % 65521
+	}
+	return b<<16 | a
+}
+
+func crc(data []byte) uint32 {
+	c := ^uint32(0)
+	for _, d := range data {
+		c ^= uint32(d)
+		for k := 0; k < 8; k++ {
+			if c&1 != 0 {
+				c = c>>1 ^ 0xedb88320
+			} else {
+				c >>= 1
+			}
+		}
+	}
+	return ^c
+}
+
+type Rand struct{ state uint64 }
+
+func (r *Rand) Next() uint64 {
+	r.state ^= r.state << 13
+	r.state ^= r.state >> 7
+	r.state ^= r.state << 17
+	return r.state
+}
+
+func mix(x uint64) uint64 {
+	x ^= x >> 33
+	x *= 0xff51afd7ed558ccd
+	x ^= x >> 33
+	x *= 0xc4ceb9fe1a85ec53
+	return x ^ x>>33
+}
+
+func main() {
+	println(fnv(""), fnv("a"), fnv("hello world"))
+	text := []byte("The quick brown fox jumps over the lazy dog")
+	println(adler(text), crc(text), crc(nil))
+	r := Rand{88172645463325252}
+	var acc uint64
+	for i := 0; i < 1000; i++ {
+		acc += r.Next() % 1000
+	}
+	println(acc, r.state)
+	println(mix(1), mix(mix(2)), mix(0))
+	lcg := uint32(42)
+	for i := 0; i < 10; i++ {
+		lcg = lcg*1664525 + 1013904223
+	}
+	println(lcg, int32(lcg), lcg>>16)
+}

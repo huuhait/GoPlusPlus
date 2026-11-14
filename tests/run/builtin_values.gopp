@@ -1,0 +1,71 @@
+package main
+
+// `min` and `max` of values that are not all known, and `print` of
+// the several values of one call.
+
+type Level int
+
+type Temp float32
+
+func ints(a, b, c int) (int, int) { return min(a, b, c), max(a, b, c) }
+
+func words(a, b string) (string, string) { return min(a, b, "m"), max(a, b, "m") }
+
+func floats(a, b float64) (float64, float64) { return min(a, b), max(a, b) }
+
+var trace string
+
+func note(s string, n int) int {
+	trace += s
+	return n
+}
+
+func main() {
+	results()
+	println(ints(3, 1, 2))
+	println(ints(-5, -5, 7))
+	println(words("b", "z"))
+	println(words("a"+"a", "n"))
+	println(floats(1.5, -2.5))
+	zero := 0.0
+	nan := zero / zero
+	println(floats(nan, 1))
+	println(floats(1, nan))
+	lo, hi := floats(zero, -zero)
+	println(1/lo, 1/hi)
+	lo, hi = floats(-zero, zero)
+	println(1/lo, 1/hi)
+	var a, b uint8 = 200, 100
+	println(min(a, b), max(a, b), min(a, 50), max(b, 255))
+	println(min(Level(3), Level(2)), max(Temp(1.5), Temp(2.5), 0))
+	println(min(note("x", 3), note("y", 1), note("z", 2)), trace)
+	n := 7
+	println(min(n, 10), max(n, 10), min(n, n), max(len("abc"), n-5))
+	s := max("x"+"y", "xz")
+	t := min(s, "aaa")
+	println(s, t, len(max(s, t)))
+	var i8 int8 = -128
+	println(min(i8, 127), max(i8, -128), min(1.5, float64(n)))
+}
+
+func three() (int, string, bool) { return 1, "two", true }
+
+func pass(a int, b string, c bool) (bool, string, int) { return c, b, a }
+
+func texts() (string, string) { return "left" + "!", "right" }
+
+func one() int { return 7 }
+
+func kinds() (float64, uint8, rune) { return 1.5, 200, 'x' }
+
+func results() {
+	println(three())
+	println(pass(three()))
+	println(texts())
+	print(texts())
+	println()
+	println(one())
+	println(kinds())
+	print(three())
+	print("\n")
+}

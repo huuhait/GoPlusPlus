@@ -1,0 +1,70 @@
+package main
+
+import "fmt"
+
+type Color int
+
+const (
+	Red Color = iota
+	Green
+	Blue
+)
+
+func (c Color) String() string {
+	switch c {
+	case Red:
+		return "red"
+	case Green:
+		return "green"
+	case Blue:
+		return "blue"
+	}
+	return "unknown"
+}
+
+type Pair struct{ a, b int }
+
+func (p Pair) String() string { return "pair" }
+
+type Version struct{ major, minor int }
+
+func digits(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+func (v Version) String() string { return "v" + digits(v.major) + "." + digits(v.minor) }
+
+type Path []string
+
+func (p Path) String() string {
+	out := ""
+	for _, part := range p {
+		out += "/" + part
+	}
+	return out
+}
+
+func show(items ...fmt.Stringer) string {
+	out := ""
+	for i, it := range items {
+		if i > 0 {
+			out += ", "
+		}
+		out += it.String()
+	}
+	return out
+}
+
+func main() {
+	fmt.Println(Red, Blue, Color(7), Pair{1, 2}, Version{1, 12})
+	fmt.Println(show(Green, Version{0, 9}, Path{"usr", "bin"}, Pair{}))
+	var s fmt.Stringer = Path{}
+	fmt.Println(s.String() == "", s, "end")
+	s = Blue
+	fmt.Println(s, s.String()+"!", s == Blue, s == Color(1))
+	fmt.Print(Red, " ", Green, "\n")
+	fmt.Print(Red, Green, Version{2, 0}, "\n")
+}

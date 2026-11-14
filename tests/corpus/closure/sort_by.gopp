@@ -1,0 +1,63 @@
+package main
+
+type Person struct {
+	name string
+	age  int
+}
+
+func sortBy(people *[]Person, less func(a, b Person) bool) {
+	for i := 1; i < len(*people); i++ {
+		for j := i; j > 0 && less((*people)[j], (*people)[j-1]); j-- {
+			(*people)[j], (*people)[j-1] = (*people)[j-1], (*people)[j]
+		}
+	}
+}
+
+func byAge(reverse bool) func(a, b Person) bool {
+	return func(a, b Person) bool {
+		if reverse {
+			return a.age > b.age
+		}
+		return a.age < b.age
+	}
+}
+
+func then(first, second func(a, b Person) bool) func(a, b Person) bool {
+	return func(a, b Person) bool {
+		if first(a, b) {
+			return true
+		}
+		if first(b, a) {
+			return false
+		}
+		return second(a, b)
+	}
+}
+
+func show(people []Person) {
+	for _, p := range people {
+		print(p.name, ":", p.age, " ")
+	}
+	println()
+}
+
+func main() {
+	people := []Person{{"dee", 30}, {"ann", 25}, {"cid", 30}, {"bob", 41}, {"eve", 25}}
+	byName := func(a, b Person) bool { return a.name < b.name }
+	sortBy(&people, byName)
+	show(people)
+	sortBy(&people, byAge(false))
+	show(people)
+	sortBy(&people, then(byAge(true), byName))
+	show(people)
+	compares := 0
+	counted := func(a, b Person) bool {
+		compares++
+		return len(a.name)+a.age < len(b.name)+b.age
+	}
+	sortBy(&people, counted)
+	println(compares > 0, people[0].name, people[4].name)
+	limit := 30
+	sortBy(&people, func(a, b Person) bool { return a.age >= limit && b.age < limit })
+	println(people[0].age >= limit, people[4].age < limit)
+}

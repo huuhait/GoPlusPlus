@@ -1,0 +1,78 @@
+package main
+
+type Monoid interface {
+	Combine(other Monoid) Monoid
+	Show() string
+}
+
+type Total int
+
+func digits(n int) string {
+	if n < 0 {
+		return "-" + digits(-n)
+	}
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+func (t Total) Combine(other Monoid) Monoid {
+	if o, ok := other.(Total); ok {
+		return t + o
+	}
+	return t
+}
+func (t Total) Show() string { return digits(int(t)) }
+
+type Text string
+
+func (t Text) Combine(other Monoid) Monoid {
+	if o, ok := other.(Text); ok {
+		return t + o
+	}
+	return t + Text(other.Show())
+}
+func (t Text) Show() string { return string(t) }
+
+type Range struct{ lo, hi int }
+
+func (r Range) Combine(other Monoid) Monoid {
+	o, ok := other.(Range)
+	if !ok {
+		return r
+	}
+	if o.lo < r.lo {
+		r.lo = o.lo
+	}
+	if o.hi > r.hi {
+		r.hi = o.hi
+	}
+	return r
+}
+func (r Range) Show() string { return digits(r.lo) + ".." + digits(r.hi) }
+
+func fold(start Monoid, items ...Monoid) Monoid {
+	acc := start
+	for _, it := range items {
+		acc = acc.Combine(it)
+	}
+	return acc
+}
+
+func main() {
+	println(fold(Total(0), Total(1), Total(2), Total(39)).Show())
+	println(fold(Text(""), Text("a"), Text("b"), Total(7), Range{1, 2}).Show())
+	println(fold(Range{5, 5}, Range{1, 2}, Range{9, 12}, Total(100), Range{-3, 0}).Show())
+	println(fold(Total(5)).Show(), fold(Text("only")).Show())
+	parts := []Monoid{Total(1), Text("x"), Range{0, 1}}
+	for _, p := range parts {
+		print(fold(p, parts...).Show(), " ")
+	}
+	println()
+	var m Monoid = Total(1)
+	for i := 0; i < 10; i++ {
+		m = m.Combine(m)
+	}
+	println(m.Show(), m == Total(1024), m == Monoid(Total(1)))
+}

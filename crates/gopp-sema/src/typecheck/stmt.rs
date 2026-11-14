@@ -124,6 +124,12 @@ impl<'a> Checker<'a> {
             );
             return self.error(code, span, message);
         }
+        // A value that is compared with an interface value is put into
+        // an interface of that type first.
+        if self.types.is_interface(x.ty) && !self.types.is_interface(v.ty) {
+            self.update_expr_type(cx, case, self.types.default_type(v.ty), true);
+            self.note_interface(cx, case, &v, x.ty, false, None);
+        }
         // Like other compilers, only numbers and strings are looked at.
         let Mode::Const(value) = &v.mode else { return };
         if !matches!(value.kind(), Kind::Int | Kind::Float | Kind::String) {

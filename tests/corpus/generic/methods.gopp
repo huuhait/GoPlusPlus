@@ -1,0 +1,63 @@
+package main
+
+type Shape interface {
+	Area() int
+	Name() string
+}
+
+type Rect struct{ w, h int }
+
+func (r Rect) Area() int    { return r.w * r.h }
+func (r Rect) Name() string { return "rect" }
+
+type Circle struct{ r int }
+
+func (c Circle) Area() int    { return 3 * c.r * c.r }
+func (c Circle) Name() string { return "circle" }
+
+func Total[S Shape](shapes []S) int {
+	sum := 0
+	for i := range shapes {
+		sum += shapes[i].Area()
+	}
+	return sum
+}
+
+func Describe[S Shape](s *S) string { return (*s).Name() }
+
+func Largest[S Shape](shapes []S) int {
+	at := 0
+	for i := range shapes {
+		if shapes[i].Area() > shapes[at].Area() {
+			at = i
+		}
+	}
+	return at
+}
+
+type Scaler interface {
+	~int | ~float64
+	Scale(int) int
+}
+
+type Meters int
+
+func (m Meters) Scale(k int) int { return int(m) * k }
+
+func ScaleAll[T Scaler](xs []T, k int) int {
+	total := 0
+	for _, x := range xs {
+		total += x.Scale(k)
+	}
+	return total
+}
+
+func main() {
+	rects := []Rect{{1, 2}, {3, 4}, {2, 2}}
+	circles := []Circle{{1}, {2}}
+	println(Total(rects), Total(circles), Total([]Shape{rects[0], circles[1]}))
+	println(Largest(rects), Largest(circles), Describe(&rects[0]), Describe(&circles[0]))
+	var s Shape = circles[1]
+	println(Describe(&s), Total([]Shape{}))
+	println(ScaleAll([]Meters{1, 2, 3}, 10))
+}

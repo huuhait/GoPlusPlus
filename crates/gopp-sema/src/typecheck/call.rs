@@ -260,6 +260,15 @@ impl<'a> Checker<'a> {
             }
             instance = Some(found);
         }
+        // The elements of `...T` that are given one by one are put in a
+        // slice that the call makes (OWN-B5); `append` says so of the
+        // slice that it adds to.
+        let makes = self.called(fun_expr) == Called::Function;
+        if makes && rest.is_some() && count >= params.len() {
+            let first = params.len() - 1;
+            let at = cx.tree.exprs[given[first].0].span;
+            self.on_the_heap(to[first], at, "the slice of a ... parameter");
+        }
         let context = format!("argument to {fun}");
         let several = given.len() > args.len();
         for ((arg, x), to) in given.into_iter().zip(to) {

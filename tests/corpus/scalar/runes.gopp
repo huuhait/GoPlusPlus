@@ -1,0 +1,41 @@
+package main
+
+func count(s string) (bytes, runes, wide int) {
+	for _, r := range s {
+		runes++
+		if r > 127 {
+			wide++
+		}
+	}
+	return len(s), runes, wide
+}
+
+func main() {
+	s := "aé世🙂z"
+	b, r, w := count(s)
+	println(b, r, w)
+	for i, c := range s {
+		println(i, c, string(c), len(string(c)))
+	}
+	rs := []rune(s)
+	println(len(rs), rs[2], string(rs[3]), string(rs[1:3]))
+	for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
+		rs[i], rs[j] = rs[j], rs[i]
+	}
+	println(string(rs))
+	bs := []byte("é")
+	println(len(bs), bs[0], bs[1])
+	bad := "a\xffb\xc3"
+	for i, c := range bad {
+		println(i, c)
+	}
+	println(string(rune(65)), string(rune(0x4e16)), string(rune(-1)) == "�", len(string(rune(0x10ffff))))
+	println('a' < 'b', 'é', '\n', '\x41', 'é', '世' > 'z')
+	digits := 0
+	for _, c := range "a1b22c333" {
+		if c >= '0' && c <= '9' {
+			digits = digits*10 + int(c-'0')
+		}
+	}
+	println(digits)
+}

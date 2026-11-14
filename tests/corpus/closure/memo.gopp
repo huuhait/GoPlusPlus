@@ -1,0 +1,74 @@
+package main
+
+func collatzLengths(limit int) (best, at int) {
+	memo := map[int]int{1: 1}
+	hits := 0
+	length := func(n int) int {
+		var path []int
+		for {
+			if l, ok := memo[n]; ok {
+				hits++
+				for i := len(path) - 1; i >= 0; i-- {
+					l++
+					memo[path[i]] = l
+				}
+				return l
+			}
+			path = append(path, n)
+			if n%2 == 0 {
+				n /= 2
+			} else {
+				n = 3*n + 1
+			}
+		}
+	}
+	for n := 1; n < limit; n++ {
+		if l := length(n); l > best {
+			best, at = l, n
+		}
+	}
+	println(hits, len(memo) > limit)
+	return
+}
+
+func ways(steps int) int {
+	memo := make([]int, steps+1)
+	calls := 0
+	count := func(n int) int {
+		calls++
+		if n <= 1 {
+			return 1
+		}
+		if memo[n] == 0 {
+			memo[n] = memo[n-1] + memo[n-2]
+		}
+		return memo[n]
+	}
+	memo[0], memo[1] = 1, 1
+	total := 0
+	for n := 2; n <= steps; n++ {
+		total = count(n)
+	}
+	println(calls)
+	return total
+}
+
+func main() {
+	println(collatzLengths(2000))
+	println(ways(40), ways(1))
+	seen := map[string]bool{}
+	first := func(s string) bool {
+		if seen[s] {
+			return false
+		}
+		seen[s] = true
+		return true
+	}
+	n := 0
+	for _, w := range []string{"a", "b", "a", "c", "b", "a"} {
+		if first(w) {
+			n++
+		}
+	}
+	println(n, len(seen))
+}

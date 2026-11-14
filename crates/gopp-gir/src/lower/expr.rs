@@ -661,7 +661,10 @@ impl<'a> FuncCx<'a, '_> {
                 return self.place(*x, mode);
             }
             ExprKind::Name(_) => match self.denoted(expr) {
-                Some(Ref::Local(local)) => {
+                // A constant has no place: it is a value.
+                Some(Ref::Local(local))
+                    if !matches!(self.body.locals[local.0 as usize].kind, LocalKind::Const) =>
+                {
                     let var = self.var(*local)?;
                     let mut place = Place::local(var);
                     // Another name of an element is what its pointer
@@ -1153,6 +1156,18 @@ impl<'a> FuncCx<'a, '_> {
         }
     }
 
+    /// An operand of an operator, for a place of the type `ty`. One
+    /// that is put into an interface to be compared is the function's
+    /// own until the statement ends.
+    pub(super) fn compared_operand(&mut self, expr: ExprId, ty: TypeId) -> Built<Operand> {
+        if !self.body.iface_conversions.contains_key(&expr) {
+            return self.operand_as(expr, ty);
+        }
+        let value = self.rvalue_as(expr, ty)?;
+        let value = self.fresh(expr, ty, value)?;
+        self.operand_of(value)
+    }
+
     fn binary(&mut self, expr: ExprId, op: BinaryOp, x: ExprId, y: ExprId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let known = |this: &Self, expr: ExprId| {
@@ -1185,17 +1200,20 @@ impl<'a> FuncCx<'a, '_> {
                 let both = match (left, right) {
                     (TypeInterner::UNIT, other) | (other, TypeInterner::UNIT) => other,
                     _ if self.pointee(left) == right => right,
+                    // A value that is compared with an interface value
+                    // is put into an interface of that type.
+                    _ if self.is_iface(right) => right,
                     _ => left,
                 };
                 (both, both)
             }
             _ => (result, result),
         };
-        let mut first = self.operand_as(x, left)?;
+        let mut first = self.compared_operand(x, left)?;
         if self.has_effects(y) {
             first = self.stable(first)?;
         }
-        let second = self.operand_as(y, right)?;
+        let second = self.compared_operand(y, right)?;
         // An interface value is nil when its first word is, and so is
         // a function value.
         let two_words = self.is_iface(left) || self.memo.func_types.contains(&left);
@@ -1693,9 +1711,12 @@ impl<'a> FuncCx<'a, '_> {
         let fixed = wanted.len();
         if let ([one], Type::Slice(of)) = (args, self.kind(ty)) {
             let inner = Shared::unparen(self.tree, *one);
-            let whole = self.ty_of(*one);
-            let results = match self.kind(whole) {
-                Type::Tuple(parts) => parts.len(),
+            // By the checker's type: a function value and an option are
+            // held in several parts too.
+            let whole = self.body.types.get(one).map(|typed| typed.ty);
+            let whole = whole.map(|whole| self.shared.types.get(whole));
+            let results = match whole.as_deref() {
+                Some(CheckedType::Tuple(parts)) => parts.len(),
                 _ => 0,
             };
             if results >= fixed.max(2)
@@ -2185,7 +2206,7 @@ impl<'a> FuncCx<'a, '_> {
             }
             self.empty_moved()?;
             let waits = super::func::Waits::Print(line);
-            return self.waits(at, waits, slots, None, (span, Vec::new(), None));
+            return self.waits(at, waits, slots, Vec::new(), (span, Vec::new(), None));
         }
         let (called, receiver) = match self.called_by(callee, *spread)? {
             Ok(found) => found,
@@ -2237,7 +2258,7 @@ impl<'a> FuncCx<'a, '_> {
                 }
                 self.empty_moved()?;
                 let (result, marked) = match *unwrap {
-                    true => (None, self.marked(expr, sig.ret, &mut slots)?),
+                    true => (Vec::new(), self.marked(expr, sig.ret, &mut slots)?),
                     false => (self.deferred_result(span, expr, sig.ret)?, None),
                 };
                 if *unwrap && marked.is_none() {
@@ -2307,7 +2328,7 @@ impl<'a> FuncCx<'a, '_> {
         }
         self.empty_moved()?;
         let (result, marked) = match *unwrap {
-            true => (None, self.marked(expr, called.ret, &mut slots)?),
+            true => (Vec::new(), self.marked(expr, called.ret, &mut slots)?),
             false => (self.deferred_result(span, expr, called.ret)?, None),
         };
         if *unwrap && marked.is_none() {
@@ -2405,7 +2426,7 @@ impl<'a> FuncCx<'a, '_> {
             _ => Waits::Nothing,
         };
         self.empty_moved()?;
-        self.waits(at, waits, slots, None, (span, borrowed, None))
+        self.waits(at, waits, slots, Vec::new(), (span, borrowed, None))
     }
 
     /// The variables that a deferred call has the address of: of its
@@ -2444,24 +2465,56 @@ impl<'a> FuncCx<'a, '_> {
     }
 
     /// How what a deferred call gives ends when the call is made:
-    /// nothing takes it.
+    /// nothing takes it. Of several results, each that holds what is
+    /// freed ends by itself.
     fn deferred_result(
         &mut self,
         span: SourceSpan,
         expr: ExprId,
         ret: TypeId,
-    ) -> Built<Option<super::glue::Ends>> {
+    ) -> Built<Vec<(Option<u32>, super::glue::Ends)>> {
+        if self.flat(ret) {
+            return Ok(Vec::new());
+        }
         let checked = self.body.types.get(&expr).map(|typed| typed.ty);
-        Ok(match self.flat(ret) {
-            true => None,
-            false => match self.kind(ret) {
-                Type::Tuple(_) => {
-                    self.unsupported(span, "a deferred call with several results that are freed");
-                    None
-                }
-                _ => self.ends_of(checked, span)?,
-            },
-        })
+        let several = checked.map(|checked| self.shared.types.get(checked));
+        let (Some(CheckedType::Tuple(checked)), Type::Tuple(parts)) =
+            (several.as_deref(), self.kind(ret))
+        else {
+            let ends = self.ends_of(checked, span)?;
+            return Ok(ends.map(|ends| (None, ends)).into_iter().collect());
+        };
+        let mut all = Vec::new();
+        for (at, (&checked, &part)) in checked.iter().zip(parts.iter()).enumerate() {
+            if !self.flat(part)
+                && let Some(ends) = self.ends_of(Some(checked), span)?
+            {
+                all.push((Some(at as u32), ends));
+            }
+        }
+        Ok(all)
+    }
+
+    /// What a deferred call gave ends: nothing took it.
+    pub(super) fn end_results(
+        &mut self,
+        result: Place,
+        ends: &[(Option<u32>, super::glue::Ends)],
+    ) -> Built {
+        if ends.is_empty() {
+            return Ok(());
+        }
+        // The address of a temporary that a call wrote is not taken:
+        // its value ends in a slot of its own.
+        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
+        for &(part, ends) in ends {
+            let place = match part {
+                Some(at) => self.b.field(&slot, at)?,
+                None => slot.clone(),
+            };
+            self.end(place, ends)?;
+        }
+        Ok(())
     }
 
     /// The `defer` statement ran: its call waits with what it keeps.
@@ -2470,7 +2523,7 @@ impl<'a> FuncCx<'a, '_> {
         at: usize,
         what: super::func::Waits,
         slots: Vec<(LocalId, Option<super::glue::Ends>)>,
-        result: Option<super::glue::Ends>,
+        result: Vec<(Option<u32>, super::glue::Ends)>,
         (span, borrowed, marked): (
             SourceSpan,
             Vec<gopp_sema::LocalId>,
@@ -2736,6 +2789,73 @@ impl<'a> FuncCx<'a, '_> {
         Ok(Operand::Copy(place))
     }
 
+    /// `min` or `max` (with `most`) of values that are not all known:
+    /// the operands are worked out from left to right, and the best so
+    /// far is kept. Two floats are compared by the runtime, as Go
+    /// compares them.
+    fn least(&mut self, expr: ExprId, ty: TypeId, most: bool, args: &[ExprId]) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
+        let mut operands = Vec::with_capacity(args.len());
+        let text = matches!(self.kind(ty), Type::String);
+        for &arg in args {
+            let operand = self.operand_as(arg, ty)?;
+            // A constant string is named once: it is read from a slot.
+            operands.push(match (&operand, text) {
+                (Operand::Const(_), true) => {
+                    Operand::Copy(Place::local(self.b.assign_temp(Rvalue::Use(operand))?))
+                }
+                _ => self.stable(operand)?,
+            });
+        }
+        let best = Place::local(self.b.temp(ty));
+        for (at, next) in operands.into_iter().enumerate() {
+            if at == 0 {
+                self.b.assign(best.clone(), Rvalue::Use(next))?;
+                continue;
+            }
+            let so_far = Operand::Copy(best.clone());
+            if let Type::Float { bits } = self.kind(ty) {
+                let wide = self.b.types().float(64);
+                let mut both = vec![so_far, next];
+                if bits != 64 {
+                    for value in &mut both {
+                        let widened = Rvalue::Cast(CastKind::FloatToFloat, value.clone(), wide);
+                        *value = self.operand_of(widened)?;
+                    }
+                }
+                let name = match most {
+                    true => "_gopp_float_max",
+                    false => "_gopp_float_min",
+                };
+                let chosen = self.runtime(name, &[wide, wide], wide, both)?;
+                let chosen = match bits {
+                    64 => Rvalue::Use(chosen),
+                    _ => Rvalue::Cast(CastKind::FloatToFloat, chosen, ty),
+                };
+                self.b.assign(best.clone(), chosen)?;
+                continue;
+            }
+            let op = match most {
+                true => BinaryOp::Gt,
+                false => BinaryOp::Lt,
+            };
+            let better = self.arith(span, op, next.clone(), so_far, false)?;
+            let better = Operand::Copy(Place::local(self.b.assign_temp(better)?));
+            let [takes, after] = [(); 2].map(|()| self.b.new_block());
+            self.b.switch(better, vec![(0, after)], takes)?;
+            self.b.switch_to(takes);
+            self.b.assign(best.clone(), Rvalue::Use(next))?;
+            self.b.goto(after)?;
+            self.b.switch_to(after);
+        }
+        // The string that is given shares its bytes with its operand.
+        if text {
+            self.counted(best.clone(), true)?;
+            return self.fresh(expr, ty, Rvalue::Use(Operand::Copy(best)));
+        }
+        Ok(Rvalue::Use(Operand::Copy(best)))
+    }
+
     fn builtin(
         &mut self,
         expr: ExprId,
@@ -2746,6 +2866,11 @@ impl<'a> FuncCx<'a, '_> {
     ) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         match (called, args, self.kind(ty)) {
+            (
+                Predeclared::Min | Predeclared::Max,
+                [_, ..],
+                Type::Int { .. } | Type::Float { .. } | Type::String,
+            ) => return self.least(expr, ty, called == Predeclared::Max, args),
             (Predeclared::Make, [_, sizes @ ..], Type::Slice(of)) => {
                 let made = self.make_slice(ty, of, sizes)?;
                 return self.fresh(expr, ty, made);
@@ -2870,7 +2995,18 @@ impl<'a> FuncCx<'a, '_> {
         let wanted = vec![None; args.len()];
         let mut values = Vec::with_capacity(args.len());
         for (value, &arg) in self.values(args, &wanted)?.into_iter().zip(args) {
-            values.push((self.operand_of(value)?, self.tree.exprs[arg].span));
+            let (value, span) = (self.operand_of(value)?, self.tree.exprs[arg].span);
+            // One call may give several values: each is written.
+            let checked = self.body.types.get(&arg).map(|typed| typed.ty);
+            let checked = checked.map(|checked| self.shared.types.get(checked));
+            let Some(CheckedType::Tuple(parts)) = checked.as_deref() else {
+                values.push((value, span));
+                continue;
+            };
+            let whole = self.slot_of(Rvalue::Use(value))?;
+            for at in 0..parts.len() {
+                values.push((Operand::Copy(self.b.field(&whole, at as u32)?), span));
+            }
         }
         self.print_values(line, values)
     }

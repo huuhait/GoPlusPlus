@@ -1349,6 +1349,13 @@ impl<'a> Checker<'a> {
         // Compared as values, both have their types for good.
         self.update_expr_type(cx, left, self.types.default_type(x.ty), true);
         self.update_expr_type(cx, right, self.types.default_type(y.ty), true);
+        // A value that is compared with an interface value is put into
+        // an interface of that type first.
+        for ((expr, operand), other) in [((left, &x), &y), ((right, &y), &x)] {
+            if self.is_interface(other.ty) && !self.is_interface(operand.ty) {
+                self.note_interface(cx, expr, operand, other.ty, false, None);
+            }
+        }
         self.value_of(Basic::UntypedBool)
     }
 

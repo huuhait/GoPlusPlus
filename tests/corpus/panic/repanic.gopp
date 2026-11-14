@@ -1,0 +1,31 @@
+package main
+
+import "fmt"
+
+func inner() {
+	defer func() {
+		r := recover()
+		fmt.Println("inner saw", r)
+		panic("second")
+	}()
+	panic("first")
+}
+
+func outer() (out string) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = "outer saw second"
+			if r != "second" {
+				out = "outer saw something else"
+			}
+		}
+	}()
+	inner()
+	return "no panic"
+}
+
+func main() {
+	fmt.Println(outer())
+	defer fmt.Println("main is leaving")
+	inner()
+}

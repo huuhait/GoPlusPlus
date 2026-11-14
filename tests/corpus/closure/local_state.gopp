@@ -1,0 +1,71 @@
+package main
+
+func count(limit int) int {
+	n := 0
+	inc := func() { n++ }
+	for i := 0; i < limit; i++ {
+		inc()
+		if i%2 == 0 {
+			inc()
+		}
+	}
+	return n
+}
+
+func fibs(n int) []int {
+	a, b := 0, 1
+	next := func() int {
+		out := a
+		a, b = b, a+b
+		return out
+	}
+	var out []int
+	for i := 0; i < n; i++ {
+		out = append(out, next())
+	}
+	return out
+}
+
+func stats(xs []int) (lo, hi, sum int) {
+	lo, hi = xs[0], xs[0]
+	see := func(x int) {
+		if x < lo {
+			lo = x
+		}
+		if x > hi {
+			hi = x
+		}
+		sum += x
+	}
+	for _, x := range xs {
+		see(x)
+	}
+	return
+}
+
+func main() {
+	println(count(10), count(0))
+	f := fibs(15)
+	println(len(f), f[14], f[7])
+	lo, hi, sum := stats([]int{4, -2, 9, 7})
+	println(lo, hi, sum)
+	text := ""
+	add := func(s string) int {
+		text += s
+		return len(text)
+	}
+	println(add("ab"), add("cde"), text)
+	base := 10
+	plus := func(x int) int { return x + base }
+	base = 20
+	println(plus(1))
+	base++
+	println(plus(1), base)
+	x := 1
+	bump := func() { x *= 2 }
+	read := func() int { return x }
+	bump()
+	bump()
+	x++
+	println(read(), x)
+}

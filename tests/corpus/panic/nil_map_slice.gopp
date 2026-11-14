@@ -1,0 +1,9 @@
+package main
+
+func first(m map[string][]int, key string) int { return m[key][0] }
+
+func main() {
+	m := map[string][]int{"a": {7}}
+	println(first(m, "a"))
+	println(first(m, "b"))
+}

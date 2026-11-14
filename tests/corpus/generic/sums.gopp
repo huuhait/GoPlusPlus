@@ -1,0 +1,50 @@
+package main
+
+type Integer interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+}
+
+type Number interface {
+	Integer | ~float32 | ~float64
+}
+
+func Sum[T Number](xs []T) T {
+	var total T
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func Product[T Number](xs ...T) T {
+	total := T(1)
+	for _, x := range xs {
+		total *= x
+	}
+	return total
+}
+
+func Mean[T Number](xs []T) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	return float64(Sum(xs)) / float64(len(xs))
+}
+
+func Dot[T Number](a, b []T) T {
+	var total T
+	for i := range a {
+		total += a[i] * b[i]
+	}
+	return total
+}
+
+func main() {
+	ints := []int{1, 2, 3, 4}
+	floats := []float64{1.5, 2.5}
+	bytes := []uint8{200, 100}
+	println(Sum(ints), Sum(floats), Sum(bytes), Sum([]int64{}))
+	println(Product(1, 2, 3, 4, 5), Product(0.5, 4), Product[int8](), Product[uint8](16, 17))
+	println(Mean(ints), Mean(floats), Mean([]uint16{}), Mean(bytes))
+	println(Dot(ints, ints), Dot(floats, []float64{2, 2}), Dot([]int32{1 << 20}, []int32{1 << 12}))
+}

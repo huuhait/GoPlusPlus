@@ -1,0 +1,75 @@
+package main
+
+func fib(n int) int {
+	if n < 2 {
+		return n
+	}
+	return fib(n-1) + fib(n-2)
+}
+
+func ack(m, n int) int {
+	if m == 0 {
+		return n + 1
+	}
+	if n == 0 {
+		return ack(m-1, 1)
+	}
+	return ack(m-1, ack(m, n-1))
+}
+
+func gcd(a, b int) int {
+	if b == 0 {
+		return a
+	}
+	return gcd(b, a%b)
+}
+
+func even(n int) bool {
+	if n == 0 {
+		return true
+	}
+	return odd(n - 1)
+}
+
+func odd(n int) bool {
+	if n == 0 {
+		return false
+	}
+	return even(n - 1)
+}
+
+func hanoi(n int, from, to, via string) int {
+	if n == 0 {
+		return 0
+	}
+	moves := hanoi(n-1, from, via, to)
+	if n == 3 {
+		println("move", n, from, to)
+	}
+	return moves + 1 + hanoi(n-1, via, to, from)
+}
+
+func power(base, exp, mod int) int {
+	if exp == 0 {
+		return 1
+	}
+	half := power(base, exp/2, mod)
+	half = half * half % mod
+	if exp%2 == 1 {
+		half = half * base % mod
+	}
+	return half
+}
+
+func digits(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+func main() {
+	println(fib(20), ack(2, 3), gcd(1071, 462), even(10), odd(7), even(7))
+	println(hanoi(5, "a", "c", "b"))
+	println(power(2, 62, 1000000007), power(3, 200, 13), digits(9876543210))
+}

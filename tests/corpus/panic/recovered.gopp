@@ -1,0 +1,33 @@
+package main
+
+import "fmt"
+
+func safe(f func()) (failed bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("recovered:", r)
+			failed = true
+		}
+	}()
+	f()
+	return false
+}
+
+func main() {
+	fmt.Println(safe(func() { panic("boom") }))
+	fmt.Println(safe(func() {}))
+	fmt.Println(safe(func() {
+		var xs []int
+		_ = xs[3]
+	}))
+	fmt.Println(safe(func() {
+		a, b := 1, 0
+		_ = a / b
+	}))
+	fmt.Println(safe(func() { panic(42) }))
+	fmt.Println(safe(func() {
+		var m map[string][]int
+		_ = m["k"][0]
+	}))
+	fmt.Println("done")
+}

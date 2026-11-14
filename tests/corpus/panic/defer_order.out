@@ -1,0 +1,11 @@
+leave 0
+unwind 1
+leave 1
+unwind 2
+leave 2
+unwind 3
+leave 3
+main deferred
+panic: bottom
+
+exit status 2

@@ -1,0 +1,23 @@
+package main
+
+func divmod(a, b int) (int, int) { return a / b, a % b }
+
+func main() {
+	pairs := [][2]int{{7, 2}, {-7, 2}, {7, -2}, {-7, -2}, {0, 5}, {5, 7}, {-5, 7}, {1 << 40, 3}}
+	for _, p := range pairs {
+		q, r := divmod(p[0], p[1])
+		println(p[0], p[1], q, r, q*p[1]+r == p[0])
+	}
+	var a int64 = -9223372036854775808
+	println(a/-1, a%-1, a/2, a%10)
+	var u uint32 = 4000000000
+	println(u/7, u%7, u/u, u%u)
+	var s int8 = -7
+	println(s/2, s%2, s>>1, s<<1)
+	n := 1000003
+	sum := 0
+	for d := 1; d <= 20; d++ {
+		sum += n/d + n%d
+	}
+	println(sum)
+}

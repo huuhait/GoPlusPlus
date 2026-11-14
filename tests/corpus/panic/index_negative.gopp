@@ -1,0 +1,11 @@
+package main
+
+func pick(xs [4]string, i int) string { return xs[i] }
+
+func main() {
+	xs := [4]string{"a", "b", "c", "d"}
+	i := 3
+	println(pick(xs, i))
+	i -= 4
+	println(pick(xs, i))
+}

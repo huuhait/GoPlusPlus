@@ -1,0 +1,72 @@
+package main
+
+type Reader interface{ Read() string }
+
+type Closer interface{ Close() string }
+
+type Sizer interface{ Size() int }
+
+type ReadCloser interface {
+	Reader
+	Closer
+}
+
+type File interface {
+	ReadCloser
+	Sizer
+	Name() string
+}
+
+type disk struct {
+	name string
+	data string
+	open bool
+}
+
+func (d disk) Read() string  { return d.data }
+func (d disk) Close() string { return "closed " + d.name }
+func (d disk) Size() int     { return len(d.data) }
+func (d disk) Name() string  { return d.name }
+
+type pipe struct{ data string }
+
+func (p pipe) Read() string  { return p.data }
+func (p pipe) Close() string { return "closed pipe" }
+
+func drain(rc ReadCloser) string { return rc.Read() + "; " + rc.Close() }
+
+func size(r Reader) int {
+	if s, ok := r.(Sizer); ok {
+		return s.Size()
+	}
+	return -1
+}
+
+func name(c Closer) string {
+	if f, ok := c.(File); ok {
+		return f.Name()
+	}
+	return "?"
+}
+
+func main() {
+	d := disk{"a.txt", "hello", true}
+	p := pipe{"stream"}
+	println(drain(d))
+	println(drain(p))
+	println(size(d), size(p), name(d), name(p))
+	var f File = d
+	var rc ReadCloser = f
+	var r Reader = rc
+	var c Closer = f
+	println(f.Name(), rc.Read(), r.Read(), c.Close(), f.Size())
+	files := []ReadCloser{d, p, f}
+	total := 0
+	for _, x := range files {
+		total += size(x)
+	}
+	println(total)
+	_, isFile := r.(File)
+	_, isSizer := Reader(p).(Sizer)
+	println(isFile, isSizer)
+}

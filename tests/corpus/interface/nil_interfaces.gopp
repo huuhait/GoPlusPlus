@@ -1,0 +1,65 @@
+package main
+
+type fail string
+
+func (f fail) Error() string { return string(f) }
+
+func check(n int) error {
+	if n < 0 {
+		return fail("negative")
+	}
+	return nil
+}
+
+func firstError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func describe(v interface{}) string {
+	if v == nil {
+		return "nothing"
+	}
+	if err, ok := v.(error); ok {
+		return "error " + err.Error()
+	}
+	return "something"
+}
+
+func main() {
+	var e error
+	println(e == nil, firstError() == nil, firstError(nil, nil) == nil, check(1) == nil, check(-1) != nil)
+	e = firstError(nil, fail("first"), fail("second"))
+	println(e != nil, e.Error(), e == fail("first"), e == fail("second"))
+	e = nil
+	println(e == nil, describe(e), describe(nil), describe(check(-1)), describe(check(1)), describe(0))
+	errs := []error{nil, fail("a"), nil}
+	count := 0
+	for _, err := range errs {
+		if err != nil {
+			count++
+		}
+	}
+	println(count, len(errs), errs[0] == nil, errs[1] != nil)
+	byName := map[string]error{"bad": fail("b"), "good": nil}
+	v, ok := byName["good"]
+	w, ok2 := byName["missing"]
+	println(v == nil, ok, w == nil, ok2, byName["bad"] != nil)
+	var any interface{}
+	println(any == nil, describe(any))
+	any = e
+	println(any == nil)
+	any = fail("x")
+	println(any != nil, any == fail("x"), describe(any))
+	var holder struct {
+		err  error
+		data interface{}
+	}
+	println(holder.err == nil, holder.data == nil)
+	holder.err, holder.data = fail("h"), 1
+	println(holder.err.Error(), holder.data == 1)
+}

@@ -1,0 +1,9 @@
+package main
+
+func part(xs []int, lo, hi int) int { return len(xs[lo:hi]) }
+
+func main() {
+	xs := []int{1, 2, 3, 4}
+	println(part(xs, 1, 3), part(xs, 4, 4))
+	println(part(xs, 3, 1))
+}

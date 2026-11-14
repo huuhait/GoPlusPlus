@@ -1,0 +1,55 @@
+package main
+
+type Key interface{ ~int | ~string }
+
+type Num interface{ ~int | ~float64 }
+
+type Pair[K Key, V Num] struct {
+	Key K
+	Val V
+}
+
+func (p Pair[K, V]) Scaled(by V) Pair[K, V] { return Pair[K, V]{p.Key, p.Val * by} }
+
+func (p *Pair[K, V]) Add(n V) { p.Val += n }
+
+func (p Pair[K, V]) Less(o Pair[K, V]) bool {
+	return p.Val < o.Val || p.Val == o.Val && p.Key < o.Key
+}
+
+func MakePair[K Key, V Num](k K, v V) Pair[K, V] { return Pair[K, V]{Key: k, Val: v} }
+
+func Flip[A, B Key](a A, b B) (B, A) { return b, a }
+
+func Best[K Key, V Num](pairs []Pair[K, V]) Pair[K, V] {
+	best := pairs[0]
+	for _, p := range pairs[1:] {
+		if best.Less(p) {
+			best = p
+		}
+	}
+	return best
+}
+
+func main() {
+	p := Pair[string, int]{"a", 2}
+	q := p.Scaled(10)
+	q.Add(1)
+	println(p.Key, p.Val, q.Val, p.Less(q), q.Less(p), p == Pair[string, int]{"a", 2})
+	r := MakePair(7, 2.5)
+	r.Add(0.5)
+	println(r.Key, r.Val, r.Scaled(2).Val)
+	x, y := Flip("left", 2)
+	println(x, y)
+	scores := []Pair[string, int]{{"ann", 3}, {"bob", 9}, {"cid", 9}, {"dee", 1}}
+	top := Best(scores)
+	println(top.Key, top.Val)
+	total := 0
+	for _, s := range scores {
+		total += s.Scaled(2).Val
+	}
+	println(total)
+	nested := Pair[int, float64]{1, 1.5}
+	list := []Pair[int, float64]{nested, nested.Scaled(3)}
+	println(Best(list).Val, len(list))
+}

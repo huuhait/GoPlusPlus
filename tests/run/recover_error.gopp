@@ -1,0 +1,36 @@
+package main
+
+import "fmt"
+
+// What `recover` gives for a panic of the runtime is an `error`.
+func try(f func()) (said string) {
+	defer func() {
+		switch r := recover().(type) {
+		case nil:
+			said = "fine"
+		case error:
+			said = "error: " + r.Error()
+		default:
+			said = "other"
+		}
+	}()
+	f()
+	return "returned"
+}
+
+func main() {
+	xs := []int{1, 2, 3}
+	i, zero := 5, 0
+	fmt.Println(try(func() { _ = xs[i] }))
+	fmt.Println(try(func() { _ = i / zero }))
+	fmt.Println(try(func() { _ = xs[2:i] }))
+	fmt.Println(try(func() { panic("text") }))
+	fmt.Println(try(func() {}))
+	defer func() {
+		r := recover()
+		err, is := r.(error)
+		fmt.Println(r, is, err)
+	}()
+	var held interface{} = "s"
+	_ = held.(int)
+}

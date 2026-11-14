@@ -1,0 +1,4 @@
+123
+panic: parse error: bad digit
+
+exit status 2

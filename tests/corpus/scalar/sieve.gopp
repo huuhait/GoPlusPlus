@@ -1,0 +1,76 @@
+package main
+
+func primes(limit int) []int {
+	composite := make([]bool, limit+1)
+	var out []int
+	for n := 2; n <= limit; n++ {
+		if composite[n] {
+			continue
+		}
+		out = append(out, n)
+		for m := n * n; m <= limit; m += n {
+			composite[m] = true
+		}
+	}
+	return out
+}
+
+func collatz(n int) int {
+	steps := 0
+	for n != 1 {
+		if n%2 == 0 {
+			n /= 2
+		} else {
+			n = 3*n + 1
+		}
+		steps++
+	}
+	return steps
+}
+
+func isqrt(n int) int {
+	lo, hi := 0, n
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if mid*mid <= n {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
+}
+
+func main() {
+	ps := primes(100)
+	println(len(ps), ps[0], ps[len(ps)-1])
+	sum := 0
+	for _, p := range primes(10000) {
+		sum += p
+	}
+	println(sum)
+	best, at := 0, 0
+	for n := 1; n < 3000; n++ {
+		if s := collatz(n); s > best {
+			best, at = s, n
+		}
+	}
+	println(best, at)
+	println(isqrt(0), isqrt(15), isqrt(16), isqrt(1000000007))
+	perfect := 0
+	for n := 2; n < 10000; n++ {
+		s := 1
+		for d := 2; d*d <= n; d++ {
+			if n%d == 0 {
+				s += d
+				if d*d != n {
+					s += n / d
+				}
+			}
+		}
+		if s == n {
+			perfect += n
+		}
+	}
+	println(perfect)
+}

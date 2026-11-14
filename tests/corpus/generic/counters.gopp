@@ -1,0 +1,67 @@
+package main
+
+type Key interface{ ~int | ~string | ~int32 }
+
+type Counter[K Key] struct {
+	counts map[K]int
+	keys   []K
+}
+
+func NewCounter[K Key]() Counter[K] { return Counter[K]{counts: map[K]int{}} }
+
+func (c *Counter[K]) Add(k K, n int) {
+	if _, ok := c.counts[k]; !ok {
+		c.keys = append(c.keys, k)
+	}
+	c.counts[k] += n
+}
+
+func (c Counter[K]) Sorted() []K {
+	keys := append([]K{}, c.keys...)
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+func (c Counter[K]) Top() (K, int) {
+	var best K
+	most := -1
+	for _, k := range c.Sorted() {
+		if c.counts[k] > most {
+			best, most = k, c.counts[k]
+		}
+	}
+	return best, most
+}
+
+func Tally[K Key](items []K) Counter[K] {
+	c := NewCounter[K]()
+	for _, it := range items {
+		c.Add(it, 1)
+	}
+	return c
+}
+
+func main() {
+	words := Tally([]string{"b", "a", "c", "a", "b", "a"})
+	for _, k := range words.Sorted() {
+		println(k, words.counts[k])
+	}
+	k, n := words.Top()
+	println(k, n, len(words.keys), words.keys[0])
+	runes := Tally([]rune("hello world"))
+	r, m := runes.Top()
+	println(string(r), m, len(runes.keys))
+	nums := NewCounter[int]()
+	for i := 0; i < 100; i++ {
+		nums.Add(i%7, i)
+	}
+	top, most := nums.Top()
+	println(top, most, len(nums.Sorted()))
+	empty := NewCounter[string]()
+	e, z := empty.Top()
+	println(e == "", z)
+}

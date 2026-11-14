@@ -1,0 +1,44 @@
+package main
+
+type Counter struct {
+	name string
+	n    int
+}
+
+func (c Counter) Get() int          { return c.n }
+func (c Counter) Label() string     { return c.name }
+func (c Counter) Plus(d int) int    { return c.n + d }
+func (c *Counter) Add(d int)        { c.n += d }
+func (c Counter) With(d int) Counter { return Counter{c.name, c.n + d} }
+
+type Greeter interface{ Greet(string) string }
+
+type English struct{}
+
+func (English) Greet(who string) string { return "hello " + who }
+
+func apply(f func(int) int, x int) int { return f(x) }
+
+func main() {
+	c := Counter{"c", 5}
+	get := c.Get
+	plus := c.Plus
+	c.Add(10)
+	println(get(), plus(1), c.Get(), c.Plus(1))
+	label := Counter.Label
+	with := Counter.With
+	println(label(c), with(c, 5).n, Counter.Get(with(with(c, 1), 1)))
+	println(apply(c.Plus, 100), apply(Counter{"x", 1}.Plus, 1), apply(with(c, -15).Plus, 7))
+	var g Greeter = English{}
+	greet := g.Greet
+	println(greet("ann"), English.Greet(English{}, "bob"))
+	fs := []func() int{c.Get, Counter{"y", 2}.Get, c.With(1).Get}
+	sum := 0
+	for _, f := range fs {
+		sum += f()
+	}
+	println(sum)
+	add := (*Counter).Add
+	add(&c, 1)
+	println(c.n)
+}

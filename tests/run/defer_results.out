@@ -1,0 +1,11 @@
+pair p
+loop 2
+pair p
+loop 1
+pair p
+loop 0
+body
+pair value
+pair x
+a1
+last

@@ -122,6 +122,8 @@ pub(super) struct Call {
     pub exprs: Vec<ExprId>,
     pub spans: Vec<Span>,
     pub at: Span,
+    /// The call gives the elements of the last parameter one by one.
+    pub listed: bool,
 }
 
 /// The variable that stands for what is outside the function.
@@ -740,9 +742,33 @@ impl<'a> Walk<'a> {
                 .collect(),
             exprs: before.iter().chain(args.iter()).copied().collect(),
             at: self.tree.exprs[fun].span,
+            listed: self.lists(expr),
         });
         self.call_ids.insert(expr, call);
         call
+    }
+
+    /// Whether the call gives the elements of the last parameter of its
+    /// function one by one, or none of them. A call that gives the
+    /// slice itself, or the values of another call, does not.
+    fn lists(&self, expr: ExprId) -> bool {
+        let ExprKind::Call {
+            fun, args, spread, ..
+        } = &self.tree.exprs[expr].kind
+        else {
+            return false;
+        };
+        let Some(places) = self.places else {
+            return false;
+        };
+        let types = places.types;
+        let is = |expr: ExprId, what: fn(&Type) -> bool| {
+            let ty = self.type_of(self.unparen(expr));
+            ty.is_some_and(|ty| what(&types.get(types.underlying(ty))))
+        };
+        let variadic = is(*fun, |ty| matches!(ty, Type::Func { variadic: true, .. }));
+        let values = matches!(args[..], [one] if is(one, |ty| matches!(ty, Type::Tuple(_))));
+        variadic && !spread && !values
     }
 
     /// What a call of `fun` is given before its arguments, and whether
@@ -1575,9 +1601,16 @@ impl Problem {
     /// with what it is given, where that is known.
     pub(super) fn solve(&self, lends: &[Option<Arc<Lends>>]) -> Lent {
         let changes = &self.changes;
+        let shaped = |(call, lends): (&Call, &Option<Arc<Lends>>)| match lends {
+            Some(lends) if call.listed && !lends.gives.is_empty() => {
+                Some(Arc::new(lends.listed(call.args.len())))
+            }
+            _ => lends.clone(),
+        };
+        let lends: Vec<_> = self.calls.iter().zip(lends).map(shaped).collect();
         let sources = &Sources {
             problem: self,
-            lends,
+            lends: &lends,
         };
         let mut lent = Lent {
             broken: Vec::new(),

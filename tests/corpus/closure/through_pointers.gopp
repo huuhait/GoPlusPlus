@@ -1,0 +1,67 @@
+package main
+
+type Account struct {
+	balance int
+	history []int
+}
+
+func transact(a *Account, deposits, withdrawals []int) (failed int) {
+	deposit := func(n int) {
+		a.balance += n
+		a.history = append(a.history, n)
+	}
+	withdraw := func(n int) bool {
+		if n > a.balance {
+			return false
+		}
+		a.balance -= n
+		a.history = append(a.history, -n)
+		return true
+	}
+	for _, n := range deposits {
+		deposit(n)
+	}
+	for _, n := range withdrawals {
+		if !withdraw(n) {
+			failed++
+		}
+	}
+	return failed
+}
+
+func fill(grid *[3][3]int, cell func(r, c int) int) {
+	for r := range grid {
+		for c := range grid[r] {
+			grid[r][c] = cell(r, c)
+		}
+	}
+}
+
+func update(xs *[]int, f func(int) int) {
+	for i := range *xs {
+		(*xs)[i] = f((*xs)[i])
+	}
+}
+
+func main() {
+	var acct Account
+	failed := transact(&acct, []int{100, 5}, []int{30, 500})
+	println(acct.balance, len(acct.history), acct.history[1], failed)
+	var grid [3][3]int
+	fill(&grid, func(r, c int) int { return r*3 + c })
+	scale := 2
+	fill(&grid, func(r, c int) int { return grid[c][r] * scale })
+	println(grid[0][1], grid[1][0], grid[2][2])
+	xs := []int{1, 2, 3}
+	total := 0
+	update(&xs, func(x int) int {
+		total += x
+		return x*x + total
+	})
+	println(xs[0], xs[1], xs[2], total)
+	p := &acct
+	bonus := func() { p.balance += len(p.history) }
+	bonus()
+	bonus()
+	println(acct.balance)
+}

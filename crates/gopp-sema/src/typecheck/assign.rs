@@ -2,6 +2,7 @@
 //! result, a channel. The functions follow `go/types` (assignments.go),
 //! and the messages are Go's.
 
+use super::call::Called;
 use super::ops::Unfit;
 use super::*;
 
@@ -293,6 +294,20 @@ impl<'a> Checker<'a> {
         vec![self.value(cx, expr)]
     }
 
+    /// Whether the one expression on the right may give several values:
+    /// it is a call. A conversion is written as one and is one value,
+    /// which is assigned as any other.
+    fn may_be_several(&mut self, cx: &Cx<'a>, rhs: &[ExprId]) -> bool {
+        let [one] = rhs else {
+            return false;
+        };
+        let ExprKind::Call { fun, .. } = &cx.tree.exprs[self.unparen(cx, *one)].kind else {
+            return false;
+        };
+        self.operand(cx, *one);
+        self.called(*fun) != Called::Conversion
+    }
+
     /// Gives variables or results of the types `lhs` their values `rhs`;
     /// a variable without a type takes the type of its value. The types
     /// that the variables have then, invalid where the value is in error.
@@ -308,13 +323,7 @@ impl<'a> Checker<'a> {
             Init::Return(_) => "return statement",
         };
         let unknown = vec![Types::INVALID; lhs.len()];
-        let is_call = match rhs {
-            [one] => matches!(
-                cx.tree.exprs[self.unparen(cx, *one)].kind,
-                ExprKind::Call { .. }
-            ),
-            _ => false,
-        };
+        let is_call = self.may_be_several(cx, rhs);
         if lhs.len() == rhs.len() && !is_call {
             let mut types = Vec::new();
             for (&to, &value) in lhs.iter().zip(rhs) {
@@ -497,13 +506,7 @@ impl<'a> Checker<'a> {
     }
 
     fn assign_places(&mut self, cx: &Cx<'a>, lhs: &[ExprId], rhs: &[ExprId]) {
-        let is_call = match rhs {
-            [one] => matches!(
-                cx.tree.exprs[self.unparen(cx, *one)].kind,
-                ExprKind::Call { .. }
-            ),
-            _ => false,
-        };
+        let is_call = self.may_be_several(cx, rhs);
         if lhs.len() == rhs.len() && !is_call {
             self.swapping = self.is_swap(cx, lhs, rhs);
             if self.swapping && self.memo.is_some() {

@@ -1,0 +1,9 @@
+package main
+
+func rem(a, b uint8) uint8 { return a % b }
+
+func main() {
+	println(rem(10, 3), rem(255, 16))
+	var zero uint8
+	println(rem(7, zero))
+}

@@ -1,0 +1,41 @@
+package main
+
+func popcount(x uint64) int {
+	n := 0
+	for x != 0 {
+		x &= x - 1
+		n++
+	}
+	return n
+}
+
+func rotl(x uint32, k uint) uint32 { return x<<k | x>>(32-k) }
+
+func reverse(x uint8) uint8 {
+	var r uint8
+	for i := 0; i < 8; i++ {
+		r = r<<1 | x&1
+		x >>= 1
+	}
+	return r
+}
+
+func main() {
+	println(popcount(0), popcount(255), popcount(0xdeadbeefcafebabe), popcount(^uint64(0)))
+	println(rotl(0x80000001, 1), rotl(0x12345678, 8), rotl(1, 31))
+	println(reverse(1), reverse(0xf0), reverse(0xa5))
+	a, b := 0b1100, 0b1010
+	println(a&b, a|b, a^b, a&^b, ^a, -a)
+	var x uint16 = 0xabcd
+	println(x>>8, x&0xff, x<<4, x>>4<<4 == x&0xfff0)
+	var s int32 = -16
+	println(s>>2, s>>31, uint32(s)>>28, s<<27)
+	mask := uint64(1)<<40 - 1
+	println(mask, mask>>20, mask&0xf0f0f0f0f0)
+	flags := 0
+	for _, bit := range []uint{0, 3, 5, 3} {
+		flags |= 1 << bit
+	}
+	flags &^= 1 << 5
+	println(flags, flags&(1<<3) != 0, flags&(1<<5) != 0)
+}

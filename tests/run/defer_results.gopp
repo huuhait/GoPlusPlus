@@ -1,0 +1,30 @@
+package main
+
+import "fmt"
+
+// What a deferred call gives is freed when the call is made: each of
+// several results by itself.
+func pair(tag string) (string, string) {
+	println("pair", tag)
+	return tag + "1", tag + "2"
+}
+
+func mixed(n int) (int, string, error) { return n, "s" + "t", nil }
+
+func loop() {
+	for i := 0; i < 3; i++ {
+		defer fmt.Println("loop", i)
+		defer pair("p")
+	}
+}
+
+func main() {
+	defer fmt.Println("last")
+	defer fmt.Print("a", 1, "\n")
+	defer pair("x")
+	defer mixed(3)
+	f := pair
+	defer f("value")
+	loop()
+	fmt.Println("body")
+}

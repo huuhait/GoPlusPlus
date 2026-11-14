@@ -1,0 +1,12 @@
+recovered: boom
+true
+false
+recovered: runtime error: index out of range [3] with length 0
+true
+recovered: runtime error: integer divide by zero
+true
+recovered: 42
+true
+recovered: runtime error: index out of range [0] with length 0
+true
+done

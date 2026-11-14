@@ -1,0 +1,76 @@
+package main
+
+type Pred func(int) bool
+
+func not(p Pred) Pred { return func(x int) bool { return !p(x) } }
+
+func and(ps ...Pred) Pred {
+	return func(x int) bool {
+		for _, p := range ps {
+			if !p(x) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func or(ps ...Pred) Pred {
+	return func(x int) bool {
+		for _, p := range ps {
+			if p(x) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func multipleOf(k int) Pred { return func(x int) bool { return x%k == 0 } }
+
+func between(lo, hi int) Pred { return func(x int) bool { return lo <= x && x <= hi } }
+
+func count(limit int, p Pred) int {
+	n := 0
+	for x := 1; x <= limit; x++ {
+		if p(x) {
+			n++
+		}
+	}
+	return n
+}
+
+func first(limit int, p Pred) int {
+	for x := 1; x <= limit; x++ {
+		if p(x) {
+			return x
+		}
+	}
+	return -1
+}
+
+func main() {
+	even, three := multipleOf(2), multipleOf(3)
+	println(count(100, even), count(100, and(even, three)), count(100, or(even, three)))
+	println(count(100, not(or(even, three))), count(100, and()), count(100, or()))
+	teen := between(13, 19)
+	println(first(100, and(teen, three)), first(100, and(teen, not(teen))), first(100, and(not(even), multipleOf(7), between(30, 99))))
+	prime := func(x int) bool {
+		if x < 2 {
+			return false
+		}
+		for d := 2; d*d <= x; d++ {
+			if x%d == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	twin := func(x int) bool { return prime(x) && prime(x+2) }
+	println(count(100, prime), count(100, twin), first(100, and(twin, between(50, 100))))
+	var p Pred = even
+	for i := 0; i < 3; i++ {
+		p = not(p)
+	}
+	println(p(4), p(5))
+}

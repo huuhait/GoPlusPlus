@@ -1,0 +1,6 @@
+hello; closed a.txt
+stream; closed pipe
+5 -1 a.txt ?
+a.txt hello hello closed a.txt 5
+9
+true false

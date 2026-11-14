@@ -1,0 +1,69 @@
+package main
+
+type Heap struct{ items []int }
+
+func (h *Heap) Push(x int) {
+	h.items = append(h.items, x)
+	i := len(h.items) - 1
+	for i > 0 {
+		parent := (i - 1) / 2
+		if h.items[parent] <= h.items[i] {
+			break
+		}
+		h.items[parent], h.items[i] = h.items[i], h.items[parent]
+		i = parent
+	}
+}
+
+func (h *Heap) Pop() int {
+	top := h.items[0]
+	last := len(h.items) - 1
+	h.items[0] = h.items[last]
+	h.items = h.items[:last]
+	i := 0
+	for {
+		small := i
+		for _, child := range [2]int{2*i + 1, 2*i + 2} {
+			if child < len(h.items) && h.items[child] < h.items[small] {
+				small = child
+			}
+		}
+		if small == i {
+			break
+		}
+		h.items[small], h.items[i] = h.items[i], h.items[small]
+		i = small
+	}
+	return top
+}
+
+func (h Heap) Len() int { return len(h.items) }
+
+func main() {
+	var h Heap
+	seed := uint32(99)
+	for i := 0; i < 200; i++ {
+		seed = seed*1664525 + 1013904223
+		h.Push(int(seed >> 20))
+	}
+	println(h.Len())
+	prev, ordered, sum := -1, true, 0
+	for h.Len() > 100 {
+		x := h.Pop()
+		ordered = ordered && x >= prev
+		prev = x
+		sum += x
+	}
+	println(ordered, sum, h.Len(), prev)
+	h.Push(-1)
+	h.Push(1 << 30)
+	println(h.Pop(), h.Len())
+	k := Heap{}
+	for _, x := range []int{5, 3, 8, 1, 9, 2} {
+		k.Push(x)
+		if k.Len() > 3 {
+			k.Pop()
+		}
+	}
+	println(k.Pop(), k.Pop(), k.Pop(), k.Len())
+}

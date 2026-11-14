@@ -1,0 +1,54 @@
+package main
+
+const (
+	KB = 1 << (10 * (iota + 1))
+	MB
+	GB
+	TB
+)
+
+type Weekday int
+
+const (
+	Sunday Weekday = iota
+	Monday
+	Tuesday
+	_
+	Thursday
+)
+
+const (
+	a, b = iota, iota * 10
+	c, d
+	e, f
+)
+
+const huge = 1 << 100
+const pi = 3.14159265358979323846
+const name = "go" + "pp"
+const yes = len(name) == 4
+
+type Bits uint8
+
+const (
+	Read Bits = 1 << iota
+	Write
+	Exec
+	All = Read | Write | Exec
+)
+
+func main() {
+	println(KB, MB, GB, TB)
+	println(Sunday, Monday, Tuesday, Thursday)
+	println(a, b, c, d, e, f)
+	println(huge>>98, huge/(1<<97), pi*2, pi > 3, 22/7 == 3, 22/7.0 > pi)
+	println(name, yes, len(name))
+	println(Read, Write, Exec, All, All&^Write)
+	const local = 7
+	var x uint8 = local * 30
+	var y float32 = local / 2
+	var z = local / 2.0
+	println(x, y, z)
+	println('a', 'a'+1, "s"[0], 1e3, 0x10, 0o17, 0b101, 1_000_000)
+	println(5/2, 5/2.0, 5.0/2, 1<<3, 7.0 == 7)
+}

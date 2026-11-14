@@ -1,0 +1,71 @@
+package main
+
+func main() {
+	xs := []int{10, 20, 30}
+	for i := range xs {
+		print(i, " ")
+	}
+	for i, x := range xs {
+		print(i*x, " ")
+	}
+	for _, x := range xs {
+		x *= 2
+		print(x, " ")
+	}
+	println(xs[0], xs[2])
+	for range xs {
+		print(".")
+	}
+	println()
+	n := 0
+	for i := range 5 {
+		n += i
+	}
+	for range 3 {
+		n *= 2
+	}
+	println(n)
+	arr := [3]int{7, 8, 9}
+	for i, v := range arr {
+		arr[2] = 0
+		print(i, v, " ")
+	}
+	println(arr[2])
+	for i, c := range "añb" {
+		print(i, ":", c, " ")
+	}
+	println()
+	for i, b := range []byte("añb") {
+		print(i, ":", b, " ")
+	}
+	println()
+	m := map[string]int{"one": 1}
+	for k, v := range m {
+		println(k, v)
+	}
+	for k := range m {
+		m[k] = 100
+	}
+	println(m["one"])
+	grown := []int{1, 2, 3}
+	count := 0
+	for _, x := range grown {
+		if x < 3 {
+			grown[2] += x
+		}
+		count++
+	}
+	println(count, len(grown), grown[2])
+	var none []string
+	for range none {
+		println("never")
+	}
+	total := 0
+	for i := len(xs) - 1; i >= 0; i-- {
+		total = total*2 + xs[i]
+	}
+	var i int
+	for i = range xs {
+	}
+	println(total, i)
+}

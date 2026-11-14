@@ -1,0 +1,82 @@
+package main
+
+const (
+	start = iota
+	sign
+	whole
+	dot
+	fraction
+	fail
+)
+
+type Step func(byte) (next int, ok bool)
+
+func digit(c byte) bool { return c >= '0' && c <= '9' }
+
+func machine() [6]Step {
+	return [6]Step{
+		start: func(c byte) (int, bool) {
+			switch {
+			case c == '-':
+				return sign, false
+			case digit(c):
+				return whole, true
+			}
+			return fail, false
+		},
+		sign: func(c byte) (int, bool) {
+			if digit(c) {
+				return whole, true
+			}
+			return fail, false
+		},
+		whole: func(c byte) (int, bool) {
+			switch {
+			case digit(c):
+				return whole, true
+			case c == '.':
+				return dot, false
+			}
+			return fail, false
+		},
+		dot: func(c byte) (int, bool) {
+			if digit(c) {
+				return fraction, true
+			}
+			return fail, false
+		},
+		fraction: func(c byte) (int, bool) {
+			if digit(c) {
+				return fraction, true
+			}
+			return fail, false
+		},
+		fail: func(byte) (int, bool) { return fail, false },
+	}
+}
+
+func number(steps [6]Step, text string) bool {
+	state, ok := start, false
+	for i := 0; i < len(text); i++ {
+		state, ok = steps[state](text[i])
+	}
+	return ok
+}
+
+func main() {
+	steps := machine()
+	for _, text := range []string{"12", "-3.5", "4.", "-", "", "1.2.3", "007", "a1", "-0.0"} {
+		println(text, number(steps, text))
+	}
+	light := map[string]func() string{}
+	light["red"] = func() string { return "green" }
+	light["green"] = func() string { return "yellow" }
+	light["yellow"] = func() string { return "red" }
+	at := "red"
+	for i := 0; i < 7; i++ {
+		if next, ok := light[at]; ok {
+			at = next()
+		}
+	}
+	println(at)
+}

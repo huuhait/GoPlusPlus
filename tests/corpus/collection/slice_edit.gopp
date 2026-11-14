@@ -1,0 +1,72 @@
+package main
+
+func show(xs []int) {
+	for i, x := range xs {
+		if i > 0 {
+			print(" ")
+		}
+		print(x)
+	}
+	println()
+}
+
+func remove(xs []int, at int) []int {
+	var out []int
+	out = append(out, xs[:at]...)
+	return append(out, xs[at+1:]...)
+}
+
+func insert(xs []int, at, v int) []int {
+	var out []int
+	out = append(out, xs[:at]...)
+	out = append(out, v)
+	return append(out, xs[at:]...)
+}
+
+func reverse(xs *[]int) {
+	s := *xs
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		(*xs)[i], (*xs)[j] = (*xs)[j], (*xs)[i]
+	}
+}
+
+func rotate(xs []int, k int) []int {
+	out := make([]int, len(xs))
+	for i, x := range xs {
+		out[(i+k)%len(xs)] = x
+	}
+	return out
+}
+
+func filter(xs []int, keep func(int) bool) []int {
+	var out []int
+	for _, x := range xs {
+		if keep(x) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func main() {
+	xs := []int{1, 2, 3, 4, 5, 6}
+	show(remove(xs, 0))
+	show(remove(xs, 5))
+	show(insert(xs, 3, 99))
+	reverse(&xs)
+	show(xs)
+	show(rotate(xs, 2))
+	show(filter(xs, func(x int) bool { return x%2 == 0 }))
+	xs = xs[1:4]
+	show(xs)
+	xs = xs[:0]
+	println(len(xs))
+	xs = append(xs, 7, 8)
+	show(xs)
+	tail := []int{1, 2, 3, 4}
+	tail = tail[len(tail)-2:]
+	show(tail)
+	last := tail[len(tail)-1]
+	tail = tail[:len(tail)-1]
+	println(last, len(tail))
+}

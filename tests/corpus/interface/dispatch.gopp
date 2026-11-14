@@ -1,0 +1,69 @@
+package main
+
+type Animal interface {
+	Sound() string
+	Legs() int
+}
+
+type Dog struct{ name string }
+
+func (d Dog) Sound() string { return d.name + " barks" }
+func (d Dog) Legs() int     { return 4 }
+
+type Bird struct{ songs int }
+
+func (b Bird) Sound() string {
+	out := ""
+	for i := 0; i < b.songs; i++ {
+		out += "tweet"
+	}
+	return out
+}
+func (b Bird) Legs() int { return 2 }
+
+type Fish struct{}
+
+func (Fish) Sound() string { return "" }
+func (Fish) Legs() int     { return 0 }
+
+type Robot struct{ model int }
+
+func (r Robot) Sound() string { return "beep" }
+func (r Robot) Legs() int     { return r.model % 3 }
+
+func legs(animals []Animal) int {
+	total := 0
+	for _, a := range animals {
+		total += a.Legs()
+	}
+	return total
+}
+
+func loudest(animals []Animal) Animal {
+	best := animals[0]
+	for _, a := range animals {
+		if len(a.Sound()) > len(best.Sound()) {
+			best = a
+		}
+	}
+	return best
+}
+
+func main() {
+	zoo := []Animal{Dog{"rex"}, Bird{3}, Fish{}, Dog{"al"}}
+	println(legs(zoo), loudest(zoo).Sound())
+	for i, a := range zoo {
+		println(i, a.Sound(), a.Legs())
+	}
+	byLegs := map[int][]Animal{}
+	for _, a := range zoo {
+		byLegs[a.Legs()] = append(byLegs[a.Legs()], a)
+	}
+	println(len(byLegs[4]), len(byLegs[2]), len(byLegs[0]), len(byLegs[8]))
+	r := Robot{8}
+	var a Animal = r
+	r.model = 9
+	println(a.Sound(), a.Legs(), r.Legs())
+	zoo = append(zoo, a, r)
+	println(legs(zoo), len(zoo))
+}

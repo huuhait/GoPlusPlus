@@ -1,0 +1,79 @@
+package main
+
+func identity(n int) [][]int {
+	m := make([][]int, n)
+	for i := range m {
+		m[i] = make([]int, n)
+		m[i][i] = 1
+	}
+	return m
+}
+
+func mul(a, b [][]int) [][]int {
+	out := make([][]int, len(a))
+	for i := range out {
+		out[i] = make([]int, len(b[0]))
+		for j := range out[i] {
+			for k := range b {
+				out[i][j] += a[i][k] * b[k][j]
+			}
+		}
+	}
+	return out
+}
+
+func transpose(a [][]int) [][]int {
+	out := make([][]int, len(a[0]))
+	for j := range out {
+		out[j] = make([]int, len(a))
+		for i := range a {
+			out[j][i] = a[i][j]
+		}
+	}
+	return out
+}
+
+func show(m [][]int) {
+	for _, row := range m {
+		for j, v := range row {
+			if j > 0 {
+				print(" ")
+			}
+			print(v)
+		}
+		println()
+	}
+}
+
+func power(m [][]int, n int) [][]int {
+	out := identity(len(m))
+	for ; n > 0; n-- {
+		out = mul(out, m)
+	}
+	return out
+}
+
+func main() {
+	a := [][]int{{1, 2, 3}, {4, 5, 6}}
+	show(transpose(a))
+	show(mul(a, transpose(a)))
+	fib := power([][]int{{1, 1}, {1, 0}}, 30)
+	show(fib)
+	var tri [][]int
+	for i := 0; i < 6; i++ {
+		row := make([]int, i+1)
+		row[0], row[i] = 1, 1
+		for j := 1; j < i; j++ {
+			row[j] = tri[i-1][j-1] + tri[i-1][j]
+		}
+		tri = append(tri, row)
+	}
+	show(tri[5:])
+	var fixed [3][4]int
+	for i := range fixed {
+		for j := range fixed[i] {
+			fixed[i][j] = i * j
+		}
+	}
+	println(fixed[2][3], len(fixed), len(fixed[0]))
+}

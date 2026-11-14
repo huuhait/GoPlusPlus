@@ -1,0 +1,41 @@
+package main
+
+type Number interface{ ~int | ~int32 | ~float64 }
+
+func Add[T Number](a, b T) T { return a + b }
+
+func Twice[T Number](f func(T, T) T, x T) T { return f(f(x, x), x) }
+
+func Apply[T Number](x T, fs ...func(T) T) T {
+	for _, f := range fs {
+		x = f(x)
+	}
+	return x
+}
+
+func Cast[From, To Number](x From) To { return To(x) }
+
+func Fold[T Number](add func(T, T) T, xs ...T) T {
+	var acc T
+	for _, x := range xs {
+		acc = add(acc, x)
+	}
+	return acc
+}
+
+func main() {
+	addInts := Add[int]
+	addFloats := Add[float64]
+	println(addInts(1, 2), addFloats(1.5, 2), Add[int32](1<<30, 1<<30))
+	println(Twice(addInts, 7), Twice(Add[float64], 0.5), Twice[int](Add, 3))
+	double := func(x int) int { return x * 2 }
+	println(Apply(1, double, double, double), Apply(2.0), Apply(1.5, func(f float64) float64 { return f * f }))
+	println(Cast[int, float64](3)/2, Cast[float64, int](3.9), Cast[int, int32](1<<31+5), Cast[float64, int32](-2.5))
+	println(Fold(addInts, 1, 2, 3), Fold(addFloats, 0.25, 0.5), Fold(Add[int32]), Fold(Add, []int{4, 5}...))
+	fs := []func(int, int) int{Add[int], func(a, b int) int { return a * b }, addInts}
+	acc := 2
+	for _, f := range fs {
+		acc = f(acc, 5)
+	}
+	println(acc)
+}

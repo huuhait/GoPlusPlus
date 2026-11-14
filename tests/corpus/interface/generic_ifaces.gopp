@@ -1,0 +1,73 @@
+package main
+
+type Number interface{ ~int | ~float64 }
+
+type Container interface {
+	Len() int
+	Total() float64
+}
+
+type List[T Number] struct{ items []T }
+
+func (l List[T]) Len() int { return len(l.items) }
+
+func (l List[T]) Total() float64 {
+	var sum T
+	for _, x := range l.items {
+		sum += x
+	}
+	return float64(sum)
+}
+
+type Pair[T Number] struct{ a, b T }
+
+func (p Pair[T]) Len() int       { return 2 }
+func (p Pair[T]) Total() float64 { return float64(p.a + p.b) }
+
+type Describer interface{ Describe() string }
+
+type Tagged[T Number] struct {
+	tag   string
+	value T
+}
+
+func (t Tagged[T]) Describe() string {
+	if t.value > 0 {
+		return t.tag + "+"
+	}
+	return t.tag + "-"
+}
+
+func grand(cs ...Container) (count int, total float64) {
+	for _, c := range cs {
+		count += c.Len()
+		total += c.Total()
+	}
+	return
+}
+
+func main() {
+	ints := List[int]{[]int{1, 2, 3}}
+	floats := List[float64]{[]float64{0.5, 0.25}}
+	n, t := grand(ints, floats, Pair[int]{10, 20}, Pair[float64]{1.5, 2.5}, List[int]{})
+	println(n, t)
+	var c Container = ints
+	if l, ok := c.(List[int]); ok {
+		println(len(l.items), l.Total())
+	}
+	_, isFloats := c.(List[float64])
+	_, isPair := c.(Pair[int])
+	println(isFloats, isPair)
+	ds := []Describer{Tagged[int]{"i", 5}, Tagged[float64]{"f", -0.5}, Tagged[int]{"z", 0}}
+	out := ""
+	for _, d := range ds {
+		out += d.Describe() + " "
+	}
+	println(out)
+	switch x := Container(Pair[float64]{1, 2}).(type) {
+	case Pair[int]:
+		println("ints", x.a)
+	case Pair[float64]:
+		println("floats", x.b)
+	}
+}

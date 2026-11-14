@@ -1,0 +1,88 @@
+package main
+
+func classify(n int) string {
+	switch {
+	case n < 0:
+		return "neg"
+	case n == 0:
+		return "zero"
+	case n%2 == 0:
+		return "even"
+	}
+	return "odd"
+}
+
+func grade(n int) string {
+	out := ""
+	switch n / 10 {
+	case 10, 9:
+		out += "A"
+	case 8:
+		out += "B"
+		fallthrough
+	case 7:
+		out += "C"
+	default:
+		out += "F"
+	}
+	return out
+}
+
+func main() {
+	for _, n := range []int{-3, 0, 4, 7} {
+		println(n, classify(n))
+	}
+	println(grade(100), grade(95), grade(85), grade(72), grade(10))
+outer:
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 4; j++ {
+			switch {
+			case j > i:
+				continue outer
+			case i == 3:
+				break outer
+			}
+			print(i, j, " ")
+		}
+	}
+	println()
+	i := 0
+loop:
+	if i < 3 {
+		print("g", i)
+		i++
+		goto loop
+	}
+	println()
+	n := 27
+	steps := 0
+	for n != 1 {
+		if n%2 == 0 {
+			n /= 2
+		} else {
+			n = 3*n + 1
+		}
+		steps++
+	}
+	println(steps)
+	for i := range 4 {
+		if i == 1 {
+			continue
+		}
+		print(i)
+	}
+	println()
+	if x := classify(5); x == "odd" {
+		println("is", x)
+	} else if x == "even" {
+		println("no")
+	} else {
+		println("never", x)
+	}
+	switch x := 5; x {
+	case 1, 2, 3:
+		println("small")
+	case 4, 5, 6:
+		println("mid")
+	}
+}

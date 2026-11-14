@@ -1,0 +1,8 @@
+inner saw first
+outer saw second
+inner saw first
+main is leaving
+panic: first [recovered]
+	panic: second
+
+exit status 2

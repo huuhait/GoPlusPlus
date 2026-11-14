@@ -537,8 +537,9 @@ pub fn explain(code: Code) -> Option<Explanation> {
         ),
         OwnPointerOnHeap => (
             "A pointer, or a struct or an array that holds one, is put where it may outlive \
-             what it points to: into a slice, a map or a channel that is made, into a \
-             `Unique` or a `Shared`, or into a variable of the package. A pointer lives in \
+             what it points to: into a slice, a map or a channel that is made, into the slice \
+             of a `...` parameter whose elements a call lists, into a `Unique` or a \
+             `Shared`, or into a variable of the package. A pointer lives in \
              the variables, the parameters and the results of functions, where the compiler \
              follows it. Generic code that puts a value of its type parameter in such a place \
              takes no type argument that holds a pointer.",

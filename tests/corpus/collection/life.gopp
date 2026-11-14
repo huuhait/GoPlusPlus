@@ -1,0 +1,74 @@
+package main
+
+const size = 8
+
+type Grid [size][size]bool
+
+func (g Grid) neighbors(r, c int) int {
+	n := 0
+	for dr := -1; dr <= 1; dr++ {
+		for dc := -1; dc <= 1; dc++ {
+			if dr == 0 && dc == 0 {
+				continue
+			}
+			if g[(r+dr+size)%size][(c+dc+size)%size] {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func (g Grid) step() Grid {
+	var next Grid
+	for r := 0; r < size; r++ {
+		for c := 0; c < size; c++ {
+			n := g.neighbors(r, c)
+			next[r][c] = n == 3 || g[r][c] && n == 2
+		}
+	}
+	return next
+}
+
+func (g Grid) show() {
+	for _, row := range g {
+		line := ""
+		for _, cell := range row {
+			if cell {
+				line += "#"
+			} else {
+				line += "."
+			}
+		}
+		println(line)
+	}
+}
+
+func (g Grid) alive() int {
+	n := 0
+	for _, row := range g {
+		for _, cell := range row {
+			if cell {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func main() {
+	var g Grid
+	for _, p := range [][2]int{{0, 1}, {1, 2}, {2, 0}, {2, 1}, {2, 2}} {
+		g[p[0]][p[1]] = true
+	}
+	start := g
+	for i := 0; i < 4; i++ {
+		g = g.step()
+	}
+	g.show()
+	println(g.alive(), g == start)
+	for i := 0; i < 28; i++ {
+		g = g.step()
+	}
+	println(g.alive(), g == start)
+}

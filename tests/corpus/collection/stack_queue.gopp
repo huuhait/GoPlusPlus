@@ -1,0 +1,116 @@
+package main
+
+type Stack struct{ items []int }
+
+func (s *Stack) Push(x int) { s.items = append(s.items, x) }
+
+func (s *Stack) Pop() int {
+	x := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return x
+}
+
+func (s *Stack) Empty() bool { return len(s.items) == 0 }
+
+type Ring struct {
+	buf        [4]int
+	head, size int
+}
+
+func (r *Ring) Put(x int) bool {
+	if r.size == len(r.buf) {
+		return false
+	}
+	r.buf[(r.head+r.size)%len(r.buf)] = x
+	r.size++
+	return true
+}
+
+func (r *Ring) Get() (int, bool) {
+	if r.size == 0 {
+		return 0, false
+	}
+	x := r.buf[r.head]
+	r.head = (r.head + 1) % len(r.buf)
+	r.size--
+	return x, true
+}
+
+func eval(tokens []string) int {
+	var s Stack
+	for _, t := range tokens {
+		switch t {
+		case "+", "-", "*":
+			b, a := s.Pop(), s.Pop()
+			switch t {
+			case "+":
+				s.Push(a + b)
+			case "-":
+				s.Push(a - b)
+			default:
+				s.Push(a * b)
+			}
+		default:
+			n := 0
+			for _, c := range t {
+				n = n*10 + int(c-'0')
+			}
+			s.Push(n)
+		}
+	}
+	return s.Pop()
+}
+
+func balanced(text string) bool {
+	var open []byte
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; c {
+		case '(', '[', '{':
+			open = append(open, c)
+		case ')', ']', '}':
+			if len(open) == 0 {
+				return false
+			}
+			top := open[len(open)-1]
+			open = open[:len(open)-1]
+			if c == ')' && top != '(' || c == ']' && top != '[' || c == '}' && top != '{' {
+				return false
+			}
+		}
+	}
+	return len(open) == 0
+}
+
+func main() {
+	println(eval([]string{"3", "4", "+", "2", "*", "7", "-"}), eval([]string{"12", "5", "-"}))
+	println(balanced("([]{})"), balanced("([)]"), balanced("(("), balanced(""))
+	var r Ring
+	for i := 1; i <= 5; i++ {
+		println(r.Put(i * 10))
+	}
+	a, _ := r.Get()
+	b, _ := r.Get()
+	r.Put(60)
+	r.Put(70)
+	println(a, b, r.size, r.head)
+	for {
+		x, ok := r.Get()
+		if !ok {
+			break
+		}
+		print(x, " ")
+	}
+	println()
+	var queue []int
+	queue = append(queue, 1)
+	order := 0
+	for len(queue) > 0 && order < 1000 {
+		n := queue[0]
+		queue = queue[1:]
+		order = order*3 + n
+		if n < 20 {
+			queue = append(queue, n*2, n*2+1)
+		}
+	}
+	println(order, len(queue))
+}

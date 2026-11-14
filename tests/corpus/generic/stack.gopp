@@ -1,0 +1,77 @@
+package main
+
+type Elem interface{ ~int | ~string | ~float64 | ~bool }
+
+type Stack[T Elem] struct {
+	items []T
+}
+
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
+
+func (s *Stack[T]) Pop() (T, bool) {
+	var zero T
+	if len(s.items) == 0 {
+		return zero, false
+	}
+	x := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return x, true
+}
+
+func (s Stack[T]) Len() int { return len(s.items) }
+
+func (s Stack[T]) Peek() T { return s.items[len(s.items)-1] }
+
+type Queue[T Elem] struct {
+	in, out Stack[T]
+}
+
+func (q *Queue[T]) Put(x T) { q.in.Push(x) }
+
+func (q *Queue[T]) Get() (T, bool) {
+	if q.out.Len() == 0 {
+		for q.in.Len() > 0 {
+			x, _ := q.in.Pop()
+			q.out.Push(x)
+		}
+	}
+	return q.out.Pop()
+}
+
+func Drain[T Elem](s *Stack[T]) int {
+	n := 0
+	for {
+		if _, ok := s.Pop(); !ok {
+			return n
+		}
+		n++
+	}
+}
+
+func main() {
+	var ints Stack[int]
+	for i := 1; i <= 5; i++ {
+		ints.Push(i * i)
+	}
+	top, _ := ints.Pop()
+	println(top, ints.Peek(), ints.Len())
+	var words Stack[string]
+	words.Push("a")
+	words.Push("b")
+	w, ok := words.Pop()
+	println(w, ok, words.Len(), Drain(&words), words.Len())
+	_, ok = words.Pop()
+	println(ok)
+	var q Queue[float64]
+	q.Put(1.5)
+	q.Put(2.5)
+	a, _ := q.Get()
+	q.Put(3.5)
+	b, _ := q.Get()
+	c, _ := q.Get()
+	_, more := q.Get()
+	println(a, b, c, more)
+	flags := Stack[bool]{items: []bool{true, false}}
+	f, _ := flags.Pop()
+	println(f, flags.Peek(), Drain(&ints))
+}

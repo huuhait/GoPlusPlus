@@ -1,0 +1,53 @@
+package main
+
+type Vec struct{ x, y int }
+
+func (v Vec) Add(o Vec) Vec   { return Vec{v.x + o.x, v.y + o.y} }
+func (v Vec) Scale(k int) Vec { return Vec{v.x * k, v.y * k} }
+func (v *Vec) Move(dx int)    { v.x += dx }
+func (v Vec) Dot(o Vec) int   { return v.x*o.x + v.y*o.y }
+
+type Celsius int
+
+func (c Celsius) Fahrenheit() int { return int(c)*9/5 + 32 }
+func (c *Celsius) Warm(by int)    { *c += Celsius(by) }
+
+type Path []Vec
+
+func (p Path) Len() int {
+	total := 0
+	for i := 1; i < len(p); i++ {
+		d := Vec{p[i].x - p[i-1].x, p[i].y - p[i-1].y}
+		total += d.Dot(d)
+	}
+	return total
+}
+
+type Op func(int, int) int
+
+func (o Op) Twice(a, b int) int { return o(o(a, b), b) }
+
+func main() {
+	v := Vec{1, 2}
+	w := v.Add(Vec{3, 4}).Scale(2)
+	w.Move(10)
+	println(w.x, w.y, v.Dot(w))
+	p := &w
+	p.Move(1)
+	println(p.Scale(2).x, w.x)
+	add := v.Add
+	v = Vec{100, 100}
+	r := add(Vec{1, 1})
+	println(r.x, r.y)
+	scale := Vec.Scale
+	move := (*Vec).Move
+	move(&v, 5)
+	println(scale(v, 3).x)
+	c := Celsius(100)
+	c.Warm(-63)
+	println(c, c.Fahrenheit(), Celsius(0).Fahrenheit())
+	path := Path{{0, 0}, {3, 4}, {3, 0}}
+	println(path.Len(), len(path))
+	plus := Op(func(a, b int) int { return a + b })
+	println(plus.Twice(1, 10), Op(func(a, b int) int { return a * b }).Twice(2, 3))
+}

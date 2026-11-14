@@ -1,0 +1,18 @@
+package main
+
+type Shape interface{ Area() int }
+
+type Square struct{ side int }
+
+func (s Square) Area() int { return s.side * s.side }
+
+func side(v interface{}) int { return v.(Square).side }
+
+func main() {
+	println(side(Square{3}))
+	var s Shape = Square{4}
+	println(s.(Square).Area())
+	var v interface{} = "text"
+	println(v.(string))
+	println(v.(int))
+}

@@ -1,0 +1,75 @@
+package main
+
+type Expr interface{ Eval(env map[string]int) int }
+
+type Num int
+
+type Var string
+
+type Add struct{ l, r Expr }
+
+type Mul struct{ l, r Expr }
+
+type Neg struct{ x Expr }
+
+func (n Num) Eval(map[string]int) int     { return int(n) }
+func (v Var) Eval(env map[string]int) int { return env[string(v)] }
+func (a Add) Eval(env map[string]int) int { return a.l.Eval(env) + a.r.Eval(env) }
+func (m Mul) Eval(env map[string]int) int { return m.l.Eval(env) * m.r.Eval(env) }
+func (n Neg) Eval(env map[string]int) int { return -n.x.Eval(env) }
+
+func show(e Expr) string {
+	switch x := e.(type) {
+	case Num:
+		return digits(int(x))
+	case Var:
+		return string(x)
+	case Add:
+		return "(" + show(x.l) + " + " + show(x.r) + ")"
+	case Mul:
+		return show(x.l) + " * " + show(x.r)
+	case Neg:
+		return "-" + show(x.x)
+	}
+	return "?"
+}
+
+func digits(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+func depth(e Expr) int {
+	switch x := e.(type) {
+	case Add:
+		return 1 + max2(depth(x.l), depth(x.r))
+	case Mul:
+		return 1 + max2(depth(x.l), depth(x.r))
+	case Neg:
+		return 1 + depth(x.x)
+	}
+	return 0
+}
+
+func max2(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func main() {
+	e := Add{Mul{Num(2), Var("x")}, Neg{Add{Var("y"), Num(1)}}}
+	env := map[string]int{"x": 10, "y": 4}
+	println(show(e), e.Eval(env), depth(e))
+	env["y"] = -21
+	println(e.Eval(env), Neg{e}.Eval(env), Mul{e, e}.Eval(env))
+	var chain Expr = Num(1)
+	for i := 0; i < 10; i++ {
+		chain = Add{chain, Mul{chain, Num(2)}}
+	}
+	println(chain.Eval(nil), depth(chain))
+	println(show(Mul{Num(12), Add{Var("a"), Var("b")}}), Var("missing").Eval(env))
+}

@@ -1,0 +1,7 @@
+3 -3
+4
+10
+22
+panic: runtime error: integer divide by zero
+
+exit status 2

@@ -1,0 +1,27 @@
+package main
+
+func main() {
+	var i int = -1
+	println(uint8(i), uint16(i), uint32(i), uint64(i), int8(i))
+	var big int64 = 0x123456789abcdef
+	println(int32(big), int16(big), int8(big), uint8(big), uint32(big))
+	var u uint8 = 200
+	println(int8(u), int(u), int16(int8(u)), uint16(int8(u)))
+	f := 3.99
+	println(int(f), int(-f), int64(f*1000), uint8(f), float32(f))
+	n := 16777217
+	println(float32(n), float64(n), int(float32(n)), int(float64(n)))
+	var m uint64 = 1<<63 + 1<<10
+	println(float64(m), uint64(float64(m)), int64(m))
+	r := 'x'
+	println(r, byte(r), string(r), rune(byte(200)), int32(r)+1)
+	type Celsius float64
+	type Meters int
+	c := Celsius(36.6)
+	d := Meters(5)
+	println(float64(c)*2, int(d)*3, Celsius(d), Meters(c))
+	var b byte = 'A'
+	println(b, b+1, string(rune(b+2)), rune(b)-'A')
+	var p uintptr = 4096
+	println(p, uint32(p)>>4)
+}

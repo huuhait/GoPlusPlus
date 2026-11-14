@@ -1,0 +1,75 @@
+package main
+
+type Item struct {
+	name  string
+	price int
+	tags  []string
+}
+
+type Order struct {
+	id    int
+	items []Item
+	notes map[string]string
+}
+
+func (o Order) total() int {
+	sum := 0
+	for _, it := range o.items {
+		sum += it.price
+	}
+	return sum
+}
+
+func (o *Order) add(name string, price int, tags ...string) {
+	o.items = append(o.items, Item{name, price, tags})
+}
+
+func (o *Order) discount(percent int) {
+	for i := range o.items {
+		o.items[i].price -= o.items[i].price * percent / 100
+	}
+}
+
+func tagged(o Order, tag string) int {
+	n := 0
+	for _, it := range o.items {
+		for _, t := range it.tags {
+			if t == tag {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func main() {
+	o := Order{id: 1}
+	o.add("pen", 120, "office")
+	o.add("ink", 300, "office", "liquid")
+	o.add("tea", 450)
+	println(len(o.items), o.total(), tagged(o, "office"), tagged(o, "liquid"), tagged(o, "none"))
+	o.discount(10)
+	println(o.total(), o.items[1].price, len(o.items[2].tags))
+	o.items[0].tags = append(o.items[0].tags, "small")
+	o.items[2].name += "!"
+	println(len(o.items[0].tags), o.items[0].tags[1], o.items[2].name)
+	o.notes = map[string]string{}
+	o.notes["gift"] = "yes"
+	println(o.notes["gift"], len(o.notes))
+	orders := []Order{o, {id: 2}}
+	orders[1].add("cup", 800)
+	sum := 0
+	for i := range orders {
+		sum += orders[i].total() * orders[i].id
+	}
+	println(sum, len(orders[1].items), orders[1].notes == nil)
+	cheap := 0
+	for _, ord := range orders {
+		for _, it := range ord.items {
+			if it.price < 400 {
+				cheap++
+			}
+		}
+	}
+	println(cheap)
+}

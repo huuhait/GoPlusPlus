@@ -1,0 +1,60 @@
+package main
+
+type Integer interface{ ~int | ~int64 | ~uint64 | ~uint8 }
+
+type Number interface{ Integer | ~float64 }
+
+func Pow[T Number](x T, n int) T {
+	if n == 0 {
+		return 1
+	}
+	half := Pow(x, n/2)
+	if n%2 == 1 {
+		return half * half * x
+	}
+	return half * half
+}
+
+func GCD[T Integer](a, b T) T {
+	if b == 0 {
+		return a
+	}
+	return GCD(b, a%b)
+}
+
+func Fib[T Integer](n int) T {
+	if n < 2 {
+		return T(n)
+	}
+	return Fib[T](n-1) + Fib[T](n-2)
+}
+
+func Digits[T Integer](n T) int {
+	if n < 10 {
+		return 1
+	}
+	return 1 + Digits(n/10)
+}
+
+func SumTo[T Number](n T) T {
+	if n <= 0 {
+		return 0
+	}
+	return n + SumTo(n-1)
+}
+
+func Depth[T Integer](n T, f func(T) T) int {
+	if n == 0 {
+		return 0
+	}
+	return 1 + Depth(f(n), f)
+}
+
+func main() {
+	println(Pow(2, 10), Pow(1.5, 3), Pow[uint8](3, 5), Pow(uint64(3), 40), Pow(2.0, 0))
+	println(GCD(48, 18), GCD[uint64](1<<40, 1<<35), GCD(int64(17), 5))
+	println(Fib[int](20), Fib[uint8](13), Fib[uint8](14), Fib[int64](25))
+	println(Digits(12345), Digits(uint64(1)<<63), Digits[uint8](255))
+	println(SumTo(100), SumTo(4.5), SumTo[int64](1000))
+	println(Depth(1000, func(n int) int { return n / 2 }), Depth[uint8](255, func(n uint8) uint8 { return n >> 3 }))
+}

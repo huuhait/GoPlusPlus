@@ -1,0 +1,52 @@
+package main
+
+func add3(a int) func(int) func(int) int {
+	return func(b int) func(int) int {
+		return func(c int) int { return a + b + c }
+	}
+}
+
+func partial(f func(int, int) int, a int) func(int) int {
+	return func(b int) int { return f(a, b) }
+}
+
+func flip(f func(int, int) int) func(int, int) int {
+	return func(a, b int) int { return f(b, a) }
+}
+
+func curry(f func(string, string) string) func(string) func(string) string {
+	return func(a string) func(string) string {
+		return func(b string) string { return f(a, b) }
+	}
+}
+
+func uncurry(f func(int) func(int) int) func(int, int) int {
+	return func(a, b int) int { return f(a)(b) }
+}
+
+func sub(a, b int) int { return a - b }
+
+func join(a, b string) string { return a + "-" + b }
+
+func main() {
+	println(add3(1)(2)(3), add3(10)(20)(30))
+	add1 := add3(1)
+	add1and2 := add1(2)
+	println(add1and2(0), add1(5)(5), add1and2(100))
+	minus := partial(sub, 100)
+	from := partial(flip(sub), 100)
+	println(minus(1), from(1), flip(flip(sub))(5, 3))
+	tag := curry(join)
+	a := tag("a")
+	println(a("b"), tag("x")("y"), curry(join)("")(""))
+	plus := uncurry(func(a int) func(int) int {
+		return func(b int) int { return a + b }
+	})
+	println(plus(2, 3), uncurry(add3(1))(2, 3))
+	chain := []func(int) int{partial(sub, 10), add1and2, partial(plus, 5)}
+	x := 0
+	for _, f := range chain {
+		x = f(x)
+	}
+	println(x)
+}

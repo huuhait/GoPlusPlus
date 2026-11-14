@@ -1,0 +1,76 @@
+package main
+
+type Ordered interface {
+	Less(other Ordered) bool
+	Key() int
+}
+
+type Num int
+
+func (n Num) Key() int                { return int(n) }
+func (n Num) Less(other Ordered) bool { return n.Key() < other.Key() }
+
+type Word string
+
+func (w Word) Key() int                { return len(w) }
+func (w Word) Less(other Ordered) bool { return w.Key() < other.Key() }
+
+type Task struct {
+	priority int
+	name     string
+}
+
+func (t Task) Key() int { return -t.priority }
+func (t Task) Less(other Ordered) bool {
+	if o, ok := other.(Task); ok && o.priority == t.priority {
+		return t.name < o.name
+	}
+	return t.Key() < other.Key()
+}
+
+func sorted(items []Ordered) []Ordered {
+	out := make([]Ordered, 0, len(items))
+	for _, it := range items {
+		at := len(out)
+		for at > 0 && it.Less(out[at-1]) {
+			at--
+		}
+		var next []Ordered
+		next = append(next, out[:at]...)
+		next = append(next, it)
+		out = append(next, out[at:]...)
+	}
+	return out
+}
+
+func smallest(items []Ordered) Ordered {
+	best := items[0]
+	for _, it := range items[1:] {
+		if it.Less(best) {
+			best = it
+		}
+	}
+	return best
+}
+
+func keys(items []Ordered) {
+	for _, it := range items {
+		print(it.Key(), " ")
+	}
+	println()
+}
+
+func main() {
+	mixed := []Ordered{Num(5), Word("abc"), Num(-2), Word(""), Task{4, "x"}, Num(3)}
+	keys(sorted(mixed))
+	println(smallest(mixed).Key(), smallest(mixed) == Task{4, "x"})
+	tasks := []Ordered{Task{1, "low"}, Task{9, "b"}, Task{9, "a"}, Task{5, "mid"}}
+	for _, t := range sorted(tasks) {
+		if task, ok := t.(Task); ok {
+			print(task.name, " ")
+		}
+	}
+	println()
+	println(Num(1).Less(Num(2)), Word("long").Less(Num(3)), Task{1, "a"}.Less(Task{1, "b"}), Task{1, "b"}.Less(Task{1, "a"}))
+	keys(sorted(nil))
+}

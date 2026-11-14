@@ -1,0 +1,62 @@
+package main
+
+import "fmt"
+
+type Celsius float64
+
+func (c Celsius) String() string {
+	if c < 0 {
+		return "freezing"
+	}
+	return "above"
+}
+
+type ID int
+
+func (i ID) String() string { return "id" }
+
+type Label string
+
+func (l Label) Short() Label {
+	if len(l) > 3 {
+		return l[:3]
+	}
+	return l
+}
+
+type Ordered interface{ ~int | ~float64 | ~string }
+
+func Max[T Ordered](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Largest[T Ordered](xs []T) T {
+	best := xs[0]
+	for _, x := range xs {
+		best = Max(best, x)
+	}
+	return best
+}
+
+func Sum[T ~int | ~float64](xs []T) T {
+	var s T
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
+func main() {
+	temps := []Celsius{-3.5, 12, 4.25}
+	hot := Largest(temps)
+	fmt.Println(hot, Max(Celsius(-1), -2), float64(Sum(temps)) > 12.7)
+	ids := []ID{4, 9, 2}
+	fmt.Println(Largest(ids), int(Largest(ids)), int(Sum(ids)))
+	labels := []Label{"alpha", "omega", "beta"}
+	best := Largest(labels)
+	fmt.Println(string(best), string(best.Short()), string(Max(Label("a"), "b").Short()))
+	println(Sum([]ID{1, 2, 3})+1, Max(ID(1), ID(2)) == 2, Largest([]Celsius{1.5}))
+}

@@ -1,0 +1,67 @@
+package main
+
+import "fmt"
+
+type Money int64
+
+func (m Money) String() string {
+	sign := ""
+	if m < 0 {
+		sign = "-"
+		m = -m
+	}
+	cents := int(m % 100)
+	return sign + digits(int(m/100)) + "." + digits(cents/10) + digits(cents%10)
+}
+
+func digits(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+type Level uint8
+
+const (
+	Low Level = iota
+	Mid
+	High
+)
+
+func (l Level) String() string {
+	switch l {
+	case Low:
+		return "low"
+	case Mid:
+		return "mid"
+	}
+	return "high"
+}
+
+func (l Level) Next() Level { return (l + 1) % 3 }
+
+type Name string
+
+func (n Name) Initial() string { return string(n[:1]) }
+
+type Flag bool
+
+func (f Flag) Not() Flag { return !f }
+
+func main() {
+	var total Money
+	for _, m := range []Money{1999, 1, -2500, 100000} {
+		total += m
+		fmt.Println(m, total)
+	}
+	l := Low
+	for i := 0; i < 4; i++ {
+		fmt.Println(l, uint8(l), l == High)
+		l = l.Next()
+	}
+	n := Name("gopher")
+	fmt.Println(n.Initial(), len(n), string(n+"s"), n == "gopher")
+	f := Flag(true)
+	fmt.Println(bool(f.Not()), f.Not().Not() == f)
+}

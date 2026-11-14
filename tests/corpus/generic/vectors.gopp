@@ -1,0 +1,59 @@
+package main
+
+type Number interface{ ~int | ~float64 }
+
+type Vec[T Number] []T
+
+func (v Vec[T]) Dot(o Vec[T]) T {
+	var sum T
+	for i := range v {
+		sum += v[i] * o[i]
+	}
+	return sum
+}
+
+func (v Vec[T]) Add(o Vec[T]) Vec[T] {
+	out := make(Vec[T], len(v))
+	for i := range v {
+		out[i] = v[i] + o[i]
+	}
+	return out
+}
+
+func (v Vec[T]) Scale(k T) Vec[T] {
+	out := make(Vec[T], len(v))
+	for i, x := range v {
+		out[i] = x * k
+	}
+	return out
+}
+
+func (v Vec[T]) Norm2() T { return v.Dot(v) }
+
+type Table[K ~string, V Number] map[K]Vec[V]
+
+func (t Table[K, V]) Total(k K) V {
+	var sum V
+	for _, x := range t[k] {
+		sum += x
+	}
+	return sum
+}
+
+type Grid[T Number] [2][2]T
+
+func (g Grid[T]) Det() T { return g[0][0]*g[1][1] - g[0][1]*g[1][0] }
+
+func main() {
+	a := Vec[int]{1, 2, 3}
+	b := Vec[int]{4, 5, 6}
+	println(a.Dot(b), a.Add(b)[2], a.Scale(3)[1], a.Add(b).Scale(2).Norm2(), len(a))
+	f := Vec[float64]{0.5, 1.5}
+	println(f.Norm2(), f.Scale(2).Dot(f), f.Add(f)[0])
+	t := Table[string, int]{"a": a, "b": b}
+	t["c"] = a.Add(b)
+	println(t.Total("a"), t.Total("c"), t.Total("none"), len(t))
+	g := Grid[int]{{1, 2}, {3, 4}}
+	h := Grid[float64]{{0.5, 0}, {0, 4}}
+	println(g.Det(), h.Det(), g == Grid[int]{{1, 2}, {3, 4}})
+}

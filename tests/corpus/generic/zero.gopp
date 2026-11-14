@@ -1,0 +1,66 @@
+package main
+
+type Number interface{ ~int | ~float64 | ~uint8 }
+
+type Maybe[T Number] struct {
+	value T
+	ok    bool
+}
+
+func Some[T Number](v T) Maybe[T] { return Maybe[T]{v, true} }
+
+func None[T Number]() Maybe[T] { return Maybe[T]{} }
+
+func (m Maybe[T]) Or(def T) T {
+	if m.ok {
+		return m.value
+	}
+	return def
+}
+
+func (m Maybe[T]) Map(f func(T) T) Maybe[T] {
+	if !m.ok {
+		return m
+	}
+	return Some(f(m.value))
+}
+
+func Zero[T Number]() T {
+	var z T
+	return z
+}
+
+func IsZero[T Number](x T) bool { return x == Zero[T]() }
+
+func Find[T Number](xs []T, pred func(T) bool) Maybe[T] {
+	for _, x := range xs {
+		if pred(x) {
+			return Some(x)
+		}
+	}
+	return None[T]()
+}
+
+func Div[T Number](a, b T) Maybe[T] {
+	if IsZero(b) {
+		return None[T]()
+	}
+	return Some(a / b)
+}
+
+func main() {
+	println(Zero[int](), Zero[float64](), Zero[uint8](), IsZero(0.0), IsZero(1))
+	m := Find([]int{1, 4, 9}, func(n int) bool { return n > 3 })
+	n := Find([]int{1, 4, 9}, func(n int) bool { return n > 30 })
+	println(m.Or(-1), n.Or(-1), m.ok, n.ok, m == Some(4), n == None[int]())
+	double := func(f float64) float64 { return f * 2 }
+	println(Div(1.0, 4).Map(double).Or(0), Div(1.0, 0).Map(double).Or(-1), Div(7, 2).Or(0))
+	println(Div[uint8](200, 3).Map(func(b uint8) uint8 { return b * 4 }).Or(0))
+	var table [3]Maybe[int]
+	table[1] = Some(5)
+	sum := 0
+	for _, t := range table {
+		sum += t.Or(100)
+	}
+	println(sum)
+}

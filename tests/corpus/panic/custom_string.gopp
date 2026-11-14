@@ -1,0 +1,15 @@
+package main
+
+func withdraw(balance, amount int) int {
+	if amount > balance {
+		panic("insufficient funds")
+	}
+	return balance - amount
+}
+
+func main() {
+	b := withdraw(100, 30)
+	println(b)
+	b = withdraw(b, 80)
+	println(b)
+}

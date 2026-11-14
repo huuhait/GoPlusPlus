@@ -1,0 +1,8 @@
+1 <nil> ok true
+0 not found: zz missing zz false
+0 invalid key bad key false
+-5 negative other false
+3 <nil>
+1 not found: x
+true false true k
+k not found: k

@@ -1,0 +1,64 @@
+package main
+
+type Ordered interface {
+	~int | ~float64 | ~string
+}
+
+func Sort[T Ordered](xs *[]T) {
+	for i := 1; i < len(*xs); i++ {
+		for j := i; j > 0 && (*xs)[j] < (*xs)[j-1]; j-- {
+			(*xs)[j], (*xs)[j-1] = (*xs)[j-1], (*xs)[j]
+		}
+	}
+}
+
+func SortBy[T Ordered](xs *[]T, less func(a, b T) bool) {
+	for i := 1; i < len(*xs); i++ {
+		for j := i; j > 0 && less((*xs)[j], (*xs)[j-1]); j-- {
+			(*xs)[j], (*xs)[j-1] = (*xs)[j-1], (*xs)[j]
+		}
+	}
+}
+
+func Search[T Ordered](xs []T, want T) (int, bool) {
+	lo, hi := 0, len(xs)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if xs[mid] < want {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(xs) && xs[lo] == want
+}
+
+func Show[T Ordered](xs []T) {
+	for _, x := range xs {
+		print(x, " ")
+	}
+	println()
+}
+
+func main() {
+	ints := []int{5, 2, 9, 1, 5, 6}
+	Sort(&ints)
+	Show(ints)
+	words := []string{"pear", "fig", "apple", "kiwi"}
+	Sort(&words)
+	Show(words)
+	SortBy(&words, func(a, b string) bool { return len(a) < len(b) || len(a) == len(b) && a > b })
+	Show(words)
+	SortBy(&ints, func(a, b int) bool { return a > b })
+	Show(ints)
+	Sort(&ints)
+	at, found := Search(ints, 6)
+	println(at, found)
+	at, found = Search(ints, 7)
+	println(at, found)
+	at, found = Search(words, "zzz")
+	println(at, found)
+	floats := []float64{2.5, -1, 1e9, 0}
+	Sort(&floats)
+	println(floats[0], floats[3])
+}

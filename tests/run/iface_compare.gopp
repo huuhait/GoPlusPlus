@@ -1,0 +1,94 @@
+package main
+
+// A value that is compared with an interface value is put into an
+// interface of that type first: in `==`, in `!=` and in a case of a
+// switch. And a conversion that is assigned is one value.
+
+type Color int
+
+const Blue Color = 2
+
+func (c Color) String() string { return "c" }
+
+type Stringer interface{ String() string }
+
+type Q struct{ n int }
+
+func (Q) String() string { return "q" }
+
+type Big struct {
+	a, b, c int
+	name    string
+}
+
+func kind(v interface{}) string {
+	switch v {
+	case 1:
+		return "one"
+	case "two":
+		return "two"
+	case Q{3}:
+		return "three"
+	case nil:
+		return "nil"
+	}
+	return "other"
+}
+
+func main() {
+	var v interface{} = 5
+	n := 5
+	println(v == 5, v == 6, v != 5, 5 == v, v == n, n == v, v == int64(5), v == 5.0, v == "5")
+	v = "a"
+	text := "a"
+	println(v == "a", v != "b", v == text, text+"b" == v, v == 1, v == true)
+	var s Stringer = Blue
+	println(s == Blue, s == Color(1), Color(2) == s, s == Q{}, s != Blue)
+	s = Q{7}
+	q := Q{7}
+	println(s == Q{7}, s == q, q == s, s == Q{8}, s == Blue)
+	v = Big{1, 2, 3, "big"}
+	big := Big{1, 2, 3, "big"}
+	println(v == big, v == Big{1, 2, 3, "bigger"}, big == v, v == Big{})
+	println(kind(1), kind("two"), kind(Q{3}), kind(nil), kind(2), kind(Q{4}), kind(1.0))
+	var e error
+	println(e == nil, v != nil)
+	count := 0
+	for _, x := range []interface{}{1, "1", 1, Q{1}, 1.0} {
+		if x == 1 {
+			count++
+		}
+	}
+	println(count)
+	conversions()
+}
+
+type fail string
+
+func (f fail) Error() string { return string(f) }
+
+type code int
+
+func (c code) Error() string { return "code" }
+
+func check(n int) error {
+	if n < 0 {
+		return fail("negative")
+	}
+	if n == 0 {
+		return code(3)
+	}
+	return nil
+}
+
+func conversions() {
+	var e error = fail("a")
+	e = fail("b")
+	println(e.Error(), check(-1).Error(), check(0).Error(), check(1) == nil)
+	var held interface{}
+	held = fail("c")
+	held = code(7)
+	n := 3
+	e = code(n)
+	println(held == code(7), e == code(3), e == fail("b"))
+}

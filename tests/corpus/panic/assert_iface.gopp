@@ -1,0 +1,16 @@
+package main
+
+type Namer interface{ Name() string }
+
+type Plain struct{}
+
+func name(v interface{}) string { return v.(Namer).Name() }
+
+type Named struct{ n string }
+
+func (n Named) Name() string { return n.n }
+
+func main() {
+	println(name(Named{"n"}))
+	println(name(Plain{}))
+}

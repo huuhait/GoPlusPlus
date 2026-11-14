@@ -1,0 +1,106 @@
+package main
+
+func insertion(xs *[]int) {
+	for i := 1; i < len(*xs); i++ {
+		for j := i; j > 0 && (*xs)[j] < (*xs)[j-1]; j-- {
+			(*xs)[j], (*xs)[j-1] = (*xs)[j-1], (*xs)[j]
+		}
+	}
+}
+
+func quick(xs *[]int, lo, hi int) {
+	if lo >= hi {
+		return
+	}
+	pivot := (*xs)[(lo+hi)/2]
+	i, j := lo, hi
+	for i <= j {
+		for (*xs)[i] < pivot {
+			i++
+		}
+		for (*xs)[j] > pivot {
+			j--
+		}
+		if i <= j {
+			(*xs)[i], (*xs)[j] = (*xs)[j], (*xs)[i]
+			i++
+			j--
+		}
+	}
+	quick(xs, lo, j)
+	quick(xs, i, hi)
+}
+
+func merge(a, b []int) []int {
+	out := make([]int, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i] <= b[j] {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	return append(out, b[j:]...)
+}
+
+func mergesort(xs []int) []int {
+	if len(xs) < 2 {
+		return xs
+	}
+	mid := len(xs) / 2
+	return merge(mergesort(xs[:mid]), mergesort(xs[mid:]))
+}
+
+func search(xs []int, want int) int {
+	lo, hi := 0, len(xs)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if xs[mid] < want {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo
+}
+
+func sorted(xs []int) bool {
+	for i := 1; i < len(xs); i++ {
+		if xs[i-1] > xs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func random(n int) []int {
+	out := make([]int, n)
+	seed := uint32(7)
+	for i := range out {
+		seed = seed*1103515245 + 12345
+		out[i] = int(seed>>16) % 1000
+	}
+	return out
+}
+
+func main() {
+	a := random(50)
+	insertion(&a)
+	b := random(500)
+	quick(&b, 0, len(b)-1)
+	c := mergesort(random(300))
+	println(sorted(a), sorted(b), sorted(c), sorted(random(50)))
+	println(a[0], a[49], b[0], b[250], b[499], c[150])
+	println(search(a, a[10]) <= 10, search(b, -1), search(b, 1000), search(c, c[299]) <= 299)
+	names := []string{"pear", "apple", "fig", "banana"}
+	for i := 1; i < len(names); i++ {
+		for j := i; j > 0 && names[j] < names[j-1]; j-- {
+			names[j], names[j-1] = names[j-1], names[j]
+		}
+	}
+	println(names[0], names[1], names[2], names[3])
+}

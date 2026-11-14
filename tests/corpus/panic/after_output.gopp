@@ -1,0 +1,19 @@
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("line one")
+	fmt.Print("partial ")
+	println("to stderr")
+	defer fmt.Println("deferred print")
+	defer func() {
+		fmt.Println("deferred func")
+	}()
+	var grid [2][3]int
+	r := 1
+	for c := 0; c <= 3; c++ {
+		grid[r][c] = c
+		fmt.Println("wrote", c)
+	}
+}

@@ -1,0 +1,52 @@
+package main
+
+func main() {
+	ages := map[string]int{"ann": 30, "bob": 25}
+	ages["cid"] = 41
+	ages["ann"]++
+	ages["bob"] += 10
+	println(len(ages), ages["ann"], ages["bob"], ages["cid"], ages["dan"])
+	if v, ok := ages["dan"]; !ok {
+		println("no dan", v)
+	}
+	delete(ages, "bob")
+	delete(ages, "nobody")
+	_, has := ages["bob"]
+	println(len(ages), has)
+	total := 0
+	for name, age := range ages {
+		total += age + len(name)
+	}
+	println(total)
+	m := make(map[int]string)
+	for i := 0; i < 100; i++ {
+		m[i*7%100] = "v"
+	}
+	println(len(m), m[7], m[101] == "")
+	for k := range m {
+		if k%2 == 1 {
+			delete(m, k)
+		}
+	}
+	println(len(m))
+	var nilmap map[string]bool
+	println(len(nilmap), nilmap["x"], nilmap == nil)
+	flags := map[bool]int{true: 1}
+	flags[false]--
+	println(flags[true], flags[false], len(flags))
+	floats := map[float64]string{0.5: "half", 2: "two"}
+	println(floats[1.0/2], floats[2.0], len(floats))
+	big := map[uint64]uint64{}
+	var key uint64 = 1
+	for i := 0; i < 1000; i++ {
+		key = key*6364136223846793005 + 1442695040888963407
+		big[key%500]++
+	}
+	var seen uint64
+	for _, n := range big {
+		seen += n
+	}
+	println(len(big) <= 500, seen)
+	clear(big)
+	println(len(big))
+}

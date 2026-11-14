@@ -1,0 +1,74 @@
+package main
+
+import "fmt"
+
+type NotFound struct{ key string }
+
+func (e NotFound) Error() string { return "not found: " + e.key }
+
+type Invalid struct {
+	field string
+	code  int
+}
+
+func (e Invalid) Error() string { return "invalid " + e.field }
+
+type simple string
+
+func (s simple) Error() string { return string(s) }
+
+func lookup(m map[string]int, key string) (int, error) {
+	if key == "" {
+		return 0, Invalid{"key", 1}
+	}
+	v, ok := m[key]
+	if !ok {
+		return 0, NotFound{key}
+	}
+	if v < 0 {
+		return v, simple("negative")
+	}
+	return v, nil
+}
+
+func classify(err error) string {
+	switch e := err.(type) {
+	case nil:
+		return "ok"
+	case NotFound:
+		return "missing " + e.key
+	case Invalid:
+		return "bad " + e.field
+	}
+	return "other"
+}
+
+func sumAll(m map[string]int, keys ...string) (total int, err error) {
+	for _, k := range keys {
+		v, err := lookup(m, k)
+		if err != nil {
+			return total, err
+		}
+		total += v
+	}
+	return total, nil
+}
+
+func main() {
+	m := map[string]int{"a": 1, "b": 2, "neg": -5}
+	for _, key := range []string{"a", "zz", "", "neg"} {
+		v, err := lookup(m, key)
+		fmt.Println(v, err, classify(err), err == nil)
+	}
+	total, err := sumAll(m, "a", "b")
+	fmt.Println(total, err)
+	total, err = sumAll(m, "a", "x", "b")
+	fmt.Println(total, err)
+	var e1 error = NotFound{"k"}
+	var e2 error = NotFound{"k"}
+	var e3 error = simple("k")
+	fmt.Println(e1 == e2, e1 == e3, e1 != nil, e3.Error())
+	if nf, ok := e1.(NotFound); ok {
+		fmt.Println(nf.key, nf)
+	}
+}

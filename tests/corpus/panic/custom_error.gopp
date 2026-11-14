@@ -1,0 +1,24 @@
+package main
+
+type ParseError struct {
+	line int
+	what string
+}
+
+func (e ParseError) Error() string { return "parse error: " + e.what }
+
+func parse(text string) int {
+	n := 0
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
+			panic(ParseError{1, "bad digit"})
+		}
+		n = n*10 + int(text[i]-'0')
+	}
+	return n
+}
+
+func main() {
+	println(parse("123"))
+	println(parse("12x"))
+}

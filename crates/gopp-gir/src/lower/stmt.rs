@@ -527,10 +527,11 @@ impl FuncCx<'_, '_> {
             return self.b.switch(on, table, otherwise);
         }
         let by_parts = matches!(self.kind(ty), Type::Struct(_) | Type::Array(..));
-        let compared = matches!(
-            self.kind(ty),
-            Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_) | Type::String
-        );
+        let compared = self.is_iface(ty)
+            || matches!(
+                self.kind(ty),
+                Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_) | Type::String
+            );
         for &(case, body) in cases {
             let span = self.tree.exprs[case].span;
             let by_method = self.body.case_operators.get(&case).cloned();
@@ -553,7 +554,7 @@ impl FuncCx<'_, '_> {
                     self.equal(span, eq, tag, on.clone(), value)?
                 }
                 (None, false) => {
-                    let value = self.operand_as(case, ty)?;
+                    let value = self.compared_operand(case, ty)?;
                     self.arith(span, eq, on.clone(), value, false)?
                 }
             };

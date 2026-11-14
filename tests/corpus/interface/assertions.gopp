@@ -1,0 +1,62 @@
+package main
+
+type Reader interface{ Read() string }
+
+type Writer interface{ Write(string) int }
+
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+type File struct{ data string }
+
+func (f File) Read() string { return f.data }
+
+type Buffer struct{ data string }
+
+func (b Buffer) Read() string        { return b.data }
+func (b Buffer) Write(s string) int { return len(b.data) + len(s) }
+
+func describe(r Reader) string {
+	out := r.Read()
+	if w, ok := r.(Writer); ok {
+		out += " writes"
+		if w.Write("xy") > 3 {
+			out += " long"
+		}
+	}
+	if _, ok := r.(ReadWriter); ok {
+		out += " both"
+	}
+	if f, ok := r.(File); ok {
+		out += " file:" + f.data
+	}
+	return out
+}
+
+func main() {
+	println(describe(File{"f"}))
+	println(describe(Buffer{"b"}))
+	println(describe(Buffer{"buffer"}))
+	var any interface{} = 42
+	n, ok := any.(int)
+	s, ok2 := any.(string)
+	println(n, ok, s == "", ok2)
+	any = "text"
+	if s, ok := any.(string); ok {
+		println(s, len(s))
+	}
+	_, isReader := any.(Reader)
+	println(isReader)
+	any = Buffer{"z"}
+	r := any.(Reader)
+	rw := r.(ReadWriter)
+	println(r.Read(), rw.Write("abc"), any.(Buffer).data)
+	var nothing interface{}
+	_, ok = nothing.(int)
+	_, ok2 = nothing.(Reader)
+	println(ok, ok2, nothing == nil)
+	f, ok := any.(float64)
+	println(f, ok)
+}

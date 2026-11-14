@@ -1,0 +1,89 @@
+package main
+
+type Set map[int]bool
+
+func of(xs ...int) Set {
+	s := Set{}
+	for _, x := range xs {
+		s[x] = true
+	}
+	return s
+}
+
+func union(a, b Set) Set {
+	out := Set{}
+	for x := range a {
+		out[x] = true
+	}
+	for x := range b {
+		out[x] = true
+	}
+	return out
+}
+
+func intersect(a, b Set) Set {
+	out := Set{}
+	for x := range a {
+		if b[x] {
+			out[x] = true
+		}
+	}
+	return out
+}
+
+func show(s Set) {
+	for x := -5; x < 50; x++ {
+		if s[x] {
+			print(x, " ")
+		}
+	}
+	println(len(s))
+}
+
+func dedupe(xs []int) []int {
+	seen := map[int]struct{}{}
+	var out []int
+	for _, x := range xs {
+		if _, ok := seen[x]; !ok {
+			seen[x] = struct{}{}
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func main() {
+	a, b := of(1, 2, 3, 4), of(3, 4, 5, -1)
+	show(union(a, b))
+	show(intersect(a, b))
+	show(intersect(a, of()))
+	d := dedupe([]int{3, 1, 3, 2, 1, 3, 9})
+	for _, x := range d {
+		print(x, " ")
+	}
+	println(len(d))
+	multiples := Set{}
+	for i := 0; i < 50; i += 3 {
+		multiples[i] = true
+	}
+	for i := 0; i < 50; i += 2 {
+		delete(multiples, i)
+	}
+	show(multiples)
+	anagram := func(x, y string) bool {
+		counts := map[rune]int{}
+		for _, r := range x {
+			counts[r]++
+		}
+		for _, r := range y {
+			counts[r]--
+		}
+		for _, n := range counts {
+			if n != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	println(anagram("listen", "silent"), anagram("abc", "abd"), anagram("", ""))
+}

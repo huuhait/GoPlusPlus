@@ -1,0 +1,58 @@
+package main
+
+type Ordered interface {
+	~int | ~int64 | ~uint8 | ~float64 | ~string
+}
+
+func Min[T Ordered](a, b T) T {
+	if b < a {
+		return b
+	}
+	return a
+}
+
+func Max[T Ordered](first T, rest ...T) T {
+	best := first
+	for _, x := range rest {
+		if x > best {
+			best = x
+		}
+	}
+	return best
+}
+
+func Clamp[T Ordered](x, lo, hi T) T { return Min(Max(x, lo), hi) }
+
+func Compare[T Ordered](a, b T) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+func Sorted[T Ordered](xs []T) bool {
+	for i := 1; i < len(xs); i++ {
+		if xs[i] < xs[i-1] {
+			return false
+		}
+	}
+	return true
+}
+
+type Version int
+
+type Word string
+
+func main() {
+	println(Min(3, 2), Min("b", "a"), Min(2.5, 2.25), Min[uint8](200, 7))
+	println(Max(1), Max(1, 5, 3), Max("x", "yy", "y"), Max(-1.5, -2.5))
+	println(Clamp(15, 0, 10), Clamp(-5, 0, 10), Clamp(5, 0, 10), Clamp("m", "a", "f"))
+	println(Compare(1, 2), Compare("b", "a"), Compare(1.0, 1.0))
+	println(Sorted([]int{1, 2, 2, 3}), Sorted([]string{"b", "a"}), Sorted([]float64{}))
+	v := Max(Version(3), Version(7), Version(5))
+	w := Min(Word("zeta"), Word("alpha"))
+	println(v, w, Compare(v, 7), Compare(w, "beta"))
+}

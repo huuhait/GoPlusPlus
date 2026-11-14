@@ -1,0 +1,56 @@
+package main
+
+type Number interface{ ~int | ~int64 | ~float64 }
+
+func Fold[T, A Number](xs []T, start A, step func(A, T) A) A {
+	acc := start
+	for _, x := range xs {
+		acc = step(acc, x)
+	}
+	return acc
+}
+
+func Scan[T Number](xs []T) []T {
+	out := make([]T, len(xs))
+	var run T
+	for i, x := range xs {
+		run += x
+		out[i] = run
+	}
+	return out
+}
+
+func Zip[A, B Number](as []A, bs []B) []float64 {
+	n := min(len(as), len(bs))
+	out := make([]float64, n)
+	for i := 0; i < n; i++ {
+		out[i] = float64(as[i]) * float64(bs[i])
+	}
+	return out
+}
+
+func Windows[T Number](xs []T, size int) []T {
+	var out []T
+	for i := 0; i+size <= len(xs); i++ {
+		var sum T
+		for _, x := range xs[i : i+size] {
+			sum += x
+		}
+		out = append(out, sum)
+	}
+	return out
+}
+
+func Last[T Number](xs []T) T { return xs[len(xs)-1] }
+
+func main() {
+	xs := []int{1, 2, 3, 4, 5}
+	println(Fold(xs, 0.5, func(a float64, x int) float64 { return a + float64(x)/2 }))
+	println(Fold(xs, int64(1), func(a int64, x int) int64 { return a * int64(x) }))
+	println(Last(Scan(xs)), Last(Scan([]float64{0.25, 0.5})), len(Scan([]int64{})))
+	z := Zip(xs, []float64{0.5, 0.25})
+	println(len(z), z[0], z[1])
+	w := Windows(xs, 2)
+	println(len(w), w[0], Last(w), len(Windows(xs, 9)))
+	println(Fold(Windows(Scan(xs), 3), 0, func(a, x int) int { return a*2 + x }))
+}

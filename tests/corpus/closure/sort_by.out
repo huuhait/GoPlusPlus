@@ -1,0 +1,5 @@
+ann:25 bob:41 cid:30 dee:30 eve:25 
+ann:25 eve:25 cid:30 dee:30 bob:41 
+bob:41 cid:30 dee:30 ann:25 eve:25 
+true ann bob
+true true

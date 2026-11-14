@@ -119,8 +119,9 @@ pub(super) struct Pending {
     pub ty: TypeId,
     /// How each of them ends if the call does not take it.
     pub slots: Vec<Option<Ends>>,
-    /// How what the call gives ends: nothing takes it.
-    pub result: Option<Ends>,
+    /// How what the call gives ends: nothing takes it. Each with the
+    /// number of the result that ends so, where the call gives several.
+    pub result: Vec<(Option<u32>, Ends)>,
     /// The call has `!`.
     pub marked: Option<Marked>,
     pub span: SourceSpan,
@@ -1504,13 +1505,10 @@ impl FuncCx<'_, '_> {
                 self.b
                     .call(callee, given, result.clone(), Some(after), unwind)?;
                 self.b.switch_to(after);
-                // The address of a temporary that a call wrote is not
-                // taken: its value ends in a slot of its own.
                 if let Some(marked) = &pending.marked {
                     self.deferred_error(pending.span, marked, &result, error_at)?;
-                } else if let Some(ends) = pending.result {
-                    let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
-                    self.end(slot, ends)?;
+                } else {
+                    self.end_results(result, &pending.result)?;
                 }
             }
             Waits::Print(line) => {
@@ -1526,10 +1524,8 @@ impl FuncCx<'_, '_> {
                     let (ret, result) = self.call_value(value, *code_ty, given)?;
                     if let Some(marked) = &pending.marked {
                         self.deferred_error(pending.span, marked, &result, error_at)?;
-                    } else if let (Some(ends), false) = (pending.result, ret == TypeInterner::UNIT)
-                    {
-                        let slot = self.slot_of(Rvalue::Use(Operand::Copy(result)))?;
-                        self.end(slot, ends)?;
+                    } else if ret != TypeInterner::UNIT {
+                        self.end_results(result, &pending.result)?;
                     }
                 }
             }

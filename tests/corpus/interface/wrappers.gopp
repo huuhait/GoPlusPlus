@@ -1,0 +1,82 @@
+package main
+
+type Source interface{ Next(at int) int }
+
+type Count struct{ step int }
+
+func (c Count) Next(at int) int { return at * c.step }
+
+type Squares struct{}
+
+func (Squares) Next(at int) int { return at * at }
+
+type Offset struct {
+	of Source
+	by int
+}
+
+func (o Offset) Next(at int) int { return o.of.Next(at) + o.by }
+
+type Scaled struct {
+	of Source
+	by int
+}
+
+func (s Scaled) Next(at int) int { return s.of.Next(at) * s.by }
+
+type Sum struct{ parts []Source }
+
+func (s Sum) Next(at int) int {
+	total := 0
+	for _, p := range s.parts {
+		total += p.Next(at)
+	}
+	return total
+}
+
+type Cached struct {
+	of   Source
+	seen map[int]int
+}
+
+func (c Cached) Next(at int) int {
+	if v, ok := c.seen[at]; ok {
+		return v
+	}
+	return c.of.Next(at)
+}
+
+func take(s Source, n int) int {
+	total := 0
+	for i := 0; i < n; i++ {
+		total += s.Next(i)
+	}
+	return total
+}
+
+func depth(s Source) int {
+	switch x := s.(type) {
+	case Offset:
+		return 1 + depth(x.of)
+	case Scaled:
+		return 1 + depth(x.of)
+	case Cached:
+		return 1 + depth(x.of)
+	}
+	return 0
+}
+
+func main() {
+	var s Source = Count{3}
+	println(take(s, 5), take(Squares{}, 5))
+	s = Offset{Scaled{s, 2}, 1}
+	println(take(s, 5), s.Next(10), depth(s))
+	both := Sum{[]Source{s, Squares{}, Count{-1}}}
+	println(take(both, 4), both.Next(3), depth(both))
+	cached := Cached{both, map[int]int{3: 1000}}
+	println(cached.Next(2), cached.Next(3), take(cached, 4), depth(Offset{cached, 0}))
+	for i := 0; i < 5; i++ {
+		s = Offset{s, i}
+	}
+	println(s.Next(0), depth(s))
+}

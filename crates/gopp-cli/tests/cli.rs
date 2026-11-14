@@ -1747,9 +1747,10 @@ fn library_packages(dir: &Path, found: &mut Vec<PathBuf>) {
 
 /// What a program frees is freed once, across packages too: a caller
 /// lends an argument to a function of another package that only reads
-/// it, as the function was built. Every run test that imports a package
-/// is built with the units of the standard library and the sanitizers of
-/// Clang, and runs without a report.
+/// it, as the function was built. Every run test and every program of
+/// the corpus that imports a package is built with the units of the
+/// standard library and the sanitizers of Clang, and runs without a
+/// report.
 #[test]
 #[ignore = "long: builds programs and the standard library with the sanitizers of Clang"]
 fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
@@ -1785,7 +1786,10 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
         assert_eq!(ran.status.code(), Some(0), "{}", what.display());
     };
     let mut checked = 0;
-    for entry in fs::read_dir(root.join("tests/run")).unwrap() {
+    let mut dirs = vec![root.join("tests/run")];
+    let groups = fs::read_dir(root.join("tests/corpus")).unwrap();
+    dirs.extend(groups.map(|group| group.unwrap().path()));
+    for entry in dirs.iter().flat_map(|dir| fs::read_dir(dir).unwrap()) {
         let path = entry.unwrap().path();
         let is_program = path
             .extension()
@@ -1795,6 +1799,12 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
             false => continue,
         };
         if text.starts_with("// exit:") || !text.contains("\nimport ") {
+            continue;
+        }
+        // The file of a program of the corpus says how it ends.
+        let wrote = fs::read_to_string(path.with_extension("out")).unwrap_or_default();
+        let ends = |line: &str| line.starts_with("exit status ");
+        if wrote.lines().last().is_some_and(ends) {
             continue;
         }
         let mut units = vec![unit_of(&path)];

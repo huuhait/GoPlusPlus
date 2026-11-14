@@ -1,0 +1,28 @@
+package main
+
+func shl(x uint32, n uint) uint32 { return x << n }
+func shr(x int32, n uint) int32   { return x >> n }
+
+func main() {
+	for _, n := range []uint{0, 1, 31, 32, 33, 64, 100} {
+		println(n, shl(1, n), shl(0xffffffff, n), shr(-8, n), shr(1<<30, n))
+	}
+	var one uint64 = 1
+	var w uint8 = 63
+	println(one<<w, one<<(w+1), one<<w>>w, int64(one<<w)>>w)
+	var i8 int8 = 1
+	println(i8<<7, i8<<8, i8<<6>>6, int8(-1)>>7)
+	var k int = 3
+	println(1<<k, 100>>k, -100>>k, uint8(255)<<k, uint16(1)<<(k*5))
+	var x uint8 = 0x81
+	x <<= 1
+	x >>= 1
+	println(x)
+	bits := 0
+	for v := uint(12345678); v != 0; v >>= 1 {
+		bits++
+	}
+	println(bits)
+	var s16 int16 = -32768
+	println(s16>>15, s16>>16, s16<<1, uint16(s16)>>15)
+}

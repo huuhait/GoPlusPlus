@@ -1,0 +1,47 @@
+package main
+
+type Point struct{ x, y int }
+
+type Key struct {
+	name string
+	id   int
+}
+
+func main() {
+	visited := map[Point]bool{}
+	p := Point{0, 0}
+	moves := "RRULLDDDRU"
+	visited[p] = true
+	for i := 0; i < len(moves); i++ {
+		switch moves[i] {
+		case 'R':
+			p.x++
+		case 'L':
+			p.x--
+		case 'U':
+			p.y++
+		case 'D':
+			p.y--
+		}
+		visited[p] = true
+	}
+	println(len(visited), visited[Point{2, 1}], visited[Point{5, 5}], p.x, p.y)
+	names := map[Key]string{{"a", 1}: "first", {"a", 2}: "second"}
+	names[Key{"b", 1}] = "third"
+	println(names[Key{"a", 2}], names[Key{name: "b", id: 1}], len(names), names[Key{}] == "")
+	pairs := map[[2]int]int{}
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 5; j++ {
+			pairs[[2]int{i % 2, j % 3}] += i + j
+		}
+	}
+	println(len(pairs), pairs[[2]int{0, 0}], pairs[[2]int{1, 2}])
+	runes := map[rune]int{}
+	for _, r := range "héllo wörld" {
+		runes[r]++
+	}
+	println(runes['l'], runes['é'], runes['ö'], len(runes))
+	var any1, any2 interface{} = 1, "1"
+	mixed := map[interface{}]string{any1: "int", any2: "string", 1.5: "float"}
+	println(mixed[1], mixed["1"], mixed[1.5], mixed[2] == "", len(mixed))
+}

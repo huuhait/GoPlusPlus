@@ -1,0 +1,76 @@
+package main
+
+type Filter interface{ Apply(string) string }
+
+type Upper struct{}
+
+func (Upper) Apply(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 32
+		}
+	}
+	return string(b)
+}
+
+type Repeat struct{ times int }
+
+func (r Repeat) Apply(s string) string {
+	out := ""
+	for i := 0; i < r.times; i++ {
+		out += s
+	}
+	return out
+}
+
+type Wrap struct{ left, right string }
+
+func (w Wrap) Apply(s string) string { return w.left + s + w.right }
+
+type Chain []Filter
+
+func (c Chain) Apply(s string) string {
+	for _, f := range c {
+		s = f.Apply(s)
+	}
+	return s
+}
+
+type FilterFunc func(string) string
+
+func (f FilterFunc) Apply(s string) string { return f(s) }
+
+type Counting struct {
+	inner Filter
+	calls *int
+}
+
+func (c Counting) Apply(s string) string {
+	*c.calls++
+	return c.inner.Apply(s)
+}
+
+func main() {
+	var f Filter = Chain{Upper{}, Repeat{2}, Wrap{"<", ">"}}
+	println(f.Apply("go"))
+	trim := FilterFunc(func(s string) string {
+		if len(s) > 4 {
+			return s[:4]
+		}
+		return s
+	})
+	nested := Chain{f, trim, Chain{}, Chain{Wrap{"[", "]"}}}
+	println(nested.Apply("ab"), Chain{}.Apply("same"), Chain(nil).Apply("nil"))
+	calls := 0
+	counted := Counting{nested, &calls}
+	println(counted.Apply("x"), counted.Apply("y"), calls)
+	registry := map[string]Filter{"up": Upper{}, "twice": Repeat{2}, "trim": trim}
+	out := "hello"
+	for _, name := range []string{"twice", "up", "trim", "none"} {
+		if step, ok := registry[name]; ok {
+			out = step.Apply(out)
+		}
+	}
+	println(out, len(registry))
+}

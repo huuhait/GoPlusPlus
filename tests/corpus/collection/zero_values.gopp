@@ -1,0 +1,50 @@
+package main
+
+type Config struct {
+	name  string
+	sizes []int
+	opts  map[string]bool
+	limit [2]int
+	on    bool
+}
+
+func main() {
+	var s []int
+	var m map[string]int
+	var a [3]int
+	var str string
+	var c Config
+	println(len(s), cap(s), s == nil, len(m), m == nil, a[1], str == "", len(str))
+	println(c.name == "", c.sizes == nil, c.opts == nil, c.limit[1], c.on, len(c.sizes), c.opts["x"])
+	s = append(s, 1)
+	println(len(s), s == nil)
+	made := make([]string, 2)
+	println(len(made), made[0] == "", made[1] == "")
+	madeMap := make(map[int][]int)
+	madeMap[1] = append(madeMap[1], 5)
+	println(len(madeMap[1]), len(madeMap[2]), madeMap[2] == nil)
+	empty := []int{}
+	println(len(empty), empty == nil, len(empty[0:0]))
+	grid := make([][]bool, 2)
+	println(grid[0] == nil, len(grid[1]))
+	c.sizes = append(c.sizes, 1, 2)
+	c.limit[0] = 9
+	d := c
+	d.limit[0] = 1
+	println(len(d.sizes), c.limit[0], d.limit[0])
+	for _, x := range s[:0] {
+		println("never", x)
+	}
+	for k := range m {
+		println("never", k)
+	}
+	v, ok := m["k"]
+	println(v, ok)
+	var pair struct {
+		a, b int
+		c    string
+	}
+	println(pair.a, pair.b, pair.c == "")
+	var i interface{}
+	println(i == nil)
+}

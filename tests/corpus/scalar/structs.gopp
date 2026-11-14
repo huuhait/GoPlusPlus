@@ -1,0 +1,55 @@
+package main
+
+type Point struct{ X, Y int }
+
+type Line struct {
+	From, To Point
+	Label    string
+}
+
+type Grid struct {
+	cells [3][3]int
+	name  string
+}
+
+func (p Point) Add(q Point) Point { return Point{p.X + q.X, p.Y + q.Y} }
+
+func length2(l Line) int {
+	dx, dy := l.To.X-l.From.X, l.To.Y-l.From.Y
+	return dx*dx + dy*dy
+}
+
+func main() {
+	p := Point{1, 2}
+	q := p
+	q.X = 10
+	println(p.X, q.X, p == q, p == Point{1, 2}, p != q)
+	l := Line{From: p, To: Point{4, 6}, Label: "a"}
+	m := l
+	m.To.Y = 0
+	m.Label += "b"
+	println(length2(l), length2(m), l.Label, m.Label, l == m)
+	var z Line
+	println(z.From.X, z.Label == "", z == Line{})
+	g := Grid{name: "g"}
+	g.cells[1][1] = 5
+	h := g
+	h.cells[1][1]++
+	println(g.cells[1][1], h.cells[1][1], g == h, g.cells == [3][3]int{1: {1: 5}})
+	anon := struct {
+		a int
+		b string
+	}{1, "x"}
+	other := anon
+	other.b = "y"
+	println(anon.a, anon.b, other.b, anon == other)
+	sum := Point{}
+	for _, d := range []Point{{1, 1}, {2, 3}, {-5, 0}} {
+		sum = sum.Add(d)
+	}
+	println(sum.X, sum.Y)
+	pp := &p
+	pp.Y = 20
+	(*pp).X++
+	println(p.X, p.Y)
+}

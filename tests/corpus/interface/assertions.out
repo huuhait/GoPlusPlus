@@ -1,0 +1,9 @@
+f file:f
+b writes both
+buffer writes long both
+42 true true false
+text 4
+false
+z 4 z
+false false true
++0.000000e+000 false

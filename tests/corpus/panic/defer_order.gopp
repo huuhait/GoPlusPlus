@@ -1,0 +1,16 @@
+package main
+
+func work(n int) {
+	defer println("leave", n)
+	if n == 0 {
+		panic("bottom")
+	}
+	defer println("unwind", n)
+	work(n - 1)
+	println("not reached", n)
+}
+
+func main() {
+	defer println("main deferred")
+	work(3)
+}

@@ -366,6 +366,25 @@ static bool text_eq(uint8_t *a, uint8_t *b) {
   return _gopp_string_eq(*(gopp_string *)a, *(gopp_string *)b);
 }
 
+// `Error() string` of the value of a panic that the runtime starts;
+// `holder` is the word of the interface value that leads to the text.
+static GOPP_CALL gopp_string runtime_error_text(uint8_t *holder) {
+  gopp_string text = **(gopp_string **)holder;
+  _gopp_string_retain(text);
+  return text;
+}
+
+// The key of `Error() string`, as the compiler writes it for the method
+// of `error`: a value that `recover()` gives for a panic of the runtime
+// is an `error`, as in Go.
+#define ERROR_KEY "Error||_GPTiG0_0_LELrE"
+
+static const struct {
+  uint64_t count;
+  gopp_method all[1];
+} runtime_error_methods = {
+    1, {{{(uint8_t *)ERROR_KEY, sizeof(ERROR_KEY) - 1, 0}, (uint8_t *)runtime_error_text}}};
+
 // The type of the value of a panic that the runtime starts: its text.
 static const gopp_type runtime_error = {
     .type = &runtime_error,
@@ -375,6 +394,7 @@ static const gopp_type runtime_error = {
     .drop = text_drop,
     .eq = text_eq,
     .name = {(uint8_t *)"runtime.Error", 13, 0},
+    .methods = (const gopp_methods *)&runtime_error_methods,
     .kind = GOPP_KIND_STRING,
 };
 

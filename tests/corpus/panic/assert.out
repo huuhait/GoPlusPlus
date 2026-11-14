@@ -1,0 +1,6 @@
+3
+16
+text
+panic: interface conversion: interface {} is string, not int
+
+exit status 2

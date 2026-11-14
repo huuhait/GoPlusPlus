@@ -892,8 +892,8 @@ impl<'a> Checker<'a> {
         // A result that is no constant has a type of its own.
         if !matches!(x.mode, Mode::Const(_)) {
             let context = format!("argument to built-in {name}");
-            let any = self.types.any();
-            x = self.assignment(cx, at, Operand::value(x.ty), Some(any), &context);
+            // In no place of a type: the value is put into no interface.
+            x = self.assignment(cx, at, Operand::value(x.ty), None, &context);
             if x.mode == Mode::Unknown {
                 return Operand::UNKNOWN;
             }

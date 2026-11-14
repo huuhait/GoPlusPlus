@@ -1,0 +1,42 @@
+package main
+
+type ID int
+
+type Point struct{ x, y int }
+
+type Named interface{ Name() string }
+
+type A struct{ n string }
+
+func (a A) Name() string { return a.n }
+
+type B struct{ n string }
+
+func (b B) Name() string { return b.n }
+
+func same(a, b interface{}) bool { return a == b }
+
+func main() {
+	println(same(1, 1), same(1, 2), same(1, int64(1)), same(1, ID(1)), same(ID(1), ID(1)))
+	println(same("a", "a"), same("a", "b"), same(1.5, 1.5), same(true, true), same(nil, nil), same(nil, 0))
+	println(same(Point{1, 2}, Point{1, 2}), same(Point{1, 2}, Point{2, 1}), same([2]int{1, 2}, [2]int{1, 2}), same([2]int{1, 2}, [3]int{1, 2}))
+	var x, y Named = A{"n"}, A{"n"}
+	var z Named = B{"n"}
+	println(x == y, x == z, x.Name() == z.Name(), x == A{"n"}, x == A{"m"}, B{"n"} == z)
+	var none interface{}
+	println(none == nil, same(none, nil), same(x, none), none == 0)
+	seen := map[interface{}]int{}
+	for _, v := range []interface{}{1, "1", 1.0, ID(1), Point{1, 1}, 1, "1", Point{1, 1}, true, [1]int{1}} {
+		seen[v]++
+	}
+	println(len(seen), seen[1], seen["1"], seen[ID(1)], seen[Point{1, 1}], seen[false])
+	var a, b interface{} = A{"q"}, A{"q"}
+	println(a == b, a == A{"q"}, a == interface{}(B{"q"}))
+	count := 0
+	for _, v := range []Named{A{"a"}, B{"a"}, A{"a"}, A{"b"}} {
+		if v == Named(A{"a"}) {
+			count++
+		}
+	}
+	println(count)
+}

@@ -1,4 +1,5 @@
-// The start and the end of a program, and the names of its functions.
+// The start and the end of a program, the names of its functions, and
+// `min` and `max` of two floats.
 
 #include "internal.h"
 
@@ -38,4 +39,26 @@ const char *_gopp_func_name(uintptr_t start) {
     }
   }
   return 0;
+}
+
+// `min` and `max` of two floats as Go has them: what is no number wins,
+// and the zero with the sign is below the zero without.
+double _gopp_float_min(double a, double b) {
+  if (a != a || b != b) {
+    return a != a ? a : b;
+  }
+  if (a == b) {
+    return __builtin_signbit(a) ? a : b;
+  }
+  return a < b ? a : b;
+}
+
+double _gopp_float_max(double a, double b) {
+  if (a != a || b != b) {
+    return a != a ? a : b;
+  }
+  if (a == b) {
+    return __builtin_signbit(a) ? b : a;
+  }
+  return a > b ? a : b;
 }

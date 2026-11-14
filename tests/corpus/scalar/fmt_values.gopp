@@ -1,0 +1,43 @@
+package main
+
+import "fmt"
+
+type Temp float64
+
+func (t Temp) String() string {
+	if t > 30 {
+		return "hot"
+	}
+	return "mild"
+}
+
+type Missing struct{ what string }
+
+func (m Missing) Error() string { return "missing " + m.what }
+
+func find(what string, found bool) error {
+	if found {
+		return nil
+	}
+	return Missing{what}
+}
+
+func main() {
+	fmt.Println(1, -1, uint8(255), int64(1)<<62, 'a', "s", true)
+	fmt.Println("a", "b", 1, 2, "c", 3, 4)
+	fmt.Print("a", "b", 1, 2, "c", 3, 4, "\n")
+	fmt.Print(1, 2, "\n")
+	fmt.Print("no", "space", "\n")
+	var e error
+	fmt.Println(e, nil, e == nil)
+	fmt.Println(int8(-5), uint64(1)<<63, byte('x'), rune('x'), uintptr(8), int16(-32768), uint32(1)<<31)
+	fmt.Println(Temp(31.5), Temp(-2), "")
+	fmt.Println(find("key", false), find("key", true))
+	n, err := fmt.Print("abc", "\n")
+	fmt.Println(n, err)
+	n, err = fmt.Println()
+	fmt.Println(n, err, find("x", false) != nil)
+	fmt.Println("", "", 0)
+	fmt.Print()
+	fmt.Print("", 1, "", "\n")
+}

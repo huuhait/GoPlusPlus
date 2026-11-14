@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 106] = [
+pub const FUNCS: [RuntimeFunc; 108] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -74,6 +74,8 @@ pub const FUNCS: [RuntimeFunc; 106] = [
         "_gopp_string_compare",
         "gopp_string a, gopp_string b",
     ),
+    gives("double", "_gopp_float_min", "double a, double b"),
+    gives("double", "_gopp_float_max", "double a, double b"),
     gives("gopp_string", "_gopp_string_from_rune", "int64_t rune"),
     gives(
         "uint64_t",

@@ -59,6 +59,37 @@ impl Lends {
             }
         }
     }
+
+    /// What the function says, for a call with `count` arguments that
+    /// gives the elements of the last parameter one by one: each of
+    /// them is held to what is said of that parameter. An element that
+    /// is given so holds no pointer (OWN-B5), so nothing is stored
+    /// behind one.
+    pub fn listed(&self, count: usize) -> Lends {
+        let last = self.gives.len().saturating_sub(1);
+        let each = |all: &[bool]| -> Vec<bool> {
+            (0..count)
+                .map(|arg| all.get(arg.min(last)).copied().unwrap_or(false))
+                .collect()
+        };
+        let behind = |&&(sink, _): &&(u32, u32)| (sink as usize) < last;
+        let stores = self.stores.iter().filter(behind).flat_map(|&(sink, from)| {
+            let given = match (from as usize) < last {
+                true => from as usize..from as usize + 1,
+                false => last..count,
+            };
+            given.map(move |from| (sink, from as u32))
+        });
+        Lends {
+            gives: each(&self.gives),
+            stores: stores.collect(),
+            keeps: each(&self.keeps),
+            changes: each(&self.changes),
+            borrows: each(&self.borrows),
+            deep: each(&self.deep),
+            outside: self.outside,
+        }
+    }
 }
 
 impl Default for Held {

@@ -1,0 +1,63 @@
+package main
+
+type Account struct {
+	owner   string
+	balance int
+}
+
+func deposit(a *Account, n int) { a.balance += n }
+
+func swap(a, b *int) { *a, *b = *b, *a }
+
+func reset(xs *[4]int) {
+	for i := range xs {
+		xs[i] = i * i
+	}
+}
+
+func longest(a, b *string) *string {
+	if len(*a) >= len(*b) {
+		return a
+	}
+	return b
+}
+
+func fill(xs *[]int, n int) {
+	for i := 0; i < n; i++ {
+		*xs = append(*xs, i)
+	}
+	(*xs)[0] = 100
+}
+
+func main() {
+	acct := Account{"ann", 10}
+	deposit(&acct, 5)
+	p := &acct
+	deposit(p, 5)
+	p.owner += "e"
+	println(acct.owner, acct.balance)
+	x, y := 1, 2
+	swap(&x, &y)
+	println(x, y)
+	var arr [4]int
+	reset(&arr)
+	println(arr[0], arr[1], arr[2], arr[3])
+	s, t := "short", "longer"
+	l := longest(&s, &t)
+	*l += "!"
+	println(s, t)
+	var xs []int
+	fill(&xs, 4)
+	println(len(xs), xs[0], xs[3])
+	n := 5
+	pn := &n
+	ppn := &pn
+	**ppn = 6
+	println(n, *pn == 6, pn == &n)
+	b := &acct.balance
+	*b *= 2
+	println(acct.balance)
+	e := &arr[2]
+	*e = -1
+	println(arr[2])
+}

@@ -1,0 +1,4 @@
+4 0
+panic: runtime error: makeslice: len out of range
+
+exit status 2

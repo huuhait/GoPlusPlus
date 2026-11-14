@@ -1,0 +1,70 @@
+package main
+
+type Key interface{ ~int | ~string | ~uint8 }
+
+type Set[T Key] struct {
+	seen  map[T]bool
+	order []T
+}
+
+func NewSet[T Key](xs ...T) Set[T] {
+	s := Set[T]{seen: map[T]bool{}}
+	for _, x := range xs {
+		s.Add(x)
+	}
+	return s
+}
+
+func (s *Set[T]) Add(x T) bool {
+	if s.seen[x] {
+		return false
+	}
+	s.seen[x] = true
+	s.order = append(s.order, x)
+	return true
+}
+
+func (s Set[T]) Has(x T) bool { return s.seen[x] }
+
+func (s Set[T]) Len() int { return len(s.order) }
+
+func Union[T Key](a, b Set[T]) Set[T] {
+	out := NewSet(a.order...)
+	for _, x := range b.order {
+		out.Add(x)
+	}
+	return out
+}
+
+func Intersect[T Key](a, b Set[T]) Set[T] {
+	out := NewSet[T]()
+	for _, x := range a.order {
+		if b.Has(x) {
+			out.Add(x)
+		}
+	}
+	return out
+}
+
+func Show[T Key](s Set[T]) {
+	for _, x := range s.order {
+		print(x, " ")
+	}
+	println(s.Len())
+}
+
+func main() {
+	a := NewSet(3, 1, 3, 2)
+	b := NewSet(2, 5, 3)
+	Show(a)
+	Show(Union(a, b))
+	Show(Intersect(a, b))
+	println(a.Add(1), a.Add(9), a.Has(9), b.Has(9))
+	words := NewSet("go", "pp", "go")
+	Show(Union(words, NewSet("c", "pp")))
+	letters := NewSet[byte]()
+	for _, c := range []byte("mississippi") {
+		letters.Add(c)
+	}
+	println(letters.Len(), letters.Has('s'), letters.Has('x'), string(letters.order))
+}

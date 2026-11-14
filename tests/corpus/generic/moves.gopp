@@ -1,0 +1,54 @@
+package main
+
+func Swap[A, B any](a A, b B) (B, A) { return b, a }
+
+func Identity[T any](x T) T { return x }
+
+func Pick[T any](first bool, a, b T) T {
+	if first {
+		return a
+	}
+	return b
+}
+
+func Ignore[T any](x T) int { return 1 }
+
+func Len[T any](xs []T) int { return len(xs) }
+
+func First[T any](xs []T, ok func(*T) bool) int {
+	for i := range xs {
+		if ok(&xs[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func Rotate[A, B, C any](a A, b B, c C) (B, C, A) { return b, c, a }
+
+type Named[T any] struct {
+	name string
+	held T
+}
+
+func (n Named[T]) Name() string { return n.name }
+
+func Label[T any](n *Named[T], suffix string) { n.name += suffix }
+
+func main() {
+	a, b := Swap(1, "one")
+	println(a, b)
+	x, y := Swap(Swap(2.5, true))
+	println(x, y)
+	println(Identity(42), Identity("id"), Identity([]int{1, 2})[1], len(Identity(map[string]int{"k": 1})))
+	println(Pick(true, "yes", "no"), Pick(false, 1, 2), len(Pick(false, []int{1}, []int{1, 2, 3})))
+	println(Ignore(struct{}{})+Ignore("x"), Len([]string{"a"}), Len([][]int{{1}, {2, 3}}))
+	println(First([]int{1, 5, 9}, func(n *int) bool { return *n > 3 }), First([]string{}, func(s *string) bool { return true }))
+	p, q, r := Rotate(1, "two", 3.5)
+	q, r, p = Rotate(p, q, r)
+	println(p, q, r)
+	n := Named[[]int]{"list", []int{1, 2, 3}}
+	Label(&n, "!")
+	m := Named[func() int]{name: "f", held: func() int { return 7 }}
+	println(n.Name(), len(n.held), m.Name(), m.held())
+}

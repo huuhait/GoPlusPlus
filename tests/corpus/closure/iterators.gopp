@@ -1,0 +1,84 @@
+package main
+
+func upTo(n int, yield func(int) bool) {
+	for i := 0; i < n; i++ {
+		if !yield(i) {
+			return
+		}
+	}
+}
+
+func pairs(xs []string, yield func(int, string) bool) {
+	for i, x := range xs {
+		if !yield(i, x) {
+			return
+		}
+	}
+}
+
+func evens(n int, yield func(int) bool) {
+	upTo(n, func(v int) bool {
+		if v%2 == 0 {
+			return yield(v)
+		}
+		return true
+	})
+}
+
+func fib(yield func(int) bool) {
+	a, b := 0, 1
+	for yield(a) {
+		a, b = b, a+b
+	}
+}
+
+func squares(n int, yield func(int) bool) {
+	upTo(n, func(v int) bool { return yield(v * v) })
+}
+
+func main() {
+	sum := 0
+	upTo(5, func(i int) bool {
+		sum += i
+		return true
+	})
+	println(sum)
+	upTo(100, func(i int) bool {
+		print(i, " ")
+		return i < 2
+	})
+	println()
+	pairs([]string{"a", "b", "c"}, func(i int, s string) bool {
+		if i != 1 {
+			print(i, s, " ")
+		}
+		return true
+	})
+	println()
+	evens(9, func(v int) bool {
+		print(v, " ")
+		return true
+	})
+	println()
+	last := 0
+	fib(func(f int) bool {
+		if f > 1000 {
+			return false
+		}
+		last = f
+		return true
+	})
+	println(last)
+	var firsts []int
+	squares(6, func(v int) bool {
+		firsts = append(firsts, v)
+		return len(firsts) < 4
+	})
+	println(len(firsts), firsts[3])
+	count := 0
+	upTo(7, func(int) bool {
+		count++
+		return true
+	})
+	println(count)
+}

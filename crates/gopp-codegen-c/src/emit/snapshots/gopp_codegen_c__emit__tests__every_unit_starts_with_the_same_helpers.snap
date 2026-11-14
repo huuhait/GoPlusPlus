@@ -161,6 +161,8 @@ void _gopp_string_retain(gopp_string text);
 void _gopp_string_release(gopp_string text);
 bool _gopp_string_eq(gopp_string a, gopp_string b);
 int64_t _gopp_string_compare(gopp_string a, gopp_string b);
+double _gopp_float_min(double a, double b);
+double _gopp_float_max(double a, double b);
 gopp_string _gopp_string_from_rune(int64_t rune);
 uint64_t _gopp_string_decode(gopp_string text, uint64_t at);
 gopp_string _gopp_string_from_bytes(const void *bytes);

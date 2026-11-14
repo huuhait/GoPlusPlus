@@ -1,0 +1,78 @@
+package main
+
+func each(xs []int, f func(int)) {
+	for _, x := range xs {
+		f(x)
+	}
+}
+
+func eachIndexed(xs []string, f func(int, string)) {
+	for i, x := range xs {
+		f(i, x)
+	}
+}
+
+func times(n int, f func()) {
+	for i := 0; i < n; i++ {
+		f()
+	}
+}
+
+func walk(n int, visit func(int) bool) int {
+	steps := 0
+	for n != 1 {
+		if !visit(n) {
+			break
+		}
+		if n%2 == 0 {
+			n /= 2
+		} else {
+			n = 3*n + 1
+		}
+		steps++
+	}
+	return steps
+}
+
+func main() {
+	xs := []int{3, 1, 4, 1, 5, 9, 2, 6}
+	sum, big := 0, 0
+	each(xs, func(x int) {
+		sum += x
+		if x > big {
+			big = x
+		}
+	})
+	println(sum, big)
+	var evens []int
+	each(xs, func(x int) {
+		if x%2 == 0 {
+			evens = append(evens, x)
+		}
+	})
+	println(len(evens), evens[0], evens[2])
+	line := ""
+	eachIndexed([]string{"a", "b", "c"}, func(i int, s string) {
+		if i > 0 {
+			line += ","
+		}
+		line += s
+	})
+	println(line)
+	n := 1
+	times(10, func() { n *= 2 })
+	times(3, func() { times(2, func() { n++ }) })
+	println(n)
+	peak := 0
+	steps := walk(27, func(v int) bool {
+		if v > peak {
+			peak = v
+		}
+		return true
+	})
+	short := walk(27, func(v int) bool { return v < 100 })
+	println(steps, peak, short)
+	counts := map[int]int{}
+	each(xs, func(x int) { counts[x]++ })
+	println(counts[1], counts[9], len(counts))
+}

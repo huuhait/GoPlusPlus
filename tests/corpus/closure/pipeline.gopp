@@ -1,0 +1,65 @@
+package main
+
+type Stage func(int) int
+
+func run(x int, stages ...Stage) int {
+	for _, s := range stages {
+		x = s(x)
+	}
+	return x
+}
+
+func chain(stages ...Stage) Stage {
+	return func(x int) int { return run(x, stages...) }
+}
+
+func clamp(lo, hi int) Stage {
+	return func(x int) int {
+		if x < lo {
+			return lo
+		}
+		if x > hi {
+			return hi
+		}
+		return x
+	}
+}
+
+func when(test func(int) bool, then Stage) Stage {
+	return func(x int) int {
+		if test(x) {
+			return then(x)
+		}
+		return x
+	}
+}
+
+func scale(k int) Stage { return func(x int) int { return x * k } }
+
+func shift(d int) Stage { return func(x int) int { return x + d } }
+
+func mapAll(xs []int, s Stage) []int {
+	out := make([]int, len(xs))
+	for i, x := range xs {
+		out[i] = s(x)
+	}
+	return out
+}
+
+func main() {
+	println(run(1), run(1, scale(3)), run(1, scale(3), shift(4), scale(2)))
+	norm := chain(shift(-50), scale(2), clamp(-10, 10))
+	println(norm(50), norm(52), norm(90), norm(0))
+	odd := func(x int) bool { return x%2 == 1 }
+	collatz := chain(when(odd, chain(scale(3), shift(1))), when(func(x int) bool { return !odd(x) }, func(x int) int { return x / 2 }))
+	x, steps := 7, 0
+	for x != 1 && steps < 100 {
+		x = collatz(x)
+		steps++
+	}
+	println(x, steps)
+	out := mapAll([]int{1, 2, 3, 4, 5}, chain(when(odd, scale(10)), shift(1)))
+	println(out[0], out[1], out[2], out[3], out[4])
+	nested := chain(chain(shift(1), shift(1)), chain(), chain(chain(scale(2))))
+	println(nested(0), nested(5), chain()(9))
+}

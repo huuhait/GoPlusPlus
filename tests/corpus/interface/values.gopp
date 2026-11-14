@@ -1,0 +1,60 @@
+package main
+
+type Value interface{ Get() int }
+
+type Num struct{ n int }
+
+func (v Num) Get() int { return v.n }
+
+type Big struct {
+	a, b, c, d int
+	name       string
+}
+
+func (b Big) Get() int { return b.a + b.b + b.c + b.d + len(b.name) }
+
+type Slice []int
+
+func (s Slice) Get() int {
+	sum := 0
+	for _, x := range s {
+		sum += x
+	}
+	return sum
+}
+
+func main() {
+	n := Num{1}
+	var v Value = n
+	n.n = 100
+	println(v.Get(), n.Get())
+	w := v
+	v = Num{2}
+	println(v.Get(), w.Get())
+	big := Big{1, 2, 3, 4, "five"}
+	v = big
+	big.a = 1000
+	println(v.Get(), big.Get())
+	s := Slice{1, 2, 3}
+	v = s
+	s = append(s, 1000)
+	println(v.Get(), s.Get())
+	values := []Value{Num{5}, Big{name: "x"}, Slice{7, 8}, v}
+	first := values[0]
+	values[0] = Num{50}
+	total := 0
+	for _, x := range values {
+		total += x.Get()
+	}
+	println(total, first.Get(), values[0].Get())
+	m := map[string]Value{"n": Num{9}}
+	got, ok := m["n"]
+	m["n"] = Num{10}
+	now, _ := m["n"]
+	_, missing := m["missing"]
+	println(got.Get(), ok, now.Get(), missing, len(m))
+	arr := [2]Value{Num{1}, Num{3}}
+	other := arr
+	other[0] = Slice{9}
+	println(arr[0].Get(), other[0].Get(), arr[1] == Num{3}, arr[1] == Value(Num{4}), arr == other)
+}

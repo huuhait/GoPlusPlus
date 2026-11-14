@@ -15801,3 +15801,84 @@ func after(head Option[*Node]) int {
         ]
     );
 }
+
+// rule: OWN-B3, OWN-B5
+#[test]
+fn the_elements_of_a_variadic_parameter_are_a_slice_and_its_function_is_known() {
+    // The elements that a call lists are put in a slice: none of them
+    // holds a pointer. And the call is held to what the function says
+    // of its parameters, however many elements it lists.
+    let text = "\
+package p
+
+type Point struct{ x, y int }
+
+type Holder struct{ p *Point }
+
+type Adder func(int, int) int
+
+func (a Adder) fold(xs ...int) int {
+	total := 0
+	for _, x := range xs {
+		total = a(total, x)
+	}
+	return total
+}
+
+func pick(ps ...*Point) *Point { return ps[len(ps)-1] }
+
+func set(h *Holder, ps ...*Point) {
+	if len(ps) > 0 {
+		h.p = ps[0]
+	}
+}
+
+func last[T any](xs ...T) int { return len(xs) }
+
+func read(h *Holder, p *Point, ns ...int) int { return h.p.x + p.x + len(ns) }
+
+func keep(h *Holder, p *Point, ns ...int) { h.p = p }
+
+func run(f func() int, ns ...int) int { return f() + len(ns) }
+
+func refused(h *Holder) *Point {
+	a, b := Point{}, Point{}
+	set(h, &a)
+	set(h, &a, &b)
+	last(&a, &b)
+	last[*Point](&a)
+	keep(h, &a)
+	keep(h, &b, 1, 2)
+	return pick(&a, &b)
+}
+
+func taken(h *Holder, add Adder) int {
+	a := Point{}
+	set(h)
+	n := last(1, 2, 3) + last(\"a\") + last[*Point]() + last(a, a)
+	n += read(h, &a) + read(h, &a, 1) + read(h, &a, 1, 2, 3)
+	count := 0
+	n += run(func() int { count++; return count }, 1, 2)
+	n += run(func() int { count++; return count })
+	return n + add.fold() + add.fold(1) + add.fold(1, 2, 3)
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let said: Vec<&str> = (checked.messages.iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| message.split(": a pointer in it").next().unwrap_or(message))
+        .collect();
+    let expected = [
+        "a.gopp:35:9: cannot keep a *Point in the slice of a ... parameter",
+        "a.gopp:36:9: cannot keep a *Point in the slice of a ... parameter",
+        "a.gopp:37:7: cannot keep a *Point in the slice of a ... parameter",
+        "a.gopp:38:15: cannot keep a *Point in the slice of a ... parameter",
+        "a.gopp:39:2: cannot give a pointer into a to keep: the call may store it where it \
+         outlives a",
+        "a.gopp:40:2: cannot give a pointer into b to keep: the call may store it where it \
+         outlives b",
+        "a.gopp:41:14: cannot keep a *Point in the slice of a ... parameter",
+    ];
+    assert_eq!(said, expected);
+}

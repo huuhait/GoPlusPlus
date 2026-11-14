@@ -1,0 +1,66 @@
+package main
+
+type Value interface {
+	~int | ~int64 | ~float64 | ~string | ~bool
+}
+
+type Number interface{ ~int | ~int64 | ~float64 }
+
+func Map[T, U Value](xs []T, f func(T) U) []U {
+	out := make([]U, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+func Filter[T Value](xs []T, keep func(T) bool) []T {
+	var out []T
+	for _, x := range xs {
+		if keep(x) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func Reduce[T, A Value](xs []T, start A, step func(A, T) A) A {
+	acc := start
+	for _, x := range xs {
+		acc = step(acc, x)
+	}
+	return acc
+}
+
+func Count[T Value](xs []T, pred func(T) bool) int {
+	return len(Filter(xs, pred))
+}
+
+func Range[T Number](from, to, by T) []T {
+	var out []T
+	for x := from; x < to; x += by {
+		out = append(out, x)
+	}
+	return out
+}
+
+func main() {
+	nums := Range(1, 11, 1)
+	squares := Map(nums, func(n int) int { return n * n })
+	evens := Filter(squares, func(n int) bool { return n%2 == 0 })
+	println(len(nums), len(evens), Reduce(evens, 0, func(a, n int) int { return a + n }))
+	names := Map(nums[:3], func(n int) string { return string(rune('a' + n)) })
+	println(Reduce(names, "", func(a string, s string) string { return a + s + s }))
+	halves := Map(Range(0.0, 2.0, 0.5), func(f float64) float64 { return f / 2 })
+	println(len(halves), halves[3], Reduce(halves, 0.0, func(a, f float64) float64 { return a + f }))
+	flags := Map(nums, func(n int) bool { return n > 7 })
+	println(Count(flags, func(b bool) bool { return b }), Count(names, func(s string) bool { return s > "b" }))
+	lengths := Map(Map(nums, func(n int) string {
+		out := ""
+		for i := 0; i < n; i++ {
+			out += "x"
+		}
+		return out
+	}), func(s string) int { return len(s) })
+	println(Reduce(lengths, int64(1), func(a int64, n int) int64 { return a * int64(n) }))
+}

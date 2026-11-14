@@ -1,0 +1,50 @@
+package main
+
+type Rec struct {
+	call func(Rec, int) int
+}
+
+func fix(f Rec) func(int) int {
+	return func(n int) int { return f.call(f, n) }
+}
+
+type Walker struct {
+	walk func(Walker, []int, int) int
+}
+
+func main() {
+	fact := fix(Rec{func(self Rec, n int) int {
+		if n <= 1 {
+			return 1
+		}
+		return n * self.call(self, n-1)
+	}})
+	fib := fix(Rec{func(self Rec, n int) int {
+		if n < 2 {
+			return n
+		}
+		return self.call(self, n-1) + self.call(self, n-2)
+	}})
+	println(fact(10), fib(20), fact(0))
+	sum := Walker{func(self Walker, xs []int, at int) int {
+		if at == len(xs) {
+			return 0
+		}
+		return xs[at] + self.walk(self, xs, at+1)
+	}}
+	println(sum.walk(sum, []int{1, 2, 3, 4}, 0), sum.walk(sum, nil, 0))
+	halvings := fix(Rec{func(self Rec, n int) int {
+		if n == 0 {
+			return 0
+		}
+		return 1 + self.call(self, n/2)
+	}})
+	println(halvings(1000), halvings(1))
+	hanoi := fix(Rec{func(self Rec, n int) int {
+		if n == 0 {
+			return 0
+		}
+		return 2*self.call(self, n-1) + 1
+	}})
+	println(hanoi(10), hanoi(1))
+}

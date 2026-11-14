@@ -1,0 +1,66 @@
+package main
+
+type Board [3][3]byte
+
+func (b Board) winner() byte {
+	for i := 0; i < 3; i++ {
+		if b[i][0] != ' ' && b[i][0] == b[i][1] && b[i][1] == b[i][2] {
+			return b[i][0]
+		}
+		if b[0][i] != ' ' && b[0][i] == b[1][i] && b[1][i] == b[2][i] {
+			return b[0][i]
+		}
+	}
+	if b[1][1] != ' ' && (b[0][0] == b[1][1] && b[1][1] == b[2][2] || b[0][2] == b[1][1] && b[1][1] == b[2][0]) {
+		return b[1][1]
+	}
+	return ' '
+}
+
+func filled(v byte) Board {
+	var b Board
+	for i := range b {
+		for j := range b[i] {
+			b[i][j] = v
+		}
+	}
+	return b
+}
+
+func double(a [4]int) [4]int {
+	for i := range a {
+		a[i] *= 2
+	}
+	return a
+}
+
+func main() {
+	a := [4]int{1, 2, 3, 4}
+	b := double(a)
+	println(a[3], b[3], a == b, double(a) == b, len(a))
+	c := [...]string{"x", "y", "z"}
+	d := c
+	d[1] = "Y"
+	println(c[1], d[1], len(c), c == d)
+	e := [5]int{1: 10, 3: 30}
+	sum := 0
+	for i, v := range e {
+		sum += i * v
+	}
+	println(sum, e[0], e[4])
+	board := filled(' ')
+	board[0][0], board[1][1], board[2][2] = 'x', 'x', 'x'
+	other := board
+	other[1][1] = 'o'
+	println(string(board.winner()), string(other.winner()) == " ", board == other)
+	var zero [3]bool
+	println(zero[0], zero == [3]bool{}, len(zero))
+	idx := [3]int{2, 0, 1}
+	perm := [3]string{}
+	for i, j := range idx {
+		perm[j] = c[i]
+	}
+	println(perm[0], perm[1], perm[2])
+	nested := [2][2][2]int{{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}}
+	println(nested[1][0][1], len(nested[0][1]))
+}

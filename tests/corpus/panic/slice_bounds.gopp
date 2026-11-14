@@ -1,0 +1,8 @@
+package main
+
+func part(s string, lo, hi int) string { return s[lo:hi] }
+
+func main() {
+	println(part("hello", 1, 3), part("hello", 0, 5), part("hello", 5, 5))
+	println(part("hello", 2, 9))
+}

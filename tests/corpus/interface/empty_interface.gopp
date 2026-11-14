@@ -1,0 +1,62 @@
+package main
+
+import "fmt"
+
+type Box struct{ v interface{} }
+
+func typeName(v interface{}) string {
+	switch v.(type) {
+	case int:
+		return "int"
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case Box:
+		return "box"
+	case nil:
+		return "nil"
+	}
+	return "?"
+}
+
+func sum(values ...interface{}) int {
+	total := 0
+	for _, v := range values {
+		switch x := v.(type) {
+		case int:
+			total += x
+		case string:
+			total += len(x)
+		case bool:
+			if x {
+				total++
+			}
+		case Box:
+			total += sum(x.v)
+		case []interface{}:
+			total += sum(x...)
+		}
+	}
+	return total
+}
+
+func main() {
+	var v interface{}
+	fmt.Println(v == nil, typeName(v))
+	v = 5
+	fmt.Println(v, typeName(v), v == 5, v.(int)+1)
+	v = "five"
+	fmt.Println(v, typeName(v), v == "five", v != 5)
+	v = Box{Box{true}}
+	fmt.Println(typeName(v), typeName(v.(Box).v), typeName(v.(Box).v.(Box).v))
+	fmt.Println(sum(1, "ab", true, false, Box{10}, Box{Box{"xyz"}}, []interface{}{1, 2, []interface{}{3}}, nil, 2.5))
+	list := []interface{}{1, "a", nil, true}
+	list = append(list, list...)
+	list[0] = "replaced"
+	fmt.Println(len(list), list[0], list[4], list[2] == nil, list[7])
+	m := map[string]interface{}{"n": 1, "s": "x", "nil": nil}
+	_, has := m["nil"]
+	_, hasNot := m["none"]
+	fmt.Println(m["n"], m["s"], m["nil"] == nil, has, hasNot, len(m))
+}

@@ -1,0 +1,78 @@
+package main
+
+func digits(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return digits(n/10) + string(rune('0'+n%10))
+}
+
+func render(rows [][]int) string {
+	out := ""
+	emit := func(s string) { out += s }
+	line := func(cells []int) {
+		for i, c := range cells {
+			if i > 0 {
+				emit(" ")
+			}
+			emit(digits(c))
+		}
+		emit("\n")
+	}
+	for _, row := range rows {
+		line(row)
+	}
+	return out
+}
+
+func collect(n int) []string {
+	var parts []string
+	depth := 0
+	open := func(tag string) {
+		parts = append(parts, tag+"(")
+		depth++
+	}
+	shut := func() {
+		depth--
+		parts = append(parts, ")")
+	}
+	for i := 0; i < n; i++ {
+		open(digits(i))
+	}
+	for depth > 0 {
+		shut()
+	}
+	return parts
+}
+
+func main() {
+	print(render([][]int{{1, 2, 3}, {40, 50}, {}, {600}}))
+	parts := collect(3)
+	text := ""
+	for _, p := range parts {
+		text += p
+	}
+	println(text, len(parts))
+	var buf []byte
+	write := func(s string) int {
+		buf = append(buf, s...)
+		return len(buf)
+	}
+	n := write("abc")
+	m := write("")
+	k := write("defgh")
+	println(n, m, k, string(buf))
+	indent := ""
+	var lines []string
+	say := func(s string) { lines = append(lines, indent+s) }
+	say("a")
+	indent += "  "
+	say("b")
+	indent += "  "
+	say("c")
+	indent = ""
+	say("d")
+	for _, l := range lines {
+		println(l)
+	}
+}

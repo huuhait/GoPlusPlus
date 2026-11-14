@@ -1,0 +1,51 @@
+package main
+
+func squares(n int) []int {
+	var out []int
+	for i := 0; i < n; i++ {
+		out = append(out, i*i)
+	}
+	return out
+}
+
+func sum(xs []int) int {
+	total := 0
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func main() {
+	var xs []int
+	println(len(xs), xs == nil)
+	xs = append(xs, 1)
+	xs = append(xs, 2, 3, 4)
+	xs = append(xs, xs...)
+	println(len(xs), sum(xs), xs[7])
+	ys := make([]int, 3, 10)
+	println(len(ys), cap(ys), ys[2])
+	ys = append(ys, 7)
+	println(len(ys), cap(ys), ys[3])
+	sq := squares(100)
+	println(len(sq), sum(sq), sq[99])
+	var words []string
+	for _, w := range []string{"a", "bb", "ccc"} {
+		words = append(words, w+w)
+	}
+	words = append(words, "end")
+	for i, w := range words {
+		println(i, w, len(w))
+	}
+	bs := append([]byte("ab"), "cd"...)
+	bs = append(bs, 'e')
+	println(string(bs), len(bs))
+	var empty []int
+	empty = append(empty, []int{}...)
+	println(len(empty), len(append(empty, 5)))
+	grow := make([]int, 0, 4)
+	for i := 0; i < 4; i++ {
+		grow = append(grow, i)
+	}
+	println(len(grow), cap(grow))
+}

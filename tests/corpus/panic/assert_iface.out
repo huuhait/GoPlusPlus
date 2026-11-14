@@ -1,0 +1,4 @@
+n
+panic: interface conversion: main.Plain is not main.Namer: missing method Name
+
+exit status 2

@@ -1,0 +1,10 @@
+package main
+
+func at(xs []int, i int) int { return xs[i] }
+
+func main() {
+	xs := []int{1, 2, 3}
+	println(at(xs, 0), at(xs, 2))
+	println(at(xs, 3))
+	println("not reached")
+}

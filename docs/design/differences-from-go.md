@@ -17,6 +17,19 @@ The table has the differences that the compiler implements today; it grows with 
 | `m[k] = v` for a nil map `m` | `panic: assignment to entry in nil map` | the write makes the map where it is held | [OWN-P9](../spec/04-ownership.md), [EXP-7](../spec/06-expressions.md) | `tests/run/map_values.gopp` |
 | A new key in a map, or `clear` of it, while a `range` loop walks it | allowed: the loop may or may not see the key | `panic: map insert during iteration`, `panic: map clear during iteration`, on every run. Writing a key that is there and `delete` are allowed | [RNG-4](../spec/08-slices-and-range.md), [RNG-5](../spec/08-slices-and-range.md) | `tests/run/panic_map_insert.gopp`, `tests/run/panic_map_clear.gopp` |
 
+## The programs that do the same
+
+`tests/corpus` has programs that are valid in both languages, in six groups: scalar, collection, generic, closure, interface, panic. Each has a file of what it writes and how it ends when Go builds it; the test suite builds each with Go++ and compares. A long test asks the `go` of the development shell again, so the files stay what Go does, and the matrix of the optimization levels runs the corpus too.
+
+A Go program that Go++ refuses is no difference in this sense: it does not compile, and the error says what to write. What the programs of the corpus keep away from:
+
+- A pointer is followed only in the variables, parameters and results of functions ([OWN-B5](../spec/04-ownership.md)): none is kept in a slice, a map or an interface value, none is returned to a variable that has ended, and no argument that holds one is listed for a `...T` parameter.
+- An interface type with methods, a pointer and a function value are never nil ([OWN-P9](../spec/04-ownership.md)); `error` and `interface{}` are.
+- A function literal that changes a variable of its function is called there, or given to a function that does not keep it; it is not returned as a plain `func` ([closures](../spec/11-closures.md)).
+- Generic code copies a value of a type parameter only if the constraint says that it can be copied: a set of types as `~int | ~string` does, `any` and `comparable` do not ([generics](../spec/10-generics.md)).
+- A struct has no embedded fields.
+- `fmt` has `Print` and `Println`, for the basic types, errors and values with a `String` method, until the standard library is written.
+
 Not different, though it may look so:
 
 - The text of a stack trace is no part of what a program means ([UB chapter](../spec/16-undefined-behavior.md)), and the run tests compare everything before it.

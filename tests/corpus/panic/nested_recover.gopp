@@ -1,0 +1,26 @@
+package main
+
+func level(n int, log *[]string) {
+	defer func() {
+		if r := recover(); r != nil {
+			*log = append(*log, "caught")
+			if n > 1 {
+				panic("again")
+			}
+		}
+	}()
+	if n == 3 {
+		panic("start")
+	}
+	level(n+1, log)
+	*log = append(*log, "after")
+}
+
+func main() {
+	var log []string
+	level(1, &log)
+	for _, l := range log {
+		println(l)
+	}
+	println(len(log))
+}

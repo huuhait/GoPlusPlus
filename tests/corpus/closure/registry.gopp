@@ -1,0 +1,63 @@
+package main
+
+type Handler func(string) string
+
+type Router struct {
+	routes map[string]Handler
+	order  []string
+}
+
+func (r *Router) on(name string, h Handler) {
+	if r.routes == nil {
+		r.routes = map[string]Handler{}
+	}
+	if _, ok := r.routes[name]; !ok {
+		r.order = append(r.order, name)
+	}
+	r.routes[name] = h
+}
+
+func (r Router) call(name, arg string) string {
+	if h, ok := r.routes[name]; ok {
+		return h(arg)
+	}
+	return "no " + name
+}
+
+func wrap(h Handler, left, right string) Handler {
+	return func(s string) string { return left + h(s) + right }
+}
+
+func upper(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 32
+		}
+	}
+	return string(b)
+}
+
+func main() {
+	var r Router
+	r.on("echo", func(s string) string { return s })
+	r.on("upper", upper)
+	r.on("twice", func(s string) string { return s + s })
+	r.on("loud", wrap(wrap(upper, "<", ">"), "[", "]"))
+	println(r.call("echo", "x"), r.call("upper", "abc"), r.call("twice", "ab"), r.call("loud", "hey"), r.call("none", ""))
+	r.on("echo", func(s string) string { return "(" + s + ")" })
+	println(r.call("echo", "x"), len(r.order), len(r.routes))
+	out := "go"
+	for _, name := range r.order {
+		out = r.call(name, out)
+	}
+	println(out)
+	prefix := "v1/"
+	versioned := Router{}
+	for _, name := range r.order {
+		if h, ok := r.routes[name]; ok {
+			versioned.on(prefix+name, wrap(h, name+"=", ""))
+		}
+	}
+	println(versioned.call("v1/upper", "a"), versioned.call("upper", "a"), len(versioned.order))
+}

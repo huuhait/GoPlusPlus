@@ -1,0 +1,40 @@
+package main
+
+type Resource struct {
+	name string
+	log  *[]string
+}
+
+func open(name string, log *[]string) Resource {
+	*log = append(*log, "open "+name)
+	return Resource{name, log}
+}
+
+func (r Resource) close() { *r.log = append(*r.log, "close "+r.name) }
+
+func use(log *[]string, fail bool) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	a := open("a", log)
+	defer a.close()
+	b := open("b", log)
+	defer b.close()
+	if fail {
+		panic("mid")
+	}
+	c := open("c", log)
+	defer c.close()
+	return true
+}
+
+func main() {
+	var log []string
+	println(use(&log, false))
+	println(use(&log, true))
+	for _, line := range log {
+		println(line)
+	}
+}
