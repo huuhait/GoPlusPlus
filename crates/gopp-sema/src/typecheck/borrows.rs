@@ -199,6 +199,8 @@ pub(super) struct Broken {
     pub holder: Option<LocalId>,
     /// Where the loan is made.
     pub made: Span,
+    /// The loan is the use of the variable by a function literal.
+    pub captured: bool,
 }
 
 /// A loan that leaves the function at `at`: one of what ends with the
@@ -1413,7 +1415,9 @@ impl<'a> Walk<'a> {
                                 let sync = crate::types::Marker::Sync;
                                 types.is_some_and(|all| all.unlabeled(ty, sync).is_some())
                             });
-                        if self.own(local) && (lends || writes || unshared) {
+                        // The variable is not moved while the literal
+                        // may run, whatever its type is.
+                        if self.own(local) {
                             let step = Step::Captured(lends, writes, unshared);
                             found.push(Source::Place(local, vec![step], span));
                         }
@@ -1577,6 +1581,7 @@ impl<'a> Walk<'a> {
                     of: change.root,
                     holder: None,
                     made: loop_.at,
+                    captured: false,
                 });
                 return;
             }
@@ -2065,6 +2070,7 @@ impl Problem {
                                     of: *of,
                                     holder: None,
                                     made: loop_.at,
+                                    captured: false,
                                 });
                                 break 'ranged;
                             }
@@ -2104,11 +2110,9 @@ impl Problem {
                                 // where it is: what is assigned to
                                 // it, the literal sees.
                                 Lies::Above if matches!(held[..], [Step::Captured(..)]) => {
-                                    matches!(held[..], [Step::Captured(true, ..)])
-                                        && matches!(
-                                            change.what,
-                                            What::End | What::Declare | What::Move
-                                        )
+                                    change.what == What::Move
+                                        || (matches!(held[..], [Step::Captured(true, ..)])
+                                            && matches!(change.what, What::End | What::Declare))
                                 }
                                 Lies::Above => !held[way.len()..].contains(&Step::Target),
                                 // A write through a pointer to the
@@ -2131,6 +2135,7 @@ impl Problem {
                                 && inside.any(|step| matches!(step, Step::At(_) | Step::Held));
                             let waiting = ends || freed;
                             let made = *made;
+                            let captured = matches!(held[..], [Step::Captured(..)]);
                             for at in 0..known.holders[loan as usize].len() {
                                 known.steps += 1;
                                 let fact = known.holders[loan as usize][at];
@@ -2145,6 +2150,7 @@ impl Problem {
                                     of: *root,
                                     holder: Some(holder),
                                     made,
+                                    captured,
                                 };
                                 // One report says that the change is
                                 // refused.

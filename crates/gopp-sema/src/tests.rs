@@ -6302,6 +6302,74 @@ func local() int {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+// rule: OWN-R3c
+#[test]
+fn a_variable_is_not_moved_while_a_function_that_uses_it_may_run() {
+    // A function literal uses a variable where it is. The first two
+    // functions move the variable and call the literal afterwards, or
+    // give it to a call. The others move it when the literal is used
+    // no more: after its last call, after a call at once, after the
+    // call that it was lent to.
+    let text = "package p
+
+type F struct{ n int }
+
+func (f *F) drop() {}
+
+func take(f F) {}
+
+func run(g func()) { g() }
+
+func kept() {
+	f := F{1}
+	g := func() { println(f.n) }
+	take(move(f))
+	g()
+}
+
+func given() {
+	f := F{1}
+	g := func() { println(f.n) }
+	take(move(f))
+	run(g)
+}
+
+func afterTheLastCall() {
+	f := F{1}
+	g := func() { println(f.n) }
+	g()
+	take(move(f))
+}
+
+func calledAtOnce() {
+	f := F{1}
+	func() { println(f.n) }()
+	take(move(f))
+}
+
+func assignedAgain() {
+	f := F{1}
+	g := func() { println(f.n) }
+	f = F{2}
+	g()
+	take(move(f))
+}
+
+func lent() {
+	f := F{1}
+	run(func() { println(f.n) })
+	take(move(f))
+}
+";
+    let expected = [
+        "a.gopp:14:7: cannot move f: the function in g uses it, and g is used later",
+        "    a.gopp:13:7: the function that uses f is written here",
+        "a.gopp:21:7: cannot move f: the function in g uses it, and g is used later",
+        "    a.gopp:20:7: the function that uses f is written here",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 // rule: PAN-3
 #[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {

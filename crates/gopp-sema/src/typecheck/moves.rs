@@ -789,6 +789,20 @@ impl<'a> Checker<'a> {
                         note,
                     )
                 }
+                // A function literal uses the variable where it is.
+                (Some(holder), Some(does)) if broken.captured => {
+                    let holder = named(self, holder);
+                    let message = format!(
+                        "cannot {does} {place}: the function in {holder} uses it, and {holder} is \
+                         used later"
+                    );
+                    let note = format!("the function that uses {owner} is written here");
+                    Diagnostic::new(code, broken.at, message).with_note(
+                        Code::NoteBorrowedHere,
+                        Some(broken.made),
+                        note,
+                    )
+                }
                 (Some(holder), Some(does)) => {
                     let holder = named(self, holder);
                     let message = match broken.what {
