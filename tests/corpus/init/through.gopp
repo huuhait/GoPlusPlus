@@ -1,0 +1,47 @@
+package main
+
+type T struct{ n int }
+
+func (t T) double() int { return t.n * 2 }
+
+// A value needs what the functions that it calls use: first is worked
+// out before second, though it is written after it, because next reads
+// it.
+var second = next()
+var first = start()
+
+var trace string
+
+func start() int {
+	trace += "first;"
+	return 1
+}
+
+func next() int {
+	trace += "second;"
+	return first + 1
+}
+
+// A method value and a function literal are followed too.
+var doubled = holder.double()
+var holder = T{n: scaled(3)}
+var scale = 10
+var scaled = func(n int) int { return n * scale }
+
+var left, right = pair()
+var _ = mark("blank")
+
+func pair() (int, string) {
+	trace += "pair;"
+	return doubled + 1, "r"
+}
+
+func mark(what string) int {
+	trace += what + ";"
+	return 0
+}
+
+func main() {
+	println(first, second, doubled, holder.n, left, right)
+	println(trace)
+}

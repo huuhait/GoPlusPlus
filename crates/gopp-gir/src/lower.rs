@@ -280,6 +280,15 @@ const MAX_LED: usize = 16;
 /// How many broken rules of one module are reported.
 const MAX_VERIFY_ERRORS: usize = 8;
 
+/// A first value of a variable of the package that is static data:
+/// the variable, and the constant, in the declaration `at` of the file.
+pub(crate) struct Static {
+    pub file: u32,
+    pub at: usize,
+    pub object: ObjId,
+    pub value: ExprId,
+}
+
 /// A function with a body.
 pub(crate) struct Job {
     file: u32,
@@ -438,6 +447,9 @@ pub(crate) struct Shared<'a> {
     pub error: Spur,
     pub string: Spur,
     jobs: Vec<Job>,
+    /// The first values that are static data: of a variable of a
+    /// plain type, a constant. Nothing runs to give them.
+    statics: Vec<Static>,
     /// The instances of generic functions, and of the methods of
     /// generic types, that the package uses, each once, in the order
     /// in which they are found: those that the functions use in the
@@ -691,6 +703,9 @@ pub(crate) struct Memo<'a> {
     /// as: none for a type without one.
     pub holds_tables: FxHashMap<TypeId, bool>,
     pub blanks: FxHashMap<TypeId, Option<GlobalId>>,
+    /// The global of each constant of several parts that was asked
+    /// for, by where the checker keeps the constant and by its type.
+    pub constants: FxHashMap<(usize, TypeId), Option<GlobalId>>,
     /// Which types of the module cross to C.
     pub c_rules: crate::CTypeRules,
     /// For each type that was asked: its first part that C has no type
@@ -747,6 +762,7 @@ impl<'a> Memo<'a> {
             with_tables: FxHashMap::default(),
             holds_tables: FxHashMap::default(),
             blanks: FxHashMap::default(),
+            constants: FxHashMap::default(),
             c_rules: crate::CTypeRules::new(Some(shared.layout)),
             c_parts: FxHashMap::default(),
             diagnostics: Vec::new(),
@@ -900,6 +916,7 @@ impl<'a> Shared<'a> {
             error: checked.names.get_or_intern_static("Error"),
             string: checked.names.get_or_intern_static("String"),
             jobs: Vec::new(),
+            statics: Vec::new(),
             instances: Vec::new(),
             instance_jobs: FxHashMap::default(),
             instance_methods: FxHashMap::default(),
@@ -980,6 +997,10 @@ impl<'a> Shared<'a> {
             let before = decls.partition_point(|&(start, _, _)| start <= span.lo);
             let around = before.checked_sub(1).map(|at| decls[at]);
             if let Some((lo, hi, at)) = around.filter(|&(_, end, _)| span.hi <= end) {
+                if let Some(found) = shared.static_first(first, at) {
+                    shared.statics.push(found);
+                    continue;
+                }
                 shared.jobs.push(Job {
                     file: first.file,
                     at,
@@ -1366,6 +1387,59 @@ impl<'a> Shared<'a> {
             JobName::Initializer(step) => self.package.init_order.get(step),
             _ => None,
         }
+    }
+
+    /// The first value as static data, if it is that: one variable
+    /// with a name, of a type that is a boolean, a number or a string,
+    /// or an array or a struct of these, and a constant for it. `at`
+    /// is the declaration of the file that the value is written in.
+    fn static_first(&self, first: &gopp_sema::Initializer, at: usize) -> Option<Static> {
+        use gopp_sema::constant::Value;
+        let [object] = first.lhs[..] else {
+            return None;
+        };
+        let variable = self.package.object(object);
+        if variable.name == self.blank {
+            return None;
+        }
+        let body = self.info(first.file).bodies.get(at)?;
+        let constant = match body.types.get(&first.value)?.value {
+            Value::Bool(_) | Value::Str(_) | Value::Int64(_) | Value::Int(_) => true,
+            Value::Rat(_) | Value::Float(_) | Value::Composite(_) => true,
+            Value::Unknown | Value::Complex(..) => false,
+        };
+        (constant && self.plain(variable.ty, 0)).then_some(Static {
+            file: first.file,
+            at,
+            object,
+            value: first.value,
+        })
+    }
+
+    /// Whether a constant of the type is static data as it is: a
+    /// boolean, a number, a string, or an array or a struct of these
+    /// without tables.
+    fn plain(&self, ty: CheckedTypeId, depth: u32) -> bool {
+        use gopp_sema::basic::Basic;
+        if depth > 16 {
+            return false;
+        }
+        match &*self.types.get(self.types.underlying(ty)) {
+            CheckedType::Basic(basic) => {
+                let other = matches!(basic, Basic::Complex64 | Basic::Complex128 | Basic::Uintptr);
+                !other && !basic.is_untyped()
+            }
+            CheckedType::Array { elem, .. } => self.plain(*elem, depth + 1),
+            CheckedType::Struct(fields) => {
+                let alone = !self.types.has_table(ty) && self.types.parents(ty).is_empty();
+                alone && fields.iter().all(|field| self.plain(field.ty, depth + 1))
+            }
+            _ => false,
+        }
+    }
+
+    pub fn statics(&self) -> &[Static] {
+        &self.statics
     }
 
     /// The symbols of the functions that give the variables of the

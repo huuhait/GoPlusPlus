@@ -4526,9 +4526,10 @@ func main() {
         assert_eq!(messages, [] as [&str; 0], "{file}");
         let module = print_module(&lowered.module);
         // What starts the package calls a function for each step, in
-        // the order of what the values need: `first`, `second`,
-        // `total`, then the others as they are written. A variable
-        // without a first value has no step.
+        // the order of what the values need: `second`, `total`, then
+        // the others as they are written. A variable without a first
+        // value has no step, and `first` has none either: a constant
+        // for a variable of a plain type is static data.
         let start = module.find("\nfn _GPJ4mainE(").unwrap();
         let start = &module[start..][..module[start..].find("\n}\n").unwrap()];
         let calls: Vec<&str> = (start.lines())
@@ -4538,7 +4539,6 @@ func main() {
         assert_eq!(
             calls,
             [
-                "_GPC1_J4mainE",
                 "_GPC2_J4mainE",
                 "_GPC3_J4mainE",
                 "_GPC4_J4mainE",
@@ -4551,11 +4551,9 @@ func main() {
             let start = module.find(&format!("\nfn _GPC{number}_J4mainE(")).unwrap();
             &module[start..][..module[start..].find("\n}\n").unwrap()]
         };
-        assert!(
-            step(1).contains("(*_1) = const 1: i64"),
-            "{file}: {}",
-            step(1)
-        );
+        assert!(!module.contains("\nfn _GPC1_J4mainE("), "{file}");
+        let first = "\nglobal var @_GPR4mainE5first: i64 [external]\n    const 1: i64\n";
+        assert!(module.contains(first), "{file}");
         assert!(
             step(2).contains("@_GPF4mainE6double("),
             "{file}: {}",
@@ -4578,6 +4576,98 @@ func main() {
             insta::assert_snapshot!(format!("{start}\n}}\n{}\n}}\n{}\n}}", step(4), step(5)));
         }
     }
+}
+
+// rule: INI-1
+#[test]
+fn a_constant_of_several_parts_is_one_read_only_global() {
+    // A constant that is a struct or an array is static data, once for
+    // all that use a constant of its type with its parts: the two
+    // names of one value share a global, and each use is the value of
+    // that global. A variable of the package that starts as a constant
+    // is static data itself, and nothing runs to give it.
+    let text = "package main
+
+type Point struct {
+	x, y int
+	name string
+}
+
+const origin = Point{1, 2, \"o\"}
+const same = Point{1, 2, \"o\"}
+const other = Point{1, 3, \"o\"}
+const primes = [3]int8{2, 3, 5}
+
+var start = origin
+var limit = 10
+var ratio = 0.5
+
+func first() Point { return origin }
+
+func second() (Point, Point, [3]int8) { return same, other, primes }
+
+func main() {
+	println(first().x, start.y, limit, ratio)
+}
+";
+    let module = gir(text);
+    let globals: Vec<&str> = (module.lines())
+        .filter(|line| line.starts_with("global const @gopp.const."))
+        .map(|line| &line[..line.find(": ").unwrap()])
+        .collect();
+    let point = "global const @gopp.const._GPTiN4mainE5Point.";
+    assert_eq!(globals.len(), 3, "{globals:#?}");
+    assert_eq!(
+        globals
+            .iter()
+            .filter(|name| name.starts_with(point))
+            .count(),
+        2
+    );
+    // `origin` and `same` are the value of one global.
+    let used = |function: &str| {
+        let start = module.find(&format!("\nfn _GPF4mainE{function}(")).unwrap();
+        let body = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        let names = body.split("const value @").skip(1);
+        let names = names.map(|rest| rest[..rest.find([' ', ')', ',']).unwrap()].to_owned());
+        names.collect::<Vec<String>>()
+    };
+    let (first, second) = (used("5first"), used("6second"));
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 3);
+    assert_eq!(first[0], second[0]);
+    assert_ne!(second[0], second[1]);
+    // No function gives the variables their first values.
+    assert!(!module.contains("_J4mainE() -> ()"), "{module}");
+    let start = "\nglobal var @_GPR4mainE5start: _GPTiN4mainE5Point [external]\n    const 1: i64\n    \
+                 const 2: i64\n    const str#";
+    assert!(module.contains(start), "{module}");
+    assert!(module.contains("\nglobal var @_GPR4mainE5limit: i64 [external]\n    const 10: i64\n"));
+}
+
+#[test]
+fn the_steps_of_constants_of_several_parts_grow_with_the_input_not_faster() {
+    let sizes = [100, 200, 400, 800];
+    // One array of many elements that is used as many times, and as
+    // many constants that each are a struct.
+    assert_near_linear(&sizes, |n| {
+        let elements: String = (0..n).map(|at| format!("{at}, ")).collect();
+        let uses: String = (0..n).map(|_| "\tn += len(keep(big))\n").collect();
+        steps_of(&format!(
+            "package main\n\nconst big = [{n}]int{{{elements}}}\n\nfunc keep(xs [{n}]int) []int {{ \
+             return xs[:1] }}\n\nfunc f() int {{\n\tn := 0\n{uses}\treturn n\n}}\n"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let constants: String = (0..n)
+            .map(|at| format!("const c{at} = P{{{at}, {at}}}\n"))
+            .collect();
+        let uses: String = (0..n).map(|at| format!("\tn += get(c{at})\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype P struct{{ a, b int }}\n\n{constants}\nfunc get(p P) int {{ return \
+             p.a }}\n\nfunc f() int {{\n\tn := 0\n{uses}\treturn n\n}}\n"
+        ))
+    });
 }
 
 #[test]

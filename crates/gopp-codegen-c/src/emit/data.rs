@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 use gopp_gir::{ConstantKind, Global, Type, TypeId, TypeInterner};
 
-use super::number::int_literal;
+use super::number::{float_literal, int_literal};
 use super::{Cx, EmitError, constness, global_name, linkage};
 
 /// The definition of the global with the number `at`, which has static
@@ -81,6 +81,9 @@ pub(super) fn global(
             (ConstantKind::Zero | ConstantKind::Null, _) => out.push('0'),
             (ConstantKind::Int(value), Type::Int { bits, signed }) => {
                 out.push_str(&int_literal(value, *bits, *signed));
+            }
+            (ConstantKind::Float(value), Type::Float { bits }) => {
+                out.push_str(&float_literal(value, *bits == 32));
             }
             (ConstantKind::Bool(value), _) => out.push_str(&value.to_string()),
             (ConstantKind::Str(at), _) => {

@@ -307,9 +307,9 @@ impl<'m> Verifier<'m> {
             self.constant(part);
             let fits = match (part.kind, types.get(leaf)) {
                 (ConstantKind::Zero, _) => true,
-                (ConstantKind::Int(_), Type::Int { .. }) | (ConstantKind::Bool(_), Type::Bool) => {
-                    part.ty == leaf
-                }
+                (ConstantKind::Int(_), Type::Int { .. })
+                | (ConstantKind::Float(_), Type::Float { .. })
+                | (ConstantKind::Bool(_), Type::Bool) => part.ty == leaf,
                 (ConstantKind::Str(_), Type::String) => true,
                 // The address of a function or of a global, as the
                 // pointer that the leaf is.

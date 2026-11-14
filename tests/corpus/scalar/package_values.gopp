@@ -1,0 +1,19 @@
+package main
+
+type Celsius float64
+
+var limit = 10
+var name = "static"
+var ratio = 0.5
+var warm Celsius = 21
+var debug = true
+var small int8 = -3
+var computed = limit * 2
+var text = name + "!"
+
+func main() {
+	println(limit, name, ratio, warm, debug, small, computed, text)
+	limit++
+	name += "?"
+	println(limit, name)
+}

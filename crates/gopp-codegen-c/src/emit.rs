@@ -450,12 +450,14 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut Stri
         let _ = writeln!(out, "  {}();", cx.func_name(init));
         number += 1;
     }
+    // When `main` has returned the runtime ends the program (INI-2);
+    // what is loaded by another program goes back to it.
+    let ends = match kind {
+        Entry::Module => "return 0;",
+        _ => "_gopp_rt_exit(0);",
+    };
     match main.filter(|_| kind != Entry::Package) {
-        Some(main) => drop(writeln!(
-            out,
-            "  {}();\n  return 0;\n}}",
-            cx.func_name(main)
-        )),
+        Some(main) => drop(writeln!(out, "  {}();\n  {ends}\n}}", cx.func_name(main))),
         None => out.push_str("}\n"),
     }
 }

@@ -441,7 +441,7 @@ pub(super) fn lower_function<'a>(
 /// the start, each function that gives variables their first value.
 pub(super) fn lower_start<'a>(shared: &'a Shared<'a>, module: &mut Module, memo: &mut Memo<'a>) {
     let steps = shared.initializers();
-    if steps.is_empty() {
+    if steps.is_empty() && shared.statics().is_empty() {
         return;
     }
     let symbol = gopp_mangle::pkg_init_symbol(&shared.package.path);
@@ -462,6 +462,11 @@ pub(super) fn lower_start<'a>(shared: &'a Shared<'a>, module: &mut Module, memo:
         );
         let entry = cx.b.new_block();
         cx.b.switch_to(entry);
+        // A constant for a variable of a plain type is in the image of
+        // the program: nothing runs to give it.
+        for first in shared.statics() {
+            cx.static_first(first);
+        }
         for step in steps {
             let step = cx.function_named(step, sig)?;
             let callee = Operand::Const(Constant {
@@ -1030,6 +1035,27 @@ impl FuncCx<'_, '_> {
     /// The body of a function whose first parameter of the source has
     /// the number `first`: an environment comes before the parameters
     /// of a function literal.
+    /// The first value of a variable of the package that is static
+    /// data: the global of the variable starts as the constant.
+    fn static_first(&mut self, first: &super::Static) {
+        let package = self.shared.package;
+        let body = &self.shared.info(first.file).bodies[first.at];
+        let (tree, _) = self.shared.files[first.file as usize];
+        let span = tree.exprs[first.value].span;
+        let ty = self.lower(package.object(first.object).ty, span);
+        let value = body.types.get(&first.value).map(|typed| &typed.value);
+        let mut parts = Vec::new();
+        let made =
+            value.and_then(|value| self.constant_parts(value, ty, &mut parts, &mut Vec::new()));
+        if made.is_none() {
+            return self.unsupported(span, "a first value of a variable of the package");
+        }
+        let key = super::CalleeKey::Object(first.object);
+        if let Some(global) = self.declare_global(key, package, first.object, ty, span) {
+            self.b.module().globals[global].parts = parts;
+        }
+    }
+
     /// The body of the function that gives the variables `lhs` of the
     /// package their first value: `value` is worked out, and each
     /// variable is the owner of what it gets. Nothing ends them

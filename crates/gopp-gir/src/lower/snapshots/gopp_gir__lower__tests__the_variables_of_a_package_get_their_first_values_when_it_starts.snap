@@ -10,20 +10,17 @@ fn _GPJ4mainE() -> () [go, external] {
   let _3: ()
   let _4: ()
   let _5: ()
-  let _6: ()
   bb0:
-    _1 = call const fn @_GPC1_J4mainE() -> [return: bb1, unwind: continue]
+    _1 = call const fn @_GPC2_J4mainE() -> [return: bb1, unwind: continue]
   bb1:
-    _2 = call const fn @_GPC2_J4mainE() -> [return: bb2, unwind: continue]
+    _2 = call const fn @_GPC3_J4mainE() -> [return: bb2, unwind: continue]
   bb2:
-    _3 = call const fn @_GPC3_J4mainE() -> [return: bb3, unwind: continue]
+    _3 = call const fn @_GPC4_J4mainE() -> [return: bb3, unwind: continue]
   bb3:
-    _4 = call const fn @_GPC4_J4mainE() -> [return: bb4, unwind: continue]
+    _4 = call const fn @_GPC5_J4mainE() -> [return: bb4, unwind: continue]
   bb4:
-    _5 = call const fn @_GPC5_J4mainE() -> [return: bb5, unwind: continue]
+    _5 = call const fn @_GPC6_J4mainE() -> [return: bb5, unwind: continue]
   bb5:
-    _6 = call const fn @_GPC6_J4mainE() -> [return: bb6, unwind: continue]
-  bb6:
     return
 }
 

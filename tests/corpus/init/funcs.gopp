@@ -1,0 +1,32 @@
+package main
+
+var count = 1
+var names = []string{"zero"}
+var total = sum(count, 2)
+
+func sum(a, b int) int { return a + b }
+
+// The init functions run in the order of the source, after every
+// variable has its value, and each sees what the one before it did.
+func init() {
+	count += total
+	names = append(names, "one")
+}
+
+func init() {
+	count *= 2
+	names = append(names, "two")
+}
+
+var late = len(names)
+
+func init() {
+	println("init three", count, late, len(names))
+}
+
+func main() {
+	println(count, total, late)
+	for i, name := range names {
+		println(i, name)
+	}
+}

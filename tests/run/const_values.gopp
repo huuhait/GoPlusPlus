@@ -1,0 +1,41 @@
+package main
+
+type Point struct{ x, y int }
+
+type Line struct {
+	from, to Point
+	name     string
+	scale    float64
+}
+
+const origin = Point{1, 2}
+const primes = [4]int{2, 3, 5, 7}
+const names = [2]string{"a", "b"}
+const diagonal = Line{origin, Point{9, 9}, "diag", 1.5}
+const grid = [2][2]int8{{1, 2}, {3, 4}}
+
+var start = origin
+var table = primes
+
+func sum(xs [4]int) int {
+	n := 0
+	for _, x := range xs {
+		n += x
+	}
+	return n
+}
+
+func main() {
+	p := origin
+	p.x++
+	println(p.x, origin.y, primes[2], names[1], start.x, table[3], len(primes))
+	println(sum(primes), diagonal.to.x, diagonal.name, diagonal.scale, grid[1][0])
+	q := origin
+	t := primes
+	t[0] = 100
+	start.y = 50
+	println(q.x, t[0], primes[0], start.y, origin.y, p == origin, q == origin)
+	for i, name := range names {
+		println(i, name)
+	}
+}

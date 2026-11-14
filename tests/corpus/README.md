@@ -1,6 +1,6 @@
 # The corpus of programs that do what Go does
 
-Each program here is valid in Go and in Go++, and does the same in both ([differences-from-go.md](../../docs/design/differences-from-go.md)). The directories are its groups: `scalar`, `collection`, `generic`, `closure`, `interface`, `panic`.
+Each program here is valid in Go and in Go++, and does the same in both ([differences-from-go.md](../../docs/design/differences-from-go.md)). The directories are its groups: `scalar`, `collection`, `generic`, `closure`, `interface`, `panic`, `init`.
 
 - `name.gopp` is the program. Go builds the same text as `main.go`.
 - `name.out` is what Go says the program does: what it writes to both streams, in the order of the writes, up to the trace of a panic, and a last line `exit status N` if it ends with another status than 0. Go writes this file; nothing else does.

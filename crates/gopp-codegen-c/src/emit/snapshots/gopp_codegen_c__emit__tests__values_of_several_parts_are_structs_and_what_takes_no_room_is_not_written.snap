@@ -213,5 +213,5 @@ int main(int argc, char **argv) {
   _gopp_rt_funcs(&gopp_table);
   gopp_f3();
   gopp_f4();
-  return 0;
+  _gopp_rt_exit(0);
 }

@@ -1,0 +1,19 @@
+package main
+
+// The values are worked out in the order of what they need, not of the
+// source: b and c before a, each call of f after the one before it.
+var (
+	a = c + b
+	b = f()
+	c = f()
+	d = 3
+)
+
+func f() int {
+	d++
+	return d
+}
+
+func main() {
+	println(a, b, c, d)
+}

@@ -211,10 +211,14 @@ fn a_unit_starts_its_program_as_it_is_built_for() {
     // What is no program has no start and no table of names.
     assert!(!library.contains(main) && !library.contains(entered));
     assert!(!library.contains("gopp_funcs"));
+    // A program ends through the runtime when `main` has returned
+    // (INI-2); what another program loads goes back to it.
+    assert!(program.contains("();\n  _gopp_rt_exit(0);\n}"));
     assert_eq!(
         program
             .replace(main, entered)
-            .replace("(argc, argv)", "(0, 0)"),
+            .replace("(argc, argv)", "(0, 0)")
+            .replace("  _gopp_rt_exit(0);\n}", "  return 0;\n}"),
         loaded
     );
 }

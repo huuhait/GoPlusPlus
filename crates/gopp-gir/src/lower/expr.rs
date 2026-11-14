@@ -201,7 +201,7 @@ impl<'a> FuncCx<'a, '_> {
         }
     }
 
-    fn constant(&mut self, value: &Value, ty: TypeId) -> Option<Operand> {
+    pub(super) fn constant(&mut self, value: &Value, ty: TypeId) -> Option<Operand> {
         match (value, self.kind(ty)) {
             (Value::Bool(known), Type::Bool) => Some(self.b.const_bool(*known)),
             (_, Type::Int { .. }) => {
@@ -220,8 +220,135 @@ impl<'a> FuncCx<'a, '_> {
                 Some(Operand::Const(Constant { kind, ty }))
             }
             (Value::Str(text), Type::String) => Some(self.b.const_str(text.bytes())),
+            (Value::Composite(of), _) => {
+                // Every use of a constant shares what the checker
+                // found for it.
+                let key = (std::sync::Arc::as_ptr(of) as usize, ty);
+                let global = match self.memo.constants.get(&key) {
+                    Some(&known) => known,
+                    None => {
+                        let made = self.composite_constant(value, ty);
+                        self.memo.constants.insert(key, made);
+                        made
+                    }
+                }?;
+                let kind = ConstantKind::Value(global);
+                Some(Operand::Const(Constant { kind, ty }))
+            }
             _ => None,
         }
+    }
+
+    /// The parts of a constant of the type as static data has them: a
+    /// constant for each leaf of the type, in their order. `said` gets
+    /// what tells the constant from every other of its type.
+    pub(super) fn constant_parts(
+        &mut self,
+        value: &Value,
+        ty: TypeId,
+        parts: &mut Vec<Constant>,
+        said: &mut Vec<u8>,
+    ) -> Option<()> {
+        use gopp_sema::constant::Composite;
+        self.memo.steps += 1;
+        let zero = |this: &mut Self, parts: &mut Vec<Constant>| {
+            let leaves = this.b.types().leaves(ty, crate::verify::MAX_LEAVES)?;
+            let kind = ConstantKind::Zero;
+            parts.extend(leaves.into_iter().map(|ty| Constant { kind, ty }));
+            Some(())
+        };
+        match (value, self.kind(ty)) {
+            (Value::Composite(of), Type::Struct(id)) => {
+                let Composite::Struct(values) = &**of else {
+                    return None;
+                };
+                let fields = self.b.types().struct_fields(id)?.to_vec();
+                if fields.len() != values.len() || self.holds_tables(ty) {
+                    return None;
+                }
+                for (value, field) in values.iter().zip(fields) {
+                    self.constant_parts(value, field, parts, said)?;
+                }
+            }
+            (Value::Composite(of), Type::Array(elem, count)) => {
+                let Composite::Array(values) = &**of else {
+                    return None;
+                };
+                if values.len() as u64 != count {
+                    return None;
+                }
+                for value in values {
+                    self.constant_parts(value, elem, parts, said)?;
+                }
+            }
+            // An option that is nil is all zero; one that is set is its
+            // value, and then that it is set.
+            (Value::Composite(of), Type::Option(_)) if matches!(**of, Composite::Nil) => {
+                said.push(b'n');
+                zero(self, parts)?;
+            }
+            (value, Type::Option(of)) => {
+                self.constant_parts(value, of, parts, said)?;
+                said.push(b's');
+                parts.push(Constant {
+                    kind: ConstantKind::Bool(true),
+                    ty: TypeInterner::BOOL,
+                });
+            }
+            (Value::Composite(_), _) => return None,
+            (value, _) => {
+                let Operand::Const(part) = self.constant(value, ty)? else {
+                    return None;
+                };
+                match (part.kind, value) {
+                    (ConstantKind::Int(bits) | ConstantKind::Float(bits), _) => {
+                        said.extend(bits.to_le_bytes());
+                    }
+                    (ConstantKind::Bool(known), _) => said.push(u8::from(known)),
+                    (ConstantKind::Str(_), Value::Str(text)) => {
+                        said.extend((text.bytes().len() as u64).to_le_bytes());
+                        said.extend(text.bytes());
+                    }
+                    _ => return None,
+                }
+                parts.push(part);
+            }
+        }
+        Some(())
+    }
+
+    /// The read-only global that holds the constant of several parts:
+    /// one for all who use a constant of this type with these parts,
+    /// in every package.
+    fn composite_constant(&mut self, value: &Value, ty: TypeId) -> Option<crate::GlobalId> {
+        use std::hash::{Hash, Hasher};
+        let (mut parts, mut said) = (Vec::new(), Vec::new());
+        self.constant_parts(value, ty, &mut parts, &mut said)?;
+        // The symbol says the type as the module writes it, and the
+        // parts by two sums over them.
+        let shown = self.b.types().display(ty).to_string();
+        let mut sums = (
+            std::collections::hash_map::DefaultHasher::new(),
+            rustc_hash::FxHasher::default(),
+        );
+        (&shown, &said).hash(&mut sums.0);
+        (&said, &shown).hash(&mut sums.1);
+        let mut symbol = "gopp.const.".to_owned();
+        for letter in shown.bytes() {
+            match letter.is_ascii_alphanumeric() || letter == b'_' || letter == b'.' {
+                true => symbol.push(letter as char),
+                false => symbol.push_str(&format!("${letter:02x}")),
+            }
+        }
+        symbol.push_str(&format!(
+            ".{:016x}{:016x}",
+            sums.0.finish(),
+            sums.1.finish()
+        ));
+        if let Some(&known) = self.memo.globals.get(&symbol) {
+            return Some(known);
+        }
+        Some(self.said(symbol, ty, parts))
     }
 
     /// `nil` in a place of the type.
@@ -777,7 +904,7 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The global of the variable in the module of the run, declared
     /// there if it is not yet; none for a variable without a value.
-    fn declare_global(
+    pub(super) fn declare_global(
         &mut self,
         key: CalleeKey,
         package: &Package,
