@@ -917,13 +917,14 @@ impl<'a> Checker<'a> {
                     Some(&Ref::Local(local)) => Some(local),
                     _ => None,
                 };
-                if local.is_some_and(|local| self.read_only.contains(&local)) {
+                if let Some(&fixed) = local.and_then(|local| self.read_only.get(&local)) {
                     let message = format!(
-                        "cannot assign to what {} points to: what a Shared holds is only read",
-                        self.expr_string(cx, pointer)
+                        "cannot assign to what {} points to: {}",
+                        self.expr_string(cx, pointer),
+                        fixed.why()
                     );
                     let span = cx.tree.exprs[pointer].span;
-                    self.error(Code::OwnSharedWrite, span, message);
+                    self.error(fixed.code(), span, message);
                 }
             }
             // The pointer itself is assigned.

@@ -166,7 +166,6 @@ func pair(p Point) (int, Point) { return p.x, Point{p.y, p.x} }
 func (b *Box) grow(by int8, i int) Nothing {
 	b.sizes[i] += by
 	b.at = origin
-	total++
 	return b.none
 }
 
@@ -174,13 +173,17 @@ func build(next *Box, grid [2][2]float32) Box {
 	n, p := pair(Point{1, 2})
 	b := Box{at: p, sizes: [3]int8{1, 2: 3}, name: \"box\\n\", next: next}
 	b.none = b.grow(int8(n), len(b.name))
-	q := &b.none
-	nothing = q
 	grid[1][0] = grid[0][1]
 	return b
 }
 
-func init() { total = 7 }
+func init() {
+	total = 7
+	total++
+	var none Nothing
+	q := &none
+	nothing = q
+}
 
 func main() {}
 ";
@@ -722,8 +725,6 @@ func main() {
 /// value is not what Go says, which panics.
 const CHECKS: &str = "package main
 
-var calls int
-
 func expect(got, want int) {
 	if got != want {
 		var cell [1]int
@@ -736,9 +737,9 @@ func least() int { return -9223372036854775808 }
 
 func minus(n int) int { return -n }
 
-func count() int {
-	calls++
-	return calls
+func count(calls *int) int {
+	*calls++
+	return *calls
 }
 
 type Point struct {
@@ -862,9 +863,10 @@ again:
 		goto again
 	}
 	expect(n, 12)
-	first := calls + count()*10 + calls*100
+	calls := 0
+	first := calls + count(&calls)*10 + calls*100
 	expect(first, 110)
-	if count() == 0 && count() == 0 || count() == 0 {
+	if count(&calls) == 0 && count(&calls) == 0 || count(&calls) == 0 {
 		expect(0, 1)
 	}
 	expect(calls, 3)

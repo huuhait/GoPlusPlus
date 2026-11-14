@@ -1,21 +1,23 @@
 package main
 
+import "sync"
+
 type doc struct {
 	title string
 	tags  []string
 }
 
-var lists [][]int
-var shelf []doc
+var lists sync.Mutex[[][]int]
+var shelf sync.Mutex[[]doc]
 
 func keep(xs []int) {
 	xs[0] += 100
-	lists = append(lists, xs)
+	lists.With(func(all *[][]int) { *all = append(*all, xs) })
 }
 
 func file(d doc) {
 	d.tags[0] = "filed"
-	shelf = append(shelf, d)
+	shelf.With(func(all *[]doc) { *all = append(*all, d) })
 }
 
 func first(xs []int) int { return xs[0] }
@@ -133,11 +135,15 @@ func main() {
 	reached()
 	moved(0)
 	moved(3)
-	println(len(lists), len(shelf))
-	for _, xs := range lists {
-		println(xs[0])
-	}
-	for _, d := range shelf {
-		println(d.title, d.tags[0])
-	}
+	lists.With(func(all *[][]int) {
+		shelf.With(func(docs *[]doc) { println(len(*all), len(*docs)) })
+		for _, xs := range *all {
+			println(xs[0])
+		}
+	})
+	shelf.With(func(docs *[]doc) {
+		for _, d := range *docs {
+			println(d.title, d.tags[0])
+		}
+	})
 }

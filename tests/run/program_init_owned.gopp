@@ -1,17 +1,19 @@
 package main
 
-var opened, closed int
+import "sync"
+
+var opened, closed sync.Atomic[int]
 
 type File struct{ fd int }
 
 func (f *File) drop() {
 	if f.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
 func open(fd int) File {
-	opened++
+	opened.Add(1)
 	return File{fd: fd}
 }
 
@@ -56,5 +58,5 @@ func init() {
 
 func main() {
 	println(log.fd, measured, name, len(names), names[2], sizes["prefix!"], port, total)
-	println(len(files), opened, closed)
+	println(len(files), opened.Load(), closed.Load())
 }

@@ -61,9 +61,7 @@ func keep(c Counting) Counting { return c }
 
 func seek(s Seeker) int { return s.Seek() + s.Seek() }
 
-var kept any
-
-func store(v any) { kept = v }
+func store(kept *any, v any) { *kept = v }
 
 func main() {
 	c := Counter{n: 1, note: "c"}
@@ -78,7 +76,8 @@ func main() {
 
 	list := []int{1, 2}
 	println(read(list), length(list))
-	store(list)
+	var kept any
+	store(&kept, list)
 	list[0] = 9
 	println(kept.([]int)[0], list[0])
 

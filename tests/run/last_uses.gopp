@@ -1,18 +1,20 @@
 package main
 
+import "sync"
+
 type doc struct {
 	title string
 	tags  []string
 	seen  map[string]int
 }
 
-var shelf []doc
-var lists [][]int
-var words []string
+var shelf sync.Mutex[[]doc]
+var lists sync.Mutex[[][]int]
+var words sync.Mutex[[]string]
 
-func keep(xs []int) { lists = append(lists, xs) }
-func file(d doc)    { shelf = append(shelf, d) }
-func say(s string)  { words = append(words, s) }
+func keep(xs []int) { lists.With(func(all *[][]int) { *all = append(*all, xs) }) }
+func file(d doc)    { shelf.With(func(all *[]doc) { *all = append(*all, d) }) }
+func say(s string)  { words.With(func(all *[]string) { *all = append(*all, s) }) }
 
 func total(xs []int) int {
 	t := 0
@@ -117,16 +119,24 @@ func main() {
 	values()
 	out, n := results()
 	println(len(out), n)
-	println(len(lists), len(shelf), len(words))
 	sum := 0
-	for _, xs := range lists {
-		sum += total(xs)
-	}
+	lists.With(func(all *[][]int) {
+		shelf.With(func(docs *[]doc) {
+			words.With(func(said *[]string) { println(len(*all), len(*docs), len(*said)) })
+		})
+		for _, xs := range *all {
+			sum += total(xs)
+		}
+	})
 	println(sum)
-	for _, d := range shelf {
-		println(d.title, len(d.tags), d.seen["x"])
-	}
-	for _, w := range words {
-		println(w)
-	}
+	shelf.With(func(docs *[]doc) {
+		for _, d := range *docs {
+			println(d.title, len(d.tags), d.seen["x"])
+		}
+	})
+	words.With(func(said *[]string) {
+		for _, w := range *said {
+			println(w)
+		}
+	})
 }

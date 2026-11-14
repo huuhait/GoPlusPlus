@@ -11,8 +11,6 @@ type shelf struct {
 	count       int
 }
 
-var kept box
-
 func (b box) size() int { return len(b.items) + len(b.tags[0]) + len(b.notes) }
 
 func (b *box) add(n int) { b.items = append(b.items, n) }
@@ -82,7 +80,7 @@ func main() {
 	sh.left, sh.right = sh.right, sh.left
 	sh.left.items, b.items = b.items, sh.left.items
 	println(sh.left.size(), sh.right.size(), b.size())
-	kept = sh.right
+	kept := sh.right
 	kept = b
 	kept.notes[2] = kept.items
 	println(kept.size(), len(kept.notes[2]))

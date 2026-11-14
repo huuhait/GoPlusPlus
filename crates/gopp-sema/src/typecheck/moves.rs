@@ -562,6 +562,8 @@ impl<'a> Checker<'a> {
                     localized: &self.localized,
                     read_only: &self.read_only,
                     of_headers: &self.foreign_uses,
+                    package: self.package,
+                    starting: self.starting,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -724,7 +726,12 @@ impl<'a> Checker<'a> {
         };
         let text = |at: Span| text[at.lo as usize..at.hi as usize].to_owned();
         for written in &found.written {
-            if !self.report_once((written.given, Code::OwnSharedWrite)) {
+            let (code, why) = (written.fixed.code(), written.fixed.why());
+            let through = match written.fixed {
+                place::Fixed::Shared => " through it",
+                place::Fixed::Package => "",
+            };
+            if !self.report_once((written.given, code)) {
                 continue;
             }
             let (called, given) = (text(written.at), text(written.given));
@@ -732,20 +739,19 @@ impl<'a> Checker<'a> {
             let receiver = written.at.lo <= written.given.lo && written.given.hi <= written.at.hi;
             let message = match (receiver, written.known) {
                 (true, true) => format!(
-                    "cannot call {called}: the method writes through its receiver, and what a \
-                     Shared holds is only read through it"
+                    "cannot call {called}: the method writes through its receiver, and \
+                     {why}{through}"
                 ),
                 (true, false) => format!(
                     "cannot call {called}: nothing says that the method only reads through its \
-                     receiver, and what a Shared holds is only read through it"
+                     receiver, and {why}{through}"
                 ),
                 (false, true) => format!(
-                    "cannot give {given} to {called}: the function writes through it, and what a \
-                     Shared holds is only read"
+                    "cannot give {given} to {called}: the function writes through it, and {why}"
                 ),
                 (false, false) => format!(
                     "cannot give {given} to {called}: nothing says that the function only reads \
-                     through it, and what a Shared holds is only read"
+                     through it, and {why}"
                 ),
             };
             // The value has one name: a `Unique` is what is meant. The
@@ -754,12 +760,11 @@ impl<'a> Checker<'a> {
             let only = [at, at + 1]
                 .iter()
                 .any(|at| problem.only_names.contains(at));
-            let fix = match only {
+            let fix = match only && written.fixed == place::Fixed::Shared {
                 true => Self::only_name_fix(&given),
-                false => "put what changes in a Mutex or an Atomic, or own the value with a Unique"
-                    .to_owned(),
+                false => written.fixed.fix().to_owned(),
             };
-            let diagnostic = Diagnostic::new(Code::OwnSharedWrite, written.given, message);
+            let diagnostic = Diagnostic::new(code, written.given, message);
             self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
         }
         for broken in walked.iter().chain(&found.broken) {
@@ -1433,10 +1438,13 @@ impl<'a> Walk<'a> {
                     let root = self.root(first);
                     root.filter(|root| self.watched.contains(root))
                 });
-                let clears =
-                    self.body.uses.get(&callee) == Some(&Ref::Universe(Predeclared::Clear));
-                if let (true, Some(first)) = (clears, operand) {
-                    self.change(first, borrows::What::Clear);
+                let elements = match self.body.uses.get(&callee) {
+                    Some(Ref::Universe(Predeclared::Clear)) => Some(false),
+                    Some(Ref::Universe(Predeclared::Delete | Predeclared::CopyFunc)) => Some(true),
+                    _ => None,
+                };
+                if let (Some(elements), Some(first)) = (elements, operand) {
+                    self.changed_by_builtin(first, elements);
                 }
                 match (written, operand) {
                     (Some(local), Some(first)) => {

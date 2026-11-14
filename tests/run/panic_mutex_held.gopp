@@ -1,0 +1,28 @@
+// exit: 2
+package main
+
+import "sync"
+
+var m = sync.NewMutex(map[int]int{1: 1, 2: 2})
+
+func grow() {
+	m.With(func(all *map[int]int) { all[len(*all)+100] = 1 })
+}
+
+// A function that runs with what a Mutex holds does not ask for it
+// again: the second With would wait for the first, so it is a panic.
+// No call changes a map under the loop that walks it.
+func main() {
+	m.With(func(all *map[int]int) {
+		for key := range *all {
+			all[key] = 0
+		}
+		println(len(*all), all[1])
+	})
+	m.With(func(all *map[int]int) {
+		for range *all {
+			grow()
+		}
+	})
+	println("not reached")
+}

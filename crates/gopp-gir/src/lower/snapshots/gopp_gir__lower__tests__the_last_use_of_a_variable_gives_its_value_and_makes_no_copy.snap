@@ -5,8 +5,6 @@ expression: gir(text)
 module "main"
 file 0 "a.gopp"
 
-global var @_GPR4mainE4kept: [][]i64 [external]
-
 fn _GPF4mainE4keep(_1: []i64) -> () [go, external] {
   let _0: ()
   let _1: []i64 "xs"
@@ -18,52 +16,39 @@ fn _GPF4mainE4keep(_1: []i64) -> () [go, external] {
   let _7: *[]i64
   let _8: *u8
   let _9: ()
-  let _10: *[][]i64
-  let _11: *[][]i64
-  let _12: [][]i64
-  let _13: []i64
-  let _14: u64
-  let _15: *[][]i64
-  let _16: *u8
-  let _17: ()
-  let _18: u64
-  let _19: *[]i64
-  let _20: *u8
-  let _21: ()
+  let _10: u64
+  let _11: i64
+  let _12: ()
+  let _13: ()
+  let _14: *[]i64
+  let _15: *u8
+  let _16: ()
   bb0:
-    _2 = copy _1  ; a.gopp:6:2
-    _3 = len(_2)  ; a.gopp:6:2
-    _4 = const 0: i64  ; a.gopp:6:2
-    _5 = int_to_int(copy _4) as u64  ; a.gopp:6:2
-    _6 = lt(copy _5, copy _3)  ; a.gopp:6:2
-    assert(copy _6 == true, Bounds(copy _4, copy _3)) -> [success: bb3, unwind: cleanup bb1]  ; a.gopp:6:2
+    _2 = copy _1  ; a.gopp:4:2
+    _3 = len(_2)  ; a.gopp:4:2
+    _4 = const 0: i64  ; a.gopp:4:2
+    _5 = int_to_int(copy _4) as u64  ; a.gopp:4:2
+    _6 = lt(copy _5, copy _3)  ; a.gopp:4:2
+    assert(copy _6 == true, Bounds(copy _4, copy _3)) -> [success: bb3, unwind: cleanup bb1]  ; a.gopp:4:2
   bb1: [cleanup]
-    _7 = &mut _1  ; a.gopp:6:2
-    _8 = ptr_to_ptr(copy _7) as *u8  ; a.gopp:6:2
-    _9 = call const fn @_GPTdSi(copy _8) -> [return: bb2, unwind: terminate]  ; a.gopp:6:2
+    _7 = &mut _1  ; a.gopp:4:2
+    _8 = ptr_to_ptr(copy _7) as *u8  ; a.gopp:4:2
+    _9 = call const fn @_GPTdSi(copy _8) -> [return: bb2, unwind: terminate]  ; a.gopp:4:2
   bb2: [cleanup]
-    resume  ; a.gopp:6:2
+    resume  ; a.gopp:4:2
   bb3:
-    _2[_5] = const 1: i64  ; a.gopp:6:2
-    _10 = const global @_GPR4mainE4kept  ; a.gopp:7:2
-    _11 = const global @_GPR4mainE4kept  ; a.gopp:7:2
-    _12 = copy (*_11)  ; a.gopp:7:2
-    _13 = copy _1  ; a.gopp:7:2
-    _1 = const zero: []i64  ; a.gopp:7:2
-    _14 = len(_12)  ; a.gopp:7:2
-    _15 = &mut _12  ; a.gopp:7:2
-    _16 = ptr_to_ptr(copy _15) as *u8  ; a.gopp:7:2
-    _17 = call const fn @_gopp_slice_grow(copy _16, const 1: u64, const 32: u64, const false) -> [return: bb4, unwind: cleanup bb1]  ; a.gopp:7:2
+    _2[_5] = const 1: i64  ; a.gopp:4:2
+    _10 = len(_1)  ; a.gopp:5:2
+    _11 = int_to_int(copy _10) as i64  ; a.gopp:5:2
+    _12 = call const fn @_gopp_print_int(copy _11) -> [return: bb4, unwind: cleanup bb1]  ; a.gopp:5:2
   bb4:
-    _18 = add(copy _14, const 0: u64)  ; a.gopp:7:2
-    _12[_18] = copy _13  ; a.gopp:7:2
-    _12.1 = add(copy _14, const 1: u64)  ; a.gopp:7:2
-    (*_10) = copy _12  ; a.gopp:7:2
-    _19 = &mut _1  ; a.gopp:8:1
-    _20 = ptr_to_ptr(copy _19) as *u8  ; a.gopp:8:1
-    _21 = call const fn @_GPTdSi(copy _20) -> [return: bb5, unwind: terminate]  ; a.gopp:8:1
+    _13 = call const fn @_gopp_print_newline() -> [return: bb5, unwind: cleanup bb1]  ; a.gopp:5:2
   bb5:
-    return  ; a.gopp:8:1
+    _14 = &mut _1  ; a.gopp:6:1
+    _15 = ptr_to_ptr(copy _14) as *u8  ; a.gopp:6:1
+    _16 = call const fn @_GPTdSi(copy _15) -> [return: bb6, unwind: terminate]  ; a.gopp:6:1
+  bb6:
+    return  ; a.gopp:6:1
 }
 
 fn _GPF4mainE4uses(_1: bool) -> i64 [go, external] {
@@ -109,71 +94,71 @@ fn _GPF4mainE4uses(_1: bool) -> i64 [go, external] {
   let _39: *u8
   let _40: ()
   bb0:
-    _2 = const zero: []i64  ; a.gopp:11:2
-    _3 = &mut _2  ; a.gopp:11:2
-    _4 = ptr_to_ptr(copy _3) as *u8  ; a.gopp:11:2
-    _5 = call const fn @_gopp_slice_make(copy _4, const 1: i64, const 1: i64, const 8: u64) -> [return: bb1, unwind: continue]  ; a.gopp:11:2
+    _2 = const zero: []i64  ; a.gopp:9:2
+    _3 = &mut _2  ; a.gopp:9:2
+    _4 = ptr_to_ptr(copy _3) as *u8  ; a.gopp:9:2
+    _5 = call const fn @_gopp_slice_make(copy _4, const 1: i64, const 1: i64, const 8: u64) -> [return: bb1, unwind: continue]  ; a.gopp:9:2
   bb1:
-    _6 = copy _2  ; a.gopp:11:2
-    _7 = const 0: u64  ; a.gopp:11:2
-    _6[_7] = const 1: i64  ; a.gopp:11:2
-    storage_live(_8)  ; a.gopp:11:2
-    _8 = copy _6  ; a.gopp:11:2
-    _9 = copy _8  ; a.gopp:12:2
-    _10 = &mut _9  ; a.gopp:12:2
-    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:12:2
-    _12 = call const fn @_gopp_slice_copy(copy _11, const 8: u64) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:12:2
+    _6 = copy _2  ; a.gopp:9:2
+    _7 = const 0: u64  ; a.gopp:9:2
+    _6[_7] = const 1: i64  ; a.gopp:9:2
+    storage_live(_8)  ; a.gopp:9:2
+    _8 = copy _6  ; a.gopp:9:2
+    _9 = copy _8  ; a.gopp:10:2
+    _10 = &mut _9  ; a.gopp:10:2
+    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:10:2
+    _12 = call const fn @_gopp_slice_copy(copy _11, const 8: u64) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:10:2
   bb2: [cleanup]
-    _13 = &mut _8  ; a.gopp:12:2
-    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:12:2
-    _15 = call const fn @_GPTdSi(copy _14) -> [return: bb3, unwind: terminate]  ; a.gopp:12:2
+    _13 = &mut _8  ; a.gopp:10:2
+    _14 = ptr_to_ptr(copy _13) as *u8  ; a.gopp:10:2
+    _15 = call const fn @_GPTdSi(copy _14) -> [return: bb3, unwind: terminate]  ; a.gopp:10:2
   bb3: [cleanup]
-    resume  ; a.gopp:12:2
+    resume  ; a.gopp:10:2
   bb4:
-    _16 = call const fn @_GPF4mainE4keep(copy _9) -> [return: bb5, unwind: cleanup bb2]  ; a.gopp:12:2
+    _16 = call const fn @_GPF4mainE4keep(copy _9) -> [return: bb5, unwind: cleanup bb2]  ; a.gopp:10:2
   bb5:
-    _17 = copy _8  ; a.gopp:13:2
-    _8 = const zero: []i64  ; a.gopp:13:2
-    _18 = call const fn @_GPF4mainE4keep(copy _17) -> [return: bb6, unwind: cleanup bb2]  ; a.gopp:13:2
+    _17 = copy _8  ; a.gopp:11:2
+    _8 = const zero: []i64  ; a.gopp:11:2
+    _18 = call const fn @_GPF4mainE4keep(copy _17) -> [return: bb6, unwind: cleanup bb2]  ; a.gopp:11:2
   bb6:
-    _19 = const zero: []i64  ; a.gopp:14:2
-    _20 = &mut _19  ; a.gopp:14:2
-    _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:14:2
-    _22 = call const fn @_gopp_slice_make(copy _21, const 1: i64, const 1: i64, const 8: u64) -> [return: bb7, unwind: cleanup bb2]  ; a.gopp:14:2
+    _19 = const zero: []i64  ; a.gopp:12:2
+    _20 = &mut _19  ; a.gopp:12:2
+    _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:12:2
+    _22 = call const fn @_gopp_slice_make(copy _21, const 1: i64, const 1: i64, const 8: u64) -> [return: bb7, unwind: cleanup bb2]  ; a.gopp:12:2
   bb7:
-    _23 = copy _19  ; a.gopp:14:2
-    _24 = const 0: u64  ; a.gopp:14:2
-    _23[_24] = const 2: i64  ; a.gopp:14:2
-    storage_live(_25)  ; a.gopp:14:2
-    _25 = copy _23  ; a.gopp:14:2
-    switch copy _1 [0: bb12, otherwise: bb8]  ; a.gopp:15:5
+    _23 = copy _19  ; a.gopp:12:2
+    _24 = const 0: u64  ; a.gopp:12:2
+    _23[_24] = const 2: i64  ; a.gopp:12:2
+    storage_live(_25)  ; a.gopp:12:2
+    _25 = copy _23  ; a.gopp:12:2
+    switch copy _1 [0: bb12, otherwise: bb8]  ; a.gopp:13:5
   bb8:
-    _26 = copy _25  ; a.gopp:16:3
-    _27 = &mut _26  ; a.gopp:16:3
-    _28 = ptr_to_ptr(copy _27) as *u8  ; a.gopp:16:3
-    _29 = call const fn @_gopp_slice_copy(copy _28, const 8: u64) -> [return: bb11, unwind: cleanup bb9]  ; a.gopp:16:3
+    _26 = copy _25  ; a.gopp:14:3
+    _27 = &mut _26  ; a.gopp:14:3
+    _28 = ptr_to_ptr(copy _27) as *u8  ; a.gopp:14:3
+    _29 = call const fn @_gopp_slice_copy(copy _28, const 8: u64) -> [return: bb11, unwind: cleanup bb9]  ; a.gopp:14:3
   bb9: [cleanup]
-    _30 = &mut _25  ; a.gopp:16:3
-    _31 = ptr_to_ptr(copy _30) as *u8  ; a.gopp:16:3
-    _32 = call const fn @_GPTdSi(copy _31) -> [return: bb10, unwind: terminate]  ; a.gopp:16:3
+    _30 = &mut _25  ; a.gopp:14:3
+    _31 = ptr_to_ptr(copy _30) as *u8  ; a.gopp:14:3
+    _32 = call const fn @_GPTdSi(copy _31) -> [return: bb10, unwind: terminate]  ; a.gopp:14:3
   bb10: [cleanup]
-    goto bb2  ; a.gopp:16:3
+    goto bb2  ; a.gopp:14:3
   bb11:
-    _33 = call const fn @_GPF4mainE4keep(copy _26) -> [return: bb12, unwind: cleanup bb9]  ; a.gopp:16:3
+    _33 = call const fn @_GPF4mainE4keep(copy _26) -> [return: bb12, unwind: cleanup bb9]  ; a.gopp:14:3
   bb12:
-    _34 = len(_25)  ; a.gopp:18:2
-    _0 = int_to_int(copy _34) as i64  ; a.gopp:18:2
-    _35 = &mut _25  ; a.gopp:18:2
-    _36 = ptr_to_ptr(copy _35) as *u8  ; a.gopp:18:2
-    _37 = call const fn @_GPTdSi(copy _36) -> [return: bb13, unwind: terminate]  ; a.gopp:18:2
+    _34 = len(_25)  ; a.gopp:16:2
+    _0 = int_to_int(copy _34) as i64  ; a.gopp:16:2
+    _35 = &mut _25  ; a.gopp:16:2
+    _36 = ptr_to_ptr(copy _35) as *u8  ; a.gopp:16:2
+    _37 = call const fn @_GPTdSi(copy _36) -> [return: bb13, unwind: terminate]  ; a.gopp:16:2
   bb13:
-    _38 = &mut _8  ; a.gopp:18:2
-    _39 = ptr_to_ptr(copy _38) as *u8  ; a.gopp:18:2
-    _40 = call const fn @_GPTdSi(copy _39) -> [return: bb14, unwind: terminate]  ; a.gopp:18:2
+    _38 = &mut _8  ; a.gopp:16:2
+    _39 = ptr_to_ptr(copy _38) as *u8  ; a.gopp:16:2
+    _40 = call const fn @_GPTdSi(copy _39) -> [return: bb14, unwind: terminate]  ; a.gopp:16:2
   bb14:
-    storage_dead(_25)  ; a.gopp:18:2
-    storage_dead(_8)  ; a.gopp:18:2
-    return  ; a.gopp:18:2
+    storage_dead(_25)  ; a.gopp:16:2
+    storage_dead(_8)  ; a.gopp:16:2
+    return  ; a.gopp:16:2
 }
 
 fn _GPF4mainE5taken(_1: bool) -> i64 [go, external] {
@@ -211,79 +196,57 @@ fn _GPF4mainE5taken(_1: bool) -> i64 [go, external] {
   let _31: *u8
   let _32: ()
   bb0:
-    _2 = const zero: []i64  ; a.gopp:22:2
-    _3 = &mut _2  ; a.gopp:22:2
-    _4 = ptr_to_ptr(copy _3) as *u8  ; a.gopp:22:2
-    _5 = call const fn @_gopp_slice_make(copy _4, const 1: i64, const 1: i64, const 8: u64) -> [return: bb1, unwind: continue]  ; a.gopp:22:2
+    _2 = const zero: []i64  ; a.gopp:20:2
+    _3 = &mut _2  ; a.gopp:20:2
+    _4 = ptr_to_ptr(copy _3) as *u8  ; a.gopp:20:2
+    _5 = call const fn @_gopp_slice_make(copy _4, const 1: i64, const 1: i64, const 8: u64) -> [return: bb1, unwind: continue]  ; a.gopp:20:2
   bb1:
-    _6 = copy _2  ; a.gopp:22:2
-    _7 = const 0: u64  ; a.gopp:22:2
-    _6[_7] = const 1: i64  ; a.gopp:22:2
-    storage_live(_8)  ; a.gopp:22:2
-    _8 = copy _6  ; a.gopp:22:2
-    _9 = copy _8  ; a.gopp:23:2
-    _8 = const zero: []i64  ; a.gopp:23:2
-    _10 = call const fn @_GPF4mainE4keep(copy _9) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:23:2
+    _6 = copy _2  ; a.gopp:20:2
+    _7 = const 0: u64  ; a.gopp:20:2
+    _6[_7] = const 1: i64  ; a.gopp:20:2
+    storage_live(_8)  ; a.gopp:20:2
+    _8 = copy _6  ; a.gopp:20:2
+    _9 = copy _8  ; a.gopp:21:2
+    _8 = const zero: []i64  ; a.gopp:21:2
+    _10 = call const fn @_GPF4mainE4keep(copy _9) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:21:2
   bb2: [cleanup]
-    _11 = &mut _8  ; a.gopp:23:2
-    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:23:2
-    _13 = call const fn @_GPTdSi(copy _12) -> [return: bb3, unwind: terminate]  ; a.gopp:23:2
+    _11 = &mut _8  ; a.gopp:21:2
+    _12 = ptr_to_ptr(copy _11) as *u8  ; a.gopp:21:2
+    _13 = call const fn @_GPTdSi(copy _12) -> [return: bb3, unwind: terminate]  ; a.gopp:21:2
   bb3: [cleanup]
-    resume  ; a.gopp:23:2
+    resume  ; a.gopp:21:2
   bb4:
-    _14 = const zero: []i64  ; a.gopp:24:2
-    _15 = &mut _14  ; a.gopp:24:2
-    _16 = ptr_to_ptr(copy _15) as *u8  ; a.gopp:24:2
-    _17 = call const fn @_gopp_slice_make(copy _16, const 1: i64, const 1: i64, const 8: u64) -> [return: bb5, unwind: cleanup bb2]  ; a.gopp:24:2
+    _14 = const zero: []i64  ; a.gopp:22:2
+    _15 = &mut _14  ; a.gopp:22:2
+    _16 = ptr_to_ptr(copy _15) as *u8  ; a.gopp:22:2
+    _17 = call const fn @_gopp_slice_make(copy _16, const 1: i64, const 1: i64, const 8: u64) -> [return: bb5, unwind: cleanup bb2]  ; a.gopp:22:2
   bb5:
-    _18 = copy _14  ; a.gopp:24:2
-    _19 = const 0: u64  ; a.gopp:24:2
-    _18[_19] = const 2: i64  ; a.gopp:24:2
-    _20 = &mut _8  ; a.gopp:24:2
-    _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:24:2
-    _22 = call const fn @_GPTdSi(copy _21) -> [return: bb6, unwind: terminate]  ; a.gopp:24:2
+    _18 = copy _14  ; a.gopp:22:2
+    _19 = const 0: u64  ; a.gopp:22:2
+    _18[_19] = const 2: i64  ; a.gopp:22:2
+    _20 = &mut _8  ; a.gopp:22:2
+    _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:22:2
+    _22 = call const fn @_GPTdSi(copy _21) -> [return: bb6, unwind: terminate]  ; a.gopp:22:2
   bb6:
-    _8 = copy _18  ; a.gopp:24:2
-    storage_live(_23)  ; a.gopp:25:2
-    _23 = &mut _8  ; a.gopp:25:2
-    _24 = copy _8  ; a.gopp:26:2
-    _25 = &mut _24  ; a.gopp:26:2
-    _26 = ptr_to_ptr(copy _25) as *u8  ; a.gopp:26:2
-    _27 = call const fn @_gopp_slice_copy(copy _26, const 8: u64) -> [return: bb7, unwind: cleanup bb2]  ; a.gopp:26:2
+    _8 = copy _18  ; a.gopp:22:2
+    storage_live(_23)  ; a.gopp:23:2
+    _23 = &mut _8  ; a.gopp:23:2
+    _24 = copy _8  ; a.gopp:24:2
+    _25 = &mut _24  ; a.gopp:24:2
+    _26 = ptr_to_ptr(copy _25) as *u8  ; a.gopp:24:2
+    _27 = call const fn @_gopp_slice_copy(copy _26, const 8: u64) -> [return: bb7, unwind: cleanup bb2]  ; a.gopp:24:2
   bb7:
-    _28 = call const fn @_GPF4mainE4keep(copy _24) -> [return: bb8, unwind: cleanup bb2]  ; a.gopp:26:2
+    _28 = call const fn @_GPF4mainE4keep(copy _24) -> [return: bb8, unwind: cleanup bb2]  ; a.gopp:24:2
   bb8:
-    _29 = len((*_23))  ; a.gopp:27:2
-    _0 = int_to_int(copy _29) as i64  ; a.gopp:27:2
-    _30 = &mut _8  ; a.gopp:27:2
-    _31 = ptr_to_ptr(copy _30) as *u8  ; a.gopp:27:2
-    _32 = call const fn @_GPTdSi(copy _31) -> [return: bb9, unwind: terminate]  ; a.gopp:27:2
+    _29 = len((*_23))  ; a.gopp:25:2
+    _0 = int_to_int(copy _29) as i64  ; a.gopp:25:2
+    _30 = &mut _8  ; a.gopp:25:2
+    _31 = ptr_to_ptr(copy _30) as *u8  ; a.gopp:25:2
+    _32 = call const fn @_GPTdSi(copy _31) -> [return: bb9, unwind: terminate]  ; a.gopp:25:2
   bb9:
-    storage_dead(_23)  ; a.gopp:27:2
-    storage_dead(_8)  ; a.gopp:27:2
-    return  ; a.gopp:27:2
-}
-
-fn _GPTdSSi(_1: *u8) -> () [c, linkonce_odr] {
-  let _0: ()
-  let _2: *[][]i64
-  let _3: u64
-  let _4: u64
-  let _5: *[]i64
-  let _6: *u8
-  let _7: ()
-  let _8: ()
-  bb0:
-    _2 = ptr_to_ptr(copy _1) as *[][]i64
-    _3 = const zero: u64
-    _4 = len((*_2))
-    _5 = &mut (*_2)[_3]
-    _6 = ptr_to_ptr(copy _5) as *u8
-    _7 = call const fn @_gopp_each(copy _6, copy _4, const 32: u64, const fn @_GPTdSi) -> [return: bb1, unwind: continue]
-  bb1:
-    _8 = call const fn @_gopp_slice_free(copy _1) -> [return: bb2, unwind: continue]
-  bb2:
-    return
+    storage_dead(_23)  ; a.gopp:25:2
+    storage_dead(_8)  ; a.gopp:25:2
+    return  ; a.gopp:25:2
 }
 
 fn _GPTdSi(_1: *u8) -> () [c, linkonce_odr] {
@@ -297,12 +260,12 @@ fn _GPTdSi(_1: *u8) -> () [c, linkonce_odr] {
     return
 }
 
-declare fn _gopp_slice_grow(_1: *u8, _2: u64, _3: u64, _4: bool) -> () [c, external]
+declare fn _gopp_print_int(_1: i64) -> () [c, external]
+
+declare fn _gopp_print_newline() -> () [c, external]
 
 declare fn _gopp_slice_make(_1: *u8, _2: i64, _3: i64, _4: u64) -> () [c, external]
 
 declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
-
-declare fn _gopp_each(_1: *u8, _2: u64, _3: u64, _4: fn "C"(*u8) -> ()) -> () [c, external]
 
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]

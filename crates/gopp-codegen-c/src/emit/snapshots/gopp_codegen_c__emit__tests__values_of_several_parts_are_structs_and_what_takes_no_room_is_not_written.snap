@@ -7,13 +7,13 @@ typedef struct T3 T3; /* _GPTiN4mainE5Point */
 typedef struct T5 T5; /* (i64, _GPTiN4mainE5Point) */
 typedef struct T8 T8; /* _GPTiN4mainE3Box */
 typedef struct T11 T11; /* [3]i8 */
-typedef struct T17 T17; /* [2]f32 */
-typedef struct T18 T18; /* [2][2]f32 */
+typedef struct T16 T16; /* [2]f32 */
+typedef struct T17 T17; /* [2][2]f32 */
 typedef GOPP_CALL T5 (*T6)(T3); /* fn(_GPTiN4mainE5Point) -> (i64, _GPTiN4mainE5Point) */
 typedef GOPP_CALL void (*T12)(T8 *, int8_t, int64_t); /* fn(*_GPTiN4mainE3Box, i8, i64) -> _GPTiN4mainE7Nothing */
-typedef GOPP_CALL T8 (*T19)(T8 *, T18); /* fn(*_GPTiN4mainE3Box, [2][2]f32) -> _GPTiN4mainE3Box */
-typedef void (*T23)(uint8_t *); /* fn "C"(*u8) -> () */
-typedef GOPP_CALL void (*T24)(void); /* fn() -> () */
+typedef GOPP_CALL T8 (*T18)(T8 *, T17); /* fn(*_GPTiN4mainE3Box, [2][2]f32) -> _GPTiN4mainE3Box */
+typedef void (*T21)(uint8_t *); /* fn "C"(*u8) -> () */
+typedef GOPP_CALL void (*T22)(void); /* fn() -> () */
 typedef void (*T26)(gopp_string); /* fn "C"(string) -> () */
 struct T3 {
   int64_t f0;
@@ -32,18 +32,18 @@ struct T8 {
   gopp_string f2;
   T8 * f4;
 };
-struct T17 {
+struct T16 {
   float a[2];
 };
-struct T18 {
-  T17 a[2];
+struct T17 {
+  T16 a[2];
 };
 _Static_assert(sizeof(T3) == 16 && _Alignof(T3) == 8, "the layout of T3");
 _Static_assert(sizeof(T5) == 24 && _Alignof(T5) == 8, "the layout of T5");
 _Static_assert(sizeof(T11) == 3 && _Alignof(T11) == 1, "the layout of T11");
 _Static_assert(sizeof(T8) == 56 && _Alignof(T8) == 8, "the layout of T8");
-_Static_assert(sizeof(T17) == 8 && _Alignof(T17) == 4, "the layout of T17");
-_Static_assert(sizeof(T18) == 16 && _Alignof(T18) == 4, "the layout of T18");
+_Static_assert(sizeof(T16) == 8 && _Alignof(T16) == 4, "the layout of T16");
+_Static_assert(sizeof(T17) == 16 && _Alignof(T17) == 4, "the layout of T17");
 
 static const char gopp_s0[] = "box\012";
 int64_t gopp_g0 __asm__("_GPR4mainE5total");
@@ -51,7 +51,7 @@ T3 gopp_g1 __asm__("_GPR4mainE6origin");
 
 GOPP_CALL T5 gopp_f0(T3 _1) __asm__("_GPF4mainE4pair");
 GOPP_CALL void gopp_f1(T8 * _1, int8_t _2, int64_t _3) __asm__("_GPM4growN4mainE3Box");
-GOPP_CALL T8 gopp_f2(T8 * _1, T18 _2) __asm__("_GPF4mainE5build");
+GOPP_CALL T8 gopp_f2(T8 * _1, T17 _2) __asm__("_GPF4mainE5build");
 GOPP_CALL void gopp_f3(void) __asm__("_GPK4mainE0_");
 GOPP_CALL void gopp_f4(void) __asm__("_GPF4mainE4main");
 GOPP_ONCE void gopp_f5(uint8_t * _1) __asm__("_GPTdN4mainE3Box");
@@ -70,7 +70,6 @@ GOPP_CALL void gopp_f1(T8 * _1, int8_t _2, int64_t _3) {
   [[maybe_unused]] uint64_t _5;
   [[maybe_unused]] bool _6;
   [[maybe_unused]] T3 * _7;
-  [[maybe_unused]] int64_t * _8;
   _4 = _3;
   _5 = ((uint64_t)_4);
   _6 = (_5 < 3ull);
@@ -80,8 +79,6 @@ bb1:
   (*_1).f1.a[_5] = ((int8_t)((*_1).f1.a[_5] + _2));
   _7 = (&gopp_g1);
   (*_1).f0 = (*_7);
-  _8 = (&gopp_g0);
-  (*_8) = ((int64_t)((*_8) + 1ll));
   return;
 }
 
@@ -107,7 +104,7 @@ bb3:
   return;
 }
 
-GOPP_CALL T8 gopp_f2(T8 * _1, T18 _2) {
+GOPP_CALL T8 gopp_f2(T8 * _1, T17 _2) {
   [[maybe_unused]] T8 _0;
   [[maybe_unused]] T3 _3;
   [[maybe_unused]] T5 _4;
@@ -119,11 +116,9 @@ GOPP_CALL T8 gopp_f2(T8 * _1, T18 _2) {
   [[maybe_unused]] int8_t _11;
   [[maybe_unused]] uint64_t _12;
   [[maybe_unused]] int64_t _13;
-  [[maybe_unused]] void * _18;
-  [[maybe_unused]] void * _19;
-  [[maybe_unused]] T8 _20;
-  [[maybe_unused]] T8 * _21;
-  [[maybe_unused]] uint8_t * _22;
+  [[maybe_unused]] T8 _18;
+  [[maybe_unused]] T8 * _19;
+  [[maybe_unused]] uint8_t * _20;
   struct gopp_f2_own gopp_owned __attribute__((cleanup(gopp_f2_unwind)));
   struct gopp_f2_own *const gopp_own = &gopp_owned;
   gopp_own->state = 0;
@@ -144,15 +139,13 @@ bb1:
   gopp_own->state = 1; gopp_f1(_10, _11, _13);
   goto bb4;
 bb4:
-  _18 = ((void *)&gopp_empty);
-  _19 = ((void *)&gopp_empty);
   _2.a[1].a[0] = _2.a[0].a[1];
-  _20 = gopp_own->_9;
+  _18 = gopp_own->_9;
   gopp_own->_9 = ((T8){});
-  _0 = _20;
-  _21 = (&gopp_own->_9);
-  _22 = ((uint8_t *)_21);
-  gopp_own->state = -1; gopp_f5(_22);
+  _0 = _18;
+  _19 = (&gopp_own->_9);
+  _20 = ((uint8_t *)_19);
+  gopp_own->state = -1; gopp_f5(_20);
   goto bb5;
 bb5:
   gopp_own->state = 0; return _0;
@@ -160,8 +153,15 @@ bb5:
 
 GOPP_CALL void gopp_f3(void) {
   [[maybe_unused]] int64_t * _1;
+  [[maybe_unused]] int64_t * _2;
+  [[maybe_unused]] void * _4;
+  [[maybe_unused]] void * _5;
   _1 = (&gopp_g0);
   (*_1) = 7ll;
+  _2 = (&gopp_g0);
+  (*_2) = ((int64_t)((*_2) + 1ll));
+  _4 = ((void *)&gopp_empty);
+  _5 = ((void *)&gopp_empty);
   return;
 }
 

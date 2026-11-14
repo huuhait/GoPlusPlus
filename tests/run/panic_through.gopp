@@ -1,13 +1,15 @@
 package main
 
+import "sync"
+
 // A panic is raised at every call of `step`, one after the other, and
 // stopped in `attempt`: the program goes on each time as in Go.
 
-var countdown int
+var countdown sync.Atomic[int]
 
 func step() {
-	countdown--
-	if countdown == 0 {
+	countdown.Add(-1)
+	if countdown.Load() == 0 {
 		panic("step")
 	}
 }
@@ -220,7 +222,7 @@ func attempt() (result int, stopped bool) {
 func main() {
 	stops, sum := 0, 0
 	for target := 1; target < 400; target++ {
-		countdown = target
+		countdown.Store(target)
 		result, stopped := attempt()
 		sum += result
 		if !stopped {
@@ -230,7 +232,7 @@ func main() {
 		stops++
 	}
 	println("stopped", stops, "panics", sum)
-	countdown = 0
+	countdown.Store(0)
 	result, _ := attempt()
 	println(result)
 }

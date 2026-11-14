@@ -535,11 +535,11 @@ struct Checker<'a> {
     /// are known.
     children: Vec<(TypeId, Span)>,
     /// While a body is walked: the pointer variables that point into what
-    /// a `Shared` holds, which is only read through them.
-    read_only: FxHashSet<LocalId>,
+    /// is only read, a `Shared` or a variable of a package.
+    read_only: FxHashMap<LocalId, place::Fixed>,
     /// While a body is walked: where what a `Shared` holds is taken as
     /// a value of a parent of its type, with the child and the parent.
-    seen_as: Vec<(Span, TypeId, TypeId)>,
+    seen_as: Vec<(Span, TypeId, TypeId, place::Fixed)>,
     /// While a body is walked: the variables that are declared with a
     /// value which `NewShared` made.
     made_shared: FxHashSet<LocalId>,
@@ -549,7 +549,10 @@ struct Checker<'a> {
     /// While a body is walked: the writes to what a `Shared` holds that
     /// are said when the body is walked, with where the variable of
     /// the place is named: what to do instead is known then.
-    shared_writes: Vec<(Span, String, Span)>,
+    shared_writes: Vec<(Span, String, Span, place::Fixed)>,
+    /// While a body is walked: it is `init` or the value of a variable
+    /// of the package, which run before the program has started.
+    starting: bool,
     /// For a child and a parent that were asked: the method of the
     /// child, with its type, that keeps the child from being seen as
     /// the parent in a `Shared`.
@@ -724,11 +727,12 @@ pub fn declarations(
         sent: Vec::new(),
         marked: false,
         required_addresses: Vec::new(),
-        read_only: FxHashSet::default(),
+        read_only: FxHashMap::default(),
         seen_as: Vec::new(),
         made_shared: FxHashSet::default(),
         lent_handles: FxHashSet::default(),
         shared_writes: Vec::new(),
+        starting: false,
         seen_as_known: FxHashMap::default(),
         operands: place::Operands::Kept,
         target: None,
@@ -1115,8 +1119,8 @@ impl<'a> Checker<'a> {
                 }
             };
             self.lent((body, text), &carried, problem, found);
-            for &(at, child, parent) in &problem.seen_as {
-                self.shared_as_parent(at, child, parent, &done);
+            for &(at, child, parent, fixed) in &problem.seen_as {
+                self.shared_as_parent((at, fixed), child, parent, &done);
             }
         }
         // For those who call the functions of this package.
@@ -3734,6 +3738,12 @@ impl<'a> Checker<'a> {
         self.memo = Some(FxHashMap::default());
         self.current.clear();
         self.decl_attributes(&cx, &tree.decl_nodes[decl]);
+        self.starting = match &tree.decl_nodes[decl].kind {
+            DeclKind::Func { receiver, name, .. } => {
+                receiver.is_none() && self.names.resolve(&name.name) == "init"
+            }
+            _ => true,
+        };
         match &tree.decl_nodes[decl].kind {
             DeclKind::Func {
                 receiver,

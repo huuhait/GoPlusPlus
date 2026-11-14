@@ -753,12 +753,12 @@ fn check_accepts_the_samples_with_any_number_of_threads() {
 
 const SUMS: &str = "package main
 
-var total int
+var total = add(1, 2)
 
 func add(a, b int) int { return a + b }
 
 func main() {
-	total = add(1, 2)
+	println(total)
 }
 ";
 
@@ -1405,17 +1405,18 @@ func main() {
     assert_eq!(names, ["base.At()", "main.main()"], "{written}");
 }
 
+const ATOMIC: &str = include_str!("../../../std/sync/atomic.gopp");
+
 /// A package with generic code that uses what it does not export.
 const ALGO: &str = r#"package algo
 
-var calls int
+import "sync"
 
-func bump() int {
-	calls++
-	return calls
-}
+var calls sync.Atomic[int]
 
-func Calls() int { return calls }
+func bump() int { return calls.Add(1) }
+
+func Calls() int { return calls.Load() }
 
 const limit = 3
 
@@ -1607,7 +1608,11 @@ func main() {
 #[test]
 fn a_package_makes_the_instances_of_the_generic_code_that_it_imports() {
     let dir = TempDir::new().unwrap();
-    let files = [("algo/algo.gopp", ALGO), ("box/box.gopp", BOX)];
+    let files = [
+        ("algo/algo.gopp", ALGO),
+        ("box/box.gopp", BOX),
+        ("sync/atomic.gopp", ATOMIC),
+    ];
     let root = library(&dir, &files);
     let file = write_source(&dir, "main.gopp", USES_GENERIC_CODE);
     let lowered = |path: &Path| {
@@ -1679,7 +1684,11 @@ fn an_operator_of_a_type_of_another_package_calls_the_method_of_that_package() {
 )]
 fn a_program_runs_the_generic_code_of_the_packages_that_it_imports() {
     let dir = TempDir::new().unwrap();
-    let files = [("algo/algo.gopp", ALGO), ("box/box.gopp", BOX)];
+    let files = [
+        ("algo/algo.gopp", ALGO),
+        ("box/box.gopp", BOX),
+        ("sync/atomic.gopp", ATOMIC),
+    ];
     let root = library(&dir, &files);
     let file = write_source(&dir, "main.gopp", USES_GENERIC_CODE);
     let program = dir.path().join("program");
@@ -1799,7 +1808,9 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
             true => fs::read_to_string(&path).unwrap(),
             false => continue,
         };
-        if text.starts_with("// exit:") || !text.contains("\nimport ") {
+        // A program with a file of C beside it is linked with that.
+        let with_c = path.with_extension("c").exists();
+        if text.starts_with("// exit:") || !text.contains("\nimport ") || with_c {
             continue;
         }
         // The file of a program of the corpus says how it ends.
@@ -1817,20 +1828,29 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
     // The instances of the generic code of another package, with a
     // library of their own.
     let dir = TempDir::new().unwrap();
-    let files = [("algo/algo.gopp", ALGO), ("box/box.gopp", BOX)];
+    let files = [
+        ("algo/algo.gopp", ALGO),
+        ("box/box.gopp", BOX),
+        ("sync/atomic.gopp", ATOMIC),
+    ];
     let generic = library(&dir, &files);
     let file = write_source(&dir, "main.gopp", USES_GENERIC_CODE);
     let std = generic.join("std");
-    let units: Vec<String> = [file.clone(), std.join("algo"), std.join("box")]
-        .iter()
-        .map(|path| {
-            let mut build = gopp();
-            build.env("GOPPROOT", &generic).args(["build", "-emit=c"]);
-            let output = run_beside(build.arg(path));
-            assert_eq!(stderr(&output), "", "{}", path.display());
-            stdout(&output)
-        })
-        .collect();
+    let units: Vec<String> = [
+        file.clone(),
+        std.join("algo"),
+        std.join("box"),
+        std.join("sync"),
+    ]
+    .iter()
+    .map(|path| {
+        let mut build = gopp();
+        build.env("GOPPROOT", &generic).args(["build", "-emit=c"]);
+        let output = run_beside(build.arg(path));
+        assert_eq!(stderr(&output), "", "{}", path.display());
+        stdout(&output)
+    })
+    .collect();
     sanitized(&units, &file);
 }
 
@@ -1881,11 +1901,7 @@ type Counter struct{ n int }
 func (c Counter) Area() int    { return c.n }
 func (c Counter) Name() string { return \"counter\" }
 
-var kept interface{}
-
-func Keep(v interface{}) { kept = v }
-
-func Kept() interface{} { return kept }
+func Keep(v interface{}) interface{} { return v }
 
 func Read(s Shape) int { return s.Area() }
 ";
@@ -1905,9 +1921,9 @@ func main() {
 		println(n.Name(), shape.Name(), shape.Area())
 	}
 	xs := []int{1, 2}
-	shapes.Keep(xs)
+	kept := shapes.Keep(xs)
 	xs[0] = 9
-	if back, ok := shapes.Kept().([]int); ok {
+	if back, ok := kept.([]int); ok {
 		println(back[0], xs[0])
 	}
 	area := shapes.Square{3}.Area

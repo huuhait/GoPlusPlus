@@ -11,8 +11,6 @@ type key struct {
 	n           int
 }
 
-var kept string
-
 func join(parts []string, with string) string {
 	out := ""
 	for i, part := range parts {
@@ -24,7 +22,7 @@ func join(parts []string, with string) string {
 	return out
 }
 
-func kind(name string) string {
+func kind(name string, kept *string) string {
 	for i := 0; i < 3; i++ {
 		switch name + "!" {
 		case "a!":
@@ -37,9 +35,9 @@ func kind(name string) string {
 			}
 			continue
 		}
-		kept = name + name
+		*kept = name + name
 	}
-	return kept
+	return *kept
 }
 
 func both(text string) (string, string) {
@@ -69,7 +67,8 @@ func main() {
 	copyOf := line
 	line += "?"
 	println(copyOf, line, join([]string{who, "bob", who[1:]}, "-"))
-	println(kind("a"), kind("b"), kind("xyz"), kept)
+	kept := ""
+	println(kind("a", &kept), kind("b", &kept), kind("xyz", &kept), kept)
 	one, two := both(who)
 	_, three := both(one + two)
 	println(one, two, three, count("héllo"))

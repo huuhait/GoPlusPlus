@@ -1,12 +1,14 @@
 package main
 
-var opened, closed int
+import "sync"
+
+var opened, closed sync.Atomic[int]
 
 type File struct{ fd int }
 
 func (f *File) drop() {
 	if f.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
@@ -18,7 +20,7 @@ func open!(fd int) File {
 	if fd < 0 {
 		return File{}, Problem{what: "no such file"}
 	}
-	opened++
+	opened.Add(1)
 	return File{fd: fd}
 }
 
@@ -131,5 +133,5 @@ func main() {
 		show("chain", total, err)
 	}
 	println(stopped(2), stopped(-1), stopped(4))
-	println("opened", opened, "closed", closed)
+	println("opened", opened.Load(), "closed", closed.Load())
 }

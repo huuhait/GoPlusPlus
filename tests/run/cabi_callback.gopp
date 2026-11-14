@@ -3,6 +3,8 @@
 // makes for it, and a function of C as it is.
 package main
 
+import "sync"
+
 type Small struct {
 	a, b int32
 }
@@ -34,10 +36,10 @@ func c_visit(xs *int32, count int, visit func(at *int32))
 @Extern("C")
 func c_sort(xs *int32, count int, by Order)
 
-var seen int32
+var seen sync.Atomic[int32]
 
 func square(at int32) int32 {
-	seen++
+	seen.Add(1)
 	return at * at
 }
 
@@ -57,8 +59,8 @@ func double(at *int32) { *at *= 2 }
 func down(a *int32, b *int32) int32 { return *b - *a }
 
 func main() {
-	println(c_each(4, square), seen)
-	println(c_each(4, (square)), seen)
+	println(c_each(4, square), seen.Load())
+	println(c_each(4, (square)), seen.Load())
 	println(c_each(4, c_triple))
 	fs := [4]float64{0.5, 1.5, 2, 4}
 	println(c_fold(&fs[0], 4, add) == 8)

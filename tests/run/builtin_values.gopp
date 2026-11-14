@@ -13,10 +13,8 @@ func words(a, b string) (string, string) { return min(a, b, "m"), max(a, b, "m")
 
 func floats(a, b float64) (float64, float64) { return min(a, b), max(a, b) }
 
-var trace string
-
-func note(s string, n int) int {
-	trace += s
+func note(trace *string, s string, n int) int {
+	*trace += s
 	return n
 }
 
@@ -38,7 +36,8 @@ func main() {
 	var a, b uint8 = 200, 100
 	println(min(a, b), max(a, b), min(a, 50), max(b, 255))
 	println(min(Level(3), Level(2)), max(Temp(1.5), Temp(2.5), 0))
-	println(min(note("x", 3), note("y", 1), note("z", 2)), trace)
+	trace := ""
+	println(min(note(&trace, "x", 3), note(&trace, "y", 1), note(&trace, "z", 2)), trace)
 	n := 7
 	println(min(n, 10), max(n, 10), min(n, n), max(len("abc"), n-5))
 	s := max("x"+"y", "xz")

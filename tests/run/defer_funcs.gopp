@@ -1,12 +1,14 @@
 package main
 
+import "sync"
+
 type Stack struct{ items []string }
 
 func (s *Stack) Push(v string) { s.items = append(s.items, v) }
 
-var log Stack
+var log sync.Mutex[Stack]
 
-func note(v string) { log.Push(v) }
+func note(v string) { log.With(func(s *Stack) { s.Push(v) }) }
 
 // A deferred literal sees what the variables are when it runs, and may
 // change a result that has a name.
@@ -76,7 +78,9 @@ func main() {
 	println(counted())
 	println(early(true), early(false))
 	method()
-	for _, line := range log.items {
-		println(line)
-	}
+	log.With(func(s *Stack) {
+		for _, line := range s.items {
+			println(line)
+		}
+	})
 }

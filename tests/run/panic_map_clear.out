@@ -2,7 +2,9 @@
 panic: map clear during iteration
 
 goroutine 1 [running]:
-main.empty()
+main.Table.Empty()
+	+0x?
+interface thunk for (*main.Table).Empty()
 	+0x?
 main.main()
 	+0x?

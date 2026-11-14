@@ -2,6 +2,8 @@
 // its name, with values of every kind, and checks what comes back.
 package main
 
+import "sync"
+
 type Small struct {
 	a, b int32
 }
@@ -30,7 +32,7 @@ type Nested struct {
 	d    float64
 }
 
-var calls int
+var calls sync.Atomic[int]
 
 @Export("C")
 func g_i8(x int8) int8 { return x - 1 }
@@ -54,7 +56,7 @@ func g_f64(x float32, y float64) float64 { return float64(x) + y }
 func g_not(x bool) bool { return !x }
 
 @Export("C")
-func g_count() { calls++ }
+func g_count() { calls.Add(1) }
 
 @Export("C")
 func g_or(at Option[*byte], otherwise int32) int32 {
@@ -111,7 +113,7 @@ func c_run() int32
 
 func main() {
 	println("first wrong:", c_run())
-	println("counted:", calls)
+	println("counted:", calls.Load())
 	// The program calls the same functions as functions of Go++.
 	println(g_i8(5), g_small(Small{1, 2}).b)
 }

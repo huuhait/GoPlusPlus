@@ -1,17 +1,19 @@
 package main
 
-var opened, closed int
+import "sync"
+
+var opened, closed sync.Atomic[int]
 
 type File struct{ fd int }
 
 func (f *File) drop() {
 	if f.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
 func open(fd int) File {
-	opened++
+	opened.Add(1)
 	return File{fd: fd}
 }
 
@@ -19,17 +21,17 @@ type Copied struct{ fd int }
 
 func (c *Copied) drop() {
 	if c.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
 func (c Copied) Clone() Copied {
-	opened++
+	opened.Add(1)
 	return Copied{fd: c.fd + 100}
 }
 
 func first() Copied {
-	opened++
+	opened.Add(1)
 	return Copied{fd: 1}
 }
 
@@ -81,5 +83,5 @@ func exchanged() int {
 
 func main() {
 	println(kept(), called(), inner(), exchanged())
-	println(opened, closed)
+	println(opened.Load(), closed.Load())
 }

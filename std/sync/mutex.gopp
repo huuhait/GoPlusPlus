@@ -3,6 +3,7 @@ package sync
 // A Mutex holds a value that one goroutine at a time reads or changes.
 type Mutex[T any] struct {
 	value T
+	held  bool
 }
 
 // NewMutex gives a mutex that holds the value.
@@ -11,7 +12,15 @@ func NewMutex[T any](value T) Mutex[T] {
 }
 
 // With runs f with a pointer to the value, which no other goroutine
-// reaches while f runs.
+// reaches while f runs. A call of With on the same mutex from f would
+// wait for itself: it panics.
 func (m *Mutex[T]) With(f func(*T)) {
+	if m.held {
+		panic("sync: With on a Mutex that this goroutine holds")
+	}
+	m.held = true
+	defer m.release()
 	f(&m.value)
 }
+
+func (m *Mutex[T]) release() { m.held = false }

@@ -1,17 +1,19 @@
 package main
 
-var opened, closed int
+import "sync"
+
+var opened, closed sync.Atomic[int]
 
 type File struct{ fd int }
 
 func (f *File) drop() {
 	if f.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
 func open(fd int) File {
-	opened++
+	opened.Add(1)
 	return File{fd: fd}
 }
 
@@ -91,7 +93,7 @@ type Holder struct {
 	rest  []Unique[Point]
 }
 
-func counts(note string) { println(note, opened, closed) }
+func counts(note string) { println(note, opened.Load(), closed.Load()) }
 
 func caught(run func()) (what string) {
 	defer func() {

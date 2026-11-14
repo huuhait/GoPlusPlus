@@ -11,6 +11,11 @@ type counter struct {
 
 var names map[int]string
 
+func init() {
+	names[3] = "three"
+	names[4] = "four"
+}
+
 func add(m map[string]int, key string) int {
 	m[key] = 100
 	return len(m)
@@ -49,8 +54,6 @@ func main() {
 	c.total += c.hits["x"]
 	println(c.total, len(c.hits))
 
-	names[3] = "three"
-	names[4] = "four"
 	println(len(names), names[3], names[4])
 
 	nested := 0

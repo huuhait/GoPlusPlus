@@ -10,16 +10,14 @@ func sum(xs []int) int {
 
 func tail(xs []int) []int { return xs[1:] }
 
-var nums []int
-var floats []float32
-var names []string
-
 type pair struct{ a, b int32 }
 
-var pairs []pair
-var big []int64
-
 func main() {
+	var nums []int
+	var floats []float32
+	var names []string
+	var pairs []pair
+	var big []int64
 	println(nums == nil, len(nums), cap(nums))
 	for i := range 40 {
 		nums = append(nums, i*i)

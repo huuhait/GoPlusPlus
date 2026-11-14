@@ -660,6 +660,16 @@ pub fn explain(code: Code) -> Option<Explanation> {
              return \"shape\" }\n\nfunc (s *Shape) drop() { s.log.Write(s.Name()) } // \
              error\n\nfunc (s *Shape) drop() { s.log.Write(\"shape\") } // ok",
         ),
+        ConGlobalWrite => (
+            "A variable of the package is written outside `init` and outside the value that \
+             it is declared with. Every goroutine reaches a variable of the package, so after \
+             the program has started it is only read; what changes then is a `sync.Atomic` \
+             or a `sync.Mutex`, which one goroutine at a time changes through its methods.",
+            "Declare the variable as a `sync.Atomic` or a `sync.Mutex`, set it in `init`, or \
+             keep what changes in a variable of a function and pass it on.",
+            "var counter int\n\nfunc Inc() { counter++ } // error\n\nvar hits \
+             sync.Atomic[int]\n\nfunc Hit() { hits.Add(1) } // ok",
+        ),
         GoCapture => (
             "A function literal that `go` runs uses a variable of the function around it \
              that something else still touches: the function after the `go` statement, a \

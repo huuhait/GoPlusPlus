@@ -25,6 +25,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use super::moves::{EMPTY, Event, Sets, Walk, lists, neighbours};
+use super::place::Fixed;
 use super::*;
 use crate::types::Lends;
 
@@ -43,9 +44,13 @@ pub(super) struct Places<'a> {
     /// which holds none, a `Local` one.
     pub localized: &'a FxHashSet<ExprId>,
     /// The variables that are pointers into what a `Shared` holds.
-    pub read_only: &'a FxHashSet<LocalId>,
+    pub read_only: &'a FxHashMap<LocalId, Fixed>,
     /// The names of the functions of headers that the body uses.
     pub of_headers: &'a FxHashMap<ExprId, crate::object::ForeignUse>,
+    /// The package, and whether the body runs before the program has
+    /// started: a variable of a package is only read after that.
+    pub package: &'a Package,
+    pub starting: bool,
     pub base: Spur,
 }
 
@@ -132,9 +137,9 @@ pub(super) struct Call {
     /// The arguments that are pointers to a value which owns something
     /// apart from itself, or hold such a pointer.
     pub owns: Vec<bool>,
-    /// The arguments that are pointers into what a `Shared` holds: the
-    /// function only reads through them (ADR-0042).
-    pub shared: Vec<bool>,
+    /// The arguments that are pointers into what is only read, and
+    /// why: the function only reads through them (ADR-0042, CON-18).
+    pub shared: Vec<Option<Fixed>>,
     /// For each argument that is or holds a pointer: the sources of
     /// what it points to.
     pub pointees: Vec<Option<(u32, u32)>>,
@@ -308,7 +313,7 @@ pub(super) struct Problem {
     pub within: Span,
     /// Where the body takes what a `Shared` holds as a value of a
     /// parent of its type: the child, the parent, and where.
-    pub seen_as: Vec<(Span, TypeId, TypeId)>,
+    pub seen_as: Vec<(Span, TypeId, TypeId, Fixed)>,
     /// Where the body names a variable that is the only name of what
     /// `NewShared` made: a `Unique` would do.
     pub only_names: Arc<FxHashSet<u32>>,
@@ -339,6 +344,7 @@ pub(super) struct Written {
     pub at: Span,
     pub given: Span,
     pub known: bool,
+    pub fixed: Fixed,
 }
 
 /// What the passes found in a problem.
@@ -793,7 +799,7 @@ impl<'a> Walk<'a> {
                 .collect(),
             changes: vec![false; count],
             owns: vec![false; count],
-            shared: vec![false; count],
+            shared: vec![None; count],
             pointees: vec![None; count],
             spans: (before.iter().chain(args.iter()))
                 .map(|&arg| self.tree.exprs[arg].span)
@@ -1062,21 +1068,21 @@ impl<'a> Walk<'a> {
             ty.is_some_and(|ty| types.sync_cell(ty).is_some())
         };
         let all = before.iter().chain(args.iter()).enumerate();
-        let shared: Vec<bool> = all
+        let shared: Vec<Option<Fixed>> = all
             .map(|(position, &arg)| {
                 let arg = self.unparen(arg);
                 match position == 0 && by_address && !typed[0] {
-                    _ if of_header => false,
-                    _ if position == 0 && receiver && cell(arg) => false,
-                    true => self.is_shared(arg) || self.held_shared(arg),
-                    false => {
-                        (pointers[position] || lent_to(position)) && self.points_into_shared(arg)
-                    }
+                    _ if of_header => None,
+                    _ if position == 0 && receiver && cell(arg) => None,
+                    true if self.is_shared(arg) => Some(Fixed::Shared),
+                    true => self.fixed(arg),
+                    false if pointers[position] || lent_to(position) => self.points_into_fixed(arg),
+                    false => None,
                 }
             })
             .collect();
-        let found = [&sinks, &funcs, &changes, &shared];
-        if !found.iter().any(|some| some.contains(&true)) {
+        let found = [&sinks, &funcs, &changes];
+        if !found.iter().any(|some| some.contains(&true)) && shared.iter().all(Option::is_none) {
             return;
         }
         let mut given = Vec::new();
@@ -1211,15 +1217,18 @@ impl<'a> Walk<'a> {
         matches!(&*types.get(types.underlying(ty)), Type::Shared(_))
     }
 
-    /// Whether the place is in what a `Shared` holds: reached through
-    /// the handle, or through a pointer that only reads.
-    fn held_shared(&self, mut expr: ExprId) -> bool {
-        let Some(places) = self.places else {
-            return false;
-        };
+    /// Why the place is only read, if it is: as `Checker::fixed` says.
+    fn fixed(&self, expr: ExprId) -> Option<Fixed> {
+        let places = self.places?;
         let types = places.types;
+        let mut expr = self.unparen(expr);
         loop {
-            let of = match self.tree.exprs[self.unparen(expr)].kind {
+            // A function literal may run at any time.
+            let started = !places.starting || !self.top;
+            if started && self.package_variable(places.package, expr) {
+                return Some(Fixed::Package);
+            }
+            let of = match self.tree.exprs[expr].kind {
                 ExprKind::Selector { x, .. }
                 | ExprKind::Index { x, .. }
                 | ExprKind::Slice { x, .. }
@@ -1227,42 +1236,56 @@ impl<'a> Walk<'a> {
                     op: UnaryOp::Star,
                     x,
                 } => self.unparen(x),
-                _ => return false,
+                _ => return None,
             };
-            let Some(mut ty) = self.type_of(of) else {
-                return false;
-            };
+            let mut ty = self.type_of(of)?;
             // What an option holds is reached like the option.
             while let Type::Option(elem) = &*types.get(types.underlying(ty)) {
                 ty = *elem;
             }
             match &*types.get(types.underlying(ty)) {
-                Type::Shared(_) => return true,
+                Type::Shared(_) => return Some(Fixed::Shared),
                 Type::Pointer(_) => {
-                    let pointer = self.local(of);
-                    return pointer.is_some_and(|local| places.read_only.contains(&local));
+                    return match self.local(of) {
+                        Some(pointer) => places.read_only.get(&pointer).copied(),
+                        None => self.fixed(of).filter(|kept| *kept == Fixed::Package),
+                    };
                 }
                 _ => expr = of,
             }
         }
     }
 
-    /// Whether the value of the expression is a pointer into what a
-    /// `Shared` holds: the address of such a place, the `Shared` itself
+    /// Whether the expression names a variable of a package.
+    fn package_variable(&self, package: &Package, expr: ExprId) -> bool {
+        let variable = |package: &Package, id: ObjId| {
+            let object = package.objects.get(id.0 as usize);
+            object.is_some_and(|object| matches!(object.kind, ObjKind::Var))
+        };
+        match self.body.uses.get(&expr) {
+            Some(&Ref::Object(object)) => variable(package, object),
+            Some(&Ref::Member { import, member }) => match &package.object(import).kind {
+                ObjKind::Import { package, .. } => variable(package, member),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// Why what the value of the expression points into is only read,
+    /// if it is: the value is the address of such a place, a `Shared`
     /// where a pointer is wanted, or a variable that is such a pointer.
-    fn points_into_shared(&self, expr: ExprId) -> bool {
+    fn points_into_fixed(&self, expr: ExprId) -> Option<Fixed> {
+        if self.is_shared(expr) {
+            return Some(Fixed::Shared);
+        }
         match self.tree.exprs[expr].kind {
             ExprKind::Unary {
                 op: UnaryOp::Addr,
                 x,
-            } => self.held_shared(x),
-            ExprKind::Name(_) => {
-                let read_only = self.places.map(|places| places.read_only);
-                let local = self.local(expr);
-                self.is_shared(expr)
-                    || local.is_some_and(|local| read_only.is_some_and(|all| all.contains(&local)))
-            }
-            _ => self.is_shared(expr),
+            } => self.fixed(x),
+            ExprKind::Name(_) => self.places?.read_only.get(&self.local(expr)?).copied(),
+            _ => None,
         }
     }
 
@@ -1672,6 +1695,51 @@ impl<'a> Walk<'a> {
             root,
             steps,
             at: span,
+            what,
+        };
+        self.ranged_over(&change);
+        self.changes.push(change);
+        self.events
+            .push(Event::Changed(self.changes.len() as u32 - 1));
+    }
+
+    /// A built-in function changes what its operand names, or what the
+    /// operand points to: all of it (`clear`), or elements of it
+    /// (`delete`, `copy`).
+    pub(super) fn changed_by_builtin(&mut self, operand: ExprId, elements: bool) {
+        let Some(places) = self.places else {
+            return;
+        };
+        let mut inner = self.unparen(operand);
+        // `copy(&xs, ...)` names the slice by its address.
+        if let ExprKind::Unary {
+            op: UnaryOp::Addr,
+            x,
+        } = self.tree.exprs[inner].kind
+        {
+            inner = self.unparen(x);
+        }
+        let Some((root, mut steps)) = self.place(inner) else {
+            return;
+        };
+        let types = places.types;
+        let pointer = self
+            .type_of(inner)
+            .is_some_and(|ty| matches!(&*types.get(types.underlying(ty)), Type::Pointer(_)));
+        if pointer {
+            steps.push(Step::Target);
+        }
+        let what = match elements {
+            true => {
+                steps.push(Step::At(None));
+                What::Assign
+            }
+            false => What::Clear,
+        };
+        let change = Change {
+            root,
+            steps,
+            at: self.tree.exprs[inner].span,
             what,
         };
         self.ranged_over(&change);
@@ -2264,13 +2332,17 @@ impl Problem {
                         let record = &self.calls[call as usize];
                         // What a `Shared` holds is given to a function
                         // that only reads through the pointer.
-                        for (arg, _) in record.shared.iter().enumerate().filter(|(_, is)| **is) {
+                        for (arg, fixed) in record.shared.iter().enumerate() {
+                            let Some(fixed) = *fixed else {
+                                continue;
+                            };
                             let changes = sources.changes(call, arg);
                             if changes != Some(false) {
                                 lent.written.push(Written {
                                     at: record.at,
                                     given: record.spans[arg],
                                     known: changes.is_some(),
+                                    fixed,
                                 });
                             }
                         }

@@ -1,13 +1,15 @@
 package main
 
-var ended int
+import "sync"
+
+var ended sync.Atomic[int]
 
 type Res struct {
 	id   int
 	text string
 }
 
-func (r *Res) drop() { ended++ }
+func (r *Res) drop() { ended.Add(1) }
 
 func (r Res) Clone() Res { return Res{r.id + 100, r.text} }
 
@@ -134,6 +136,6 @@ func main() {
 		println(total)
 	}
 	resources()
-	println(ended)
+	println(ended.Load())
 	found()
 }

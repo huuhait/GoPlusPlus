@@ -195,8 +195,12 @@ impl ClangDriver<'_> {
 
     pub(crate) fn link_flags(&self) -> Vec<String> {
         let mut flags = vec!["-fuse-ld=lld".to_owned()];
-        if self.target.object == ObjectFormat::Elf {
-            flags.extend(ELF_LINK_FLAGS.map(str::to_owned));
+        match self.target.object {
+            ObjectFormat::Elf => flags.extend(ELF_LINK_FLAGS.map(str::to_owned)),
+            // `lld-link` makes one function of those with the same code:
+            // a trace would name another function than the one that ran.
+            ObjectFormat::Coff => flags.push("-Wl,/opt:noicf".to_owned()),
+            _ => {}
         }
         flags.extend(self.found_flags());
         if let Some(loader) = self.link.loader {

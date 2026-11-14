@@ -1,5 +1,7 @@
 package main
 
+import "sync"
+
 type Handler func(name string, tags []string) int
 
 type Route struct {
@@ -7,25 +9,34 @@ type Route struct {
 	run  Handler
 }
 
-var routes []Route
 
 // Only reads what it is given.
 func count(name string, tags []string) int { return len(name) + len(tags) }
 
 // Keeps what it is given.
-var seen []string
+var seen sync.Mutex[[]string]
 
 func record(name string, tags []string) int {
-	seen = append(seen, name)
-	seen = append(seen, tags...)
-	return len(seen)
+	n := 0
+	seen.With(func(all *[]string) {
+		*all = append(*all, name)
+		*all = append(*all, tags...)
+		n = len(*all)
+	})
+	return n
 }
 
-func register(path string, run Handler) {
-	routes = append(routes, Route{path, run})
+func seenNames() []string {
+	var names []string
+	seen.With(func(all *[]string) { names = *all })
+	return names
 }
 
-func serve(path string, tags []string) int {
+func register(routes []Route, path string, run Handler) []Route {
+	return append(routes, Route{path, run})
+}
+
+func serve(routes []Route, path string, tags []string) int {
 	for _, route := range routes {
 		if route.path == path {
 			return route.run(path, tags)
@@ -45,14 +56,15 @@ func choose(n int) Handler {
 }
 
 func main() {
-	register("/count", count)
-	register("/record", record)
-	register("/literal", func(name string, tags []string) int { return len(tags) * 10 })
+	var routes []Route
+	routes = register(routes, "/count", count)
+	routes = register(routes, "/record", record)
+	routes = register(routes, "/literal", func(name string, tags []string) int { return len(tags) * 10 })
 	tags := []string{"a", "b"}
-	println(serve("/count", tags), serve("/record", tags), serve("/literal", tags), serve("/none", tags))
+	println(serve(routes, "/count", tags), serve(routes, "/record", tags), serve(routes, "/literal", tags), serve(routes, "/none", tags))
 	tags[0] = "changed"
-	println(len(seen), seen[1], tags[0])
-	println(serve("/record", []string{"c"}), len(seen))
+	println(len(seenNames()), seenNames()[1], tags[0])
+	println(serve(routes, "/record", []string{"c"}), len(seenNames()))
 
 	first := choose(0)
 	second := first

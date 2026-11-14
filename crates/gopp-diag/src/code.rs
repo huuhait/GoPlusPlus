@@ -380,6 +380,7 @@ codes! {
     521 ExtendsNotCopied "err_extends_not_copied",
     522 CloneNotCopied "err_clone_not_copied",
     523 DropUsesReceiver "err_drop_uses_receiver",
+    524 ConGlobalWrite "err_con_global_write",
 }
 
 impl Code {

@@ -521,7 +521,7 @@ func walk/*=walk*/(n/*=n1*/ *Node/*@Node*/, xs/*=xs*/ []int) (sum/*=sum*/ int) {
 	}
 	add/*=add*/ := func(d/*=d*/ int) {
 		sum/*@sum*/ += d/*@d*/
-		total/*@total*/++
+		sum/*@sum*/ += total/*@total*/
 	}
 	add/*@add*/(count/*@count*/)
 	switch v/*=v2*/ := any(n/*@n1*/).(type) {
@@ -1126,7 +1126,7 @@ fn assignments_are_checked_as_go_checks_them() {
     for (body, expected) in cases {
         let text = format!(
             "package p\n{declared}func s2b(s string) []byte {{ return []byte(s) }}\n\
-             func _() {{\n\t{body}\n}}\n"
+             func init() {{\n\t{body}\n}}\n"
         );
         let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
@@ -1453,7 +1453,7 @@ fn built_in_functions_are_checked_as_go_checks_them() {
         ),
     ];
     for (body, expected) in cases {
-        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let text = format!("package p\n{declared}func init() {{\n\t{body}\n}}\n");
         let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
@@ -1603,7 +1603,7 @@ fn selectors_and_channels_are_checked_as_go_checks_them() {
         ),
     ];
     for (body, expected) in cases {
-        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let text = format!("package p\n{declared}func init() {{\n\t{body}\n}}\n");
         let found = messages("a.gopp", &text);
         let found: Vec<&str> = found
             .iter()
@@ -2582,7 +2582,7 @@ type T struct {
 	xs   []int
 }
 
-var all [][]int
+type All [][]int
 
 func keep(xs []int)            {}
 func keep2(xs []int, ys []int) {}
@@ -2640,11 +2640,11 @@ func again(xs []int, n int) {
 	}
 }
 
-func units(xs, ys, zs []int, t T) {
+func units(xs, ys, zs []int, t T, all *All) {
 	keep2(xs, xs)
 	keep3(len(ys), ys)
 	zs = append(make1(), zs...)
-	all = append(all, zs)
+	*all = append(*all, zs)
 	t.xs = t.xs
 	hold(t)
 }
@@ -2710,8 +2710,8 @@ func literals(xs, ys []int) {
         "67:12 xs: copy",
         "68:17 ys: copy",
         "69:23 zs: copy, over, last",
-        "70:15 all: copy, over",
-        "70:20 zs: copy, last",
+        "70:16 *all: copy, over",
+        "70:22 zs: copy, last",
         "71:9 t.xs: copy, over",
         "72:7 t: copy, last",
         "78:9 xs: copy",
@@ -2736,7 +2736,7 @@ type List []int
 
 type Doc struct{ Title string }
 
-var all [][]int
+type All [][]int
 
 func keep(xs []int) {}
 
@@ -2793,12 +2793,12 @@ func grow(xs []int, ys []int, zs []int) []int {
 	return zs
 }
 
-func passed(xs []int, ys []int, c bool) {
+func passed(xs []int, ys []int, c bool, all *All) {
 	xs[0] = 1
 	keep(xs)
 	ys[0] = 2
 	if c {
-		all = append(all, ys)
+		*all = append(*all, ys)
 	}
 }
 
@@ -5163,7 +5163,7 @@ var (
 )
 
 // Regular assignments
-func _() {
+func init() {
 	v1 = f1 // no error here because v1 is invalid (we don't know its type) due to the error above
 	var v1_ func() int
 	_ = v1_
@@ -6947,6 +6947,286 @@ func viaMutex() func() {
     assert_eq!(checked.messages, expected);
 }
 
+// rule: CON-18
+#[test]
+fn a_variable_of_the_package_is_only_read_once_the_program_has_started() {
+    // `init` and the value that a variable is declared with set the
+    // variables of the package, by an assignment, a method and a call
+    // that is given a pointer. A function that they call does not
+    // (`setup`), nor a function literal in them, which may run later.
+    // After that every way to change one is refused (`bad`): of this
+    // package and of another, a part of one, through a pointer that a
+    // variable of the function or of the package keeps. Reading stays
+    // free, and a `sync.Atomic` and a `sync.Mutex` change (`good`).
+    let text = "package p
+
+import (
+	\"conf\"
+	\"sync\"
+)
+
+type Box struct {
+	n     int
+	items []int
+}
+
+func (b *Box) Set(n int) { b.n = n }
+func (b *Box) Get() int  { return b.n }
+
+var count int
+var box Box
+var table = map[string]int{\"a\": 1}
+var hits sync.Atomic[int]
+var names sync.Mutex[[]string]
+var ready = setup()
+var where = &box
+
+func setup() int {
+	count = 5
+	return 1
+}
+
+func init() {
+	count = 1
+	box.Set(2)
+	bump(&count)
+	table[\"b\"] = 2
+	conf.Level = 3
+	func() { count = 9 }()
+	func() { bump(&count) }()
+}
+
+func bump(p *int)     { *p += 1 }
+func read(p *int) int { return *p }
+
+func bad() {
+	count++
+	count = 3
+	box.n = 4
+	box.items = append(box.items, 1)
+	box.items[0] = 2
+	table[\"c\"] = 3
+	delete(table, \"a\")
+	clear(table)
+	conf.Level = 4
+	box.Set(7)
+	bump(&count)
+	bump(&box.n)
+	p := &count
+	*p = 2
+	q := &box
+	q.n = 1
+	q.Set(1)
+	where.n = 2
+	for count = range 3 {
+	}
+}
+
+func good() int {
+	n := count
+	n++
+	b := box
+	b.Set(n)
+	p := &count
+	hits.Add(1)
+	names.With(func(all *[]string) { *all = append(*all, \"x\") })
+	return n + b.Get() + box.Get() + read(&count) + read(p) + len(table) + hits.Load() + conf.Level
+}
+";
+    let names = ThreadedRodeo::new();
+    let mut loader = with_sync(&names);
+    let conf = "package conf\n\nvar Level = 1\n";
+    let checked = check_texts("conf", &[("conf.gopp", conf)], &loader, &names);
+    loader
+        .packages
+        .insert("conf".to_owned(), Arc::new(checked.package));
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let said: Vec<&str> = (checked.messages.iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| {
+            let message = message.strip_prefix("a.gopp:").unwrap_or(message);
+            let end = ": a variable of the package is only read once the program has started";
+            let message = message.strip_suffix(end).unwrap_or(message);
+            let end = ", and a variable of the package is only read once the program has started";
+            message.strip_suffix(end).unwrap_or(message)
+        })
+        .collect();
+    let expected = [
+        "25:2: cannot assign to count",
+        "35:11: cannot assign to count",
+        "36:16: cannot give &count to bump: the function writes through it",
+        "43:2: cannot assign to count",
+        "44:2: cannot assign to count",
+        "45:2: cannot assign to box.n",
+        "46:2: cannot assign to box.items",
+        "47:2: cannot assign to box.items[0]",
+        "48:2: cannot assign to table[\"c\"]",
+        "49:9: cannot delete from table",
+        "50:8: cannot clear table",
+        "51:2: cannot assign to conf.Level",
+        "52:2: cannot call box.Set: the method writes through its receiver",
+        "53:7: cannot give &count to bump: the function writes through it",
+        "54:7: cannot give &box.n to bump: the function writes through it",
+        "56:2: cannot assign to *p",
+        "58:2: cannot assign to q.n",
+        "59:2: cannot call q.Set: the method writes through its receiver",
+        "60:2: cannot assign to where.n",
+        "61:6: cannot assign to count",
+    ];
+    assert_eq!(said, expected);
+    let fix = "    declare it as a sync.Atomic or a sync.Mutex, or set it in init";
+    let fixes = checked.messages.iter().filter(|message| *message == fix);
+    assert_eq!(fixes.count(), said.len());
+}
+
+// rule: CON-18, OWN-P8
+#[test]
+fn a_built_in_function_changes_nothing_that_is_only_read() {
+    // `clear`, `delete` and `copy` write what their first operand
+    // names or points to: not what a `Shared` holds or a variable of
+    // the package, at the place itself, through a pointer, or in a
+    // function that is given a pointer. What the function owns they
+    // change, also through a pointer. A function that is called under
+    // a loop over a map changes the map through no pointer: what it
+    // says of itself does not tell `delete` from a new key.
+    let text = "package p
+
+type Box struct {
+	m     map[int]int
+	items []int
+}
+
+var table = map[int]int{1: 1}
+var list = []int{1}
+
+func empty(m *map[int]int)  { clear(m) }
+func remove(m *map[int]int) { delete(m, 1) }
+func fill(xs *[]int)        { copy(xs, []int{9}) }
+func wipe(xs *[]int)        { clear(xs) }
+
+func shared() int {
+	s := NewShared(Box{m: map[int]int{1: 1}, items: []int{1}})
+	t := s
+	empty(&s.m)
+	remove(&s.m)
+	fill(&s.items)
+	wipe(&s.items)
+	copy(&s.items, []int{9})
+	p := &s.items
+	clear(p)
+	copy(p, []int{2})
+	q := &s.m
+	delete(q, 1)
+	return len(t.m) + t.items[0]
+}
+
+func ofPackage() {
+	empty(&table)
+	fill(&list)
+	copy(&list, []int{9})
+	p := &list
+	clear(p)
+	q := &table
+	delete(q, 1)
+}
+
+func own() int {
+	b := Box{m: map[int]int{1: 1}, items: []int{1}}
+	empty(&b.m)
+	remove(&b.m)
+	fill(&b.items)
+	wipe(&b.items)
+	copy(&b.items, []int{9})
+	p := &b.items
+	clear(p)
+	copy(p, []int{2})
+	q := &b.m
+	delete(q, 1)
+	return len(b.m) + len(b.items)
+}
+
+func ranged() int {
+	m := map[int]int{1: 1}
+	n := 0
+	for range m {
+		empty(&m)
+	}
+	for k := range m {
+		remove(&m)
+		n += k
+	}
+	return n
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| {
+            let message = message.strip_prefix("a.gopp:").unwrap_or(&message);
+            let message = message.replace(
+                "a variable of the package is only read once the program has started",
+                "package",
+            );
+            message.replace("what a Shared holds is only read", "shared")
+        })
+        .collect();
+    let expected = [
+        "19:8: cannot give &s.m to empty: the function writes through it, and shared",
+        "20:9: cannot give &s.m to remove: the function writes through it, and shared",
+        "21:7: cannot give &s.items to fill: the function writes through it, and shared",
+        "22:7: cannot give &s.items to wipe: the function writes through it, and shared",
+        "23:8: cannot copy into s.items: shared through it",
+        "25:8: cannot clear what p points to: shared",
+        "26:7: cannot copy into what p points to: shared",
+        "28:9: cannot delete from what q points to: shared",
+        "33:8: cannot give &table to empty: the function writes through it, and package",
+        "34:7: cannot give &list to fill: the function writes through it, and package",
+        "35:8: cannot copy into list: package",
+        "37:8: cannot clear what p points to: package",
+        "39:9: cannot delete from what q points to: package",
+        "61:3: cannot call empty: it may change m, which the loop ranges over",
+        "64:3: cannot call remove: it may change m, which the loop ranges over",
+    ];
+    assert_eq!(said, expected);
+}
+
+#[test]
+fn the_steps_of_what_is_only_read_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // Many variables of the package, each read through a pointer that
+    // is given and one that is kept; and one place as deep as there
+    // are types, read so and set in `init`.
+    let many = |count: usize| {
+        let variables: String = (0..count).map(|i| format!("var g{i} int\n")).collect();
+        let reads: String = (0..count)
+            .map(|i| format!("\tp{i} := &g{i}\n\tn += read(&g{i}) + *p{i}\n"))
+            .collect();
+        format!(
+            "package p\n{variables}func read(p *int) int {{ return *p }}\nfunc f() int {{\n\tn \
+             := 0\n{reads}\treturn n\n}}\n"
+        )
+    };
+    let deep = |count: usize| {
+        let types: String = (1..count)
+            .map(|i| format!("type T{i} struct{{ a T{} }}\n", i - 1))
+            .collect();
+        let way = ".a".repeat(count - 1);
+        format!(
+            "package p\ntype T0 struct{{ n int }}\n{types}var top T{}\nfunc read(p *int) int {{ \
+             return *p }}\nfunc init() {{ top{way}.n = 1 }}\nfunc f() int {{\n\tp := \
+             &top{way}.n\n\treturn read(&top{way}.n) + *p\n}}\n",
+            count - 1
+        )
+    };
+    let sizes = [100, 200, 400, 800];
+    linear::assert_near_linear(&sizes, |n| steps(many(n)));
+    linear::assert_near_linear(&sizes, |n| steps(deep(n)));
+}
+
 // rule: PAN-3
 #[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {
@@ -7340,11 +7620,27 @@ func stack(p *Point, n Node) {
 }
 
 func pair(p *Point) (*Point, bool) { return p, true }
+
+func init() {
+	p := &origin
+	late = p
+	late = &origin
+	late = first
+	first, late = made(p), nil
+	var ok bool
+	first, ok = pair(p)
+	ps := [2]*Point{p, p}
+	for _, first = range ps {
+	}
+	_ = ok
+}
 ";
     let names = ThreadedRodeo::new();
     let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    // Outside `init` a variable of the package is not assigned to at
+    // all: that is what is said there.
     let said: Vec<&str> = (checked.messages.iter())
-        .filter(|message| !message.starts_with("    "))
+        .filter(|message| !message.starts_with("    ") && !message.contains("is only read"))
         .map(|message| message.split(": a pointer in it").next().unwrap_or(message))
         .collect();
     let expected = [
@@ -7360,13 +7656,13 @@ func pair(p *Point) (*Point, bool) { return p, true }
         "a.gopp:38:6: cannot keep a Node in a slice that grows",
         "a.gopp:39:15: invalid type Unique[Node]: a Node holds a pointer, and what holds one is \
          not kept on the heap",
-        "a.gopp:40:9: cannot keep a Option[*Point] in a variable of the package",
-        "a.gopp:43:16: cannot keep a *Point in a variable of the package",
-        "a.gopp:45:2: cannot keep a *Point in a variable of the package",
-        "a.gopp:47:9: cannot keep a *Point in a variable of the package",
         "a.gopp:49:7: cannot keep a *Point in a slice",
         "a.gopp:51:7: cannot keep a Local[any] in a slice",
         "a.gopp:52:17: cannot keep a Local[any] in NewShared",
+        "a.gopp:77:9: cannot keep a Option[*Point] in a variable of the package",
+        "a.gopp:80:16: cannot keep a *Point in a variable of the package",
+        "a.gopp:82:2: cannot keep a *Point in a variable of the package",
+        "a.gopp:84:9: cannot keep a *Point in a variable of the package",
     ];
     assert_eq!(said, expected);
 }
@@ -7423,7 +7719,7 @@ func deep(w *Wrap) {
 	w.h.p = &local
 }
 
-func viaPackage() {
+func init() {
 	local := T{7}
 	gp := &holder
 	gp.p = &local
@@ -7707,7 +8003,7 @@ fn a_call_stores_what_its_function_says_behind_the_pointers_that_it_is_given() {
     // behind another, and `twice` by a call of `set`: where they are
     // called, the variable behind the pointer holds what was given
     // (`bad2` to `bad5`), a pointer to a variable of the function is
-    // not given where it is stored outside the function (`bad1`,
+    // not given where it is stored outside the function (`init`,
     // `bad7`), and what a parameter points to is not stored where
     // nothing says how long it lives (`bad8`). A function value may
     // store all that it is given (`bad6`). `count` stores nothing.
@@ -7740,7 +8036,7 @@ func find() *Holder { return &holder }
 
 func count(h *Holder, t *T) int { return h.p.n + t.n }
 
-func bad1() {
+func init() {
 	x := T{1}
 	set(&holder.p, &x)
 }
@@ -8165,9 +8461,17 @@ func generic(p *T) {
              when what it points to has ended"
         )
     };
+    let fixed = |at: &str, place: &str| {
+        format!(
+            "a.gopp:{at}: cannot assign to {place}: a variable of the package is only read once \
+             the program has started"
+        )
+    };
     let expected = [
+        fixed("9:44", "handlers[name]"),
         "a.gopp:22:2: cannot return a pointer into x: x ends when the function returns".to_owned(),
         format!("a.gopp:28:2: cannot keep {}", uses("p")),
+        fixed("28:2", "kept"),
         "a.gopp:40:2: y ends here, and f points into it and is used later".to_owned(),
         format!("a.gopp:45:5: cannot keep {}", uses("p")),
         format!("a.gopp:49:2: cannot give register {}", uses("p")),
@@ -8177,6 +8481,7 @@ func generic(p *T) {
         "a.gopp:74:23: cannot keep what q points to in found: nothing says how long it is kept \
          there"
             .to_owned(),
+        fixed("99:2", "kept"),
         "a.gopp:109:2: *T does not satisfy Send (a *T borrows what it points to)".to_owned(),
         format!(
             "a.gopp:109:2: cannot use *T for X: the function is not for a type with a pointer \
@@ -8776,13 +9081,13 @@ func reader(i I) func() int {
 	return func() int { return i.M() }
 }
 
-func register(xs []int) {
+func init() {
 	sent := 0
 	handlers = append(handlers, func() int { sent++; return sent })
 	var locals []Local[func() int]
 	locals = append(locals, func() int { sent++; return sent })
 	total := 0
-	each(xs, func(x int) { total += x })
+	each([]int{1}, func(x int) { total += x })
 	name, sum := \"n\", total
 	handlers = append(handlers, func() int { return len(name) + sum + len(locals) })
 }
@@ -9274,13 +9579,13 @@ fn the_steps_of_where_pointers_are_kept_grow_with_the_input_not_faster() {
         let assigned: String = (order.iter())
             .map(|i| format!("\tg{i} = T{i}{{}}\n"))
             .collect();
-        format!("{}{variables}func f() {{\n{assigned}}}\n", types(count))
+        format!("{}{variables}func init() {{\n{assigned}}}\n", types(count))
     };
     // One place and one address, each as deep as there are types.
     let deep = |count: usize| {
         let way = ".a".repeat(count - 1);
         format!(
-            "{}var top, other T{}\nfunc f() {{\n\ttop{way}.p = &other{way}.n\n}}\n",
+            "{}var top, other T{}\nfunc init() {{\n\ttop{way}.p = &other{way}.n\n}}\n",
             types(count),
             count - 1
         )
@@ -9290,7 +9595,7 @@ fn the_steps_of_where_pointers_are_kept_grow_with_the_input_not_faster() {
         let variables: String = (0..count).map(|i| format!("var v{i} int\n")).collect();
         let values: String = (0..count).map(|i| format!("&v{i}, ")).collect();
         format!(
-            "package p\n{variables}var all [{count}]Option[*int]\nfunc f() {{\n\tall = \
+            "package p\n{variables}var all [{count}]Option[*int]\nfunc init() {{\n\tall = \
              [{count}]Option[*int]{{{values}}}\n}}\n"
         )
     };
@@ -10065,6 +10370,9 @@ func channel(ch chan File, f File) {
     let expected = [
         "a.gopp:26:9: f is used after it was moved: it has no value until it is assigned again",
         "    a.gopp:23:7: f is moved here",
+        "a.gopp:30:9: cannot assign to global: a variable of the package is only read once the \
+         program has started",
+        "    declare it as a sync.Atomic or a sync.Mutex, or set it in init",
         "a.gopp:35:7: cannot copy f (variable of struct type File): File has a drop method and no \
          Clone() File",
         "    use move(f) to give the value, or &f to lend it",
@@ -12581,10 +12889,10 @@ type Soft struct{ n *int }
 
 func (s *Soft) Error() string { return \"\" }
 
-var saved any
+
 
 func println(args ...any) {}
-func log(v any)          { saved = v }
+func log(v any)          {}
 func open() File         { return File{} }
 
 func good(name string, xs []int, f File, pt Point, buf Buffer, v any) (any, error) {
@@ -12621,7 +12929,7 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
 	var p any = &pt
 	var r Reader = &buf
 	var l any = lf
-	saved = &pt
+	d = &pt
 	_ = v.(File)
 	switch v.(type) {
 	case File:
@@ -12667,7 +12975,7 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
          interface value may be given to another goroutine, and a Local[func()] stays with one \
          goroutine",
         "    keep it in a Local[any], or hold a Shared",
-        "a.gopp:61:10: cannot keep &pt (value of type *Point) in a value of type any: an interface \
+        "a.gopp:61:6: cannot keep &pt (value of type *Point) in a value of type any: an interface \
          value may be given to another goroutine, and a *Point borrows what it points to",
         "    keep it in a Local[any], or hold a Shared",
         "a.gopp:62:6: impossible type assertion: no interface value holds a File: File has a drop \
@@ -14615,6 +14923,9 @@ func (v V) Count() int { return counter }
     let expected = [
         "a.gopp:34:41: invalid @Const function bad: it uses a channel",
         "a.gopp:35:2: invalid @Const function bad: it uses the variable counter",
+        "a.gopp:35:2: cannot assign to counter: a variable of the package is only read once the \
+         program has started",
+        "    declare it as a sync.Atomic or a sync.Mutex, or set it in init",
         "a.gopp:36:7: invalid @Const function bad: it uses the variable counter",
         "a.gopp:36:17: invalid @Const function bad: it calls plain, which is not @Const",
         "a.gopp:37:7: invalid @Const function bad: it calls a method of an interface",

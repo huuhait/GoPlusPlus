@@ -1,17 +1,19 @@
 package main
 
-var opened, closed int
+import "sync"
+
+var opened, closed sync.Atomic[int]
 
 type File struct{ fd int }
 
 func (f *File) drop() {
 	if f.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
 func open(fd int) File {
-	opened++
+	opened.Add(1)
 	return File{fd: fd}
 }
 
@@ -36,14 +38,22 @@ func total(files ...File) int {
 	return sum
 }
 
-var shelf []File
+var shelf sync.Mutex[[]File]
+
+func shelved() int {
+	n := 0
+	shelf.With(func(all *[]File) { n = len(*all) })
+	return n
+}
 
 // Keeps its files.
 func store(files ...File) int {
-	for i := range files {
-		shelf = append(shelf, File{fd: files[i].fd * 10})
-	}
-	return len(shelf)
+	shelf.With(func(all *[]File) {
+		for i := range files {
+			*all = append(*all, File{fd: files[i].fd * 10})
+		}
+	})
+	return shelved()
 }
 
 func fails(files ...File) int {
@@ -64,9 +74,17 @@ func join(sep string, parts ...string) string {
 	return out
 }
 
-var words []string
+var words sync.Mutex[[]string]
 
-func remember(parts ...string) { words = append(words, parts...) }
+func remember(parts ...string) {
+	words.With(func(all *[]string) { *all = append(*all, parts...) })
+}
+
+func remembered() []string {
+	var parts []string
+	words.With(func(all *[]string) { parts = *all })
+	return parts
+}
 
 func sizes(values ...any) int {
 	n := 0
@@ -108,7 +126,7 @@ func caught(run func()) (what string) {
 }
 
 func counts(note string) {
-	println(note, opened, closed)
+	println(note, opened.Load(), closed.Load())
 }
 
 func deferred() {
@@ -133,9 +151,9 @@ func main() {
 	a, b := "left", "right"
 	println(join(", ", a+"!", b+"?", join("", a, b)))
 	remember(a+b, b)
-	remember(words...)
-	println(len(words), words[2], words[3])
-	println(sizes(a+b, []string{a, b}, 3, words))
+	remember(remembered()...)
+	println(len(remembered()), remembered()[2], remembered()[3])
+	println(sizes(a+b, []string{a, b}, 3, remembered()))
 
 	n, err := parse("ab", "c")
 	println(n, err == nil)
@@ -144,5 +162,5 @@ func main() {
 
 	deferred()
 	counts("after the deferred calls")
-	println(len(words), words[5], len(shelf))
+	println(len(remembered()), remembered()[5], shelved())
 }

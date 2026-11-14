@@ -1,37 +1,36 @@
 package main
 
-var trace string
-
-func t(name string) bool {
-	trace += name
+func t(trace *string, name string) bool {
+	*trace += name
 	return true
 }
 
-func f(name string) bool {
-	trace += name
+func f(trace *string, name string) bool {
+	*trace += name
 	return false
 }
 
-func n(name string, v int) int {
-	trace += name
+func n(trace *string, name string, v int) int {
+	*trace += name
 	return v
 }
 
 func main() {
-	println(t("a") || f("b"), trace)
+	trace := ""
+	println(t(&trace, "a") || f(&trace, "b"), trace)
 	trace = ""
-	println(f("a") && t("b"), trace)
+	println(f(&trace, "a") && t(&trace, "b"), trace)
 	trace = ""
-	println(f("a") || t("b") && f("c") || t("d"), trace)
+	println(f(&trace, "a") || t(&trace, "b") && f(&trace, "c") || t(&trace, "d"), trace)
 	trace = ""
-	println(!(t("a") && !f("b")) == f("c"), trace)
+	println(!(t(&trace, "a") && !f(&trace, "b")) == f(&trace, "c"), trace)
 	trace = ""
-	println(n("x", 1)+n("y", 2)*n("z", 3), trace)
+	println(n(&trace, "x", 1)+n(&trace, "y", 2)*n(&trace, "z", 3), trace)
 	trace = ""
-	xs := []int{n("p", 1), n("q", 2), n("r", 3)}
-	println(xs[n("i", 0)]+xs[n("j", 2)], trace)
+	xs := []int{n(&trace, "p", 1), n(&trace, "q", 2), n(&trace, "r", 3)}
+	println(xs[n(&trace, "i", 0)]+xs[n(&trace, "j", 2)], trace)
 	trace = ""
-	if n("m", 5) > 3 && n("n", 1) < 0 || n("o", 0) == 0 {
+	if n(&trace, "m", 5) > 3 && n(&trace, "n", 1) < 0 || n(&trace, "o", 0) == 0 {
 		println("taken", trace)
 	}
 	a, b := true, false

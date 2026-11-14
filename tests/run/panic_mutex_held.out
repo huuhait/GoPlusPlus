@@ -1,0 +1,14 @@
+2 0
+panic: sync: With on a Mutex that this goroutine holds
+
+goroutine 1 [running]:
+sync.Mutex[map[int]int].With()
+	+0x?
+main.grow()
+	+0x?
+main.main.func2()
+	+0x?
+sync.Mutex[map[int]int].With()
+	+0x?
+main.main()
+	+0x?

@@ -334,7 +334,7 @@ impl<'a> Checker<'a> {
                 }
                 self.changed(cx, at, place::Change::Emptied("clear"));
                 self.wrote(cx, at);
-                self.shared_changed(cx, at, "clear");
+                self.changed_by_builtin(cx, at, "clear");
                 // A slice keeps its length, with zero values in it.
                 if let Type::Slice(elem) = &*self.types.get(self.types.underlying(x.ty)) {
                     let text = self.expr_string(cx, at);
@@ -399,6 +399,7 @@ impl<'a> Checker<'a> {
                     }
                     return Operand::UNKNOWN;
                 }
+                self.changed_by_builtin(cx, at, "copy into");
                 let (x, y) = (self.read(x), self.read(y));
                 if self.unsettled(x.ty) || self.unsettled(y.ty) {
                     return Operand::value(int);
@@ -472,7 +473,7 @@ impl<'a> Checker<'a> {
                 };
                 self.changed(cx, at, place::Change::Emptied("delete"));
                 self.wrote(cx, at);
-                self.shared_changed(cx, at, "delete from");
+                self.changed_by_builtin(cx, at, "delete from");
                 self.lost_entry(cx, at, at);
                 let (key_at, key_value) = given[1].clone();
                 let assigned =

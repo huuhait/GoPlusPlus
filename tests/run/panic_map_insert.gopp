@@ -1,23 +1,25 @@
 // exit: 2
 package main
 
-var m = map[int]int{1: 1, 2: 2}
+type Grower interface{ Grow() }
 
-func grow() {
-	m[len(m)+100] = 1
-}
+type Table map[int]int
+
+func (t *Table) Grow() { t[len(*t)+100] = 1 }
 
 // A new key in a map that a range loop walks is a panic on every run:
 // Go lets the loop see the key or not. The checker refuses a change of
-// a map of the function under its loop; what a call does to a map of
-// the package it does not see.
+// the map under its loop that it sees, also in a function that is
+// called; what a method of an interface does it does not see.
 func main() {
+	m := Table{1: 1, 2: 2}
 	for key := range m {
 		m[key] = 0
 	}
 	println(len(m), m[1])
+	var g Local[Grower] = &m
 	for range m {
-		grow()
+		g.Grow()
 	}
 	println("not reached")
 }

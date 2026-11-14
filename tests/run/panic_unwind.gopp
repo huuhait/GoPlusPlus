@@ -1,16 +1,18 @@
 package main
 
+import "sync"
+
 // A panic is raised at every call of `step`, one after the other, and
 // stopped in `attempt`. What the functions between own must end each
 // time: `opened` and `closed` are equal at the end, and no memory is
 // lost or freed twice.
 
-var countdown int
-var opened, closed int
+var countdown sync.Atomic[int]
+var opened, closed sync.Atomic[int]
 
 func step() {
-	countdown--
-	if countdown == 0 {
+	countdown.Add(-1)
+	if countdown.Load() == 0 {
 		panic("step")
 	}
 }
@@ -19,13 +21,13 @@ type File struct{ fd int }
 
 func (f *File) drop() {
 	if f.fd != 0 {
-		closed++
+		closed.Add(1)
 	}
 }
 
 func open(fd int) File {
 	step()
-	opened++
+	opened.Add(1)
 	return File{fd: fd}
 }
 
@@ -259,7 +261,7 @@ func attempt() (result int, stopped bool) {
 func main() {
 	stops := 0
 	for target := 1; target < 400; target++ {
-		countdown = target
+		countdown.Store(target)
 		_, stopped := attempt()
 		if !stopped {
 			println("no panic from", target, "on")
@@ -268,8 +270,8 @@ func main() {
 		stops++
 	}
 	println("stopped", stops, "panics")
-	println("opened", opened, "closed", closed)
-	countdown = 0
+	println("opened", opened.Load(), "closed", closed.Load())
+	countdown.Store(0)
 	result, _ := attempt()
 	println(result)
 }

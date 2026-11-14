@@ -1,6 +1,8 @@
 package main
 
-var live, ended int
+import "sync"
+
+var live, ended sync.Atomic[int]
 
 type File struct {
 	fd   int
@@ -8,12 +10,12 @@ type File struct {
 }
 
 func open(fd int) File {
-	live++
+	live.Add(1)
 	return File{fd, "f"}
 }
 
 func (f *File) drop() {
-	ended++
+	ended.Add(1)
 	println("  end", f.fd)
 }
 
@@ -21,7 +23,7 @@ func (f File) Fd() int { return f.fd }
 
 func (f *File) Named() string { return f.name }
 
-func counts(when string) { println(when, live, ended) }
+func counts(when string) { println(when, live.Load(), ended.Load()) }
 
 type Holder struct {
 	file  Shared[File]
@@ -152,8 +154,6 @@ func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
 
 func (s *Stack[T]) Top() T { return s.items[len(s.items)-1] }
 
-var held Option[Shared[Node]]
-
 func fails(n Shared[Node]) {
 	defer func() {
 		recover()
@@ -185,7 +185,7 @@ func linked() {
 	label := root.Label
 	path := leaf.Path
 	println(label(), path(), root == one, root == leaf)
-	held = leaf
+	var held Option[Shared[Node]] = leaf
 	fails(root)
 	if k := held; k != nil {
 		println(k.Path())

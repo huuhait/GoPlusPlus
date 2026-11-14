@@ -431,11 +431,9 @@ type Counter struct {
 	n int
 }
 
-var total int
-
-func bump() int {
-	total++
-	return total
+func bump(total *int) int {
+	*total++
+	return *total
 }
 
 func (c Counter) add(a, b int) int { return c.n + a + b }
@@ -443,13 +441,14 @@ func (c Counter) add(a, b int) int { return c.n + a + b }
 func three(a, b, c int) int { return a + b + c }
 
 func order(c Counter, x int, p *int) int {
-	a := x + bump()
-	b := bump() + x
-	d := total + bump() + total
-	e := three(x, bump(), *p)
-	f := c.add(bump(), c.n)
-	g := Counter{x}.add(total, bump())
-	h := [3]int{total, bump(), total}
+	total := 0
+	a := x + bump(&total)
+	b := bump(&total) + x
+	d := total + bump(&total) + total
+	e := three(x, bump(&total), *p)
+	f := c.add(bump(&total), c.n)
+	g := Counter{x}.add(total, bump(&total))
+	h := [3]int{total, bump(&total), total}
 	return a + b + d + e + f + g + h[0]
 }
 "));
@@ -989,11 +988,9 @@ func calls(xs []int, name string) int {
 fn the_last_use_of_a_variable_gives_its_value_and_makes_no_copy() {
     let text = "package main
 
-var kept [][]int
-
 func keep(xs []int) {
 	xs[0] = 1
-	kept = append(kept, xs)
+	println(len(xs))
 }
 
 func uses(c bool) int {
@@ -2253,11 +2250,9 @@ type Op func(a int, note string) int
 func plain(a int, note string) int { return a + len(note) }
 
 func keeps(a int, note string) int {
-	last = note
+	println(note)
 	return a
 }
-
-var last string
 
 func apply(op Op, a int) int { return op(a, \"n\") }
 
@@ -2667,8 +2662,6 @@ func main() {
 fn the_last_arguments_of_a_function_with_dots_are_one_slice() {
     let text = "package main
 
-var kept []string
-
 func sum(xs ...int) int {
 	total := 0
 	for _, x := range xs {
@@ -2678,7 +2671,7 @@ func sum(xs ...int) int {
 }
 
 func keep(first string, parts ...string) int {
-	kept = append(kept, first)
+	kept := []string{first}
 	kept = append(kept, parts...)
 	return len(kept)
 }
@@ -2749,13 +2742,11 @@ func (r Rect) Area() int { return r.w * r.h }
 
 func (r *Rect) grow() { r.w++ }
 
-var last any
-
 func read(v any) bool { return v == nil }
 
 func area(s Shape) int { return s.Area() }
 
-func keep(v any) { last = v }
+func keep(last *any, v any) { *last = v }
 
 func returned(s Shape) Shape { return s }
 
@@ -2775,8 +2766,9 @@ func main() {
 	list := []int{1}
 	var s Shape = r
 	println(read(r), read(list), area(r), area(Rect{1, 1}), area(s), passes(r), twice(r))
-	keep(r)
-	keep(list)
+	var last any
+	keep(&last, r)
+	keep(&last, list)
 	println(r.w, len(list))
 }
 ";
@@ -2787,7 +2779,7 @@ func main() {
             "main.Rect.grow: own",
             "main.read: lent",
             "main.area: worked",
-            "main.keep: lent",
+            "main.keep: own lent",
             "main.returned: own",
             "main.assigned: own lent",
             "main.field: own",
@@ -4749,31 +4741,32 @@ func f{at}(n int, p Pair) (int, string) {{
 		rows []int
 	}}
 	l := Local{{v: {at} % 100}}
+	sum := total
 	both := struct {{
 		l Local
 		p *Pair
 	}}{{l, &p}}
 	if n > {at} && p != (Pair{{n, {at}}}) {{
 		m, _ := f{next}(n-1, Pair{{n, int(l.v)}})
-		total += m
+		sum += m
 	}}
 	for i := 0; i < n; i++ {{
-		total += both.p.a * i
+		sum += both.p.a * i
 	}}
-	println(total, \"f{at}\")
+	println(sum, \"f{at}\")
 	var held any = l
 	if _, ok := held.(Local); ok {{
 		held = p
 	}}
 	var sized Sized = p
-	total += sized.Size()
+	sum += sized.Size()
 	next := func(n int) int {{ return func(m int) int {{ return m + int(l.v) + {at} }}(n) }}
-	total += next(n)
-	total += len(twice(l)) + first([]int{{n}}, {at}) + len(twice(p))
-	total += int(Cell[Local]{{v: l}}.get().v) + Cell[Pair]{{v: p}}.get().a
-	total += wrap(l) + wrap(n) + Cell[Pair]{{v: p}}.with(l) + scaled({at})
-	go println(total)
-	return total + p.b, \"f{at}\"
+	sum += next(n)
+	sum += len(twice(l)) + first([]int{{n}}, {at}) + len(twice(p))
+	sum += int(Cell[Local]{{v: l}}.get().v) + Cell[Pair]{{v: p}}.get().a
+	sum += wrap(l) + wrap(n) + Cell[Pair]{{v: p}}.with(l) + scaled({at})
+	go println(sum)
+	return sum + p.b, \"f{at}\"
 }}
 ",
             bits = [8, 16, 32, 64][at % 4],
@@ -4904,7 +4897,7 @@ fn the_steps_grow_with_the_source() {
         steps_of(&function(&labels))
     });
     assert_near_linear(&[50, 100, 200, 400], |n| {
-        steps_of(&many_functions(n).replace("\tgo println(total)\n", ""))
+        steps_of(&many_functions(n).replace("\tgo println(sum)\n", ""))
     });
 }
 
@@ -5313,7 +5306,7 @@ fn the_steps_grow_with_loops_whose_variable_is_kept() {
     assert_near_linear(&sizes, |n| {
         let loops: String = (0..n).map(|at| passes(at) + "\t}\n").collect();
         steps_of(&format!(
-            "package main\n\n{types}\nfunc f() {{\n{loops}}}\n"
+            "package main\n\n{types}\nfunc init() {{\n{loops}}}\n"
         ))
     });
     assert_near_linear(&sizes, |n| {
@@ -5321,7 +5314,7 @@ fn the_steps_grow_with_loops_whose_variable_is_kept() {
         let loops: String = (0..n).map(passes).collect();
         let ends = "\t}\n".repeat(n);
         steps_of(&format!(
-            "package main\n\n{types}\nfunc f() {{\n{loops}{ends}}}\n"
+            "package main\n\n{types}\nfunc init() {{\n{loops}{ends}}}\n"
         ))
     });
 }

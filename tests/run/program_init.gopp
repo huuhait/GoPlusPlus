@@ -1,5 +1,7 @@
 package main
 
+import "sync"
+
 type Point struct{ x, y int }
 
 type Config struct {
@@ -8,10 +10,18 @@ type Config struct {
 	tags  map[string]int
 }
 
-var order []string
+var order sync.Mutex[[]string]
+
+func note(name string) { order.With(func(all *[]string) { *all = append(*all, name) }) }
+
+func noted() int {
+	n := 0
+	order.With(func(all *[]string) { n = len(*all) })
+	return n
+}
 
 func step(name string, n int) int {
-	order = append(order, name)
+	note(name)
 	return n
 }
 
@@ -33,14 +43,14 @@ var config = Config{
 }
 
 func suffix() string {
-	order = append(order, "suffix")
+	note("suffix")
 	return "!"
 }
 
 var left, right = pair()
 
 func pair() (int, string) {
-	order = append(order, "pair")
+	note("pair")
 	return origin.x * 10, config.name
 }
 
@@ -81,12 +91,12 @@ func join(parts []string) string {
 }
 
 func init() {
-	order = append(order, "init one")
-	zero = len(order)
+	note("init one")
+	zero = noted()
 }
 
 func init() {
-	order = append(order, "init two")
+	note("init two")
 	words = append(words, "c")
 }
 
@@ -95,8 +105,10 @@ func main() {
 	println(config.name, len(config.sizes), config.sizes[2], config.tags["b"], len(config.tags))
 	println(left, right, double(4), handlers["square"](5), handlers["scaled"](2), len(handlers))
 	println(counter(), counter(), text, len(words), zero, named, grid[1][1], pointer.y)
-	for _, name := range order {
-		print(name, "; ")
-	}
+	order.With(func(all *[]string) {
+		for _, name := range *all {
+			print(name, "; ")
+		}
+	})
 	println()
 }

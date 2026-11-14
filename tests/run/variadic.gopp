@@ -1,5 +1,7 @@
 package main
 
+import "sync"
+
 type Named struct {
 	name string
 	tags []string
@@ -26,11 +28,21 @@ func join(sep string, parts ...string) string {
 
 func count(xs ...int) (int, bool) { return len(xs), xs == nil }
 
-var kept []string
+var kept sync.Mutex[[]string]
 
 func keep(parts ...string) int {
-	kept = append(kept, parts...)
-	return len(kept)
+	n := 0
+	kept.With(func(all *[]string) {
+		*all = append(*all, parts...)
+		n = len(*all)
+	})
+	return n
+}
+
+func keptParts() []string {
+	var parts []string
+	kept.With(func(all *[]string) { parts = *all })
+	return parts
 }
 
 func hold(parts ...string) []string { return parts }
@@ -98,16 +110,22 @@ type Adder interface {
 	Add(lines ...string) int
 }
 
-var order []string
+var order sync.Mutex[[]string]
 
 func step(name string) string {
-	order = append(order, name)
+	order.With(func(all *[]string) { *all = append(*all, name) })
 	return name
 }
 
 func number(name string, n int) int {
-	order = append(order, name)
+	step(name)
 	return n
+}
+
+func steps() []string {
+	var names []string
+	order.With(func(all *[]string) { names = *all })
+	return names
 }
 
 func pair() (string, string) { return "left", "right" }
@@ -126,7 +144,7 @@ func main() {
 
 	a, b := "x", "y"
 	println(keep(a, b), keep(), keep(a+b))
-	println(join(",", kept...))
+	println(join(",", keptParts()...))
 	held := hold(a, b, a+b)
 	println(len(held), cap(held), held[2])
 	parts := []string{"p", "q"}
@@ -154,7 +172,7 @@ func main() {
 	println(joiner("/", "a", "b"), joiner("/"))
 
 	println(join(step("sep"), step("first"), step("second")), sum(number("one", 1), number("two", 2)))
-	println(join(",", order...))
+	println(join(",", steps()...))
 	println(join(pair()))
 
 	func() {
@@ -163,5 +181,5 @@ func main() {
 		defer log.Add("last")
 		defer func(xs ...int) { println("literal", len(xs)) }(1, 2, 3)
 	}()
-	println(len(kept), len(log.lines), log.lines[len(log.lines)-1])
+	println(len(keptParts()), len(log.lines), log.lines[len(log.lines)-1])
 }

@@ -308,14 +308,14 @@ impl<'a> Checker<'a> {
             return;
         };
         for (&arg, flag) in args.iter().zip(read_only) {
-            if flag || !self.points_into_shared(cx, arg) {
+            let Some(fixed) = self.points_into_fixed(cx, arg).filter(|_| !flag) else {
                 continue;
-            }
+            };
             let message = format!(
-                "cannot give {} to {}: the function may write through it, and what a Shared \
-                 holds is only read",
+                "cannot give {} to {}: the function may write through it, and {}",
                 self.expr_string(cx, arg),
-                self.expr_string(cx, fun)
+                self.expr_string(cx, fun),
+                fixed.why()
             );
             self.error(Code::ForeignReadOnly, self.span(cx, arg), message);
         }

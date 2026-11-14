@@ -1,19 +1,22 @@
 // exit: 2
 package main
 
-func empty(m *map[int]int) {
-	clear(m)
-}
+type Emptier interface{ Empty() }
+
+type Table map[int]int
+
+func (t *Table) Empty() { clear(t) }
 
 func main() {
-	m := map[int]int{1: 1}
+	m := Table{1: 1}
 	for key := range m {
 		delete(m, key)
 	}
 	println(len(m))
 	m[2] = 2
+	var e Local[Emptier] = &m
 	for range m {
-		empty(&m)
+		e.Empty()
 	}
 	println("not reached")
 }

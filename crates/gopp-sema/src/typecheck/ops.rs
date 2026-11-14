@@ -699,7 +699,7 @@ impl<'a> Checker<'a> {
                 }
                 // `&s[i:j]` in a `.gopp` file is those elements of `s`.
                 let is_view = matches!(cx.tree.exprs[literal].kind, ExprKind::Slice { .. });
-                let held = self.held_shared(cx, inner);
+                let held = self.fixed(cx, inner) == Some(place::Fixed::Shared);
                 if self.operators.contains_key(&literal) && x.mode != Mode::Variable {
                     let message = format!(
                         "invalid operation: cannot take address of {}: what @Operator Index \
