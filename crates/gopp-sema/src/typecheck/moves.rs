@@ -677,7 +677,13 @@ impl<'a> Checker<'a> {
                 false => Marker::Send,
             };
             let unlabeled = self.types.unlabeled(ty, label);
-            let why = match (found.touched, found.how, found.written, unlabeled) {
+            // A method of an `Atomic` or a `Mutex` has the address of
+            // the variable, and changes it for both sides at once.
+            let how = match (self.types.sync_cell(ty), found.how) {
+                (Some(_), CaptureUse::Address) => CaptureUse::Read,
+                (_, how) => how,
+            };
+            let why = match (found.touched, how, found.written, unlabeled) {
                 (true, CaptureUse::Write | CaptureUse::Address, ..) => format!(
                     "the goroutine changes {name}, and {name} is used after the go statement"
                 ),

@@ -1,0 +1,34 @@
+package main
+
+import "sync"
+
+// What changes while several names have it is in an Atomic or a Mutex:
+// a field of a value in a Shared, a variable that a kept function uses,
+// a variable of the package.
+
+type Stats struct {
+	hits  sync.Atomic[int]
+	names sync.Mutex[[]string]
+}
+
+var total sync.Atomic[int64]
+
+func counter() func() int {
+	var n sync.Atomic[int]
+	return func() int { return n.Add(1) }
+}
+
+func main() {
+	s := NewShared(Stats{})
+	other := s
+	s.hits.Add(2)
+	other.hits.Add(3)
+	s.names.With(func(names *[]string) { *names = append(*names, "a", "b") })
+	other.names.With(func(names *[]string) { println(len(*names), s.hits.Load()) })
+
+	next := counter()
+	println(next(), next(), next())
+
+	total.Store(40)
+	println(total.Add(2), total.Swap(7), total.CompareAndSwap(7, 8), total.CompareAndSwap(7, 9), total.Load())
+}

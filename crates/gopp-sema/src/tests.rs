@@ -6876,6 +6876,77 @@ func use(f Local[func()], run func(func() bool)) {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+/// A loader with package `sync` of the standard library.
+fn with_sync(names: &ThreadedRodeo) -> Loader {
+    let atomic = include_str!("../../../std/sync/atomic.gopp");
+    let mutex = include_str!("../../../std/sync/mutex.gopp");
+    let text = format!("{atomic}{}", mutex.replacen("package sync", "", 1));
+    with_packages(names, &[("sync", &text)])
+}
+
+// rule: CON-17
+#[test]
+fn an_atomic_and_a_mutex_change_what_is_only_read() {
+    // A method of an `Atomic` or a `Mutex` changes the value for every
+    // user at once: it is called on a field of what a `Shared` holds,
+    // and on a variable that a kept function or a goroutine uses. A
+    // plain field and a plain variable are still not changed there.
+    let text = "package p
+
+import \"sync\"
+
+type Stats struct {
+	hits  sync.Atomic[int]
+	names sync.Mutex[[]string]
+	plain int
+}
+
+func shared() int {
+	s := NewShared(Stats{})
+	s.hits.Add(1)
+	s.names.With(func(names *[]string) { *names = append(*names, \"a\") })
+	s.plain++
+	return s.hits.Load()
+}
+
+func kept() func() int {
+	var n sync.Atomic[int]
+	return func() int { return n.Add(1) }
+}
+
+func keptPlain() func() int {
+	n := 0
+	return func() int {
+		n++
+		return n
+	}
+}
+
+func spawned() int {
+	var n sync.Atomic[int]
+	go func() { n.Add(1) }()
+	return n.Load()
+}
+
+func viaMutex() func() {
+	m := sync.NewMutex(map[string]int{})
+	return func() { m.With(func(all *map[string]int) { all[\"a\"]++ }) }
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = with_sync(&names);
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:15:2: cannot assign to s.plain: what a Shared holds is only read through it",
+        "    s is the only name of this value: make it with NewUnique, and it can be changed",
+        "a.gopp:26:2: cannot keep a function that uses n as a func value, which may run on another \
+         goroutine: n is changed by it or by another function",
+        "    keep it as a Local[func(...)], which stays with one goroutine, or put n in a \
+         sync.Atomic or a sync.Mutex",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
 // rule: PAN-3
 #[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {

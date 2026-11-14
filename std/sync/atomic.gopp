@@ -1,0 +1,41 @@
+// Package sync has what several goroutines use one value through.
+package sync
+
+// The types that an Atomic holds.
+type integer interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
+}
+
+// An Atomic holds a number that is read and written whole, by one
+// goroutine at a time, with no lock.
+type Atomic[T integer] struct {
+	value T
+}
+
+// Load gives the value.
+func (a *Atomic[T]) Load() T { return a.value }
+
+// Store sets the value.
+func (a *Atomic[T]) Store(value T) { a.value = value }
+
+// Swap sets the value and gives the one before.
+func (a *Atomic[T]) Swap(value T) T {
+	before := a.value
+	a.value = value
+	return before
+}
+
+// CompareAndSwap sets the value if it is old, and says whether it was.
+func (a *Atomic[T]) CompareAndSwap(old, value T) bool {
+	if a.value != old {
+		return false
+	}
+	a.value = value
+	return true
+}
+
+// Add adds to the value and gives the sum.
+func (a *Atomic[T]) Add(delta T) T {
+	a.value += delta
+	return a.value
+}

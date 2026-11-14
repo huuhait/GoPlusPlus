@@ -1050,12 +1050,24 @@ impl<'a> Walk<'a> {
         // A function of a header says what it only reads by its own
         // types, which the checker held the arguments against.
         let of_header = places.of_headers.contains_key(&callee);
+        // A method of an `Atomic` or a `Mutex` changes its value for
+        // every user at once: it may be called on what is only read.
+        let cell = |arg: ExprId| {
+            let ty = self
+                .type_of(arg)
+                .map(|ty| match &*types.get(types.underlying(ty)) {
+                    Type::Pointer(of) | Type::Shared(of) | Type::Unique(of) => *of,
+                    _ => ty,
+                });
+            ty.is_some_and(|ty| types.sync_cell(ty).is_some())
+        };
         let all = before.iter().chain(args.iter()).enumerate();
         let shared: Vec<bool> = all
             .map(|(position, &arg)| {
                 let arg = self.unparen(arg);
                 match position == 0 && by_address && !typed[0] {
                     _ if of_header => false,
+                    _ if position == 0 && receiver && cell(arg) => false,
                     true => self.is_shared(arg) || self.held_shared(arg),
                     false => {
                         (pointers[position] || lent_to(position)) && self.points_into_shared(arg)
@@ -1430,8 +1442,20 @@ impl<'a> Walk<'a> {
                         });
                         // What another function literal changes is
                         // changed while this one may run.
-                        let writes = capture.how != crate::object::CaptureUse::Read
-                            || self.changed_by_other(expr, local);
+                        // A method of an `Atomic` or a `Mutex` takes
+                        // the address of the variable and changes it
+                        // for every user at once: that is no change.
+                        let cell = self.local_type(local).is_some_and(|ty| {
+                            let types = self.places.map(|places| places.types);
+                            types.is_some_and(|all| all.sync_cell(ty).is_some())
+                        });
+                        let writes = match cell {
+                            true => capture.how == crate::object::CaptureUse::Write,
+                            false => {
+                                capture.how != crate::object::CaptureUse::Read
+                                    || self.changed_by_other(expr, local)
+                            }
+                        };
                         // A variable of the type of a type parameter may
                         // hold a pointer, and is shared like any other.
                         let by_params = self.local_type(local).is_some_and(|ty| {

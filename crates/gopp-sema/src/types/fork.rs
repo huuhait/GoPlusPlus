@@ -99,6 +99,7 @@ impl Types {
             rune: self.rune,
             any: self.any,
             clone_name: self.clone_name,
+            sync_names: self.sync_names,
             steps: AtomicU64::new(0),
             forked,
         }

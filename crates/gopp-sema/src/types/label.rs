@@ -140,7 +140,17 @@ impl Types {
                 walk.inside.insert(ty, depth);
                 let under = self.underlying(ty);
                 let (of, held) = deep(|| self.labels_in(under, walk));
-                labels = of;
+                // An `Atomic` is shared whatever it holds, and a `Mutex`
+                // where what it holds may be given to a goroutine: one
+                // of them at a time has the value (CON-12, CON-17).
+                labels = match self.sync_cell(ty) {
+                    Some(true) => Labels::BOTH,
+                    Some(false) => Labels {
+                        send: of.send,
+                        sync: of.send,
+                    },
+                    None => of,
+                };
                 outermost = held;
                 // The parents are parts of the value.
                 for parent in self.parents(ty) {

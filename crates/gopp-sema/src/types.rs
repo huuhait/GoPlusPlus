@@ -805,6 +805,8 @@ pub struct Types {
     any: TypeId,
     /// The name of the copy method.
     clone_name: Spur,
+    /// The package `sync` and its types that guard what they hold.
+    sync_names: [Spur; 3],
     /// The work of looking up members, counted for the tests of speed.
     steps: AtomicU64,
     /// For a copy of a table: how much of the table there was.
@@ -943,6 +945,7 @@ impl Types {
             rune,
             any,
             clone_name: names.get_or_intern_static("Clone"),
+            sync_names: ["sync", "Atomic", "Mutex"].map(|name| names.get_or_intern_static(name)),
             steps: AtomicU64::new(0),
             forked: fork::Sizes::default(),
         }
@@ -1219,6 +1222,27 @@ impl Types {
                 self.read(|inner| !inner.named[id.0 as usize].methods.is_empty())
             }
             _ => false,
+        }
+    }
+
+    /// Whether the type is one of package `sync` whose value several
+    /// goroutines change through its methods, one at a time: with
+    /// true an `Atomic`, with false a `Mutex`. A method of such a type
+    /// that writes through its receiver changes nothing that another
+    /// user of the value could see half done.
+    pub fn sync_cell(&self, ty: TypeId) -> Option<bool> {
+        let Type::Named { id, .. } = &*self.get(ty) else {
+            return None;
+        };
+        let [sync, atomic, mutex] = self.sync_names;
+        let home = self.home(*id);
+        if home.path.or(home.package) != Some(sync) {
+            return None;
+        }
+        match home.name {
+            name if name == atomic => Some(true),
+            name if name == mutex => Some(false),
+            _ => None,
         }
     }
 
