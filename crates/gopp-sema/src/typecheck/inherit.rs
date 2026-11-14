@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::object::CaptureUse;
-use crate::types::{Found, Marks, NamedId, NotCopied, PARENT};
+use crate::types::{CopyRule, Found, Marks, NamedId, NotCopied, PARENT};
 
 impl<'a> Checker<'a> {
     fn marked(&self, cx: &Cx<'a>, attr: &Attribute, name: &str) -> bool {
@@ -315,6 +315,19 @@ impl<'a> Checker<'a> {
         self.error(Code::CloneNotCopied, sel.span, message);
     }
 
+    /// Whether the method `name` of the type `holder` is one that each
+    /// type has for itself, so that a child replaces none with its own
+    /// and two parents may both have one: `drop`, which ends the part
+    /// of its type (OWN-R2), and the copy method `Clone() T` of a type
+    /// with a `drop` method (OWN-R6).
+    fn own_alone(&self, holder: TypeId, name: Spur) -> bool {
+        match self.names.resolve(&name) {
+            "drop" => true,
+            "Clone" => self.types.copy_rule(holder) == Some(CopyRule::Method),
+            _ => false,
+        }
+    }
+
     /// Two parents of `ty` have a member of one name: a field, or
     /// methods of which one is final or which differ; methods that may
     /// all be replaced and are alike are replaced by one `@Override`
@@ -331,6 +344,9 @@ impl<'a> Checker<'a> {
             for holder in holders {
                 for key in self.types.member_names(holder) {
                     self.steps += 1;
+                    if self.own_alone(holder, key.0) {
+                        continue;
+                    }
                     let Some(&other) = first.get(&key).filter(|&&other| other != index) else {
                         first.insert(key, index);
                         continue;
@@ -505,7 +521,9 @@ impl<'a> Checker<'a> {
                 let found = self
                     .types
                     .lookup(parent, name.name, self.path, self.names, false);
-                if let Ok(found) = found {
+                if let Ok(found) = found
+                    && !self.own_alone(found.holder, name.name)
+                {
                     versions.push(found);
                 }
             }

@@ -1,0 +1,14 @@
+9
+panic: method main.Shape.Area has no body: it is called while the value ends
+
+goroutine 1 [running]:
+thunk at offset 0 for main.Shape.Area()
+	+0x?
+main.Shape.drop()
+	+0x?
+drop glue for main.Shape()
+	+0x?
+drop glue for main.Square()
+	+0x?
+main.main()
+	+0x?

@@ -3147,6 +3147,10 @@ impl<'a> FuncCx<'a, '_> {
                     .unwrap_or_default()
                     .to_vec();
                 let names = self.b.types().field_names(id).to_vec();
+                // A literal without names is of a type without parents:
+                // its fields come after the address of the table, if
+                // the type has one.
+                let lead = self.memo.leads.get(&ty).copied().unwrap_or(0) as usize;
                 // Which field each element sets, in the order of the
                 // source.
                 // A field of an ancestor is set in the part of the
@@ -3167,7 +3171,7 @@ impl<'a> FuncCx<'a, '_> {
                             }
                         },
                         Some(_) => None,
-                        None => Some(at),
+                        None => Some(lead + at),
                     };
                     let inherited = match (field, key.map(|key| &self.tree.exprs[key].kind)) {
                         (None, Some(ExprKind::Name(name))) => {

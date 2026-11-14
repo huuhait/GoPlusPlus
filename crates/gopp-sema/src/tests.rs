@@ -8211,6 +8211,65 @@ func dup(c *Conn, u Unique[Conn], p *Plain) {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-R2, OWN-R6, TYP-17
+#[test]
+fn each_type_has_its_drop_and_its_copy_method_for_itself() {
+    // A `drop` method ends the part of its own type, and the copy
+    // method of a type with one copies that type: a child declares its
+    // own next to those of its parents (`Child`), and two parents may
+    // both have them. A `Clone` method of a type without a `drop`
+    // method is a method like any other (`Kid`, `Both`).
+    let text = "package p
+
+type Base struct{ name string }
+
+func (b *Base) drop() {}
+
+func (b Base) Clone() Base { return Base{b.name} }
+
+type Side struct{ side string }
+
+func (s *Side) drop() {}
+
+func (s Side) Clone() Side { return Side{s.side} }
+
+@Extends(Base)
+@Extends(Side)
+type Child struct{ extra string }
+
+func (c *Child) drop() {}
+
+func (c Child) Clone() Child { return Child{name: c.name, side: c.side, extra: c.extra} }
+
+type Plain struct{ n int }
+
+func (p Plain) Clone() Plain { return p }
+
+@Extends(Plain)
+type Kid struct{ m int }
+
+func (k Kid) Clone() Kid { return k }
+
+type Other struct{ o int }
+
+func (o Other) Clone() Other { return o }
+
+@Extends(Plain)
+@Extends(Other)
+type Both struct{}
+
+var child Child
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:30:14: cannot replace Plain.Clone: it is final, because it is not marked @Virtual",
+        "a.gopp:38:6: the parents Plain and Other of Both both have a member Clone",
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: TYP-20, CLO-2
 #[test]
 fn a_function_literal_that_names_base_uses_the_receiver() {

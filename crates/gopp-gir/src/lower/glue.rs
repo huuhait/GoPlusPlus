@@ -501,6 +501,7 @@ impl FuncCx<'_, '_> {
         kind: Glue,
         value: &Place,
         fields: Vec<(u32, CheckedTypeId)>,
+        parents: std::ops::Range<u32>,
     ) -> Built<Result<(), &'static str>> {
         for (at, part) in fields {
             let glue = match self.glue(kind, part)? {
@@ -508,8 +509,16 @@ impl FuncCx<'_, '_> {
                 Err(what) => return Ok(Err(what)),
             };
             let field = self.b.field(value, at)?;
+            let had = match kind == Glue::Drop && parents.contains(&at) {
+                true => match self.ends_as(&field, part)? {
+                    Ok(had) => had,
+                    Err(what) => return Ok(Err(what)),
+                },
+                false => Vec::new(),
+            };
             let at = self.record(field)?;
             self.call_glue(glue, at)?;
+            self.ended_as(had)?;
         }
         Ok(Ok(()))
     }
@@ -543,6 +552,9 @@ impl FuncCx<'_, '_> {
             }
             _ => false,
         };
+        // Where the parts of the parents are among those of a struct.
+        let table = u32::from(shared.own_table(ty));
+        let parents = table..table + types.parents(ty).len() as u32;
         let given = Operand::Copy(Place::local(self.b.param(0)));
         let to = self.b.types().ptr(lowered);
         let typed = self
@@ -603,7 +615,7 @@ impl FuncCx<'_, '_> {
                 }
             }
             Cloned::Fields(fields) => {
-                if let Err(what) = self.fields_glue(kind, &value, fields)? {
+                if let Err(what) = self.fields_glue(kind, &value, fields, parents)? {
                     return Ok(Err(what));
                 }
             }
@@ -631,7 +643,7 @@ impl FuncCx<'_, '_> {
                 self.b.switch_to(next);
                 match ends {
                     true => {
-                        if let Err(what) = self.fields_glue(kind, &value, fields)? {
+                        if let Err(what) = self.fields_glue(kind, &value, fields, parents)? {
                             return Ok(Err(what));
                         }
                     }

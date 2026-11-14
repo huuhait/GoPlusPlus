@@ -1,0 +1,100 @@
+package main
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Base struct{ name string }
+
+@Virtual
+func (b *Base) Label() string { return "base " + b.name }
+
+func (b *Base) drop() { println("drop", b.Label()) }
+
+type Side struct{ side string }
+
+@Virtual
+func (s *Side) Mark() string { return "side " + s.side }
+
+func (s *Side) Show() string { return s.Mark() }
+
+func (s *Side) drop() { println("drop", s.Show()) }
+
+func (s Side) Clone() Side { return Side{s.side} }
+
+func (b Base) Clone() Base { return Base{b.name} }
+
+@Extends(Base)
+@Extends(Side)
+type Child struct {
+	extra string
+	held  Res
+}
+
+@Override
+func (c *Child) Label() string { return "child " + c.name + c.extra + c.held.name }
+
+@Override
+func (c *Child) Mark() string { return "child side " + c.side + c.held.name }
+
+@Extends(Child)
+type Grand struct{ more Res }
+
+@Override
+func (g *Grand) Label() string { return "grand " + g.name + g.more.name }
+
+func (g *Grand) drop() { println("drop grand:", g.Label(), g.Mark()) }
+
+func (g Grand) Clone() Grand {
+	return Grand{name: g.name, side: g.side, extra: g.extra, held: g.held, more: g.more}
+}
+
+type Leaf struct{ leaf string }
+
+func (l *Leaf) drop() { println("drop leaf", l.leaf) }
+
+func (l Leaf) Clone() Leaf { return Leaf{l.leaf + "'"} }
+
+@Extends(Leaf)
+type Twig struct{ twig string }
+
+func (t *Twig) drop() { println("drop twig", t.leaf, t.twig) }
+
+func (t Twig) Clone() Twig { return Twig{leaf: t.leaf + "''", twig: t.twig} }
+
+func twigs() {
+	t := Twig{leaf: "l", twig: "t"}
+	u := t
+	println(t.leaf, u.leaf)
+}
+
+func weaks() (Weak[Side], Weak[Base]) {
+	g := NewShared(Child{name: "w", side: "v", extra: "#", held: Res{"k"}})
+	var s Shared[Side] = g
+	var b Shared[Base] = g
+	w := NewWeak(s)
+	if got := w.Lock(); !got.IsNil() {
+		println("alive", s.Mark())
+	}
+	return w, NewWeak(b)
+}
+
+func main() {
+	c := Child{name: "a", side: "s", extra: "!", held: Res{"r"}}
+	println(c.Label())
+	u := NewUnique(Child{name: "b", side: "t", extra: "?", held: Res{"q"}})
+	var p Unique[Base] = move(u)
+	println(p.Label())
+	g := NewShared(Grand{name: "g", side: "u", extra: "#", held: Res{"h"}, more: Res{"m"}})
+	var s Shared[Side] = g
+	println(s.Mark(), g.Label())
+	var b *Base = &c
+	println(b.Label())
+	w, v := weaks()
+	println(w.Lock().IsNil(), v.Lock().IsNil())
+	twigs()
+	plain := Side{"p"}
+	println(plain.Mark())
+}

@@ -112,7 +112,28 @@ func (c *Conn) drop() {
 - Locals are destroyed (or released) at the end of their block, in reverse declaration order. One exception: a block-scoped local that an executed `defer` uses lives until function exit ([PAN-3, PAN-4](09-errors-and-panics.md)).
 - Temporaries are destroyed at the end of the full statement, in reverse order of creation.
 - In the header of a `for … range`, `if` or `switch`, temporaries live until the end of the whole statement, body included.
-- A value of a type with parents ([TYP-16](03-types.md#35-inheritance-adr-0023)) is destroyed child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in reverse `@Extends` order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse) ([TYP-24](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md)). Destroying a `Unique[Parent]` that holds a `Child` destroys the whole `Child`.
+- A value of a type with parents ([TYP-16](03-types.md#35-inheritance-adr-0023)) is destroyed child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in reverse `@Extends` order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse) ([TYP-24](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md)). Destroying a `Unique[Parent]` that holds a `Child` destroys the whole `Child`. Each type has its `drop` method for itself: a child declares its own next to those of its parents without `@Override`, and two parents may both have one; the same holds for the copy method `Clone() T` of a type with a `drop` method ([OWN-R6](#42-ownership-rules-d14)).
+- *While the `drop` method of a parent runs, the value is a value of that parent.* The fields of the child have ended by then, so a call of a method that may be replaced ([EXP-14](06-expressions.md#69-upcasts-and-downcasts-adr-0023)) runs the parent's own version there, not the child's, in the `drop` method and in everything that it calls. If the parent leaves that method open (`@Abstract`), the call is a panic: `method main.Shape.Area has no body: it is called while the value ends`.
+
+```go
+type Base struct{ name string }
+
+@Virtual
+func (b *Base) Label() string { return "base " + b.name }
+
+func (b *Base) drop() { println("drop", b.Label()) }
+
+@Extends(Base)
+type Child struct{ extra []string }
+
+@Override
+func (c *Child) Label() string { return "child " + c.name + c.extra[0] }
+
+func main() {
+    c := Child{name: "a", extra: []string{"!"}}
+    println(c.Label())   // child a!
+}                        // drop base a   (c.extra has ended; Child's Label would read it)
+```
 
 **OWN-R3.** *Copying, copies that are not made, and `move(x)`* ([ADR-0041](../adr/0041-values-are-copied.md)).
 - **A value is a copy.** Initialization and assignment (`b := a`, `b = a`), storing into a field, an element or a map entry (`x.f = a`, `T{F: a}`, `xs = append(xs, a)`, `m[k] = a`), passing `a` to a by-value parameter or receiver, `return a`, `ch <- a`, `go f(a)` and converting `a` to an interface each give the destination its own value, for every type. After `b := a`, nothing done to `b` is seen through `a`. What a copy is depends on the type ([OWN-C1, OWN-C2](#41-type-categories-d13)).
