@@ -1015,11 +1015,14 @@ impl<'a> Checker<'a> {
             let mut called = Vec::new();
             for call in &problem.calls {
                 self.steps += 1;
-                if let Some(&at) = owned.get(&call.callee) {
+                // What a method that a child may replace changes is
+                // what the method of that name changes.
+                let callee = call.named.unwrap_or(call.callee);
+                if let Some(&at) = owned.get(&callee) {
                     called.push(at);
                     continue;
                 }
-                let known = match call.callee {
+                let known = match callee {
                     Callee::Imported(import, member) => {
                         match &self.package.objects[import.0 as usize].kind {
                             ObjKind::Import { package, .. } => package.lends.get(&member).cloned(),
@@ -1030,7 +1033,7 @@ impl<'a> Checker<'a> {
                     _ => None,
                 };
                 if let Some(known) = known {
-                    done.entry(call.callee).or_insert(known);
+                    done.entry(callee).or_insert(known);
                 }
             }
             calls.push(called);

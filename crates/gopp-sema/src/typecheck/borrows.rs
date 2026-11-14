@@ -42,6 +42,10 @@ pub(super) struct Places<'a> {
     /// The values with a plain function that are given to a place
     /// which holds none, a `Local` one.
     pub localized: &'a FxHashSet<ExprId>,
+    /// The variables that are pointers into what a `Shared` holds.
+    pub read_only: &'a FxHashSet<LocalId>,
+    /// The names of the functions of headers that the body uses.
+    pub of_headers: &'a FxHashMap<ExprId, crate::object::ForeignUse>,
     pub base: Spur,
 }
 
@@ -104,6 +108,10 @@ pub(super) enum Callee {
 /// sources that its argument gives.
 pub(super) struct Call {
     pub callee: Callee,
+    /// The method that the call names, where a child may replace it:
+    /// the function that runs is not known, and what it changes is
+    /// what the named method changes.
+    pub named: Option<Callee>,
     pub args: Vec<(u32, u32)>,
     /// The arguments that lead to a place which may be given a pointer.
     pub sinks: Vec<bool>,
@@ -118,6 +126,9 @@ pub(super) struct Call {
     /// The arguments that are pointers to a value which owns something
     /// apart from itself, or hold such a pointer.
     pub owns: Vec<bool>,
+    /// The arguments that are pointers into what a `Shared` holds: the
+    /// function only reads through them (ADR-0042).
+    pub shared: Vec<bool>,
     /// For each argument that is or holds a pointer: the sources of
     /// what it points to.
     pub pointees: Vec<Option<(u32, u32)>>,
@@ -302,8 +313,18 @@ pub(super) struct Shared {
     pub changes: bool,
 }
 
+/// A call at `at` that may write through the pointer at `given`, which
+/// points into what a `Shared` holds. `known` says that the function
+/// is known to write there; of any other, nothing is known.
+pub(super) struct Written {
+    pub at: Span,
+    pub given: Span,
+    pub known: bool,
+}
+
 /// What the passes found in a problem.
 pub(super) struct Lent {
+    pub written: Vec<Written>,
     pub broken: Vec<Broken>,
     pub escaped: Vec<Escaped>,
     pub aliased: Vec<Aliased>,
@@ -411,11 +432,14 @@ pub(super) fn solve_together(
     while let Some(at) = rest.pop_front() {
         waits[at] = false;
         let problem = &problems[group[at]].2;
-        let known = |call: &Call| own.get(&call.callee).or_else(|| done.get(&call.callee));
+        let known = |callee: &Callee| own.get(callee).or_else(|| done.get(callee));
         let lends: Vec<Option<Arc<Lends>>> = (problem.calls.iter())
-            .map(|call| known(call).cloned())
+            .map(|call| known(&call.callee).cloned())
             .collect();
-        let mut lent = problem.solve(&lends);
+        let named: Vec<Option<Arc<Lends>>> = (problem.calls.iter())
+            .map(|call| call.named.as_ref().and_then(known).cloned())
+            .collect();
+        let mut lent = problem.solve(&lends, &named);
         steps += std::mem::take(&mut lent.steps);
         if let Some(owner) = problem.owner
             && *own[&owner] != lent.lends
@@ -741,6 +765,7 @@ impl<'a> Walk<'a> {
         let count = args.len() + before.iter().count();
         self.calls.push(Call {
             callee,
+            named: self.named(fun),
             args: vec![(0, 0); count],
             sinks: vec![false; count],
             funcs: vec![false; count],
@@ -749,6 +774,7 @@ impl<'a> Walk<'a> {
                 .collect(),
             changes: vec![false; count],
             owns: vec![false; count],
+            shared: vec![false; count],
             pointees: vec![None; count],
             spans: (before.iter().chain(args.iter()))
                 .map(|&arg| self.tree.exprs[arg].span)
@@ -906,13 +932,15 @@ impl<'a> Walk<'a> {
         if built_in || matches!(typed, Some(Mode::Type)) {
             return;
         }
-        // Nor does a method that an option or a handle has of its own.
+        // Nor does a method that an option, a handle or a pointer has of
+        // its own.
         let (before, receiver) = self.given_before(*fun, self.callee(*fun));
         let own = before.filter(|_| receiver).is_some_and(|x| {
             let mut steps = Vec::new();
             let ty = self.type_of(self.unparen(x));
             let ty = ty.map(|ty| self.through(ty, &mut steps));
-            let handle = steps.last() == Some(&Step::Held);
+            // `Clone` of a pointer to a value with a table is one too.
+            let handle = steps.last().is_some();
             let option = ty.is_some_and(|ty| places.types.is_option(ty));
             (handle || option) && !places.selections.contains_key(&callee)
         });
@@ -986,7 +1014,37 @@ impl<'a> Walk<'a> {
         if before.is_some() && receiver {
             changes[0] = typed[0] || by_address;
         }
-        if !sinks.contains(&true) && !funcs.contains(&true) && !changes.contains(&true) {
+        // A handle is lent to a parameter that is a pointer.
+        let params: Vec<TypeId> = match self.type_of(callee) {
+            Some(ty) => match &*types.get(types.underlying(ty)) {
+                Type::Func { params, .. } => params.to_vec(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let lent_to = |position: usize| {
+            let at = position.checked_sub(before.iter().count());
+            let param = at.and_then(|at| params.get(at));
+            param.is_some_and(|&ty| matches!(&*types.get(types.underlying(ty)), Type::Pointer(_)))
+        };
+        // A function of a header says what it only reads by its own
+        // types, which the checker held the arguments against.
+        let of_header = places.of_headers.contains_key(&callee);
+        let all = before.iter().chain(args.iter()).enumerate();
+        let shared: Vec<bool> = all
+            .map(|(position, &arg)| {
+                let arg = self.unparen(arg);
+                match position == 0 && by_address && !typed[0] {
+                    _ if of_header => false,
+                    true => self.is_shared(arg) || self.held_shared(arg),
+                    false => {
+                        (pointers[position] || lent_to(position)) && self.points_into_shared(arg)
+                    }
+                }
+            })
+            .collect();
+        let found = [&sinks, &funcs, &changes, &shared];
+        if !found.iter().any(|some| some.contains(&true)) {
             return;
         }
         let mut given = Vec::new();
@@ -996,6 +1054,7 @@ impl<'a> Walk<'a> {
         self.calls[call as usize].funcs = funcs;
         self.calls[call as usize].changes = changes;
         self.calls[call as usize].owns = owns;
+        self.calls[call as usize].shared = shared;
         if let Some(receiver) = lent {
             self.borrowing(receiver, self.tree.exprs[receiver].span, interface);
         }
@@ -1104,6 +1163,91 @@ impl<'a> Walk<'a> {
         if from < to {
             self.events.push(Event::Holds(DEFERRED, from, to, false));
         }
+    }
+
+    /// Whether the value of the expression is a `Shared`.
+    fn is_shared(&self, expr: ExprId) -> bool {
+        let (Some(places), Some(ty)) = (self.places, self.type_of(expr)) else {
+            return false;
+        };
+        let types = places.types;
+        matches!(&*types.get(types.underlying(ty)), Type::Shared(_))
+    }
+
+    /// Whether the place is in what a `Shared` holds: reached through
+    /// the handle, or through a pointer that only reads.
+    fn held_shared(&self, mut expr: ExprId) -> bool {
+        let Some(places) = self.places else {
+            return false;
+        };
+        let types = places.types;
+        loop {
+            let of = match self.tree.exprs[self.unparen(expr)].kind {
+                ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Slice { x, .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => self.unparen(x),
+                _ => return false,
+            };
+            let Some(mut ty) = self.type_of(of) else {
+                return false;
+            };
+            // What an option holds is reached like the option.
+            while let Type::Option(elem) = &*types.get(types.underlying(ty)) {
+                ty = *elem;
+            }
+            match &*types.get(types.underlying(ty)) {
+                Type::Shared(_) => return true,
+                Type::Pointer(_) => {
+                    let pointer = self.local(of);
+                    return pointer.is_some_and(|local| places.read_only.contains(&local));
+                }
+                _ => expr = of,
+            }
+        }
+    }
+
+    /// Whether the value of the expression is a pointer into what a
+    /// `Shared` holds: the address of such a place, the `Shared` itself
+    /// where a pointer is wanted, or a variable that is such a pointer.
+    fn points_into_shared(&self, expr: ExprId) -> bool {
+        match self.tree.exprs[expr].kind {
+            ExprKind::Unary {
+                op: UnaryOp::Addr,
+                x,
+            } => self.held_shared(x),
+            ExprKind::Name(_) => {
+                let read_only = self.places.map(|places| places.read_only);
+                let local = self.local(expr);
+                self.is_shared(expr)
+                    || local.is_some_and(|local| read_only.is_some_and(|all| all.contains(&local)))
+            }
+            _ => self.is_shared(expr),
+        }
+    }
+
+    /// The method that the call of `fun` names, if it is one of a
+    /// type with a table: a child may replace it.
+    fn named(&self, fun: ExprId) -> Option<Callee> {
+        let places = self.places?;
+        let fun = self.unparen(fun);
+        let ExprKind::Selector { sel, .. } = &self.tree.exprs[fun].kind else {
+            return None;
+        };
+        let selection = places.selections.get(&fun)?;
+        let types = places.types;
+        let Type::Named { id, .. } = &*types.get(selection.holder) else {
+            return None;
+        };
+        let method = matches!(
+            selection.kind,
+            SelectionKind::Method | SelectionKind::MethodExpr
+        );
+        let replaced = method && types.has_table(selection.holder);
+        replaced.then_some(Callee::Method(*id, sel.name))
     }
 
     /// The function that the call of `fun` runs.
@@ -1698,7 +1842,7 @@ impl Problem {
     /// that is still used, and the loans that leave the function.
     /// `lends` says for each call what the function that it runs does
     /// with what it is given, where that is known.
-    pub(super) fn solve(&self, lends: &[Option<Arc<Lends>>]) -> Lent {
+    pub(super) fn solve(&self, lends: &[Option<Arc<Lends>>], named: &[Option<Arc<Lends>>]) -> Lent {
         let changes = &self.changes;
         let shaped = |(call, lends): (&Call, &Option<Arc<Lends>>)| match lends {
             Some(lends) if call.listed && !lends.gives.is_empty() => {
@@ -1710,8 +1854,10 @@ impl Problem {
         let sources = &Sources {
             problem: self,
             lends: &lends,
+            named,
         };
         let mut lent = Lent {
+            written: Vec::new(),
             broken: Vec::new(),
             escaped: Vec::new(),
             aliased: Vec::new(),
@@ -2048,6 +2194,18 @@ impl Problem {
                     }
                     Event::Called(call) => {
                         let record = &self.calls[call as usize];
+                        // What a `Shared` holds is given to a function
+                        // that only reads through the pointer.
+                        for (arg, _) in record.shared.iter().enumerate().filter(|(_, is)| **is) {
+                            let changes = sources.changes(call, arg);
+                            if changes != Some(false) {
+                                lent.written.push(Written {
+                                    at: record.at,
+                                    given: record.spans[arg],
+                                    known: changes.is_some(),
+                                });
+                            }
+                        }
                         lent.aliased
                             .extend(known.aliased(&sets, set, sources, record));
                         // A function that points into what a value owns
@@ -2290,6 +2448,9 @@ struct StoredBy {
 struct Sources<'p> {
     problem: &'p Problem,
     lends: &'p [Option<Arc<Lends>>],
+    /// For each call of a method that a child may replace: what the
+    /// named method does.
+    named: &'p [Option<Arc<Lends>>],
 }
 
 impl Sources<'_> {
@@ -2301,6 +2462,17 @@ impl Sources<'_> {
         let count = self.problem.calls[call as usize].args.len();
         let known = self.lends[call as usize].as_deref();
         known.filter(|lends| lends.gives.is_empty() || lends.gives.len() == count)
+    }
+
+    /// Whether the function of the call may change what its argument
+    /// at the position reaches, if that is known: of a method that a
+    /// child may replace, what the named method does.
+    fn changes(&self, call: u32, position: usize) -> Option<bool> {
+        let count = self.problem.calls[call as usize].args.len();
+        let named = self.named[call as usize].as_deref();
+        let named = named.filter(|lends| lends.gives.is_empty() || lends.gives.len() == count);
+        let known = self.says(call).or(named);
+        known.map(|lends| lends.changes.get(position).copied().unwrap_or(false))
     }
 }
 
@@ -2673,10 +2845,9 @@ impl Known {
         call: u32,
     ) -> Vec<(LocalId, Vec<Step>, bool)> {
         let record = &of.problem.calls[call as usize];
-        let says = of.says(call);
         let mut written = Vec::new();
         for (position, &may) in record.changes.iter().enumerate() {
-            let said = says.map(|lends| lends.changes.get(position).copied().unwrap_or(false));
+            let said = of.changes(call, position);
             if !may || said == Some(false) {
                 continue;
             }

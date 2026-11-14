@@ -6059,6 +6059,168 @@ fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
 }
 
+// rule: OWN-P8
+#[test]
+fn what_a_shared_holds_is_given_only_to_what_reads_through_the_pointer() {
+    // `writes` gives what a `Shared` holds to a method or a function
+    // that writes through the pointer, itself or in what it calls, or
+    // of which nothing is known: an interface, a function value.
+    // `reads` gives it to those that only read, and gives what a
+    // `Unique` holds to those that write.
+    let text = "package p
+
+type In struct{ k int }
+
+type C struct {
+	n  int
+	in In
+}
+
+func (c *C) Get() int { return c.n }
+
+func (c *C) Up() { c.n++ }
+
+func (c *C) UpTwice() {
+	c.Up()
+	c.Up()
+}
+
+func (c *C) Inner() *In { return &c.in }
+
+func (c C) Copy() C { return c }
+
+func up(c *C) { c.n++ }
+
+func get(c *C) int { return c.n }
+
+func setk(i *In) { i.k = 1 }
+
+func getk(i *In) int { return i.k }
+
+func twice(i *In) int { return getk(i) + getk(i) }
+
+func through(i *In) { setk(i) }
+
+func set[T any](p *T, v T) { *p = move(v) }
+
+func same[T any](p *T) *T { return p }
+
+type Reader interface{ Read(i *In) int }
+
+func writes(r Reader, run func(*In), run2 func(*C) int) {
+	s := NewShared(C{1, In{0}})
+	s.Up()
+	s.UpTwice()
+	up(s)
+	setk(&s.in)
+	through(&s.in)
+	p := &s.in
+	setk(p)
+	set(&s.in, In{2})
+	_ = r.Read(&s.in)
+	run(&s.in)
+	_ = run2(s)
+}
+
+func reads() {
+	s := NewShared(C{1, In{0}})
+	_ = s.Get() + get(s) + getk(&s.in) + twice(&s.in) + s.Inner().k + s.Copy().n
+	p := &s.in
+	_ = getk(p)
+	_ = same(&s.in).k
+	u := NewUnique(C{1, In{0}})
+	u.Up()
+	up(u)
+	setk(&u.in)
+	set(&u.in, In{2})
+}
+";
+    let fix = "    put what changes in a Mutex or an Atomic, or own the value with a Unique";
+    let expected = [
+        "a.gopp:43:2: cannot call s.Up: the method writes through its receiver, and what a Shared holds is only \
+         read through it",
+        fix,
+        "a.gopp:44:2: cannot call s.UpTwice: the method writes through its receiver, and what a Shared holds is \
+         only read through it",
+        fix,
+        "a.gopp:45:5: cannot give s to up: the function writes through it, and what a Shared holds is only read",
+        fix,
+        "a.gopp:46:7: cannot give &s.in to setk: the function writes through it, and what a Shared holds is only \
+         read",
+        fix,
+        "a.gopp:47:10: cannot give &s.in to through: the function writes through it, and what a Shared holds is \
+         only read",
+        fix,
+        "a.gopp:49:7: cannot give p to setk: the function writes through it, and what a Shared holds is only read",
+        fix,
+        "a.gopp:50:6: cannot give &s.in to set: the function writes through it, and what a Shared holds is only \
+         read",
+        fix,
+        "a.gopp:51:13: cannot give &s.in to r.Read: nothing says that the function only reads through it, and what \
+         a Shared holds is only read",
+        fix,
+        "a.gopp:52:6: cannot give &s.in to run: nothing says that the function only reads through it, and what a \
+         Shared holds is only read",
+        fix,
+        "a.gopp:53:11: cannot give s to run2: nothing says that the function only reads through it, and what a \
+         Shared holds is only read",
+        fix,
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+// rule: OWN-P8
+#[test]
+fn a_method_that_a_child_may_replace_is_held_to_what_the_named_method_does() {
+    // Which method runs is not known where the call is written. What
+    // it may change is what the method of that name changes: `Sound`
+    // of `Animal` only reads, `Count` writes. `Clone` of a pointer or
+    // a handle is no method of the type, and only reads.
+    let text = "package p
+
+type Animal struct {
+	name  string
+	calls int
+}
+
+@Virtual
+func (a *Animal) Sound() string { return a.name }
+
+@Virtual
+func (a *Animal) Count() int {
+	a.calls++
+	return a.calls
+}
+
+@Extends(Animal)
+type Dog struct{ barks int }
+
+@Override
+func (d *Dog) Sound() string {
+	d.barks++
+	return \"woof\"
+}
+
+func use() {
+	s := NewShared(Dog{name: \"d\"})
+	var a Shared[Animal] = s
+	_ = a.Sound()
+	_ = a.Count()
+	u := NewUnique(Dog{name: \"u\"})
+	_ = u.Sound()
+	_ = u.Count()
+	c := a.Clone()
+	_ = c.Count()
+}
+";
+    let expected = [
+        "a.gopp:30:6: cannot call a.Count: the method writes through its receiver, and what a Shared \
+         holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 // rule: PAN-3
 #[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {
@@ -10882,6 +11044,9 @@ func shareds(s Shared[Node], w Weak[Node], o Option[Shared[Node]]) {
         "a.gopp:87:19: cannot take s.N: what a Shared holds is only read through it",
         "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
         "a.gopp:89:2: cannot assign to what p points to: what a Shared holds is only read",
+        "a.gopp:90:9: cannot give &s.Kids to addOne: the function writes through it, and what a Shared \
+         holds is only read",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
         "a.gopp:92:8: w.Name undefined (type Weak[Node] has no field or method Name)",
         "    use w.Lock(), which gives an Option of a Shared",
         "a.gopp:93:4: w.Rename undefined (type Weak[Node] has no field or method Rename)",

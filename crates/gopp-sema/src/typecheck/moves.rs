@@ -549,6 +549,8 @@ impl<'a> Checker<'a> {
                     instances: &self.instantiated,
                     pointer_methods: &self.pointer_methods,
                     localized: &self.localized,
+                    read_only: &self.read_only,
+                    of_headers: &self.foreign_uses,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -686,6 +688,35 @@ impl<'a> Checker<'a> {
             this.names.resolve(&name).to_owned()
         };
         let text = |at: Span| text[at.lo as usize..at.hi as usize].to_owned();
+        for written in &found.written {
+            if !self.report_once((written.given, Code::OwnSharedWrite)) {
+                continue;
+            }
+            let (called, given) = (text(written.at), text(written.given));
+            // The receiver is written in what names the method.
+            let receiver = written.at.lo <= written.given.lo && written.given.hi <= written.at.hi;
+            let message = match (receiver, written.known) {
+                (true, true) => format!(
+                    "cannot call {called}: the method writes through its receiver, and what a \
+                     Shared holds is only read through it"
+                ),
+                (true, false) => format!(
+                    "cannot call {called}: nothing says that the method only reads through its \
+                     receiver, and what a Shared holds is only read through it"
+                ),
+                (false, true) => format!(
+                    "cannot give {given} to {called}: the function writes through it, and what a \
+                     Shared holds is only read"
+                ),
+                (false, false) => format!(
+                    "cannot give {given} to {called}: nothing says that the function only reads \
+                     through it, and what a Shared holds is only read"
+                ),
+            };
+            let fix = "put what changes in a Mutex or an Atomic, or own the value with a Unique";
+            let diagnostic = Diagnostic::new(Code::OwnSharedWrite, written.given, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix.to_owned()));
+        }
         for broken in walked.iter().chain(&found.broken) {
             let owner = named(self, broken.of);
             let place = match broken.what {
