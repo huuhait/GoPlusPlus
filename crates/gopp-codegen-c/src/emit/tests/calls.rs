@@ -14,6 +14,7 @@ fn options_for(target: &TargetSpec, entry: Entry) -> EmitOptions<'static> {
         imports: &[],
         swiftcall: target.swiftcall,
         aborts: false,
+        debug: false,
     }
 }
 

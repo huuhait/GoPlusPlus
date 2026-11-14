@@ -1720,6 +1720,7 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
         target: gopp_target::TargetSpec::named("linux/amd64").unwrap(),
         opt: OptLevel::O1,
         strict: false,
+        debug: false,
     };
     let sanitized = |units: &[String], what: &Path| {
         let dir = TempDir::new().unwrap();
@@ -1796,4 +1797,44 @@ fn an_argument_is_lent_to_a_function_of_another_package_that_only_reads_it() {
     // parameter is lent the slice; one that changes it gets a copy.
     assert!(!lowered("reads.Sum(xs)").contains("_gopp_slice_copy"));
     assert!(lowered("len(reads.Keep(xs))").contains("_gopp_slice_copy"));
+}
+
+/// A debugger stops at a line of the source, names the lines of the
+/// calls that led there, and goes on line by line; without debug
+/// information it knows no line.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_debugger_stops_and_steps_by_the_lines_of_the_source() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main\n\nfunc add(a int, b int) int {\n\tsum := a + b\n\treturn sum\n}\n\n\
+                func main() {\n\tx := 3\n\ty := add(x, 4)\n\tprintln(y)\n}\n";
+    let file = write_source(&dir, "steps.gopp", text);
+    let session = |flags: &[&str]| {
+        let program = dir.path().join("steps.bin");
+        let mut build = gopp();
+        build.arg("build").args(flags).arg("-o").arg(&program);
+        let built = run_beside(build.arg(&file));
+        assert_eq!(stderr(&built), "");
+        let mut gdb = Command::new("gdb");
+        gdb.args(["-q", "-nx", "-batch"]);
+        for command in ["break steps.gopp:4", "run", "bt", "next", "info line"] {
+            gdb.args(["-ex", command]);
+        }
+        let ran = run_beside(gdb.arg(&program));
+        format!("{}{}", stdout(&ran), stderr(&ran))
+    };
+    let said = session(&[]);
+    let at = |line: u32| format!("steps.gopp:{line}\n");
+    assert!(
+        said.contains("Breakpoint 1, ") && said.contains(&at(4)),
+        "{said}"
+    );
+    // The call of `add` in `main`, and the line after the stop.
+    let callers: Vec<&str> = said.lines().filter(|line| line.starts_with('#')).collect();
+    assert!(callers[0].ends_with("steps.gopp:4"), "{said}");
+    assert!(callers[1].ends_with("steps.gopp:10"), "{said}");
+    assert!(said.contains("\n5\t\treturn sum\n"), "{said}");
+    assert!(said.contains("Line 5 of \""), "{said}");
+    let said = session(&["-no-debug"]);
+    assert!(!said.contains("Breakpoint 1, "), "{said}");
 }

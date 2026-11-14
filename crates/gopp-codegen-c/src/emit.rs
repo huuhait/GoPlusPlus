@@ -51,6 +51,9 @@ pub struct EmitOptions<'a> {
     /// A panic ends the program at once (`-panic=abort`): the program
     /// tells the runtime when it starts.
     pub aborts: bool,
+    /// The unit says where in the source each statement is written, for
+    /// a debugger (debug-info.md).
+    pub debug: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,6 +90,7 @@ pub(crate) struct Cx<'m> {
     globals: Vec<TypeId>,
     /// The name that each function has in the unit.
     funcs: Vec<String>,
+    debug: bool,
 }
 
 impl Cx<'_> {
@@ -124,6 +128,21 @@ impl Cx<'_> {
     /// which the header declares.
     pub fn func_name(&self, at: usize) -> &str {
         &self.funcs[at]
+    }
+
+    /// The directive that says that what follows is written at the
+    /// place of the source: none without debug information, and for
+    /// what has no place there.
+    pub fn line(&self, loc: gopp_gir::Span) -> Option<String> {
+        let file = (loc.file as usize).checked_sub(1)?;
+        let file = self.module.files.get(file).filter(|_| self.debug)?;
+        let line = loc.line.max(1);
+        Some(format!("#line {line} \"{}\"\n", quoted(file.as_bytes())))
+    }
+
+    /// Whether the unit says where its statements are in the source.
+    pub fn line_tables(&self) -> bool {
+        self.debug
     }
 
     /// Whether the name is that of a function of the runtime.
@@ -198,6 +217,7 @@ pub(crate) fn emit_counted(
         spelled,
         globals: module.globals.values().map(|global| global.ty).collect(),
         funcs: func_names(module)?,
+        debug: options.debug,
     };
     let mut out = crate::runtime::header(options.layout);
     out.push_str(convention(options.swiftcall));
@@ -266,6 +286,10 @@ pub(crate) fn emit_counted(
         let (text, taken) = written?;
         steps += taken;
         out.push_str(&text);
+    }
+    // What follows is written nowhere in the source.
+    if options.debug {
+        out.push_str("#line 1 \"gopp-generated\"\n");
     }
     if options.entry != Entry::None {
         entry(&cx, &funcs, options, &mut out);

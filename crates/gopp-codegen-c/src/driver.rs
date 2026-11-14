@@ -103,6 +103,8 @@ pub struct ClangDriver<'a> {
     /// Every warning of Clang about the unit is an error: for the tests
     /// of the emitter. Without it, the warnings are off.
     pub strict: bool,
+    /// Clang writes what a debugger reads (debug-info.md).
+    pub debug: bool,
 }
 
 impl ClangDriver<'_> {
@@ -114,6 +116,10 @@ impl ClangDriver<'_> {
             flags.push(format!("-march={cpu}"));
         }
         flags.push(self.opt.flag().to_owned());
+        // DWARF, where the debuggers of the target read it.
+        if self.debug && self.target.object == ObjectFormat::Elf {
+            flags.extend(["-gdwarf-5".to_owned(), "-fno-omit-frame-pointer".to_owned()]);
+        }
         flags.push(format!("-ffile-prefix-map={}=.", dir.display()));
         // Clang writes the time into a COFF object unless it is told
         // that no incremental linker reads it.

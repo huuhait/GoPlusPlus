@@ -72,6 +72,7 @@ fn options(entry: Entry) -> EmitOptions<'static> {
         imports: &[],
         swiftcall: target.swiftcall,
         aborts: false,
+        debug: false,
     }
 }
 
@@ -321,12 +322,88 @@ fn what_crosses_to_c_is_declared_as_c_declares_it() {
             imports: &[],
             swiftcall: spec.swiftcall,
             aborts: false,
+            debug: false,
         };
         let unit = emit_c23(&module("a.gopp", OF_C), &options).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let object = dir.path().join("unit.o");
         strict(&toolchain, target, OptLevel::O0)
             .build(&unit, dir.path(), &object, Output::Object, &[])
+            .unwrap_or_else(|error| panic!("{target}: {error}"));
+    }
+}
+
+#[test]
+fn a_unit_for_a_debugger_says_where_each_statement_is_written() {
+    let text = "package main
+
+type Named struct {
+	name string
+}
+
+func length(n Named) int {
+	copied := n
+	return len(copied.name)
+}
+
+func main() {
+	println(length(Named{\"ab\"}))
+}
+";
+    let module = module("a.gopp", text);
+    let debug = EmitOptions {
+        debug: true,
+        ..options(Entry::Main)
+    };
+    let unit = emit_c23(&module, &debug).unwrap();
+    // Each line of the source that has a statement is named before it.
+    let named: Vec<&str> = unit
+        .lines()
+        .filter_map(|line| line.strip_prefix("#line "))
+        .collect();
+    for line in [7, 8, 9, 12, 13] {
+        let directive = format!("{line} \"a.gopp\"");
+        assert!(named.contains(&&*directive), "{directive}\n{named:?}");
+    }
+    // What starts the program is written nowhere in the source.
+    let generated = unit.find("#line 1 \"gopp-generated\"\n").unwrap();
+    assert!(generated < unit.find("\nint main(int argc, char **argv) {").unwrap());
+    // The glue of a type has no line: a debugger steps over it.
+    let glue = (unit.lines())
+        .filter(|line| line.ends_with(") {") && !line.contains("static inline "))
+        .filter(|line| line.contains(" gopp_f"));
+    let (of_source, made): (Vec<&str>, Vec<&str>) =
+        glue.partition(|line| !line.contains("__attribute__((nodebug))"));
+    assert_eq!(of_source.len(), 2, "{of_source:?}");
+    assert!(!made.is_empty(), "{unit}");
+    // Without it the unit says nothing of the source.
+    let plain = emit_c23(&module, &options(Entry::Main)).unwrap();
+    assert!(!plain.contains("#line") && !plain.contains("nodebug"));
+    // Clang takes the unit, with what a debugger reads where the
+    // target has it.
+    let toolchain = HostToolchain::discover().unwrap();
+    for target in ["linux/amd64", "windows/amd64"] {
+        let spec = TargetSpec::named(target).unwrap();
+        let options = EmitOptions {
+            layout: spec.layout(),
+            swiftcall: spec.swiftcall,
+            entry: Entry::None,
+            ..debug
+        };
+        let unit = emit_c23(&module, &options).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let driver = ClangDriver {
+            debug: true,
+            ..strict(&toolchain, target, OptLevel::O2)
+        };
+        driver
+            .build(
+                &unit,
+                dir.path(),
+                &dir.path().join("unit.o"),
+                Output::Object,
+                &[],
+            )
             .unwrap_or_else(|error| panic!("{target}: {error}"));
     }
 }
@@ -408,6 +485,7 @@ fn a_program_whose_panics_end_it_tells_the_runtime_when_it_starts() {
     let told = "  _gopp_rt_funcs(&gopp_table);\n  _gopp_panic_aborts();\n";
     let aborting = EmitOptions {
         aborts: true,
+        debug: false,
         ..options(Entry::Main)
     };
     assert!(emit_c23(&module, &aborting).unwrap().contains(told));
@@ -488,6 +566,7 @@ fn strict<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> Clan
         target: TargetSpec::named(target).unwrap(),
         opt,
         strict: true,
+        debug: false,
     }
 }
 

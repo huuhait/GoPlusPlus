@@ -14,6 +14,7 @@ fn driver<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> Clan
         target: TargetSpec::named(target).unwrap(),
         opt,
         strict: true,
+        debug: false,
     }
 }
 
@@ -112,6 +113,7 @@ fn the_runtime_is_built_once_for_a_target_and_its_flags() {
     // The driver of a program, which lets warnings be, has the same.
     let loose = ClangDriver {
         strict: false,
+        debug: false,
         ..driver(&toolchain, "linux/amd64", OptLevel::O0)
     };
     assert_eq!(build(&loose, Form::Objects, cache.path()).unwrap(), all[0]);

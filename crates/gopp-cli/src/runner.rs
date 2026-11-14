@@ -198,6 +198,7 @@ impl Run<'_> {
             imports: &paths,
             swiftcall: target.swiftcall,
             aborts: false,
+            debug: false,
         };
         let codegen = |error: String| format!("error[{}]: {error}\n", Code::Codegen);
         let unit =
@@ -423,6 +424,7 @@ pub fn run(options: &Options) -> ExitCode {
         target,
         opt: options.opt,
         strict: false,
+        debug: false,
     };
     let form = match real {
         true => Form::Objects,

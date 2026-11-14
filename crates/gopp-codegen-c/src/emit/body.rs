@@ -5,8 +5,8 @@ use std::fmt::Write;
 
 use gopp_gir::{
     AggKind, AssertKind, BinOp, BlockId, CastKind, Constant, ConstantKind, Function, Inline,
-    LocalId, Operand, Place, ProjectionKind, Rvalue, StatementKind, TerminatorKind, Type, TypeId,
-    UnOp, UnwindAction,
+    LocalId, Operand, Place, ProjectionKind, Rvalue, Span, StatementKind, TerminatorKind, Type,
+    TypeId, UnOp, UnwindAction,
 };
 
 use gopp_target::{Header, SLICE, STRING};
@@ -52,6 +52,11 @@ pub(super) fn prototype(
     }
     if func.no_unwind() {
         line.push_str("__attribute__((nothrow)) ");
+    }
+    // What the compiler makes is written nowhere in the source: a
+    // debugger steps over it.
+    if cx.line(func.loc()).is_none() && cx.line_tables() && !func.is_declaration() {
+        line.push_str("__attribute__((nodebug)) ");
     }
     match func.inline() {
         Inline::Default => {}
@@ -206,6 +211,7 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         guard,
         unwinding: false,
         name: name.clone(),
+        line: (0, 0),
     };
     let Type::Func(sig) = cx.kind(func.sig()) else {
         return Err(unsupported(func, "a function without a function type"));
@@ -223,6 +229,9 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
     writer.out.push('\n');
     if let Some(guard) = &writer.guard {
         // The record, and the function that the cleanup blocks are.
+        if let Some(line) = cx.line(func.loc()) {
+            writer.out.push_str(&line);
+        }
         let _ = writeln!(writer.out, "struct {name}_own {{\n  int64_t state;");
         for (id, local) in func.locals().iter() {
             let shared = guard.shared[id.into_raw().into_u32() as usize];
@@ -249,6 +258,8 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         writer.unwinding = false;
         writer.out.push_str("}\n\n");
     }
+    writer.line = (0, 0);
+    writer.at(func.loc());
     let _ = writeln!(writer.out, "{} {{", prototype(cx, at, func, false)?);
     let mut given = String::new();
     for (number, (id, local)) in func.locals().iter().enumerate() {
@@ -310,6 +321,9 @@ struct Writer<'c, 'm> {
     unwinding: bool,
     /// The name of the function in C.
     name: String,
+    /// The file and the line of the source that the unit was last told
+    /// of.
+    line: (u32, u32),
 }
 
 /// Whether the end of a block is the call by which a function with
@@ -328,6 +342,17 @@ fn entered(cx: &Cx<'_>, term: &TerminatorKind) -> bool {
 }
 
 impl Writer<'_, '_> {
+    /// Says where in the source what is written next stands, if that is
+    /// another line than the last.
+    fn at(&mut self, loc: Span) {
+        if (loc.file, loc.line) != self.line
+            && let Some(line) = self.cx.line(loc)
+        {
+            self.out.push_str(&line);
+            self.line = (loc.file, loc.line);
+        }
+    }
+
     /// Whether the local is a part of the record of the cleanup blocks.
     fn shared(&self, local: LocalId) -> bool {
         let at = local.into_raw().into_u32() as usize;
@@ -358,10 +383,12 @@ impl Writer<'_, '_> {
                 self.steps += 1;
                 if let StatementKind::Assign(assigned) = &stmt.kind {
                     let (dest, value) = &**assigned;
+                    self.at(stmt.loc);
                     self.assign(dest, value)?;
                 }
             }
             self.steps += 1;
+            self.at(block.term.loc);
             self.end(&block.term.kind)?;
         }
         Ok(())

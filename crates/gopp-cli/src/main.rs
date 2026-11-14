@@ -86,6 +86,10 @@ enum Command {
         /// may stop it; `abort` ends the program at once
         #[arg(long, value_enum, default_value = "unwind")]
         panic: PanicMode,
+        /// Leave out what a debugger reads: the lines of the source
+        /// and the names of the variables
+        #[arg(long)]
+        no_debug: bool,
         /// What is made of the package
         #[arg(long, value_enum, default_value = "exe")]
         emit: EmitBuilt,
@@ -272,12 +276,14 @@ fn run() -> ExitCode {
         Command::Build {
             target,
             panic,
+            no_debug,
             emit,
             o,
             paths,
         } => build::run(&build::Options {
             target,
             aborts: panic == PanicMode::Abort,
+            debug: !no_debug,
             emit,
             output: o,
             paths,

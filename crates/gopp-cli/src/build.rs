@@ -28,6 +28,9 @@ pub struct Options {
     pub target: Option<String>,
     /// A panic ends the program at once (`-panic=abort`).
     pub aborts: bool,
+    /// What is built says where its code is in the source, for a
+    /// debugger.
+    pub debug: bool,
     pub emit: EmitBuilt,
     pub output: Option<PathBuf>,
     pub paths: Vec<PathBuf>,
@@ -216,6 +219,7 @@ pub fn run(options: &Options) -> ExitCode {
         imports: &paths,
         swiftcall: target.swiftcall,
         aborts: options.aborts,
+        debug: options.debug,
     };
     let unit = match emit_c23(&module, &emit) {
         Ok(unit) => unit,
@@ -247,6 +251,7 @@ pub fn run(options: &Options) -> ExitCode {
         target,
         opt: OptLevel::default(),
         strict: false,
+        debug: options.debug,
     };
     // An executable is linked with the runtime, which is built once for
     // a target and its flags.
