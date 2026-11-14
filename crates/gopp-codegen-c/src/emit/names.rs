@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use gopp_gir::{
     Function, LocalId, LocalKind, Module, Operand, Place, ProjectionKind, Rvalue, ScopeKind,
-    Statement, StatementKind, Terminator, TerminatorKind, Type,
+    Statement, StatementKind, Terminator, TerminatorKind, Type, TypeId,
 };
 
 use super::Cx;
@@ -129,8 +129,19 @@ pub(super) fn of_types(module: &Module, steps: &mut u64) -> (Vec<String>, Vec<Ve
     let mut given: HashSet<String> = HashSet::new();
     for ty in types.ids() {
         *steps += 1;
-        let Type::Struct(id) = types.get(ty) else {
-            continue;
+        let id = match types.get(ty) {
+            Type::Struct(id) => id,
+            // A function value: its code, which takes the environment
+            // first, and the environment.
+            Type::Tuple(parts) => {
+                let code =
+                    |part: &TypeId| matches!(types.get(*part), Type::Func(func) if func.has_env);
+                if parts.len() == 2 && parts.first().is_some_and(code) {
+                    fields[ty.index()] = vec!["code".to_owned(), "env".to_owned()];
+                }
+                continue;
+            }
+            _ => continue,
         };
         // A declared type has the symbol of its descriptor as its
         // name, which says the type as the source writes it.

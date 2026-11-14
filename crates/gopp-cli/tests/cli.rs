@@ -1980,3 +1980,71 @@ func main() {
         "{said}"
     );
 }
+
+/// What a debugger shows of a value of each kind: the text of a
+/// string, the elements of a slice, the parts of an option, what a
+/// pointer points to, the table of an interface value and the code of
+/// a function value by their symbols.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_debugger_shows_the_values_of_every_kind() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main
+
+type Shape interface {
+	Area() int
+}
+
+type Rect struct {
+	w, h int
+}
+
+func (r Rect) Area() int { return r.w * r.h }
+
+func show(text string, nums []int, grid [2]int32, maybe Option[int], ptr *Rect, shape Shape, each func(int) int) int {
+	total := len(text) + len(nums) + int(grid[1]) + ptr.w + shape.Area() + each(2)
+	if v, ok := maybe.Get(); ok {
+		total += v
+	}
+	return total
+}
+
+func double(x int) int { return x * 2 }
+
+func main() {
+	r := Rect{3, 4}
+	var six Option[int] = 6
+	println(show(\"hello\", []int{7, 8, 9}, [2]int32{-1, 5}, six, &r, r, double))
+}
+";
+    let commands = [
+        "break steps.gopp:14",
+        "run",
+        "p text",
+        "p *nums.ptr@nums.len",
+        "p nums.cap",
+        "p grid",
+        "p maybe",
+        "p *ptr",
+        "p shape",
+        "p each",
+    ];
+    let said = debugged(&dir, text, &[], &commands);
+    let shown = |value: &str| {
+        said.lines()
+            .any(|line| line.starts_with('$') && line.contains(value))
+    };
+    for value in [
+        "\"hello\", len = 5, backing = 0x0}",
+        " = {7, 8, 9}",
+        " = 3",
+        " = {a = {-1, 5}}",
+        " = {value = 6, set = true}",
+        " = {w = 3, h = 4}",
+        "<_GPTaN4mainE4RectN4mainE5Shape>",
+        "{code = ",
+        "<_GPTEF4mainE6double>, env = 0x0}",
+    ] {
+        assert!(shown(value), "{value}\n{said}");
+    }
+}
