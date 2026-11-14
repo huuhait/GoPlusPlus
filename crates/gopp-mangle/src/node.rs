@@ -442,10 +442,11 @@ impl Context {
         }
     }
 
-    /// Whether methods are declared for the type.
+    /// Whether the type has methods of its own: those that are declared
+    /// for it, or those that an interface type says.
     fn has_methods(&self, id: NodeId) -> bool {
         match self.get(id) {
-            Node::Named { .. } | Node::LocalNamed { .. } => true,
+            Node::Named { .. } | Node::LocalNamed { .. } | Node::Interface { .. } => true,
             Node::Instance { .. } => self.is_type(id),
             _ => false,
         }

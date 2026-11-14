@@ -2309,9 +2309,20 @@ func passed(values []int) int {
 	return sum
 }
 
+func nested(values []int) int {
+	sum := 0
+	run := func(scale int) {
+		apply(values, func(v int) { sum += v * scale })
+		func() { sum++ }()
+	}
+	run(2)
+	return sum
+}
+
 func main() {
 	xs := []int{1, 2, 3}
 	println(direct(2), deferred(3), inner(true), lent(xs), helper(xs), escapes(xs), passed(xs))
+	println(nested(xs))
 }
 ";
     {
@@ -2321,12 +2332,13 @@ func main() {
         let module = print_module(&lowered.module);
         // The environments and the cells that each function makes on
         // the heap.
-        let made = |name: &str| {
-            let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+        let made_by = |symbol: &str| {
+            let start = module.find(&format!("\nfn {symbol}(")).unwrap();
             let body = &module[start..][..module[start..].find("\n}\n").unwrap()];
             let calls = |name: &str| body.matches(&format!("@{name}(")).count();
             [calls("_gopp_env_new"), calls("_gopp_cell_new")]
         };
+        let made = |name: &str| made_by(&format!("_GPF4mainE{name}"));
         // Called where it is written, called by a `defer` statement
         // with variables of the whole function, lent to a function
         // that only calls it, held by a variable that is only called:
@@ -2334,6 +2346,10 @@ func main() {
         for name in ["6direct", "8deferred", "4lent", "6helper"] {
             assert_eq!(made(name), [0, 0], "{file}: {name}");
         }
+        // And so for a literal in a literal: its environment is in the
+        // frame of the literal around it.
+        assert_eq!(made("6nested"), [0, 0], "{file}");
+        assert_eq!(made_by("_GPC1_F4mainE6nested"), [0, 0], "{file}");
         // A deferred literal that uses a variable of a block, a
         // variable that is passed on, and a literal that is given to a
         // function which keeps it: an environment, and a cell for each
@@ -2379,7 +2395,6 @@ func main() {
         messages,
         [
             "not supported yet: a function literal that uses a variable that has no cell",
-            "not supported yet: a method of an interface or of an embedded type as a function",
             "not supported yet: a go statement",
         ]
     );

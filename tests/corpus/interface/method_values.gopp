@@ -1,0 +1,63 @@
+package main
+
+type Shape interface {
+	Area() int
+	Scaled(by int) int
+}
+
+type Namer interface{ Name() string }
+
+type Square struct{ side int }
+
+func (s Square) Area() int         { return s.side * s.side }
+func (s Square) Scaled(by int) int { return s.side * by }
+func (s Square) Name() string      { return "square" }
+
+type Rect struct{ w, h int }
+
+func (r Rect) Area() int         { return r.w * r.h }
+func (r Rect) Scaled(by int) int { return (r.w + r.h) * by }
+
+func total(shapes []Shape, of func(Shape) int) int {
+	sum := 0
+	for _, s := range shapes {
+		sum += of(s)
+	}
+	return sum
+}
+
+func twice(f func() int) int { return f() + f() }
+
+func main() {
+	shapes := []Shape{Square{2}, Rect{2, 3}, Square{1}}
+	// A method of an interface type as a function.
+	area := Shape.Area
+	scaled := Shape.Scaled
+	println(area(shapes[0]), area(shapes[1]), scaled(shapes[1], 10))
+	println(total(shapes, Shape.Area), total(shapes, area))
+	name := Namer.Name
+	println(name(Square{5}))
+	// A method value of an interface value.
+	var s Shape = Rect{4, 5}
+	bound := s.Area
+	s = Square{9}
+	println(bound(), s.Area(), twice(bound), twice(s.Area))
+	// Of an interface type without a name.
+	var held interface{ Area() int } = Square{3}
+	of := held.Area
+	held = Rect{1, 1}
+	println(of(), twice(of), twice(held.Area))
+	var both interface {
+		Area() int
+		Name() string
+	} = Square{4}
+	println(both.Name(), twice(both.Area))
+	fs := []func() int{bound, of, both.Area, Square{10}.Area}
+	sum := 0
+	for _, f := range fs {
+		sum += f()
+	}
+	println(sum)
+	by := s.Scaled
+	println(by(2), by(3))
+}

@@ -727,6 +727,7 @@ impl FuncCx<'_, '_> {
         };
         let holder = selection.holder;
         let through = Self::bound_through(shared, (holder, sel.name, None));
+        let dynamic = types.is_interface(holder) && selection.path.is_empty();
         let method = match selection.path.is_empty() {
             true => shared.method(holder, sel.name),
             false => None,
@@ -737,8 +738,11 @@ impl FuncCx<'_, '_> {
                 matches!(&*types.get(method.receiver), CheckedType::Pointer(_))
             }
             (None, true) => true,
+            // The function takes the interface value, and finds the
+            // method in its table.
+            (None, false) if dynamic => false,
             (None, false) => {
-                let what = "a method of an interface or of an embedded type as a function";
+                let what = "a method of an embedded type as a function";
                 return Ok(self.placeholder(span, ty, what));
             }
         };
@@ -753,7 +757,9 @@ impl FuncCx<'_, '_> {
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             return Ok(self.placeholder(span, ty, "a method without a symbol as a function"));
         };
-        if !through && let Err(what) = self.callee(CalleeKey::Method(holder, sel.name))? {
+        if !(through || dynamic)
+            && let Err(what) = self.callee(CalleeKey::Method(holder, sel.name))?
+        {
             return Ok(self.placeholder(span, ty, what));
         }
         let asked = self.memo.funcs.contains_key(&symbol);
@@ -797,6 +803,8 @@ impl FuncCx<'_, '_> {
                     let value = memo.lower_type(shared, types, ty)?;
                     types.ptr(value)
                 }
+                // The interface value itself.
+                None if shared.types.is_interface(ty) => memo.lower_type(shared, types, ty)?,
                 None => return Err("a method that its type does not have"),
             };
             params.push(match pointer {
@@ -906,8 +914,12 @@ impl FuncCx<'_, '_> {
                 let first_word = self.slot_of(Rvalue::Use(Operand::Copy(first_word)))?;
                 self.not_nil(&first_word)?;
                 // What a table holds takes the same, without the
-                // convention of an environment.
+                // convention of an environment: the word of the value
+                // first, then the parameters of the method.
+                let mut params = vec![own.1.params[0]];
+                params.extend(own.1.params[before as usize..].iter());
                 let plain = Type::Func(crate::FuncType {
+                    params: params.into(),
                     has_env: false,
                     ..own.1.clone()
                 });
@@ -958,6 +970,13 @@ impl FuncCx<'_, '_> {
         self.b
             .call(callee, args, result.clone(), Some(next), unwind)?;
         self.b.switch_to(next);
+        // The interface value that an expression was given is this
+        // function's own: the method had the value that it holds for
+        // the call only.
+        if dynamic && first.is_some() {
+            let drop = self.iface_glue(Glue::Drop)?;
+            self.end(Place::local(self.b.param(1)), Ends::Glue(drop))?;
+        }
         if let (Some(called), CheckedType::Func { params, .. }) =
             (&called, &*shared.types.get(checked))
         {

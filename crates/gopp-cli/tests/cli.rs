@@ -1910,6 +1910,9 @@ func main() {
 	if back, ok := shapes.Kept().([]int); ok {
 		println(back[0], xs[0])
 	}
+	area := shapes.Square{3}.Area
+	of := shapes.Square.Area
+	println(area(), of(shapes.Square{4}), shapes.Shape.Name(s))
 }
 ";
     let file = write_source(&dir, "main.gopp", text);
@@ -1922,7 +1925,11 @@ func main() {
     // The method of a type of another package is found through a table
     // that is made here and while the program runs; a function of
     // another package that keeps its parameter has a copy of its own.
-    assert_eq!(stderr(&ran), "9 square 16\nsquare counter 0\n1 9\n");
+    // And so are its methods as values and as functions.
+    assert_eq!(
+        stderr(&ran),
+        "9 square 16\nsquare counter 0\n1 9\n9 16 square\n"
+    );
 }
 
 /// What `gdb` says of the program of the text when it is given the

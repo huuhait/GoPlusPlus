@@ -172,6 +172,8 @@ struct Walk<'a> {
     waiting: FxHashSet<LocalId>,
     /// A macro call is in the body: what it names is not known.
     opaque: bool,
+    /// How many function literals are around what is walked.
+    inside: u32,
     facts: Facts,
 }
 
@@ -181,6 +183,8 @@ enum Node {
     /// later.
     Later(ExprId),
     Stmt(StmtId),
+    /// The body of a function literal is walked.
+    Leave,
 }
 
 /// The facts of the function of a job.
@@ -211,6 +215,7 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         named: FxHashMap::default(),
         waiting: FxHashSet::default(),
         opaque: false,
+        inside: 0,
         facts: Facts::default(),
     };
     walk.block(block);
@@ -284,7 +289,20 @@ impl Walk<'_> {
                 Node::Expr(expr) => self.expr(expr, &mut rest, false),
                 Node::Later(expr) => self.expr(expr, &mut rest, true),
                 Node::Stmt(stmt) => self.stmt(stmt, &mut rest),
+                Node::Leave => self.inside -= 1,
             }
+        }
+    }
+
+    /// The body of a function literal is walked too: a literal in it
+    /// may be framed as one of the function itself is, with its
+    /// environment in the frame of the literal around it. Nothing else
+    /// is put on the list after this for the same expression.
+    fn literal(&mut self, literal: ExprId, rest: &mut Vec<Node>) {
+        if let ExprKind::FuncLit { body, .. } = &self.tree.exprs[literal].kind {
+            self.inside += 1;
+            rest.push(Node::Leave);
+            rest.extend(body.stmts.iter().map(|&stmt| Node::Stmt(stmt)));
         }
     }
 
@@ -396,7 +414,10 @@ impl Walk<'_> {
                 self.facts.all = true;
                 self.opaque = true;
             }
-            ExprKind::FuncLit { .. } => self.facts.all = true,
+            ExprKind::FuncLit { .. } => {
+                self.facts.all = true;
+                self.literal(expr, rest);
+            }
             ExprKind::Name(_) => {
                 if let Some(local) = self.local(expr) {
                     self.named.entry(local).or_default().0 += 1;
@@ -575,9 +596,15 @@ impl Walk<'_> {
                 match &tree.exprs[inner].kind {
                     ExprKind::Call { fun, args, .. } => {
                         let callee = self.unparen(*fun);
-                        match tree.exprs[callee].kind {
-                            ExprKind::FuncLit { .. } => self.deferred.push(callee),
-                            _ => rest.push(Node::Later(*fun)),
+                        // The deferred calls of a function literal are
+                        // those of the literal: what its `defer`
+                        // statements call and hold is not that of the
+                        // function.
+                        let literal = matches!(tree.exprs[callee].kind, ExprKind::FuncLit { .. });
+                        let own = literal && self.inside == 0;
+                        match own {
+                            true => self.deferred.push(callee),
+                            false => rest.push(Node::Later(*fun)),
                         }
                         rest.extend(args.iter().map(|&arg| Node::Later(arg)));
                         // What the statement has the address of.
@@ -603,7 +630,12 @@ impl Walk<'_> {
                             .chain(taken)
                             .filter_map(|place| self.root(place))
                             .collect();
-                        self.held.extend(roots);
+                        if self.inside == 0 {
+                            self.held.extend(roots);
+                        }
+                        if own {
+                            self.literal(callee, rest);
+                        }
                     }
                     _ => rest.push(Node::Later(*call)),
                 }

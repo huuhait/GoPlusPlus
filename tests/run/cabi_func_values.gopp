@@ -1,0 +1,19 @@
+package main
+
+// A function of C as a function value: its code is the function with
+// an environment in front, which the call leaves out.
+@Extern("C")
+func c_i32(x int32) int32
+
+func apply(f func(int32) int32, x int32) int32 { return f(x) }
+
+func main() {
+	f := c_i32
+	println(f(2), apply(c_i32, 3))
+	fs := []func(int32) int32{c_i32, func(x int32) int32 { return x + 1 }}
+	println(fs[0](4), fs[1](4))
+	defer f(5)
+	g := f
+	f = func(x int32) int32 { return -x }
+	println(g(6), f(6))
+}
