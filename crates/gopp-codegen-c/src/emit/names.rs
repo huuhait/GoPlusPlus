@@ -5,11 +5,11 @@
 //! something else, and a variable that the unit cannot declare in the
 //! block of its scope, stays `_N`: the program means the same.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gopp_gir::{
-    Function, LocalId, LocalKind, Operand, Place, ProjectionKind, Rvalue, ScopeKind, Statement,
-    StatementKind, Terminator, TerminatorKind,
+    Function, LocalId, LocalKind, Module, Operand, Place, ProjectionKind, Rvalue, ScopeKind,
+    Statement, StatementKind, Terminator, TerminatorKind, Type,
 };
 
 use super::Cx;
@@ -113,6 +113,66 @@ pub(super) fn usable(name: &str) -> bool {
         && !name.starts_with("GOPP")
         && !numbered("T")
         && !TAKEN.contains(&name)
+}
+
+/// How long the tag of a struct may be: a longer one is cut, and ends
+/// in a hash of the symbol of the type.
+const MAX_TAG: usize = 200;
+
+/// The tag that the struct of each type has in C for a debugger, and
+/// the names of its fields: those of the source. A type that keeps the
+/// names of the unit has an empty tag, and a field its number.
+pub(super) fn of_types(module: &Module, steps: &mut u64) -> (Vec<String>, Vec<Vec<String>>) {
+    let types = &module.types;
+    let mut tags = vec![String::new(); types.count()];
+    let mut fields = vec![Vec::new(); types.count()];
+    let mut given: HashSet<String> = HashSet::new();
+    for ty in types.ids() {
+        *steps += 1;
+        let Type::Struct(id) = types.get(ty) else {
+            continue;
+        };
+        // A declared type has the symbol of its descriptor as its
+        // name, which says the type as the source writes it.
+        let symbol = types.struct_name(*id);
+        let readable = gopp_mangle::demangle(symbol.as_bytes(), 2 * MAX_TAG).ok();
+        let readable = readable
+            .as_deref()
+            .and_then(|text| text.strip_prefix("typeinfo for "));
+        if let Some(readable) = readable {
+            let mut tag = String::with_capacity(readable.len());
+            for letter in readable.chars() {
+                match letter.is_ascii_alphanumeric() {
+                    true => tag.push(letter),
+                    false if !tag.ends_with('_') => tag.push('_'),
+                    false => {}
+                }
+            }
+            let mut tag = tag.trim_end_matches('_').to_owned();
+            if tag.len() > MAX_TAG {
+                let hash = xxhash_rust::xxh3::xxh3_64(symbol.as_bytes());
+                tag.truncate(MAX_TAG - 20);
+                tag = format!("{tag}_x{hash:016x}");
+            }
+            if usable(&tag) && given.insert(tag.clone()) {
+                tags[ty.index()] = tag;
+            }
+        }
+        let mut seen: HashSet<&str> = HashSet::new();
+        let numbered = |name: &str| {
+            let digits = name.strip_prefix('f').unwrap_or("x");
+            digits.bytes().all(|digit| digit.is_ascii_digit())
+        };
+        let named = (types.field_names(*id).iter().enumerate()).map(|(at, name)| {
+            *steps += 1;
+            match usable(name) && !numbered(name) && seen.insert(name) {
+                true => name.clone(),
+                false => format!("f{at}"),
+            }
+        });
+        fields[ty.index()] = named.collect();
+    }
+    (tags, fields)
 }
 
 /// Each place that a statement names.

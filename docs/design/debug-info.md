@@ -46,6 +46,8 @@ Debug information is produced jointly by `crates/gopp-gir` (`Function::Scopes`, 
 | `func` value (`gopp_func`) | `struct gopp_func { void *code; void *env; }` (`16` bytes); closures emit as `main_f_func1` with captured variables exposed by source name |
 | Types with parents, `@Extends` (`P04.22`) | Embedded leading parent subobject fields at offset `0` (and tagged secondary bases) |
 
+**What a unit writes today.** The values of a unit keep the type names of the unit (`T12`); for a debugger the struct of a declared type has a tag made of the name that the source gives it, with `_` where C takes no other letter (`struct main_Pair`, `struct main_Box_main_Pair` for `Box[Pair]`, `struct Unique_main_Pair`), so `ptype` shows the struct under that name. Its fields, and those of a struct without a name, have the names of the source; a field whose name C takes for something else, or that is written like the number of a field (`f3`), keeps its number. A tag is said once in a unit: a second type that would have the same keeps the name of the unit. A tag longer than 200 bytes is cut and ends in `_x` and the 64-bit `xxh3` of the symbol of the type. Slices, arrays, options and tuples keep the names of the unit, with the fields `ptr`, `len`, `cap`, `backing`, `a`, `value`, `set`.
+
 ### Deterministic type names, cycles, and height bounds
 
 - **Canonical 200-byte name bound (`MaxNameLength = 200`):** Type names longer than 200 bytes are truncated and suffixed with `...#<hex>` where `<hex>` is the 64-bit `xxh3` (`xxhash-rust` `0.8.19`) compositional hash of the full type tree, preventing quadratic symbol/DWARF growth on deeply nested generics while keeping distinct types collision-free regardless of traversal order.

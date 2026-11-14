@@ -1932,3 +1932,51 @@ func main() {
         assert!(said.contains(variable), "{variable}\n{said}");
     }
 }
+
+/// A debugger shows a value of a declared type with the names of its
+/// fields, and its type under the name that the source gives it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_debugger_shows_a_struct_with_the_names_of_the_source() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main
+
+type Pair struct {
+	a     int32
+	linux float64
+}
+
+type Box[T any] struct {
+	held T
+	next Option[*Box[T]]
+}
+
+func main() {
+	p := Pair{1, 2.5}
+	b := Box[Pair]{held: p}
+	println(p.a, b.held.linux)
+}
+";
+    let commands = [
+        "break steps.gopp:16",
+        "run",
+        "p p",
+        "ptype p",
+        "p b",
+        "p b.held.linux",
+        "ptype b",
+    ];
+    let said = debugged(&dir, text, &[], &commands);
+    assert!(said.contains("\n$1 = {a = 1, linux = 2.5}\n"), "{said}");
+    let pair = "type = struct main_Pair {\n    int32_t a;\n    double linux;\n}\n";
+    assert!(said.contains(pair), "{said}");
+    assert!(
+        said.contains("\n$2 = {held = {a = 1, linux = 2.5}, next = 0x0}\n"),
+        "{said}"
+    );
+    assert!(said.contains("\n$3 = 2.5\n"), "{said}");
+    assert!(
+        said.contains("type = struct main_Box_main_Pair {\n"),
+        "{said}"
+    );
+}

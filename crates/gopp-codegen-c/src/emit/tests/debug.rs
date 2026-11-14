@@ -185,6 +185,91 @@ fn a_name_that_c_takes_for_something_else_is_not_used() {
     assert!(greet.contains("gopp_own->text = "), "{greet}");
 }
 
+const TYPES: &str = "package main
+
+type Pair struct {
+	a     int32
+	linux float64
+	bool  int8
+	f1    int8
+}
+
+type Box[T any] struct {
+	held T
+	next Option[*Box[T]]
+}
+
+type Box_main_Pair struct {
+	n int
+}
+
+func main() {
+	p := Pair{1, 2.5, 3, 4}
+	b := Box[Pair]{held: p}
+	deep := Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Pair]]]]]]]]]]]]]]]]]]]]]]]]]]{}
+	same := Box_main_Pair{n: 5}
+	anon := struct{ x, y int }{1, 2}
+	println(p.a, p.bool, b.held.linux, deep.next == nil, same.n, anon.y)
+}
+";
+
+#[test]
+fn a_struct_has_the_name_of_its_type_and_its_fields_those_of_the_source() {
+    let unit = emit_c23(&module("a.gopp", TYPES), &debug()).unwrap();
+    let plain: String = (unit.lines())
+        .filter(|line| !line.starts_with("#line "))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    // A field whose name C takes for something else, or that is
+    // written like the number of a field, keeps its number.
+    let pair =
+        "struct main_Pair {\n  int32_t a;\n  double linux;\n  int8_t f2;\n  int8_t f3;\n};\n";
+    assert!(plain.contains(pair), "{plain}");
+    assert!(plain.contains("\n#undef linux\n") && plain.contains("\n#undef held\n"));
+    // The values are still of the type of the unit, which is the
+    // struct of that name.
+    let tagged = |tag: &str| plain.contains(&format!("\ntypedef struct {tag} T"));
+    assert!(
+        tagged("main_Pair") && tagged("main_Box_main_Pair"),
+        "{plain}"
+    );
+    // One struct of a name: the second type that would have it keeps
+    // the name of the unit, and so does a struct without a name, whose
+    // fields have theirs.
+    assert_eq!(
+        plain
+            .matches("\ntypedef struct main_Box_main_Pair T")
+            .count(),
+        1
+    );
+    assert!(
+        plain.contains("  int64_t x;\n  int64_t y;\n};\n"),
+        "{plain}"
+    );
+    // A long name is cut, and ends in a hash of the symbol of the type.
+    let tags: Vec<&str> = (plain.lines())
+        .filter_map(|line| line.strip_prefix("typedef struct "))
+        .filter_map(|rest| rest.split(' ').next())
+        .collect();
+    let hashed = |tag: &&&str| {
+        tag.rsplit_once("_x").is_some_and(|(cut, hash)| {
+            let hex = hash.len() == 16 && hash.bytes().all(|digit| digit.is_ascii_hexdigit());
+            hex && cut.starts_with("main_Box_main_Box_")
+        })
+    };
+    assert!(tags.iter().all(|tag| tag.len() <= 200), "{tags:?}");
+    assert!(tags.iter().filter(hashed).count() >= 2, "{tags:?}");
+    // The fields are read by their names.
+    let main = defined(&unit, "_GPF4mainE4main");
+    assert!(
+        main.contains(".held") && main.contains(".linux") && main.contains(".f2"),
+        "{main}"
+    );
+    // Without debug information the unit has its own names only.
+    let plain = emit_c23(&module("a.gopp", TYPES), &options(Entry::Main)).unwrap();
+    assert!(!plain.contains("struct main_Pair") && !plain.contains("double linux;"));
+}
+
 /// A function with `count` blocks in one another, each with a variable
 /// of its own that the next reads.
 fn nested(count: usize) -> String {
@@ -221,7 +306,9 @@ fn the_blocks_of_a_function_are_nested_no_deeper_than_c_takes() {
 fn a_unit_for_a_debugger_compiles_without_a_warning_and_runs_the_same() {
     let toolchain = HostToolchain::discover().unwrap();
     let deep = nested(80);
-    let programs = [SCOPES, &deep, CONTROL, VALUES, CHECKS, INTERFACES, PANICS];
+    let programs = [
+        SCOPES, TYPES, &deep, CONTROL, VALUES, CHECKS, INTERFACES, PANICS,
+    ];
     let cases: Vec<(&str, &str, OptLevel)> = programs
         .iter()
         .flat_map(|&program| {

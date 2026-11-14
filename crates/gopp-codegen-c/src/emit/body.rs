@@ -572,7 +572,9 @@ impl Writer<'_, '_> {
                 (ProjectionKind::Field(at), Type::Option(_)) => {
                     format!("{text}.{}", member(&["value", "set"], at))
                 }
-                (ProjectionKind::Field(at), _) => format!("{text}.f{at}"),
+                (ProjectionKind::Field(at), _) => {
+                    format!("{text}.{}", self.cx.field(ty, at as usize))
+                }
                 (ProjectionKind::Index(at), Type::Array(..)) => {
                     format!("{text}.a[{}]", self.local(at))
                 }

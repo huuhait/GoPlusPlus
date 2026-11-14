@@ -92,6 +92,10 @@ pub(crate) struct Cx<'m> {
     /// The name that each function has in the unit.
     funcs: Vec<String>,
     debug: bool,
+    /// For a debugger: the tag of the struct of each type and the
+    /// names of its fields, where they are those of the source.
+    tags: Vec<String>,
+    fields: Vec<Vec<String>>,
 }
 
 impl Cx<'_> {
@@ -139,6 +143,35 @@ impl Cx<'_> {
         let file = self.module.files.get(file).filter(|_| self.debug)?;
         let line = loc.line.max(1);
         Some(format!("#line {line} \"{}\"\n", quoted(file.as_bytes())))
+    }
+
+    /// The tag of the struct of the type: its name in the source for a
+    /// debugger, or the name that the type has in the unit.
+    pub fn tag(&self, ty: TypeId) -> &str {
+        match self.tags.get(ty.index()).filter(|tag| !tag.is_empty()) {
+            Some(tag) => tag,
+            None => self.spelled(ty),
+        }
+    }
+
+    /// The name of the field of the number of a struct or a tuple.
+    pub fn field(&self, ty: TypeId, at: usize) -> String {
+        let named = self.fields.get(ty.index()).and_then(|names| names.get(at));
+        named.map_or_else(|| format!("f{at}"), String::clone)
+    }
+
+    /// The names that the fields have from the source, each once.
+    pub fn field_names(&self) -> Vec<&str> {
+        let numbered = |name: &str| {
+            (name.strip_prefix('f')).is_some_and(|number| number.parse::<u32>().is_ok())
+        };
+        let mut names: Vec<&str> = (self.fields.iter().flatten())
+            .map(|name| &**name)
+            .filter(|name| !numbered(name))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// Whether the unit says where its statements are in the source.
@@ -212,6 +245,10 @@ pub(crate) fn emit_counted(
     let layouts = module.types.layouts(options.layout)?;
     let mut steps = 0;
     let spelled = types::spelled(module, &layouts, &mut steps);
+    let (tags, fields) = match options.debug {
+        true => names::of_types(module, &mut steps),
+        false => (Vec::new(), Vec::new()),
+    };
     let cx = Cx {
         module,
         layouts,
@@ -219,6 +256,8 @@ pub(crate) fn emit_counted(
         globals: module.globals.values().map(|global| global.ty).collect(),
         funcs: func_names(module)?,
         debug: options.debug,
+        tags,
+        fields,
     };
     let mut out = crate::runtime::header(options.layout);
     out.push_str(convention(options.swiftcall));

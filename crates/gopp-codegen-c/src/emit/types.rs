@@ -167,6 +167,10 @@ pub(super) fn definitions(
 ) -> Result<(), EmitError> {
     let types = &cx.module.types;
     out.push('\n');
+    // A name of the source is no macro of a header here.
+    for name in cx.field_names() {
+        let _ = writeln!(out, "#undef {name}");
+    }
     for ty in types.ids() {
         *steps += 1;
         if let Type::Rec(_) = cx.kind(ty) {
@@ -177,7 +181,8 @@ pub(super) fn definitions(
             let name = cx.spelled(ty);
             let _ = writeln!(
                 out,
-                "typedef struct {name} {name}; /* {} */",
+                "typedef struct {} {name}; /* {} */",
+                cx.tag(ty),
                 comment(cx, ty)
             );
         }
@@ -217,8 +222,7 @@ pub(super) fn definitions(
         if cx.empty(ty) {
             continue;
         }
-        let name = cx.spelled(ty);
-        let _ = writeln!(out, "struct {name} {{");
+        let _ = writeln!(out, "struct {} {{", cx.tag(ty));
         match cx.kind(ty) {
             Type::Slice(of) => {
                 let of = match cx.empty(*of) {
@@ -271,7 +275,7 @@ pub(super) fn definitions(
                     } else {
                         out.push(' ');
                     }
-                    let _ = writeln!(out, " {} f{at};", cx.spelled(field));
+                    let _ = writeln!(out, " {} {};", cx.spelled(field), cx.field(ty, at));
                 }
             }
         }
@@ -304,7 +308,8 @@ pub(super) fn definitions(
             if !cx.empty(fields[at]) {
                 let _ = writeln!(
                     out,
-                    "_Static_assert(__builtin_offsetof({name}, f{at}) == {offset}, \"the layout of T{}\");",
+                    "_Static_assert(__builtin_offsetof({name}, {}) == {offset}, \"the layout of T{}\");",
+                    cx.field(ty, at),
                     ty.index()
                 );
             }
