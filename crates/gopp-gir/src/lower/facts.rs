@@ -62,6 +62,11 @@ pub(crate) struct Facts {
     /// parameter, the symbol of the function and the number of its
     /// parameter, for the calls of functions that are known.
     passed: Vec<(LocalId, ExprId, Option<usize>)>,
+    /// The loops that range over a slice or a map which is reached
+    /// through a pointer, and whose body could change what another
+    /// pointer to the same value reaches: such a loop walks a copy
+    /// (OWN-B10).
+    pub copied_ranges: FxHashSet<StmtId>,
     pub given_on: Vec<(usize, String, usize)>,
     /// The variables whose address is taken.
     reached: FxHashSet<LocalId>,
@@ -194,6 +199,10 @@ struct Walk<'a> {
     /// How many function literals are around what is walked, and which.
     inside: u32,
     within: Vec<ExprId>,
+    /// The loops over a slice behind a pointer whose bodies are walked.
+    ranging: Vec<StmtId>,
+    /// How many of them, the outermost first, are known to walk a copy.
+    copied: usize,
     facts: Facts,
 }
 
@@ -205,6 +214,8 @@ enum Node {
     Stmt(StmtId),
     /// The body of a function literal is walked.
     Leave,
+    /// The body of a loop over a slice behind a pointer is walked.
+    LeaveRange,
 }
 
 /// The facts of the function of a job.
@@ -238,6 +249,8 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         opaque: false,
         inside: 0,
         within: Vec::new(),
+        ranging: Vec::new(),
+        copied: 0,
         facts: Facts::default(),
     };
     walk.block(block);
@@ -347,6 +360,10 @@ impl Walk<'_> {
                 Node::Leave => {
                     self.inside -= 1;
                     self.within.pop();
+                }
+                Node::LeaveRange => {
+                    self.ranging.pop();
+                    self.copied = self.copied.min(self.ranging.len());
                 }
             }
         }
@@ -586,6 +603,22 @@ impl Walk<'_> {
                 }
             }
         }
+        // A call that is given what may hold a pointer, or that runs
+        // what is not known, may change what a loop around it walks.
+        if !self.ranging.is_empty() && self.body.types.contains_key(&callee) {
+            let lends = |this: &Self, expr: &ExprId| {
+                let typed = this.body.types.get(expr);
+                typed.is_none_or(|typed| this.shared.types.may_lend(typed.ty))
+            };
+            let receiver = match self.tree.exprs[callee].kind {
+                ExprKind::Selector { x, .. } => Some(x),
+                _ => None,
+            };
+            let given = receiver.iter().chain(args).any(|arg| lends(self, arg));
+            if given || self.through_value(callee) {
+                self.copy_ranges();
+            }
+        }
         if self.through_value(callee) {
             match self.within.last() {
                 Some(&literal) => drop(self.facts.calling_values.insert(literal)),
@@ -622,6 +655,42 @@ impl Walk<'_> {
         }
     }
 
+    /// The body of every loop that is walked now could change what the
+    /// loop ranges over: each walks a copy.
+    fn copy_ranges(&mut self) {
+        let more = &self.ranging[self.copied..];
+        self.facts.copied_ranges.extend(more.iter().copied());
+        self.copied = self.ranging.len();
+    }
+
+    /// Whether the place of the expression is reached through a
+    /// pointer: a field, an element or a part of what one points to.
+    fn behind_pointer(&self, expr: ExprId) -> bool {
+        let types = self.shared.types;
+        let mut at = self.unparen(expr);
+        loop {
+            let base = match self.tree.exprs[at].kind {
+                ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Slice { x, .. } => self.unparen(x),
+                ExprKind::Unary {
+                    op: UnaryOp::Star, ..
+                } => return true,
+                _ => return false,
+            };
+            let pointer = self.body.types.get(&base).is_some_and(|typed| {
+                matches!(
+                    &*types.get(types.underlying(typed.ty)),
+                    CheckedType::Pointer(_)
+                )
+            });
+            if pointer {
+                return true;
+            }
+            at = base;
+        }
+    }
+
     /// Whether a call of `callee` runs a function that is not known
     /// where the call is written: `callee` is no function by its name
     /// and no method of a type that has it.
@@ -651,7 +720,10 @@ impl Walk<'_> {
                 {
                     self.shared.method(selection.holder, sel.name).is_none()
                 }
-                _ => true,
+                Some(_) => true,
+                // A method that an option, a handle or a pointer has of
+                // its own (`Get`, `IsNil`, `Lock`, `Clone`).
+                None => false,
             },
             _ => true,
         }
@@ -786,6 +858,19 @@ impl Walk<'_> {
             StmtKind::Assign { op, lhs, rhs } => {
                 exprs(rest, lhs);
                 exprs(rest, rhs);
+                // A write through a pointer to a place that owns what
+                // may be walked.
+                let frees = |this: &Self, left: &ExprId| {
+                    let owns = this
+                        .body
+                        .types
+                        .get(left)
+                        .is_some_and(|typed| this.shared.types.owns_apart(typed.ty, false));
+                    owns && this.behind_pointer(*left)
+                };
+                if !self.ranging.is_empty() && lhs.iter().any(|left| frees(self, left)) {
+                    self.copy_ranges();
+                }
                 if let (AssignOp::Define, [left], [value]) = (op, &lhs[..], &rhs[..]) {
                     let local = self.body.defs.get(&tree.exprs[*left].span.lo).copied();
                     self.func_var(local, *value);
@@ -844,6 +929,18 @@ impl Walk<'_> {
                 body,
             } => {
                 exprs(rest, &[*x]);
+                // What the body does while the slice is walked.
+                let sliced = self.body.types.get(x).is_some_and(|typed| {
+                    let types = self.shared.types;
+                    matches!(
+                        &*types.get(types.underlying(typed.ty)),
+                        CheckedType::Slice(_) | CheckedType::Map { .. }
+                    )
+                });
+                if sliced && self.behind_pointer(*x) {
+                    self.ranging.push(stmt);
+                    rest.push(Node::LeaveRange);
+                }
                 rest.extend(body.stmts.iter().map(|&stmt| Node::Stmt(stmt)));
                 for &left in lhs {
                     let mut left = left;

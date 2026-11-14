@@ -1,0 +1,79 @@
+package main
+
+// A loop over a slice or a map that is reached through a pointer walks
+// its own copy when its body could change it through another pointer:
+// two pointers into one structure may lead to the same value, and
+// nothing tells them apart.
+
+type Node struct {
+	Items []int
+	Next  Option[*Node]
+}
+
+func clearItems(n *Node) { n.Items = nil }
+
+func double(x int) int { return 2 * x }
+
+// The body writes through a pointer that was read from another one.
+func writes(a *Node, b *Node) int {
+	sum := 0
+	for _, x := range a.Items {
+		if m, ok := b.Next.Get(); ok {
+			m.Items = nil
+		}
+		sum += x
+	}
+	return sum
+}
+
+// The body gives a pointer to a function.
+func calls(a *Node, b *Node) int {
+	sum := 0
+	for _, x := range a.Items {
+		if m, ok := b.Next.Get(); ok {
+			clearItems(m)
+		}
+		sum += x
+	}
+	return sum
+}
+
+// Nothing in these bodies can reach another pointer: no copy is made.
+func reads(a *Node) int {
+	sum := 0
+	for i, x := range a.Items {
+		a.Items[i] = double(x)
+		sum += x
+	}
+	return sum
+}
+
+type Table struct {
+	M    map[string]int
+	Next Option[*Table]
+}
+
+// The same for a map.
+func entries(a *Table, b *Table) int {
+	sum := 0
+	for _, v := range a.M {
+		if m, ok := b.Next.Get(); ok {
+			m.M = nil
+		}
+		sum += v
+	}
+	return sum
+}
+
+func main() {
+	held := Table{M: map[string]int{"a": 1, "b": 2, "c": 3}}
+	holder := Table{Next: &held}
+	println(entries(&held, &holder), len(held.M))
+	last := Node{Items: []int{1, 2, 3}}
+	first := Node{Next: &last}
+	println(writes(&last, &first), len(last.Items))
+	last.Items = []int{4, 5, 6}
+	println(calls(&last, &first), len(last.Items))
+	last.Items = []int{7, 8}
+	println(reads(&last), last.Items[0], last.Items[1])
+}

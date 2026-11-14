@@ -262,7 +262,8 @@ impl FuncCx<'_, '_> {
             return Ok(());
         }
         if self.holds_map(x) {
-            return self.range_map(label, span, lhs, define, x, body);
+            let copied = self.copied_range(stmt);
+            return self.range_map(label, span, lhs, define, (x, copied), body);
         }
         let walked = self.ty_of(x);
         if self.memo.func_types.contains(&walked) {
@@ -327,8 +328,25 @@ impl FuncCx<'_, '_> {
                 let mut mode = PlaceMode::default();
                 let place = self.place(x, &mut mode)?;
                 let place = self.through(place, &mut mode)?;
-                let whole = self.b.assign_temp(Rvalue::Use(Operand::Copy(place)))?;
-                let whole = Place::local(whole);
+                let read = Rvalue::Use(Operand::Copy(place));
+                // A slice behind a pointer that the body could change
+                // through another pointer is walked as a copy of its
+                // own, which ends with the loop (OWN-B10).
+                let whole = match self.copied_range(stmt) && alias.is_none() {
+                    true => {
+                        let checked = self.body.types.get(&x).map(|typed| typed.ty);
+                        let copy = self.cloned_value(span, checked, read)?;
+                        let whole = self.slot_of(copy)?;
+                        if let Some(Ok(ends)) = match checked {
+                            Some(checked) => Some(self.ends_quietly(checked)?),
+                            None => None,
+                        } {
+                            self.hold(whole.clone(), ends);
+                        }
+                        whole
+                    }
+                    false => Place::local(self.b.assign_temp(read)?),
+                };
                 let len = self.b.assign_temp(Rvalue::Len(whole.clone()))?;
                 (Walked::Elements(whole), slot(len), word)
             }

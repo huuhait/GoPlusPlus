@@ -511,7 +511,7 @@ impl FuncCx<'_, '_> {
         span: SourceSpan,
         lhs: &[ExprId],
         define: bool,
-        x: ExprId,
+        (x, copied): (ExprId, bool),
         body: &Block,
     ) -> Built {
         self.open_scope();
@@ -521,8 +521,25 @@ impl FuncCx<'_, '_> {
         };
         // A map that is made for the loop lives as long as the loop.
         let mark = self.temps.len();
-        let map = self.map_now(x)?;
+        let mut map = self.map_now(x)?;
         self.keep_temps(mark)?;
+        // A map behind a pointer that the body could change through
+        // another pointer is walked as a copy of its own, which ends
+        // with the loop (OWN-B10).
+        let checked = self.body.types.get(&x).map(|typed| typed.ty);
+        let is_map = checked.is_some_and(|ty| {
+            let types = self.shared.types;
+            matches!(&*types.get(types.underlying(ty)), CheckedType::Map { .. })
+        });
+        let named = lhs.get(1).is_some_and(|&left| self.aliased(left).is_some());
+        if let (true, true, false, Some(checked)) = (copied, is_map, named, checked) {
+            let copy = self.cloned_value(span, Some(checked), Rvalue::Use(map))?;
+            let whole = self.slot_of(copy)?;
+            if let Ok(ends) = self.ends_quietly(checked)? {
+                self.hold(whole.clone(), ends);
+            }
+            map = Operand::Copy(whole);
+        }
         // What the runtime keeps of the walk: three words.
         let word = self.b.types().int(64, false);
         let walk = self.b.types().tuple(&[word; 3]);

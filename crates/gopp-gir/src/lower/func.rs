@@ -2688,6 +2688,12 @@ impl FuncCx<'_, '_> {
         var.is_some_and(|var| self.worked_params.contains(var))
     }
 
+    /// Whether the loop walks a copy of its slice: the slice is behind
+    /// a pointer, and the body could change it through another one.
+    pub fn copied_range(&self, stmt: StmtId) -> bool {
+        self.facts.copied_ranges.contains(&stmt)
+    }
+
     /// Whether the function literal calls `recover` itself.
     pub fn recovering(&self, literal: ExprId) -> bool {
         self.facts.recovering.contains(&literal)

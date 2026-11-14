@@ -1098,6 +1098,123 @@ fn the_steps_grow_with_a_chain_of_functions_that_give_on() {
     assert_near_linear(&sizes, |n| chain(n, true));
 }
 
+// rule: OWN-B10
+#[test]
+fn a_loop_over_what_is_behind_a_pointer_walks_a_copy_if_its_body_could_change_it() {
+    let text = "package main
+
+type Node struct {
+	Items []int
+	M     map[string]int
+	Next  Option[*Node]
+}
+
+func clearItems(n *Node) { n.Items = nil }
+
+func double(x int) int { return 2 * x }
+
+func writes(a *Node, b *Node) (sum int) {
+	for _, x := range a.Items {
+		if m, ok := b.Next.Get(); ok {
+			m.Items = nil
+		}
+		sum += x
+	}
+	return sum
+}
+
+func calls(a *Node, b *Node) (sum int) {
+	for _, x := range a.Items {
+		clearItems(b)
+		sum += x
+	}
+	return sum
+}
+
+func entries(a *Node, run func()) (sum int) {
+	for _, v := range a.M {
+		run()
+		sum += v
+	}
+	return sum
+}
+
+func reads(a *Node) (sum int) {
+	for i, x := range a.Items {
+		a.Items[i] = double(x)
+		a.Next = nil
+		sum += x + len(a.M)
+	}
+	return sum
+}
+
+func own(xs []int, b *Node) (sum int) {
+	for _, x := range xs {
+		clearItems(b)
+		sum += x
+	}
+	return sum
+}
+
+func named(a *Node, b *Node) {
+	for _, &x := range a.Items {
+		x += len(b.Items)
+	}
+}
+
+func main() {}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let copies = |name: &str| {
+        let start = module.find(&format!("\nfn _GPF4mainE{name}(")).unwrap();
+        let body = &module[start..][..module[start..].find("\n}\n").unwrap()];
+        // The copy of a slice, and that of a map.
+        body.matches("@_GPTcS").count() + body.matches("@_GPTcH").count()
+    };
+    // A write through a pointer to a place that owns a slice, a call
+    // that is given a pointer, a call of a function value: one copy.
+    assert_eq!([copies("6writes"), copies("5calls")], [1, 1]);
+    assert_eq!(copies("7entries"), 1, "{module}");
+    // A write of an element, a write to a place that owns nothing, a
+    // call that is given no pointer; a slice of the function's own;
+    // another name of the elements: none.
+    assert_eq!(
+        [copies("5reads"), copies("3own"), copies("5named")],
+        [0, 0, 0]
+    );
+}
+
+#[test]
+fn the_steps_grow_with_loops_over_what_is_behind_a_pointer() {
+    let head = "package main\n\ntype Node struct {\n\tItems []int\n\tNext  Option[*Node]\n}\n\nfunc \
+                touch(n *Node) {}\n\n";
+    // Loops in loops, with a call in the innermost body: each of them
+    // walks a copy. And loops one after another.
+    let nested = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("for _, x{i} := range a.Items {{\nn += x{i}\n"))
+            .collect();
+        let close = "}\n".repeat(depth);
+        steps_of(&format!(
+            "{head}func f(a *Node, b *Node) int {{\nn := 0\n{open}touch(b)\n{close}return n\n}}\n"
+        ))
+    };
+    let siblings = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!("\tfor _, x{i} := range a.Items {{\n\t\ttouch(b)\n\t\tn += x{i}\n\t}}\n")
+            })
+            .collect();
+        steps_of(&format!(
+            "{head}func f(a *Node, b *Node) int {{\n\tn := 0\n{each}\treturn n\n}}\n"
+        ))
+    };
+    assert_near_linear(&[50, 100, 200], nested);
+    assert_near_linear(&[100, 200, 400, 800], siblings);
+}
+
 #[test]
 fn a_type_with_a_drop_method_ends_by_it_and_is_copied_by_its_clone_method() {
     let text = "package main
