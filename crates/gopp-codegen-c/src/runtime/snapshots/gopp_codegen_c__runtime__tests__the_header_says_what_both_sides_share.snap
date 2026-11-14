@@ -266,6 +266,11 @@ typedef struct gopp_mark {
 } gopp_mark;
 __attribute__((returns_twice)) int gopp_setjmp(void *mark, void *frame) __asm__("_setjmp");
 #define GOPP_MARK_UNWOUND 0
+// A function that is put into the function of the mark would have what
+// it owns ended by nothing when a stopped panic leaves it there: the
+// unwinding runs nothing of that function. So the calls of the function
+// of a mark stay calls.
+#define GOPP_CALL_STAYS [[clang::noinline]]
 #define _gopp_defer_enter(frame, at) \
   (_gopp_defer_push(frame), ((gopp_frame *)(frame))->mark = &(at), \
    gopp_setjmp(&(at), __builtin_frame_address(0)) != 0)
@@ -279,6 +284,7 @@ typedef struct gopp_mark {
 } gopp_mark;
 __attribute__((returns_twice)) void _gopp_defer_push(uint8_t *frame);
 #define GOPP_MARK_UNWOUND 1
+#define GOPP_CALL_STAYS
 #define _gopp_defer_enter(frame, at) \
   (_gopp_defer_push(frame), ((gopp_frame *)(frame))->mark = &(at), \
    __builtin_setjmp((at).part) != 0)

@@ -186,6 +186,7 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         steps,
         guard,
         unwinding: false,
+        enters,
         name: name.clone(),
         line: (0, 0),
         names: Names::plain(func),
@@ -347,6 +348,8 @@ struct Writer<'c, 'm> {
     guard: Option<Guard>,
     /// The cleanup blocks are written, and not the others.
     unwinding: bool,
+    /// The function marks where it goes on after a stopped panic.
+    enters: bool,
     /// The name of the function in C.
     name: String,
     /// The file and the line of the source that the unit was last told
@@ -867,13 +870,17 @@ impl Writer<'_, '_> {
                     return Ok(());
                 }
                 let call = format!("{called}({})", given.join(", "));
+                let stays = match self.enters {
+                    true => "GOPP_CALL_STAYS ",
+                    false => "",
+                };
                 match cx.empty(self.place_ty(dest)) {
                     true => {
-                        let _ = writeln!(self.out, "  {state}{call};");
+                        let _ = writeln!(self.out, "  {state}{stays}{call};");
                     }
                     false => {
                         let dest = self.place(dest)?;
-                        let _ = writeln!(self.out, "  {state}{dest} = {call};");
+                        let _ = writeln!(self.out, "  {state}{stays}{dest} = {call};");
                     }
                 }
                 match target {

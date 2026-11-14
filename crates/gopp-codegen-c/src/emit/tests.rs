@@ -334,6 +334,43 @@ fn what_crosses_to_c_is_declared_as_c_declares_it() {
     }
 }
 
+/// A function that goes on after a stopped panic: where the unwinding
+/// of the system runs nothing of that function, a function that Clang
+/// put into it would have what it owns ended by nothing.
+#[test]
+fn the_calls_of_a_function_that_stops_a_panic_stay_calls() {
+    let text = "package main
+
+func work(n int) int {
+	text := \"a\"
+	text += \"b\"
+	return n + len(text)
+}
+
+func stops() int {
+	defer func() { recover() }()
+	return work(1)
+}
+
+func plain() int { return work(2) }
+
+func main() { println(stops(), plain()) }
+";
+    let unit = unit("a.gopp", text);
+    let calls: Vec<&str> = (unit.lines())
+        .filter(|line| line.contains(" = gopp_f0("))
+        .collect();
+    let [stops, plain] = calls[..] else {
+        panic!("{unit}");
+    };
+    assert!(stops.contains("GOPP_CALL_STAYS _"), "{stops}");
+    assert!(!plain.contains("GOPP_CALL_STAYS"), "{plain}");
+    // The mark is one that Clang reads on Windows, and nothing else.
+    let header = crate::runtime::header(options(Entry::Main).layout);
+    assert!(header.contains("#define GOPP_CALL_STAYS [[clang::noinline]]\n"));
+    assert!(header.contains("#define GOPP_CALL_STAYS\n"));
+}
+
 #[test]
 fn a_unit_for_a_debugger_says_where_each_statement_is_written() {
     let text = "package main
