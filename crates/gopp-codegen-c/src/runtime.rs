@@ -585,6 +585,7 @@ pub fn build(driver: &ClangDriver, form: Form, cache: &Path) -> Result<Vec<PathB
     // Our own C has no warning.
     let driver = ClangDriver {
         strict: true,
+        time_trace: false,
         ..*driver
     };
     if form == Form::Shared {

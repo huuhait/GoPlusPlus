@@ -9,6 +9,7 @@ mod fmt;
 mod packages;
 mod parse;
 mod runner;
+mod times;
 
 use std::env;
 use std::panic;
@@ -90,6 +91,18 @@ enum Command {
         /// and the names of the variables
         #[arg(long)]
         no_debug: bool,
+        /// How much Clang optimizes; the program means the same at
+        /// every level
+        #[arg(long, value_enum, default_value = "0")]
+        opt: Opt,
+        /// Print how long each stage of the build took, as
+        /// `stage=wall/cpu`, to standard error
+        #[arg(long)]
+        pipeline_times: bool,
+        /// Write the stages of the build, and those of Clang, to this
+        /// file as a trace that Chrome reads
+        #[arg(long)]
+        trace: Option<PathBuf>,
         /// What is made of the package
         #[arg(long, value_enum, default_value = "exe")]
         emit: EmitBuilt,
@@ -281,6 +294,9 @@ fn run() -> ExitCode {
             target,
             panic,
             no_debug,
+            opt,
+            pipeline_times,
+            trace,
             emit,
             o,
             paths,
@@ -288,6 +304,9 @@ fn run() -> ExitCode {
             target,
             aborts: panic == PanicMode::Abort,
             debug: !no_debug,
+            opt: opt.level(),
+            pipeline_times,
+            trace,
             emit,
             output: o,
             paths,

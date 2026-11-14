@@ -21,6 +21,7 @@ use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
 use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output};
+use gopp_codegen_c::pipeline::{PipelineRequest, PipelineSpec, select_pipeline};
 use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
@@ -30,6 +31,7 @@ use rayon::prelude::*;
 
 use self::protocol::{JobResult, JobSpec, Outcome, VERSION, base64, job_of};
 use crate::build::{cache_dir, imported_units, lowered};
+use crate::times::Clock;
 
 // Only the fast way, which is on Linux, reads all of it.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -58,6 +60,7 @@ pub struct Options {
 /// What every job of a run is built and run with.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct Run<'a> {
+    pipeline: PipelineSpec,
     driver: ClangDriver<'a>,
     /// What a link is given of the runtime: nothing for a module, which
     /// finds the runtime in its process.
@@ -179,12 +182,19 @@ impl Run<'_> {
         let (of_c, sources): (Vec<PathBuf>, Vec<PathBuf>) =
             job.inputs.iter().cloned().partition(is_c);
         let mut said = String::new();
-        let Some(package) = lowered(&sources, (target, false), false, &mut said) else {
+        let lowered = lowered(
+            &sources,
+            (target, false),
+            false,
+            &mut said,
+            &mut Clock::new(),
+        );
+        let Some(package) = lowered else {
             return Err(said);
         };
-        let package = match self.driver.debug {
-            true => package,
-            false => package.inlined(),
+        let package = match self.pipeline.inline {
+            true => package.inlined(),
+            false => package,
         };
         if !package.is_main {
             return Err(
@@ -203,7 +213,7 @@ impl Run<'_> {
             imports: &paths,
             swiftcall: target.swiftcall,
             aborts: false,
-            debug: self.driver.debug,
+            debug: self.pipeline.debug,
         };
         let codegen = |error: String| format!("error[{}]: {error}\n", Code::Codegen);
         let unit =
@@ -424,12 +434,17 @@ pub fn run(options: &Options) -> ExitCode {
         Ok(target) => target,
         Err(error) => return stopped(error),
     };
+    let pipeline = select_pipeline(PipelineRequest {
+        opt: options.opt,
+        debug: options.debug,
+    });
     let driver = ClangDriver {
         toolchain: &toolchain,
         target,
-        opt: options.opt,
+        opt: pipeline.clang,
         strict: false,
-        debug: options.debug,
+        debug: pipeline.debug,
+        time_trace: false,
     };
     let form = match real {
         true => Form::Objects,
@@ -460,6 +475,7 @@ pub fn run(options: &Options) -> ExitCode {
         Err(error) => return stopped(format!("{}: {error}", work.display())),
     };
     let run = Run {
+        pipeline,
         driver,
         link_with: match real {
             true => runtime.clone(),

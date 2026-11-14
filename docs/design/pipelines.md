@@ -4,7 +4,7 @@ This document specifies what happens between a checked package (`gopp-sema`) and
 
 ## 1. Core rule: identical program semantics in every pipeline
 
-Optimization settings change compile time, binary size, and run-time speed — never what a valid program computes. Standard output, exit status, panic messages, and floating-point results are identical across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on every target:
+Optimization settings change compile time, binary size, and run-time speed — never what a valid program computes. Standard output, exit status, panic messages, and floating-point results are identical across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on every target. The one thing that a level changes in what a program writes is the trace under the message of a panic: above `-opt=0` Clang puts functions into their callers, and the trace does not name those ([runtime.md](runtime.md)); it names no other function and keeps their order, and `main.main` is always in it:
 
 - **Zero C undefined behavior:** `gopp-codegen-c` compiles all generated GNU C23 with `-std=gnu23 -fwrapv -fno-strict-aliasing -ffp-contract=off -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free`, and lowers Go shift semantics (`count >= width ? 0 : ...` / sign-fill), `MinInt / -1`, `MinInt % -1`, and saturating float-to-integer casts explicitly in C23 helpers.
 - **Deterministic FMA contraction:** Floating-point multiply-add fusion (`__builtin_fma` / `__builtin_fmaf`) is decided once by `gopp-codegen-c` on `arm64` only, while `-ffp-contract=off` prevents Clang's optimizer from fusing additional operations at higher `-O` levels (section 4).
@@ -13,7 +13,7 @@ Optimization settings change compile time, binary size, and run-time speed — n
 
 ## 2. Single definition point: `PipelineSpec`
 
-`select_pipeline(PipelineRequest, &TargetSpec)` is the sole function translating CLI/profile settings into a `PipelineSpec`:
+`gopp_codegen_c::pipeline::select_pipeline(PipelineRequest)` is the sole function translating CLI/profile settings into a `PipelineSpec` (its name, whether small functions are inlined, the level of Clang, debug information); `gopp build -opt=…` and `gopp test-run -opt=…` both go through it:
 
 | Setting | Name | GIR trivial inlining | Middle-IR `-fpass-plugin` | Clang optimization flag | LTO (`-flto=thin`) |
 |---|---|---|---|---|---|
@@ -26,7 +26,7 @@ Optimization settings change compile time, binary size, and run-time speed — n
 
 ### Stages in order
 
-Each stage records wall and CPU timing in `PipelineTimes` (`-pipeline-times` prints `stage=wall/cpu`):
+Each stage records wall and CPU timing in `PipelineTimes`. `gopp build -pipeline-times` prints them as one line to standard error, `check=0.009s/0.091s gir-lower=… gir-inline=… c23-emit=… clang-compile=…`: the wall time, then the time of the processor that the build and what it started used (`-` where the system does not say it: it is measured on Linux). The stages that are built today are `check` (read, parse, check), `gir-lower` (with `gir-verify`), `gir-inline`, `c23-emit` and `clang-compile`; the list below is the whole design:
 
 1. **`gir-lower` & `gir-verify`:** Lowers `gopp_sema::CheckedPackage` to `gopp_gir::Module` and runs `verify_module` (`V001`–`V085`). (`-emit=gir` prints the module here.)
 2. **`gir-safety`:** Runs `MoveCheck`, `BorrowCheck`, and `ConcurrencyCheck` over the GIR CFG. Always runs unconditionally before any plugin or optimization pass. Today the move check (`E0451`) and the last uses are worked out earlier, by the checker on the syntax tree ([gir.md](gir.md) §7), and the other two are not built.
@@ -72,7 +72,7 @@ Debug info is enabled by default (`-no-debug` disables it). Because `gopp-codege
 
 ## 6. Opt-matrix verification and extension hooks
 
-- **Optimization equivalence matrix (`tests/run`):** Builds and runs the full differential, collection, panic, FMA, and C-ABI corpora across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on `linux/amd64` and `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md)), asserting identical stdout, stderr, and exit codes across all levels alongside DWARF verification (`dwarfdump` / `gdb` / `lldb`).
+- **Optimization equivalence matrix (`tests/run`):** Builds and runs the full differential, collection, panic, FMA, and C-ABI corpora across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on `linux/amd64` and `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md)), asserting identical stdout, stderr, and exit codes across all levels alongside DWARF verification (`dwarfdump` / `gdb` / `lldb`). Today a long test runs every program of `tests/run` at the six levels, as a module and as an executable on Linux and as an executable on Windows, against the file of what the program writes at `-opt=0`: everything is the same but the trace of a panic, which above `-opt=0` may lack functions and has no other and no other order (section 1). The DWARF checks are not built.
 - **Profiles ([ADR-0007](../adr/0007-build-profiles.md)):** Profiles populate `PipelineRequest` (`opt`, `debuginfo`, `lto`, `panic`, `sanitize`, `strip`, `cpu`, `pgo`, `link`); build cache keys (`blake3`) hash the effective `PipelineSpec` plus loaded `-fpass-plugin` digests so equivalent profiles share cache entries.
-- **`-trace`:** Emits Chrome Trace JSON spans across front-end, GIR passes, plugin invocations, C23 emission, and Clang `-ftime-trace` subprocess reports.
+- **`-trace=FILE`:** Emits Chrome Trace JSON spans across front-end, GIR passes, plugin invocations, C23 emission, and Clang `-ftime-trace` subprocess reports. Today the file has one span for each stage of `PipelineTimes` (process 1) and the events that Clang writes for each unit (`-ftime-trace`, processes 2 and up, moved to where the stage of Clang starts).
 - **ThinLTO (`lto = "thin"`):** Passes `-flto=thin -fuse-ld=lld` to `ClangDriver` across Go++ C23 translation units and Clang-compiled `cdep` objects (`P15`).

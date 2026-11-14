@@ -88,6 +88,7 @@ static const gopp_func_name gopp_funcs[] = {
 };
 static gopp_func_table gopp_table = {gopp_funcs, 2, 0};
 
+__attribute__((noinline, optnone))
 int main(int argc, char **argv) {
   _gopp_rt_init(argc, argv);
   _gopp_rt_funcs(&gopp_table);

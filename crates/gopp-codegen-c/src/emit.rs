@@ -411,6 +411,9 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], options: &EmitOptions, out: &mut Stri
             let symbol = start_symbol(import);
             let _ = writeln!(out, "void gopp_start_{at}(void) __asm__(\"{symbol}\");");
         }
+        // What starts the program keeps its calls at every level, so
+        // that the trace of a panic names `main.main`.
+        out.push_str("\n__attribute__((noinline, optnone))");
         out.push_str(match kind {
             Entry::Module => "\nint gopp_entry(void) {\n  _gopp_rt_init(0, 0);\n",
             _ => "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n",

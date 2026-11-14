@@ -7,7 +7,8 @@ use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output};
+use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output, TIME_TRACE_DIR};
+use gopp_codegen_c::pipeline::{PipelineRequest, Stage, select_pipeline};
 use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
@@ -22,6 +23,7 @@ use rayon::prelude::*;
 
 use crate::check::grouped;
 use crate::parse::MAX_DIAGNOSTICS;
+use crate::times::Clock;
 use crate::{EXIT_ERRORS, EmitBuilt, packages};
 
 pub struct Options {
@@ -31,6 +33,11 @@ pub struct Options {
     /// What is built says where its code is in the source, for a
     /// debugger.
     pub debug: bool,
+    pub opt: OptLevel,
+    /// Says how long each stage took.
+    pub pipeline_times: bool,
+    /// The file for the trace of the stages.
+    pub trace: Option<PathBuf>,
     pub emit: EmitBuilt,
     pub output: Option<PathBuf>,
     pub paths: Vec<PathBuf>,
@@ -98,7 +105,9 @@ pub(crate) fn lowered(
     (target, aborts): (&'static TargetSpec, bool),
     color: bool,
     said: &mut String,
+    clock: &mut Clock,
 ) -> Option<Lowered> {
+    let checking = clock.begin();
     let mut stopped = |message: &dyn std::fmt::Display| {
         said.push_str(&format!("error: {message}\n"));
         None
@@ -123,6 +132,8 @@ pub(crate) fn lowered(
     if reported(sink.finish(), &sources, color, said) {
         return None;
     }
+    clock.end(Stage::Check, checking);
+    let lowering = clock.begin();
     // A package is lowered with what is known of the functions of those
     // that it imports, so the packages that import nothing come first,
     // side by side, then those that import only them, and so on. What is
@@ -179,6 +190,7 @@ pub(crate) fn lowered(
     if failed {
         return None;
     }
+    clock.end(Stage::GirLower, lowering);
     let first = files.first().and_then(|file| file.file_stem());
     let name = match name.as_str() {
         "command-line-arguments" => first.map_or("a".into(), |stem| stem.to_os_string()),
@@ -200,45 +212,51 @@ pub fn run(options: &Options) -> ExitCode {
         Ok(target) => target,
         Err(error) => return stopped(error),
     };
+    let pipeline = select_pipeline(PipelineRequest {
+        opt: options.opt,
+        debug: options.debug,
+    });
+    let mut clock = Clock::new();
     let mut said = String::new();
     let lowered = lowered(
         &options.paths,
         (target, options.aborts),
         io::stderr().is_terminal(),
         &mut said,
+        &mut clock,
     );
     eprint!("{said}");
-    let Some(Lowered {
-        module,
-        is_main,
-        name,
-        imports,
-    }) = lowered
-    else {
+    let Some(whole) = lowered else {
         return ExitCode::from(EXIT_ERRORS);
     };
     // The module as it is lowered is what `-emit=gir` shows.
     if options.emit == EmitBuilt::Gir {
-        return written(options.output.as_ref(), &print_module(&module));
+        return written(options.output.as_ref(), &print_module(&whole.module));
     }
-    let whole = Lowered {
-        module,
-        is_main,
-        name,
-        imports,
-    };
-    // A call that is replaced has no frame, and C cannot say that a
-    // function was put into another: what is built for a debugger
-    // keeps its calls.
+    let inlining = clock.begin();
     let Lowered {
         module,
         is_main,
         name,
         imports,
-    } = match options.debug {
-        true => whole,
-        false => whole.inlined(),
+    } = match pipeline.inline {
+        true => whole.inlined(),
+        false => whole,
     };
+    clock.end(Stage::GirInline, inlining);
+    let (kind, extension) = match (options.emit, target.os) {
+        (EmitBuilt::Gir | EmitBuilt::C, _) => (None, ""),
+        (EmitBuilt::Obj, Os::Windows) => (Some(Output::Object), "obj"),
+        (EmitBuilt::Obj, _) => (Some(Output::Object), "o"),
+        (EmitBuilt::Asm, _) => (Some(Output::Assembly), "s"),
+        (EmitBuilt::Exe, Os::Windows) => (Some(Output::Executable), "exe"),
+        (EmitBuilt::Exe, _) => (Some(Output::Executable), ""),
+    };
+    let dir = match tempfile::tempdir() {
+        Ok(dir) => dir,
+        Err(error) => return stopped(format!("no directory for the unit: {error}")),
+    };
+    let emitting = clock.begin();
     let paths: Vec<String> = imports.iter().map(|(path, _)| path.clone()).collect();
     let emit = EmitOptions {
         layout: target.layout(),
@@ -250,19 +268,26 @@ pub fn run(options: &Options) -> ExitCode {
         imports: &paths,
         swiftcall: target.swiftcall,
         aborts: options.aborts,
-        debug: options.debug,
+        debug: pipeline.debug,
     };
     let unit = match emit_c23(&module, &emit) {
         Ok(unit) => unit,
         Err(error) => return codegen(error),
     };
-    let (kind, extension) = match (options.emit, target.os) {
-        (EmitBuilt::Gir | EmitBuilt::C, _) => return written(options.output.as_ref(), &unit),
-        (EmitBuilt::Obj, Os::Windows) => (Output::Object, "obj"),
-        (EmitBuilt::Obj, _) => (Output::Object, "o"),
-        (EmitBuilt::Asm, _) => (Output::Assembly, "s"),
-        (EmitBuilt::Exe, Os::Windows) => (Output::Executable, "exe"),
-        (EmitBuilt::Exe, _) => (Output::Executable, ""),
+    // An executable is linked with the packages that it imports too,
+    // each a unit of its own.
+    let mut link_with = Vec::new();
+    if kind == Some(Output::Executable) {
+        link_with = match imported_units(&imports, &emit, dir.path()) {
+            Ok(units) => units,
+            Err(message) => return codegen(message),
+        };
+    }
+    clock.end(Stage::C23Emit, emitting);
+    let traces = dir.path().join(TIME_TRACE_DIR);
+    let Some(kind) = kind else {
+        said_times(options, &clock, &traces);
+        return written(options.output.as_ref(), &unit);
     };
     // Without `-o`: named after the directory, or after the first file.
     let output = options
@@ -273,47 +298,47 @@ pub fn run(options: &Options) -> ExitCode {
         Ok(toolchain) => toolchain,
         Err(error) => return stopped(error),
     };
-    let dir = match tempfile::tempdir() {
-        Ok(dir) => dir,
-        Err(error) => return stopped(format!("no directory for the unit: {error}")),
-    };
+    let compiling = clock.begin();
     let driver = ClangDriver {
         toolchain: &toolchain,
         target,
-        opt: OptLevel::default(),
+        opt: pipeline.clang,
         strict: false,
-        debug: options.debug,
+        debug: pipeline.debug,
+        time_trace: options.trace.is_some(),
     };
     // An executable is linked with the runtime, which is built once for
     // a target and its flags.
-    let runtime = match kind {
-        Output::Executable => {
-            let cache = match cache_dir() {
-                Ok(cache) => cache,
-                Err(message) => return stopped(message),
-            };
-            let checked = driver.check_link_inputs();
-            match checked.and_then(|()| runtime::build(&driver, Form::Objects, &cache)) {
-                Ok(runtime) => runtime,
-                Err(error) => return codegen(error),
-            }
-        }
-        _ => Vec::new(),
-    };
-    // An executable is linked with the packages that it imports too,
-    // each a unit of its own.
-    let mut link_with = Vec::new();
     if kind == Output::Executable {
-        let units = match imported_units(&imports, &emit, dir.path()) {
-            Ok(units) => units,
-            Err(message) => return codegen(message),
+        let cache = match cache_dir() {
+            Ok(cache) => cache,
+            Err(message) => return stopped(message),
         };
-        link_with = units;
+        let checked = driver.check_link_inputs();
+        match checked.and_then(|()| runtime::build(&driver, Form::Objects, &cache)) {
+            Ok(runtime) => link_with.extend(runtime),
+            Err(error) => return codegen(error),
+        }
     }
-    link_with.extend(runtime);
-    match driver.build(&unit, dir.path(), &output, kind, &link_with) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => codegen(error),
+    if let Err(error) = driver.build(&unit, dir.path(), &output, kind, &link_with) {
+        return codegen(error);
+    }
+    clock.end(Stage::ClangCompile, compiling);
+    said_times(options, &clock, &traces);
+    ExitCode::SUCCESS
+}
+
+/// Says how long the stages took, to standard error and to the file of
+/// the trace, as the build was asked. `clang` is where Clang wrote of
+/// its own time.
+fn said_times(options: &Options, clock: &Clock, clang: &std::path::Path) {
+    if options.pipeline_times {
+        eprintln!("{}", clock.times);
+    }
+    if let Some(file) = &options.trace
+        && let Err(error) = clock.write_trace(file, clang)
+    {
+        eprintln!("error: {}: {error}", file.display());
     }
 }
 

@@ -1721,6 +1721,7 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
         opt: OptLevel::O1,
         strict: false,
         debug: false,
+        time_trace: false,
     };
     let sanitized = |units: &[String], what: &Path| {
         let dir = TempDir::new().unwrap();
@@ -2047,4 +2048,72 @@ func main() {
     ] {
         assert!(shown(value), "{value}\n{said}");
     }
+}
+
+/// `-opt` says how much Clang optimizes, `-pipeline-times` how long
+/// each stage took, and `-trace` writes the stages and those of Clang
+/// as a trace.
+#[test]
+fn a_build_says_its_level_its_times_and_its_trace() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main\n\nfunc half(x int) int { return x / 2 }\n\n\
+                func main() { println(half(9)) }\n";
+    let file = write_source(&dir, "level.gopp", text);
+    let program = dir.path().join("level.bin");
+    let trace = dir.path().join("trace.json");
+    let mut build = gopp();
+    build.args(["build", "-opt=2", "-pipeline-times", "-trace"]);
+    let built = run_beside(build.arg(&trace).arg("-o").arg(&program).arg(&file));
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    // One line: each stage with its wall time and the time of the
+    // processor, where the system says it.
+    let said = stderr(&built);
+    let stages: Vec<&str> = said.trim_end().split(' ').collect();
+    let names = [
+        "check",
+        "gir-lower",
+        "gir-inline",
+        "c23-emit",
+        "clang-compile",
+    ];
+    assert_eq!(stages.len(), names.len(), "{said}");
+    for (stage, name) in stages.iter().zip(names) {
+        let (stage, times) = stage.split_once('=').unwrap();
+        let (wall, cpu) = times.split_once('/').unwrap();
+        assert_eq!(stage, name, "{said}");
+        assert!(
+            wall.strip_suffix('s').unwrap().parse::<f64>().is_ok(),
+            "{said}"
+        );
+        let measured = cpu
+            .strip_suffix('s')
+            .is_some_and(|cpu| cpu.parse::<f64>().is_ok());
+        assert_eq!(measured, cfg!(target_os = "linux"), "{said}");
+        assert!(measured || cpu == "-", "{said}");
+    }
+    let ran = run_beside(&mut Command::new(&program));
+    assert_eq!((stderr(&ran).as_str(), ran.status.code()), ("4\n", Some(0)));
+    // The trace has the stages in their order, then what Clang says of
+    // its own time, as another process.
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&trace).unwrap()).unwrap();
+    let events = parsed["traceEvents"].as_array().unwrap();
+    let ours: Vec<&str> = (events.iter())
+        .filter(|event| event["pid"] == 1)
+        .map(|event| event["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(ours, names);
+    assert!(events.iter().any(|event| event["pid"] == 2), "{parsed}");
+    // What is only written has no stage of Clang, and a level that
+    // there is not is refused.
+    let mut build = gopp();
+    build.args(["build", "-opt=z", "-pipeline-times", "-emit=c"]);
+    let written = run_beside(build.arg(&file));
+    let said = stderr(&written);
+    assert!(
+        said.contains("c23-emit=") && !said.contains("clang-compile="),
+        "{said}"
+    );
+    let refused = run_beside(gopp().args(["build", "-opt=9"]).arg(&file));
+    assert_ne!(refused.status.code(), Some(0));
 }

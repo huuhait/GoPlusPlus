@@ -75,9 +75,35 @@ fn id(program: &Path) -> String {
     program.file_stem().unwrap().to_str().unwrap().to_owned()
 }
 
+/// Where the trace of a panic starts in what a program writes.
+const TRACE: &str = "\ngoroutine 1 [running]:\n";
+
+/// Whether a program that wrote `written` did what `expected` says, but
+/// for the functions that Clang put into their callers: before the
+/// trace of a panic the two are the same, and the trace names functions
+/// of the expected trace, in their order, and no other.
+fn same_but_inlined(written: &str, expected: &str) -> bool {
+    let (Some((said, trace)), Some((meant, whole))) =
+        (written.split_once(TRACE), expected.split_once(TRACE))
+    else {
+        return written == expected;
+    };
+    let mut rest = whole.lines();
+    said == meant
+        && trace
+            .lines()
+            .all(|line| rest.any(|expected| expected == line))
+}
+
 /// Builds and runs the programs in one `gopp test-run` with the flags,
 /// and says which of them did not do what its files say.
 fn wrong_among(programs: &[PathBuf], flags: &[&str]) -> Vec<String> {
+    wrong_by(programs, flags, |written, expected| written == expected)
+}
+
+/// `wrong_among`, with what says whether what a program wrote is what
+/// its file has.
+fn wrong_by(programs: &[PathBuf], flags: &[&str], same: fn(&str, &str) -> bool) -> Vec<String> {
     let manifest: String = programs
         .iter()
         .map(|program| {
@@ -137,7 +163,7 @@ fn wrong_among(programs: &[PathBuf], flags: &[&str]) -> Vec<String> {
             fs::write(&golden, &written).unwrap();
         }
         let expected = fs::read_to_string(&golden).unwrap_or_default();
-        if written != expected {
+        if !same(&written, &expected) {
             wrong.push(format!(
                 "{}: wrote\n{written}--- and its file says\n{expected}---",
                 id(program)
@@ -179,4 +205,55 @@ fn the_programs_that_call_c_do_the_same_at_every_level() {
             assert!(wrong.is_empty(), "{flags:?}\n{}", wrong.join("\n"));
         }
     }
+}
+
+/// A program means the same at every level of Clang (pipelines.md §1):
+/// what it writes, the message of a panic and the status that it ends
+/// with. Above the first level Clang puts functions into their callers,
+/// and the trace of a panic does not name those.
+#[test]
+#[ignore = "long: builds the runtime and every run test at six levels"]
+fn every_program_does_the_same_at_every_level() {
+    let programs = programs(|_| true);
+    let modes: &[&[&str]] = match cfg!(target_os = "linux") {
+        true => &[&[], &["--real"]],
+        false => &[&[]],
+    };
+    for level in [
+        "--opt=0", "--opt=1", "--opt=2", "--opt=3", "--opt=s", "--opt=z",
+    ] {
+        for mode in modes {
+            let flags = [&[level], *mode].concat();
+            let same = match level {
+                "--opt=0" => |written: &str, expected: &str| written == expected,
+                _ => same_but_inlined,
+            };
+            let wrong = wrong_by(&programs, &flags, same);
+            assert!(wrong.is_empty(), "{flags:?}\n{}", wrong.join("\n"));
+        }
+    }
+}
+
+#[test]
+fn a_trace_may_lack_the_functions_that_were_put_into_their_callers() {
+    let expected =
+        "1\npanic: no\n\ngoroutine 1 [running]:\nmain.f()\n\t+0x?\nmain.main()\n\t+0x?\n";
+    let head = "1\npanic: no\n\ngoroutine 1 [running]:\n";
+    assert!(same_but_inlined(expected, expected));
+    assert!(same_but_inlined(
+        &format!("{head}main.main()\n\t+0x?\n"),
+        expected
+    ));
+    assert!(same_but_inlined(head, expected));
+    // Another function, another order, another message, a trace that
+    // is missing.
+    assert!(!same_but_inlined(
+        &format!("{head}main.g()\n\t+0x?\n"),
+        expected
+    ));
+    let turned = format!("{head}main.main()\n\t+0x?\nmain.f()\n\t+0x?\n");
+    assert!(!same_but_inlined(&turned, expected));
+    assert!(!same_but_inlined(&expected.replace("no", "yes"), expected));
+    assert!(!same_but_inlined("1\npanic: no\n", expected));
+    assert!(same_but_inlined("1\n", "1\n") && !same_but_inlined("1\n", "2\n"));
 }

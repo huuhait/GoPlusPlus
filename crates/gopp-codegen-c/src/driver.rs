@@ -105,7 +105,13 @@ pub struct ClangDriver<'a> {
     pub strict: bool,
     /// Clang writes what a debugger reads (debug-info.md).
     pub debug: bool,
+    /// Clang writes where its time went, a file for each unit in the
+    /// directory `TIME_TRACE_DIR` beside the unit.
+    pub time_trace: bool,
 }
+
+/// Where Clang writes its time traces, in the directory of a unit.
+pub const TIME_TRACE_DIR: &str = "time-trace";
 
 impl ClangDriver<'_> {
     /// The flags for compiling a unit that lies in `dir`.
@@ -134,6 +140,9 @@ impl ClangDriver<'_> {
         // that no incremental linker reads it.
         if self.target.object == ObjectFormat::Coff {
             flags.push("-mno-incremental-linker-compatible".to_owned());
+        }
+        if self.time_trace {
+            flags.push(format!("-ftime-trace={TIME_TRACE_DIR}/"));
         }
         match self.strict {
             true => flags.extend(["-Wall".to_owned(), "-Werror".to_owned()]),
@@ -227,6 +236,13 @@ impl ClangDriver<'_> {
             path: output.to_owned(),
             source,
         })?;
+        if self.time_trace {
+            let traces = dir.join(TIME_TRACE_DIR);
+            fs::create_dir_all(&traces).map_err(|source| DriverError::Write {
+                path: traces.clone(),
+                source,
+            })?;
+        }
         let mut command = self.clang(dir);
         command.args(self.compile_flags(dir));
         match kind {

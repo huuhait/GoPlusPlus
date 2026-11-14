@@ -2,6 +2,7 @@
 
 pub mod driver;
 mod emit;
+pub mod pipeline;
 pub mod runtime;
 pub mod toolchain;
 

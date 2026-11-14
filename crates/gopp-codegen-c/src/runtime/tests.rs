@@ -15,6 +15,7 @@ fn driver<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> Clan
         opt,
         strict: true,
         debug: false,
+        time_trace: false,
     }
 }
 
