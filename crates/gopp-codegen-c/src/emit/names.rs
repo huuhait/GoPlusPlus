@@ -96,8 +96,42 @@ const TAKEN: [&str; 73] = [
     "while",
 ];
 
-/// Whether a variable of the source may have its name in C.
+/// The name of the source as a name of C, as a debugger shows and
+/// takes it: `__` for each `.`, and `_` for what else a name of C does
+/// not have, so `main.Vec.Len` is `main__Vec__Len` and `main.Max[int]`
+/// is `main__Max_int`. None for a name that is not written in ASCII or
+/// would be one that the unit has for itself.
+pub(super) fn c_name(readable: &str) -> Option<String> {
+    let mut name = String::with_capacity(readable.len() + 8);
+    for letter in readable.chars() {
+        match letter {
+            '.' => name.push_str("__"),
+            letter if letter.is_ascii_alphanumeric() || letter == '_' => name.push(letter),
+            letter if letter.is_ascii() => name.push('_'),
+            _ => return None,
+        }
+    }
+    let name = name.trim_end_matches('_');
+    let starts = name
+        .bytes()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic());
+    let own = name.starts_with("gopp") || name.starts_with("GOPP") || TAKEN.contains(&name);
+    (starts && !own && name.contains("__")).then(|| name.to_owned())
+}
+
+/// Whether a variable of the source may have its name in C. A name
+/// with `__` in it may be that of a type or of a function of the unit.
 pub(super) fn usable(name: &str) -> bool {
+    named(name) && !name.contains("__")
+}
+
+/// Whether a field of the source may have its name in C.
+pub(super) fn usable_field(name: &str) -> bool {
+    named(name)
+}
+
+fn named(name: &str) -> bool {
     let mut letters = name.bytes();
     let starts = letters
         .next()
@@ -150,22 +184,13 @@ pub(super) fn of_types(module: &Module, steps: &mut u64) -> (Vec<String>, Vec<Ve
         let readable = readable
             .as_deref()
             .and_then(|text| text.strip_prefix("typeinfo for "));
-        if let Some(readable) = readable {
-            let mut tag = String::with_capacity(readable.len());
-            for letter in readable.chars() {
-                match letter.is_ascii_alphanumeric() {
-                    true => tag.push(letter),
-                    false if !tag.ends_with('_') => tag.push('_'),
-                    false => {}
-                }
-            }
-            let mut tag = tag.trim_end_matches('_').to_owned();
+        if let Some(mut tag) = readable.and_then(c_name) {
             if tag.len() > MAX_TAG {
                 let hash = xxhash_rust::xxh3::xxh3_64(symbol.as_bytes());
                 tag.truncate(MAX_TAG - 20);
                 tag = format!("{tag}_x{hash:016x}");
             }
-            if usable(&tag) && given.insert(tag.clone()) {
+            if given.insert(tag.clone()) {
                 tags[ty.index()] = tag;
             }
         }
@@ -176,7 +201,7 @@ pub(super) fn of_types(module: &Module, steps: &mut u64) -> (Vec<String>, Vec<Ve
         };
         let named = (types.field_names(*id).iter().enumerate()).map(|(at, name)| {
             *steps += 1;
-            match usable(name) && !numbered(name) && seen.insert(name) {
+            match usable_field(name) && !numbered(name) && seen.insert(name) {
                 true => name.clone(),
                 false => format!("f{at}"),
             }

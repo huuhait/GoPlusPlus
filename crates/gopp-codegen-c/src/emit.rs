@@ -92,9 +92,8 @@ pub(crate) struct Cx<'m> {
     /// The name that each function has in the unit.
     funcs: Vec<String>,
     debug: bool,
-    /// For a debugger: the tag of the struct of each type and the
-    /// names of its fields, where they are those of the source.
-    tags: Vec<String>,
+    /// For a debugger: the names of the fields of each type, where
+    /// they are those of the source.
     fields: Vec<Vec<String>>,
 }
 
@@ -145,15 +144,6 @@ impl Cx<'_> {
         Some(format!("#line {line} \"{}\"\n", quoted(file.as_bytes())))
     }
 
-    /// The tag of the struct of the type: its name in the source for a
-    /// debugger, or the name that the type has in the unit.
-    pub fn tag(&self, ty: TypeId) -> &str {
-        match self.tags.get(ty.index()).filter(|tag| !tag.is_empty()) {
-            Some(tag) => tag,
-            None => self.spelled(ty),
-        }
-    }
-
     /// The name of the field of the number of a struct or a tuple.
     pub fn field(&self, ty: TypeId, at: usize) -> String {
         let named = self.fields.get(ty.index()).and_then(|names| names.get(at));
@@ -196,63 +186,43 @@ const RUNTIME_PREFIX: &str = "_gopp_";
 /// The name of each function in the unit. A module that names a
 /// function of the runtime that the runtime does not have is refused.
 /// For a debugger a function of the source has the name that a trace
-/// writes for it, with `$` where a name of C takes no other letter.
-fn func_names(module: &Module, debug: bool) -> Result<Vec<String>, EmitError> {
-    let mut given = std::collections::HashSet::new();
-    let mut named = |(at, func): (usize, &Function)| {
+/// writes for it, as a name of C (`names::c_name`): `main__add`. A name
+/// that a type of the unit has already, or another function, is not
+/// given twice.
+fn func_names(module: &Module, tags: &[String]) -> Result<Vec<String>, EmitError> {
+    let mut given: std::collections::HashSet<&str> = tags.iter().map(|tag| &**tag).collect();
+    let debug = !tags.is_empty();
+    let readable: Vec<Option<String>> = (module.funcs.values())
+        .map(
+            |func| match debug && !func.is_declaration() && func.loc().file != 0 {
+                true => gopp_mangle::demangle(func.name().as_bytes(), MAX_TRACE_NAME).ok(),
+                false => None,
+            },
+        )
+        .map(|readable| readable.and_then(|readable| names::c_name(&readable)))
+        .collect();
+    let mut named = Vec::with_capacity(readable.len());
+    for (at, (func, readable)) in module.funcs.values().zip(&readable).enumerate() {
         let name = func.name();
-        let readable = match debug && !func.is_declaration() && func.loc().file != 0 {
-            true => debugger_name(name).filter(|(written, _)| given.insert(written.clone())),
-            false => None,
-        };
-        match (
-            func.is_declaration() && name.starts_with(RUNTIME_PREFIX),
-            readable,
-        ) {
-            (true, _) if crate::runtime::is_func(name) => Ok(name.to_owned()),
-            (true, _) => Err(EmitError::Unsupported {
-                func: Some(name.to_owned()),
-                what: "a function that the runtime does not have",
-            }),
-            (false, Some((written, _))) => Ok(written),
-            (false, None) => Ok(format!("gopp_f{at}")),
-        }
-    };
-    module.funcs.values().enumerate().map(&mut named).collect()
-}
-
-/// What a function with the symbol is called for a debugger: its name
-/// as the unit writes it, and the name that it stands for, which has
-/// as many bytes. A name of C has no `.` and no bracket, so the unit
-/// writes `$` for each, and what Clang made is given the name itself
-/// afterwards. None for a symbol that is no symbol of Go++, and for a
-/// name that is not written in ASCII.
-fn debugger_name(symbol: &str) -> Option<(String, String)> {
-    let readable = gopp_mangle::demangle(symbol.as_bytes(), MAX_TRACE_NAME).ok()?;
-    let starts = readable
-        .bytes()
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic());
-    if !starts || !readable.is_ascii() || readable.contains('$') {
-        return None;
+        let own = readable.as_deref().filter(|written| given.insert(written));
+        named.push(
+            match (
+                func.is_declaration() && name.starts_with(RUNTIME_PREFIX),
+                own,
+            ) {
+                (true, _) if crate::runtime::is_func(name) => name.to_owned(),
+                (true, _) => {
+                    return Err(EmitError::Unsupported {
+                        func: Some(name.to_owned()),
+                        what: "a function that the runtime does not have",
+                    });
+                }
+                (false, Some(written)) => written.to_owned(),
+                (false, None) => format!("gopp_f{at}"),
+            },
+        );
     }
-    let letter = |byte: u8| match byte.is_ascii_alphanumeric() || byte == b'_' {
-        true => byte as char,
-        false => '$',
-    };
-    Some((readable.bytes().map(letter).collect(), readable))
-}
-
-/// For each function of the module that a unit for a debugger names in
-/// its own way: that name, and the name of the source that it stands
-/// for (`debugger_name`).
-pub fn debugger_names(module: &Module) -> Vec<(String, String)> {
-    let mut given = std::collections::HashSet::new();
-    let of_source = |func: &&Function| !func.is_declaration() && func.loc().file != 0;
-    (module.funcs.values().filter(of_source))
-        .filter_map(|func| debugger_name(func.name()))
-        .filter(|(written, _)| given.insert(written.clone()))
-        .collect()
+    Ok(named)
 }
 
 pub(crate) fn global_name(at: usize) -> String {
@@ -289,19 +259,18 @@ pub(crate) fn emit_counted(
     }
     let layouts = module.types.layouts(options.layout)?;
     let mut steps = 0;
-    let spelled = types::spelled(module, &layouts, &mut steps);
     let (tags, fields) = match options.debug {
         true => names::of_types(module, &mut steps),
         false => (Vec::new(), Vec::new()),
     };
+    let spelled = types::spelled(module, &layouts, &tags, &mut steps);
     let cx = Cx {
         module,
         layouts,
         spelled,
         globals: module.globals.values().map(|global| global.ty).collect(),
-        funcs: func_names(module, options.debug)?,
+        funcs: func_names(module, &tags)?,
         debug: options.debug,
-        tags,
         fields,
     };
     let mut out = crate::runtime::header(options.layout);

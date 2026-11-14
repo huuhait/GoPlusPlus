@@ -95,10 +95,10 @@ func main() {
 fn a_variable_has_its_name_in_the_block_of_its_scope() {
     let unit = emit_c23(&module("a.gopp", SCOPES), &debug()).unwrap();
     let add = defined(&unit, "_GPF4mainE3add");
-    // The function has the name that a trace writes for it, with `$`
-    // where a name of C takes no `.`.
+    // The function has the name that a trace writes for it, with
+    // `__` for each `.`.
     assert!(
-        add.starts_with("GOPP_CALL int64_t main$add(int64_t a, int64_t b) {\n"),
+        add.starts_with("GOPP_CALL int64_t main__add(int64_t a, int64_t b) {\n"),
         "{add}"
     );
     let named: Vec<(String, usize)> = declared(&add)
@@ -182,7 +182,7 @@ fn a_name_that_c_takes_for_something_else_is_not_used() {
     }
     // What a cleanup block ends is a field of the record of the
     // function, under its name.
-    let record = unit.find("struct main$greet_own {\n").unwrap();
+    let record = unit.find("struct main__greet_own {\n").unwrap();
     let record = &unit[record..record + unit[record..].find("};").unwrap()];
     assert!(record.contains("  gopp_string text;\n"), "{record}");
     assert!(greet.contains("gopp_own->text = "), "{greet}");
@@ -202,7 +202,7 @@ type Box[T any] struct {
 	next Option[*Box[T]]
 }
 
-type Box_main_Pair struct {
+type Box_main__Pair struct {
 	n int
 }
 
@@ -210,7 +210,7 @@ func main() {
 	p := Pair{1, 2.5, 3, 4}
 	b := Box[Pair]{held: p}
 	deep := Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Box[Pair]]]]]]]]]]]]]]]]]]]]]]]]]]{}
-	same := Box_main_Pair{n: 5}
+	same := Box_main__Pair{n: 5}
 	anon := struct{ x, y int }{1, 2}
 	println(p.a, p.bool, b.held.linux, deep.next == nil, same.n, anon.y)
 }
@@ -226,14 +226,14 @@ fn a_struct_has_the_name_of_its_type_and_its_fields_those_of_the_source() {
     // A field whose name C takes for something else, or that is
     // written like the number of a field, keeps its number.
     let pair =
-        "struct main_Pair {\n  int32_t a;\n  double linux;\n  int8_t f2;\n  int8_t f3;\n};\n";
+        "struct main__Pair {\n  int32_t a;\n  double linux;\n  int8_t f2;\n  int8_t f3;\n};\n";
     assert!(plain.contains(pair), "{plain}");
     assert!(plain.contains("\n#undef linux\n") && plain.contains("\n#undef held\n"));
-    // The values are still of the type of the unit, which is the
-    // struct of that name.
-    let tagged = |tag: &str| plain.contains(&format!("\ntypedef struct {tag} T"));
+    // A value is declared by that name: a debugger shows it, and takes
+    // it in a cast.
+    let tagged = |tag: &str| plain.contains(&format!("\ntypedef struct {tag} {tag};"));
     assert!(
-        tagged("main_Pair") && tagged("main_Box_main_Pair"),
+        tagged("main__Pair") && tagged("main__Box_main__Pair"),
         "{plain}"
     );
     // One struct of a name: the second type that would have it keeps
@@ -241,7 +241,7 @@ fn a_struct_has_the_name_of_its_type_and_its_fields_those_of_the_source() {
     // fields have theirs.
     assert_eq!(
         plain
-            .matches("\ntypedef struct main_Box_main_Pair T")
+            .matches("\ntypedef struct main__Box_main__Pair ")
             .count(),
         1
     );
@@ -257,7 +257,7 @@ fn a_struct_has_the_name_of_its_type_and_its_fields_those_of_the_source() {
     let hashed = |tag: &&&str| {
         tag.rsplit_once("_x").is_some_and(|(cut, hash)| {
             let hex = hash.len() == 16 && hash.bytes().all(|digit| digit.is_ascii_hexdigit());
-            hex && cut.starts_with("main_Box_main_Box_")
+            hex && cut.starts_with("main__Box_main__Box_")
         })
     };
     assert!(tags.iter().all(|tag| tag.len() <= 200), "{tags:?}");
@@ -270,7 +270,7 @@ fn a_struct_has_the_name_of_its_type_and_its_fields_those_of_the_source() {
     );
     // Without debug information the unit has its own names only.
     let plain = emit_c23(&module("a.gopp", TYPES), &options(Entry::Main)).unwrap();
-    assert!(!plain.contains("struct main_Pair") && !plain.contains("double linux;"));
+    assert!(!plain.contains("struct main__Pair") && !plain.contains("double linux;"));
 }
 
 /// A function with `count` blocks in one another, each with a variable
@@ -362,7 +362,25 @@ fn the_steps_of_naming_grow_with_the_scopes() {
 }
 
 #[test]
-fn a_function_of_the_source_has_its_name_with_a_mark_for_what_c_does_not_write() {
+fn a_function_of_the_source_has_its_name_as_a_name_of_c() {
+    use crate::emit::names::c_name;
+    // `__` for each `.`, `_` for what else a name of C does not have.
+    let names = [
+        ("main.add", "main__add"),
+        ("main.Vec.Len", "main__Vec__Len"),
+        ("main.Max[int]", "main__Max_int"),
+        ("main.Box[main.Pair]", "main__Box_main__Pair"),
+        ("main.main.func1", "main__main__func1"),
+        ("std/fmt.Println", "std_fmt__Println"),
+    ];
+    for (readable, written) in names {
+        assert_eq!(c_name(readable).as_deref(), Some(written), "{readable}");
+    }
+    // What is not ASCII, what the unit has for itself, and a name
+    // without a package have no such name.
+    for readable in ["main.état", "gopp.f", "Unique[int]", "", "9.x"] {
+        assert_eq!(c_name(readable), None, "{readable}");
+    }
     let text = "package main
 
 type Vec struct{ x, y int }
@@ -384,30 +402,20 @@ func main() {
 }
 ";
     let module = module("a.gopp", text);
-    // Each name that the unit writes, and the name that it stands for:
-    // as many bytes, so that one can be put in the place of the other.
-    let names = crate::debugger_names(&module);
-    let stands_for = |written: &str| {
-        let found = names.iter().find(|(name, _)| name == written);
-        found.map(|(_, readable)| readable.as_str())
-    };
-    assert_eq!(stands_for("main$main"), Some("main.main"));
-    assert_eq!(stands_for("main$Vec$Len"), Some("main.Vec.Len"));
-    assert_eq!(stands_for("main$Max$int$"), Some("main.Max[int]"));
-    assert_eq!(stands_for("main$main$func1"), Some("main.main.func1"));
-    assert_eq!(stands_for("main$Vec_Len"), Some("main.Vec_Len"));
-    assert!(
-        names
-            .iter()
-            .all(|(written, readable)| written.len() == readable.len())
-    );
-    // The unit names its functions so, and those that the compiler
-    // makes itself as before.
     let unit = emit_c23(&module, &debug()).unwrap();
-    for (written, _) in &names {
-        assert!(unit.contains(&format!(" {written}(")), "{written}\n{unit}");
+    let written = [
+        "main__main",
+        "main__Vec__Len",
+        "main__Max_int",
+        "main__main__func1",
+        "main__Vec_Len",
+    ];
+    for name in written {
+        assert!(unit.contains(&format!(" {name}(")), "{name}\n{unit}");
     }
+    // The functions that the compiler makes itself are named as before,
+    // and so is every function without debug information.
     assert!(unit.contains(" gopp_f"), "{unit}");
     let plain = emit_c23(&module, &options(Entry::Main)).unwrap();
-    assert!(!plain.contains("main$"), "{plain}");
+    assert!(!plain.contains("main__"), "{plain}");
 }

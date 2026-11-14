@@ -11,8 +11,14 @@ use gopp_target::{Layout, Part, SLICE, STRING, TargetLayout};
 use super::number::int_type;
 use super::{Cx, EmitError};
 
-/// How each type is written where a value of it is declared.
-pub(super) fn spelled(module: &Module, layouts: &[Layout], steps: &mut u64) -> Vec<String> {
+/// How each type is written where a value of it is declared. A struct
+/// that has a name for a debugger in `tags` is written by that name.
+pub(super) fn spelled(
+    module: &Module,
+    layouts: &[Layout],
+    tags: &[String],
+    steps: &mut u64,
+) -> Vec<String> {
     let types = &module.types;
     let mut spelled: Vec<Option<String>> = vec![None; types.count()];
     for ty in types.ids() {
@@ -38,7 +44,10 @@ pub(super) fn spelled(module: &Module, layouts: &[Layout], steps: &mut u64) -> V
                 Type::Int { bits, signed } => int_type(*bits, *signed),
                 Type::Float { bits: 32 } => "float".to_owned(),
                 Type::Float { .. } => "double".to_owned(),
-                _ => format!("T{}", at.index()),
+                _ => match tags.get(at.index()).filter(|tag| !tag.is_empty()) {
+                    Some(tag) => tag.clone(),
+                    None => format!("T{}", at.index()),
+                },
             };
             spelled[at.index()] = Some(own);
             break;
@@ -181,8 +190,7 @@ pub(super) fn definitions(
             let name = cx.spelled(ty);
             let _ = writeln!(
                 out,
-                "typedef struct {} {name}; /* {} */",
-                cx.tag(ty),
+                "typedef struct {name} {name}; /* {} */",
                 comment(cx, ty)
             );
         }
@@ -222,7 +230,8 @@ pub(super) fn definitions(
         if cx.empty(ty) {
             continue;
         }
-        let _ = writeln!(out, "struct {} {{", cx.tag(ty));
+        let name = cx.spelled(ty);
+        let _ = writeln!(out, "struct {name} {{");
         match cx.kind(ty) {
             Type::Slice(of) => {
                 let of = match cx.empty(*of) {

@@ -409,7 +409,7 @@ func main() {
     // The glue of a type has no line: a debugger steps over it.
     let glue = (unit.lines())
         .filter(|line| line.ends_with(") {") && !line.contains("static inline "))
-        .filter(|line| line.contains(" gopp_f") || line.contains(" main$"));
+        .filter(|line| line.contains(" gopp_f") || line.contains(" main__"));
     let (of_source, made): (Vec<&str>, Vec<&str>) =
         glue.partition(|line| !line.contains("__attribute__((nodebug))"));
     assert_eq!(of_source.len(), 2, "{of_source:?}");

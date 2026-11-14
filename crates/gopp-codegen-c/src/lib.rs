@@ -6,4 +6,4 @@ pub mod pipeline;
 pub mod runtime;
 pub mod toolchain;
 
-pub use emit::{EmitError, EmitOptions, Entry, debugger_names, emit_c23};
+pub use emit::{EmitError, EmitOptions, Entry, emit_c23};
