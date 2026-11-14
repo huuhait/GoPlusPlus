@@ -281,12 +281,23 @@ const MAX_LED: usize = 16;
 const MAX_VERIFY_ERRORS: usize = 8;
 
 /// A first value of a variable of the package that is static data:
-/// the variable, and the constant, in the declaration `at` of the file.
+/// the variable, where the value is written, and the value.
 pub(crate) struct Static {
     pub file: u32,
-    pub at: usize,
     pub object: ObjId,
-    pub value: ExprId,
+    pub at: ExprId,
+    pub value: StaticValue,
+}
+
+/// A value that is static data.
+pub(crate) enum StaticValue {
+    /// A constant that the checker worked out.
+    Const(gopp_sema::constant::Value),
+    /// The fields of a struct or the elements of an array, in their
+    /// order.
+    Parts(Vec<StaticValue>),
+    /// What is not written in a literal: all zero.
+    Zero,
 }
 
 /// A function with a body.
@@ -1391,29 +1402,110 @@ impl<'a> Shared<'a> {
 
     /// The first value as static data, if it is that: one variable
     /// with a name, of a type that is a boolean, a number or a string,
-    /// or an array or a struct of these, and a constant for it. `at`
-    /// is the declaration of the file that the value is written in.
+    /// or an array or a struct of these, and for it a constant, or a
+    /// literal of constants. `at` is the declaration of the file that
+    /// the value is written in.
     fn static_first(&self, first: &gopp_sema::Initializer, at: usize) -> Option<Static> {
-        use gopp_sema::constant::Value;
         let [object] = first.lhs[..] else {
             return None;
         };
         let variable = self.package.object(object);
-        if variable.name == self.blank {
+        if variable.name == self.blank || !self.plain(variable.ty, 0) {
+            return None;
+        }
+        // Static data has so many parts at most.
+        if self.plain_leaves(variable.ty) > crate::verify::MAX_LEAVES as u64 {
             return None;
         }
         let body = self.info(first.file).bodies.get(at)?;
-        let constant = match body.types.get(&first.value)?.value {
-            Value::Bool(_) | Value::Str(_) | Value::Int64(_) | Value::Int(_) => true,
-            Value::Rat(_) | Value::Float(_) | Value::Composite(_) => true,
-            Value::Unknown | Value::Complex(..) => false,
-        };
-        (constant && self.plain(variable.ty, 0)).then_some(Static {
+        let (tree, _) = self.files[first.file as usize];
+        let value = self.static_value((tree, body), first.value, variable.ty)?;
+        Some(Static {
             file: first.file,
-            at,
             object,
-            value: first.value,
+            at: first.value,
+            value,
         })
+    }
+
+    /// The expression of the plain type `ty` as static data: a
+    /// constant, or a literal of an array or a struct whose elements
+    /// are static data, with zeros for what it does not write.
+    fn static_value(
+        &self,
+        (tree, body): (&File, &Body),
+        expr: ExprId,
+        ty: CheckedTypeId,
+    ) -> Option<StaticValue> {
+        use gopp_sema::constant::Value;
+        let mut expr = expr;
+        while let ExprKind::Paren(inner) = tree.exprs[expr].kind {
+            expr = inner;
+        }
+        match body.types.get(&expr).map(|typed| &typed.value) {
+            Some(Value::Unknown) | None => {}
+            Some(Value::Complex(..)) => return None,
+            Some(value) => return Some(StaticValue::Const(value.clone())),
+        }
+        let ExprKind::CompositeLit { elems, .. } = &tree.exprs[expr].kind else {
+            return None;
+        };
+        let keyed = |element: ExprId| match tree.exprs[element].kind {
+            ExprKind::KeyValue { key, value } => (Some(key), value),
+            _ => (None, element),
+        };
+        let under = self.types.get(self.types.underlying(ty));
+        let (count, of): (usize, Box<dyn Fn(usize) -> CheckedTypeId>) = match &*under {
+            CheckedType::Array { len, elem } => {
+                let elem = *elem;
+                (usize::try_from(*len).ok()?, Box::new(move |_| elem))
+            }
+            CheckedType::Struct(fields) => {
+                let types: Vec<CheckedTypeId> = fields.iter().map(|field| field.ty).collect();
+                (types.len(), Box::new(move |at| types[at]))
+            }
+            _ => return None,
+        };
+        let mut written: Vec<Option<ExprId>> = vec![None; count];
+        let mut next = 0;
+        for &element in elems {
+            let (key, value) = keyed(element);
+            let at = match (key, &*under) {
+                (None, _) => next,
+                (Some(key), CheckedType::Struct(fields)) => {
+                    let ExprKind::Name(name) = &tree.exprs[key].kind else {
+                        return None;
+                    };
+                    fields.iter().position(|field| field.name == *name)?
+                }
+                (Some(key), _) => match &body.types.get(&key)?.value {
+                    Value::Int64(index) => usize::try_from(*index).ok()?,
+                    _ => return None,
+                },
+            };
+            *written.get_mut(at)? = Some(value);
+            next = at + 1;
+        }
+        let mut parts = Vec::with_capacity(count);
+        for (at, element) in written.into_iter().enumerate() {
+            parts.push(match element {
+                Some(element) => self.static_value((tree, body), element, of(at))?,
+                None => StaticValue::Zero,
+            });
+        }
+        Some(StaticValue::Parts(parts))
+    }
+
+    /// The number of parts that static data of the plain type has.
+    fn plain_leaves(&self, ty: CheckedTypeId) -> u64 {
+        match &*self.types.get(self.types.underlying(ty)) {
+            CheckedType::Array { len, elem } => len.saturating_mul(self.plain_leaves(*elem)),
+            CheckedType::Struct(fields) => {
+                let parts = fields.iter().map(|field| self.plain_leaves(field.ty));
+                parts.fold(0, u64::saturating_add)
+            }
+            _ => 1,
+        }
     }
 
     /// Whether a constant of the type is static data as it is: a

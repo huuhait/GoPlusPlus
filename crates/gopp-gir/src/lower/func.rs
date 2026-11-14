@@ -1036,24 +1036,60 @@ impl FuncCx<'_, '_> {
     /// the number `first`: an environment comes before the parameters
     /// of a function literal.
     /// The first value of a variable of the package that is static
-    /// data: the global of the variable starts as the constant.
+    /// data: the global of the variable starts as that value.
     fn static_first(&mut self, first: &super::Static) {
         let package = self.shared.package;
-        let body = &self.shared.info(first.file).bodies[first.at];
         let (tree, _) = self.shared.files[first.file as usize];
-        let span = tree.exprs[first.value].span;
+        let span = tree.exprs[first.at].span;
         let ty = self.lower(package.object(first.object).ty, span);
-        let value = body.types.get(&first.value).map(|typed| &typed.value);
         let mut parts = Vec::new();
-        let made =
-            value.and_then(|value| self.constant_parts(value, ty, &mut parts, &mut Vec::new()));
-        if made.is_none() {
+        if self.static_parts(&first.value, ty, &mut parts).is_none() {
             return self.unsupported(span, "a first value of a variable of the package");
         }
         let key = super::CalleeKey::Object(first.object);
         if let Some(global) = self.declare_global(key, package, first.object, ty, span) {
             self.b.module().globals[global].parts = parts;
         }
+    }
+
+    /// The parts of the value as static data of the type has them.
+    fn static_parts(
+        &mut self,
+        value: &super::StaticValue,
+        ty: TypeId,
+        parts: &mut Vec<Constant>,
+    ) -> Option<()> {
+        use super::StaticValue;
+        self.memo.steps += 1;
+        match (value, self.kind(ty)) {
+            (StaticValue::Const(value), _) => {
+                self.constant_parts(value, ty, parts, &mut Vec::new())?;
+            }
+            (StaticValue::Zero, _) => {
+                let leaves = self.b.types().leaves(ty, crate::verify::MAX_LEAVES)?;
+                let kind = ConstantKind::Zero;
+                parts.extend(leaves.into_iter().map(|ty| Constant { kind, ty }));
+            }
+            (StaticValue::Parts(values), Type::Struct(id)) => {
+                let fields = self.b.types().struct_fields(id)?.to_vec();
+                if fields.len() != values.len() {
+                    return None;
+                }
+                for (value, field) in values.iter().zip(fields) {
+                    self.static_parts(value, field, parts)?;
+                }
+            }
+            (StaticValue::Parts(values), Type::Array(elem, count)) => {
+                if values.len() as u64 != count {
+                    return None;
+                }
+                for value in values {
+                    self.static_parts(value, elem, parts)?;
+                }
+            }
+            (StaticValue::Parts(_), _) => return None,
+        }
+        Some(())
     }
 
     /// The body of the function that gives the variables `lhs` of the

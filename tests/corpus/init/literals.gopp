@@ -1,0 +1,29 @@
+package main
+
+type Point struct{ x, y int }
+
+type Shape struct {
+	name   string
+	corner [2]Point
+	scale  float64
+	open   bool
+}
+
+var primes = [4]int{2, 3, 5, 7}
+var sparse = [6]int8{1, 4: 9}
+var origin = Point{1, 2}
+var named = Point{y: 5}
+var shape = Shape{name: "box", corner: [2]Point{{1, 2}, {3, 4}}, scale: 2.5}
+var words = [3]string{"a", 2: "c"}
+var grid = [2][2]int{{1, 2}, {3, 4}}
+var mixed = [2]int{len(words), 2}
+var bytes = [3]byte{'a', 'b', 'c'}
+
+func main() {
+	println(primes[3], sparse[0], sparse[4], sparse[5], origin.x, named.x, named.y)
+	println(shape.name, shape.corner[1].x, shape.scale, shape.open, words[0], words[1] == "", words[2])
+	println(grid[1][0], mixed[0], bytes[2])
+	primes[0] = 100
+	shape.corner[0].y = 9
+	println(primes[0], shape.corner[0].y)
+}

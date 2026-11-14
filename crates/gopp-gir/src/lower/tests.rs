@@ -4584,8 +4584,10 @@ fn a_constant_of_several_parts_is_one_read_only_global() {
     // A constant that is a struct or an array is static data, once for
     // all that use a constant of its type with its parts: the two
     // names of one value share a global, and each use is the value of
-    // that global. A variable of the package that starts as a constant
-    // is static data itself, and nothing runs to give it.
+    // that global. A variable of the package that starts as a constant,
+    // or as a literal of constants, is static data itself, with zeros
+    // for what the literal does not write, and nothing runs to give
+    // it.
     let text = "package main
 
 type Point struct {
@@ -4601,6 +4603,8 @@ const primes = [3]int8{2, 3, 5}
 var start = origin
 var limit = 10
 var ratio = 0.5
+var table = [3]int{1, 2: 3}
+var corner = Point{y: 4, name: \"c\"}
 
 func first() Point { return origin }
 
@@ -4643,6 +4647,12 @@ func main() {
                  const 2: i64\n    const str#";
     assert!(module.contains(start), "{module}");
     assert!(module.contains("\nglobal var @_GPR4mainE5limit: i64 [external]\n    const 10: i64\n"));
+    let table = "\nglobal var @_GPR4mainE5table: [3]i64 [external]\n    const 1: i64\n    const \
+                 zero: i64\n    const 3: i64\n";
+    assert!(module.contains(table), "{module}");
+    let corner = "\nglobal var @_GPR4mainE6corner: _GPTiN4mainE5Point [external]\n    const zero: \
+                  i64\n    const 4: i64\n    const str#";
+    assert!(module.contains(corner), "{module}");
 }
 
 #[test]
@@ -4656,6 +4666,18 @@ fn the_steps_of_constants_of_several_parts_grow_with_the_input_not_faster() {
         steps_of(&format!(
             "package main\n\nconst big = [{n}]int{{{elements}}}\n\nfunc keep(xs [{n}]int) []int {{ \
              return xs[:1] }}\n\nfunc f() int {{\n\tn := 0\n{uses}\treturn n\n}}\n"
+        ))
+    });
+    // A variable that starts as a literal of many constants, and as
+    // many variables that each start as a small one.
+    assert_near_linear(&sizes, |n| {
+        let elements: String = (0..n).map(|at| format!("{at}, ")).collect();
+        let small: String = (0..n)
+            .map(|at| format!("var v{at} = [2]int{{{at}, 1}}\n"))
+            .collect();
+        steps_of(&format!(
+            "package main\n\nvar big = [{n}]int{{{elements}}}\n\n{small}\nfunc f() int {{ return \
+             big[0] + v0[1] }}\n"
         ))
     });
     assert_near_linear(&sizes, |n| {
