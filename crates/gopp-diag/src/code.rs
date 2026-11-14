@@ -374,6 +374,8 @@ codes! {
     515 OwnAliasAtCall "err_own_alias_at_call",
     516 GoNotSend "err_go_not_send",
     517 ChanNotSend "err_chan_not_send",
+    518 GoCapture "err_go_capture",
+    519 NoteGoFixShare "note_go_fix_share",
 }
 
 impl Code {

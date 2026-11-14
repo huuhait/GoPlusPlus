@@ -604,6 +604,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "go work(&x)           // error\ngo work2(x)           // ok: a copy\ngo func() { \
              srv.Run() }() // ok, if nothing else uses srv",
         ),
+        GoCapture => (
+            "A function literal that `go` runs uses a variable of the function around it \
+             that something else still touches: the function after the `go` statement, a \
+             later turn of a loop around it, or another function literal. The goroutine and \
+             the rest run at the same time, so one of them could change the variable while \
+             the other uses it. A variable that nothing touches after the `go` statement is \
+             the goroutine's; one that both only read may be shared if its type is `Sync`.",
+            "Give the goroutine a variable of its own, put what changes in a `sync.Atomic` \
+             or a `sync.Mutex`, or send the result on a channel.",
+            "x := 0\ngo func() { x++ }() // error\nprintln(x)\n\ny := 0\ngo func() { y++ \
+             }() // ok: nothing else uses y",
+        ),
         ChanNotSend => (
             "The element type of a channel is not one whose values may be given to another \
              goroutine: it is or holds a pointer, or a `Local` function or interface. What \

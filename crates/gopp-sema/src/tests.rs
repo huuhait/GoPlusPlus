@@ -2987,7 +2987,16 @@ fn the_steps_of_moves_and_last_uses_grow_with_the_input_not_faster() {
         let reads: String = (0..count).map(|i| format!("n += len(p{i})\n")).collect();
         format!("package p\nfunc f(c bool, n int{params}) int {{\n{writes}{reads}return n\n}}\n")
     };
+    // Many `go` statements in a loop, each with a function literal that
+    // uses a variable of its own and one of the function.
+    let spawned = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| format!("v{i} := n + {i}\ngo func() {{ v{i}++; println(v{i}, s) }}()\n"))
+            .collect();
+        format!("package p\nfunc f(c bool, n int, s string) {{\nfor c {{\n{each}}}\n}}\n")
+    };
     let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(spawned(n)));
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(long_lived(n)));
     linear::assert_near_linear(&sizes, |n| steps(jumps(n)));
@@ -7433,6 +7442,96 @@ var calls chan func()
     let said: Vec<String> = (messages("a.gopp", text).into_iter())
         .filter(|message| !message.starts_with("    "))
         .collect();
+    assert_eq!(said, expected);
+}
+
+// rule: CON-3, CON-13
+#[test]
+fn a_function_that_go_runs_uses_what_nothing_else_touches_or_what_both_only_read() {
+    // The goroutine changes a variable that is used after the `go`
+    // statement (`x`), or in a later turn of the loop (`z`); the
+    // function changes one that the goroutine reads: by an assignment
+    // (`w`, `xs`), in another function literal (`v`), through a
+    // pointer (`a`). A variable that nothing touches afterwards is the
+    // goroutine's (`y`, `k`), one that both only read is shared (`s`,
+    // `t`), and a loop has a variable of its own for each turn (`i`).
+    let text = "package p
+
+type T struct{ n int }
+
+func show(n int) {}
+
+func bad() {
+	x := 0
+	go func() { x++ }()
+	println(x)
+
+	z := 0
+	for i := 0; i < 3; i++ {
+		go func() { z++ }()
+	}
+
+	w := 0
+	go func() { println(w) }()
+	w = 5
+
+	xs := []int{1}
+	go func() { show(len(xs)) }()
+	xs = append(xs, 2)
+
+	v := 0
+	inc := func() { v++ }
+	go func() { show(v) }()
+	inc()
+
+	a := 0
+	p := &a
+	go func() { show(a) }()
+	*p = 1
+
+	var lf Local[func()] = func() {}
+	go func() { lf() }()
+}
+
+func fine(n int) {
+	y := 0
+	go func() { y++; println(y) }()
+
+	s := \"hi\"
+	go func() { println(s) }()
+	println(s)
+
+	for i := 0; i < n; i++ {
+		go func() { show(i) }()
+	}
+	for i := range n {
+		k := i * 2
+		go func() { k++; show(k) }()
+	}
+	t := T{1}
+	go func() { show(t.n) }()
+	show(t.n)
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:9:2: cannot use x in a new goroutine: the goroutine changes x, and x is used after \
+         the go statement",
+        "a.gopp:14:3: cannot use z in a new goroutine: the goroutine changes z, and z is used \
+         after the go statement",
+        "a.gopp:18:2: cannot use w in a new goroutine: w is changed after the go statement, while \
+         the goroutine reads it",
+        "a.gopp:22:2: cannot use xs in a new goroutine: xs is changed after the go statement, \
+         while the goroutine reads it",
+        "a.gopp:27:2: cannot use v in a new goroutine: v is changed after the go statement, while \
+         the goroutine reads it",
+        "a.gopp:32:2: cannot use a in a new goroutine: a is changed after the go statement, while \
+         the goroutine reads it",
+        "a.gopp:36:5: cannot keep a function that uses lf: lf may hold a pointer, and the \
+         function may run when what it points to has ended",
+    ];
     assert_eq!(said, expected);
 }
 

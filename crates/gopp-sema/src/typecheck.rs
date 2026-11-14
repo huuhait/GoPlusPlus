@@ -393,6 +393,8 @@ struct Checker<'a> {
     /// The body that is checked takes an address or has a `range`
     /// loop: its pointers are followed (`borrows.rs`).
     lends: bool,
+    /// Whether the body that is checked has a `go` statement.
+    spawns: bool,
     /// While a part of a literal that is a parent is worked out: a
     /// literal of an abstract type is that part of a child, not a value.
     parent_part: bool,
@@ -681,6 +683,7 @@ pub fn declarations(
         foreign_uses: FxHashMap::default(),
         receiver_of: None,
         lends: false,
+        spawns: false,
         parent_part: false,
         iface_args: FxHashSet::default(),
         flow: flow::Flow::default(),
@@ -4118,6 +4121,7 @@ impl<'a> Checker<'a> {
             StmtKind::Block(block) => self.stmts(cx, &block.stmts),
             StmtKind::Expr(x) => self.expr_stmt(cx, *x),
             StmtKind::Go(x) => {
+                self.spawns = true;
                 self.impure(tree.stmts[id].span, "has a go statement");
                 self.suspended(cx, "go", *x);
             }

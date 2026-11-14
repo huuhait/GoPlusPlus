@@ -57,6 +57,14 @@ pub(super) enum Event {
     /// The pointer with the number is taken into what a value owns
     /// apart from itself.
     Borrowed(u32),
+    /// The variable is written, or a part of it: before the `Set` of an
+    /// assignment, which no declaration has.
+    Written(LocalId),
+    /// The variable is a new one from here on: that of the next turn
+    /// of its loop.
+    Fresh(LocalId),
+    /// A `go` statement runs the function literal with the number.
+    Spawned(u32),
 }
 
 /// A variable that is read where it may hold no value.
@@ -81,7 +89,20 @@ pub(super) struct Found {
     /// What the function and each of its function literals do with
     /// pointers, for the passes that run when every body is walked.
     pub lent: Vec<borrows::Problem>,
+    /// The variables that a function literal which `go` runs uses.
+    pub spawned: Vec<Spawned>,
     pub steps: u64,
+}
+
+/// A variable that a function literal which `go` runs uses, and what
+/// the literal does to it: whether it is touched after the `go`
+/// statement, and whether it is written then (CON-13).
+pub(super) struct Spawned {
+    pub at: Span,
+    pub local: LocalId,
+    pub how: crate::object::CaptureUse,
+    pub touched: bool,
+    pub written: bool,
 }
 
 /// A node of a set: 64 bits at the bottom, and above them the children
@@ -292,6 +313,10 @@ pub(super) struct Walk<'a> {
     reached: FxHashSet<LocalId>,
     /// The function literals that are walked later.
     literals: Vec<ExprId>,
+    /// The function literals that `go` statements run, each with where
+    /// its statement is; and the variables whose address is taken.
+    spawns: Vec<(Span, ExprId)>,
+    addressed: FxHashSet<LocalId>,
     pub found: Found,
     /// What says what a place is, for a body that may make loans; and
     /// what the walk has found of them (`borrows.rs`).
@@ -368,6 +393,8 @@ pub(super) fn of(
         seen: FxHashMap::default(),
         reached: FxHashSet::default(),
         literals: Vec::new(),
+        spawns: Vec::new(),
+        addressed: FxHashSet::default(),
         found: Found::default(),
         places,
         sources: Vec::new(),
@@ -489,7 +516,8 @@ impl<'a> Checker<'a> {
             handle || self.types.may_lend(held.ty)
         };
         let lends = std::mem::take(&mut self.lends) || self.locals.values().any(handle);
-        if self.var_modes.is_empty() && watched.is_empty() && !lends {
+        let spawns = std::mem::take(&mut self.spawns);
+        if self.var_modes.is_empty() && watched.is_empty() && !lends && !spawns {
             return Default::default();
         }
         let found = {
@@ -522,6 +550,7 @@ impl<'a> Checker<'a> {
             let name = cx.body.locals[local.0 as usize].name;
             this.names.resolve(&name).to_owned()
         };
+        self.shared_with_goroutines(cx, &found.spawned);
         // What follows of a move that is refused is said once.
         let refused: FxHashSet<Span> = found.held.iter().map(|&(_, at)| at).collect();
         for (local, at) in found.held {
@@ -578,6 +607,51 @@ impl<'a> Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
+    /// A function literal that `go` runs uses the variables of the
+    /// function where they are. One that nothing touches after the
+    /// `go` statement is the goroutine's, and is of a type that may be
+    /// given to one; one that is still touched is shared, so neither
+    /// side changes it and its type may be shared (CON-13).
+    fn shared_with_goroutines(&mut self, cx: &Cx<'a>, spawned: &[Spawned]) {
+        use crate::object::CaptureUse;
+        use crate::types::Marker;
+        for found in spawned {
+            let Some(ty) = self.locals.get(&found.local).map(|x| x.ty) else {
+                continue;
+            };
+            // A pointer in it is the borrow check's.
+            if self.open(ty) || self.types.may_hold_pointer(ty) {
+                continue;
+            }
+            let name = cx.body.locals[found.local.0 as usize].name;
+            let name = self.names.resolve(&name).to_owned();
+            let label = match found.touched {
+                true => Marker::Sync,
+                false => Marker::Send,
+            };
+            let unlabeled = self.types.unlabeled(ty, label);
+            let why = match (found.touched, found.how, found.written, unlabeled) {
+                (true, CaptureUse::Write | CaptureUse::Address, ..) => format!(
+                    "the goroutine changes {name}, and {name} is used after the go statement"
+                ),
+                (true, _, true, _) => format!(
+                    "{name} is changed after the go statement, while the goroutine reads it"
+                ),
+                (true, _, _, Some((part, why))) => format!(
+                    "{name} is used after the go statement, and {}",
+                    self.unlabeled_text(part, why, "Sync")
+                ),
+                (false, _, _, Some((part, why))) => self.unlabeled_text(part, why, "Send"),
+                _ => continue,
+            };
+            let message = format!("cannot use {name} in a new goroutine: {why}");
+            let fix = "give the goroutine a variable of its own, put what changes in a \
+                       sync.Atomic or a sync.Mutex, or send the result on a channel";
+            let fix = (Code::NoteGoFixShare, fix.to_owned());
+            self.error_with_fix(Code::GoCapture, found.at, message, fix);
+        }
+    }
+
     /// Says what was found of the pointers of a function of the body,
     /// whose source is `text`: by its walk, and by the passes (OWN-B2,
     /// OWN-B3, OWN-B5, RNG-3).
@@ -955,6 +1029,8 @@ impl<'a> Walk<'a> {
         self.blocks.clear();
         self.edges.clear();
         self.labels.clear();
+        self.spawns.clear();
+        self.addressed.clear();
         self.depths.clear();
         self.label_depths.clear();
         self.gotos.clear();
@@ -1111,6 +1187,7 @@ impl<'a> Walk<'a> {
             ExprKind::Unary { op, x } => {
                 if *op == UnaryOp::Addr {
                     self.reached.extend(self.root(*x));
+                    self.addressed.extend(self.root(*x));
                     self.borrowing(*x, span, false);
                 }
                 rest.push(Todo::Part(*x));
@@ -1201,9 +1278,13 @@ impl<'a> Walk<'a> {
         if let ExprKind::Name(_) = tree.exprs[inner].kind {
             let declared = self.body.defs.get(&span.lo).copied();
             if let Some(local) = declared.or_else(|| self.local(inner)) {
+                if declared.is_none() {
+                    self.events.push(Event::Written(local));
+                }
                 self.events.push(Event::Set(local));
             }
         } else if let Some(local) = self.root(inner) {
+            self.events.push(Event::Written(local));
             self.wrote(local, span);
         }
         self.change(inner, self.change);
@@ -1368,6 +1449,16 @@ impl<'a> Walk<'a> {
                 {
                     self.left(&[*fun], tree.exprs[*fun].span);
                 }
+                // What a literal that it runs uses is the goroutine's
+                // from here on (CON-13).
+                if let ExprKind::Call { fun, .. } = &tree.exprs[self.unparen(*x)].kind {
+                    let literal = self.unparen(*fun);
+                    if let ExprKind::FuncLit { .. } = tree.exprs[literal].kind {
+                        self.spawns.push((tree.stmts[stmt].span, literal));
+                        self.events
+                            .push(Event::Spawned(self.spawns.len() as u32 - 1));
+                    }
+                }
             }
             StmtKind::Send { chan, value } => {
                 self.unit(&[*chan, *value]);
@@ -1479,9 +1570,24 @@ impl<'a> Walk<'a> {
                 post,
                 body,
             } => {
+                // The variables that the loop declares: each turn has
+                // its own (CLO-8).
+                let declared = self.events.len();
                 if let Some(init) = init {
                     self.stmt(*init);
                 }
+                let written = |event: &Event| match event {
+                    Event::Written(local) => Some(*local),
+                    _ => None,
+                };
+                let assigned: Vec<LocalId> =
+                    self.events[declared..].iter().filter_map(written).collect();
+                let fresh: Vec<LocalId> = (self.events[declared..].iter())
+                    .filter_map(|event| match event {
+                        Event::Set(local) if !assigned.contains(local) => Some(*local),
+                        _ => None,
+                    })
+                    .collect();
                 let [head, turn, next, after] = [(); 4].map(|()| self.block());
                 self.jump(head);
                 self.start(head);
@@ -1500,6 +1606,7 @@ impl<'a> Walk<'a> {
                 self.continues.pop();
                 self.jump(next);
                 self.start(next);
+                self.events.extend(fresh.into_iter().map(Event::Fresh));
                 if let Some(post) = post {
                     self.stmt(*post);
                 }
@@ -1733,7 +1840,8 @@ impl<'a> Walk<'a> {
             _ => false,
         });
         let holds = holds || !self.broken.is_empty();
-        if !given && !moved && !wrote && !holds {
+        let spawns = !self.spawns.is_empty();
+        if !given && !moved && !wrote && !holds && !spawns {
             return;
         }
         self.blocks[self.current as usize].1 = self.events.len() as u32;
@@ -1750,12 +1858,124 @@ impl<'a> Walk<'a> {
         if wrote {
             self.lost(&before, &after);
         }
+        if spawns {
+            self.spawning(&before, &after);
+        }
         // What it does with pointers is looked at when every body is
         // walked.
         if holds {
             let problem = self.problem();
             self.found.lent.push(problem);
         }
+    }
+
+    /// Backward: for each variable that a function literal which `go`
+    /// runs uses, whether it is touched after the `go` statement, and
+    /// whether it is written then. A turn of a loop that comes later
+    /// is after the statement too. A variable that another function
+    /// literal uses, or whose address is taken, may be touched at any
+    /// time.
+    fn spawning(&mut self, before: &Lists, after: &Lists) {
+        let mut members: FxHashMap<LocalId, u32> = FxHashMap::default();
+        for &(_, literal) in &self.spawns {
+            for capture in self.captured(literal) {
+                let next = members.len() as u32 * 2;
+                members.entry(capture.local).or_insert(next);
+            }
+        }
+        let mut sets = Sets::new(members.len() * 2);
+        let step = |sets: &mut Sets, set: u32, event: &Event| {
+            let (local, touched, written) = match *event {
+                Event::Read(local, _)
+                | Event::Given(local, _)
+                | Event::Moved(local, _)
+                | Event::Wrote(local, _) => (local, true, None),
+                Event::Written(local) => (local, true, Some(true)),
+                Event::Set(local) | Event::Fresh(local) => (local, false, Some(false)),
+                _ => return set,
+            };
+            let Some(&member) = members.get(&local) else {
+                return set;
+            };
+            let set = sets.put(set, member, touched);
+            match written {
+                Some(written) => sets.put(set, member + 1, written),
+                None => set,
+            }
+        };
+        let count = self.blocks.len();
+        let mut entering = vec![EMPTY; count];
+        let mut queued = vec![true; count];
+        let mut queue: BinaryHeap<u32> = (0..count as u32).collect();
+        let leaving = |sets: &mut Sets, entering: &[u32], block: usize| {
+            let mut set = EMPTY;
+            for &to in neighbours(after, block) {
+                set = sets.join(set, entering[to as usize]);
+            }
+            set
+        };
+        while let Some(block) = queue.pop() {
+            let block = block as usize;
+            queued[block] = false;
+            let mut set = leaving(&mut sets, &entering, block);
+            let (first, last) = self.blocks[block];
+            for event in self.events[first as usize..last as usize].iter().rev() {
+                set = step(&mut sets, set, event);
+            }
+            if set != entering[block] {
+                entering[block] = set;
+                for &from in neighbours(before, block) {
+                    if !std::mem::replace(&mut queued[from as usize], true) {
+                        queue.push(from);
+                    }
+                }
+            }
+        }
+        // What another function literal does to a variable.
+        let mut elsewhere: FxHashMap<LocalId, Vec<(ExprId, bool)>> = FxHashMap::default();
+        for (&literal, captures) in self.captures {
+            for capture in captures
+                .iter()
+                .filter(|capture| members.contains_key(&capture.local))
+            {
+                let writes = capture.how != crate::object::CaptureUse::Read;
+                elsewhere
+                    .entry(capture.local)
+                    .or_default()
+                    .push((literal, writes));
+            }
+        }
+        for block in 0..count {
+            let mut set = leaving(&mut sets, &entering, block);
+            let (first, last) = self.blocks[block];
+            for at in (first as usize..last as usize).rev() {
+                if let Event::Spawned(spawn) = self.events[at] {
+                    let (span, literal) = self.spawns[spawn as usize];
+                    for capture in self.captured(literal) {
+                        let local = capture.local;
+                        if !self.own(local) {
+                            continue;
+                        }
+                        let member = members[&local];
+                        let others = elsewhere.get(&local).map_or(&[][..], |all| &all[..]);
+                        let mut others = others.iter().filter(|(other, _)| *other != literal);
+                        let other = others.clone().next().is_some();
+                        let addressed = self.addressed.contains(&local);
+                        self.found.spawned.push(Spawned {
+                            at: span,
+                            local,
+                            how: capture.how,
+                            touched: sets.has(set, member) || other || addressed,
+                            written: sets.has(set, member + 1)
+                                || others.any(|&(_, writes)| writes)
+                                || addressed,
+                        });
+                    }
+                }
+                set = step(&mut sets, set, &self.events[at]);
+            }
+        }
+        self.found.steps += sets.steps + self.events.len() as u64;
     }
 
     /// A number for each variable that an event of the kind names.
@@ -1842,7 +2062,10 @@ impl<'a> Walk<'a> {
                     | Event::Stored(..)
                     | Event::Called(_)
                     | Event::Left(..)
-                    | Event::Borrowed(_) => continue,
+                    | Event::Borrowed(_)
+                    | Event::Written(_)
+                    | Event::Fresh(_)
+                    | Event::Spawned(_) => continue,
                 };
                 let Some(&member) = members.get(&local) else {
                     continue;
@@ -1885,7 +2108,10 @@ impl<'a> Walk<'a> {
             | Event::Stored(..)
             | Event::Called(_)
             | Event::Left(..)
-            | Event::Borrowed(_) => None,
+            | Event::Borrowed(_)
+            | Event::Written(_)
+            | Event::Fresh(_)
+            | Event::Spawned(_) => None,
         };
         for at in self.not_read_later(before, after, asked, effect) {
             if let Event::Given(local, expr) = self.events[at]
@@ -1918,7 +2144,10 @@ impl<'a> Walk<'a> {
             | Event::Stored(..)
             | Event::Called(_)
             | Event::Left(..)
-            | Event::Borrowed(_) => None,
+            | Event::Borrowed(_)
+            | Event::Written(_)
+            | Event::Fresh(_)
+            | Event::Spawned(_) => None,
         };
         // What a function literal uses or a pointer leads to may be read
         // at any time.
