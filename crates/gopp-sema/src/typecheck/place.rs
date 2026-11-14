@@ -19,41 +19,22 @@ pub(super) enum Place {
     Elsewhere,
 }
 
-/// Why a place is only read.
+/// Why a write to a place is looked at: a `Shared` holds it and it is
+/// only read, or it is in a variable of a package, which no plain write
+/// changes if a goroutine may use it (CON-18).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Fixed {
     /// A `Shared` holds it.
     Shared,
-    /// It is in a variable of a package, and the program has started.
-    Package,
+    /// It is in a variable of a package: the one that is known, or
+    /// one that a pointer was taken into.
+    Package(std::option::Option<crate::types::Global>),
 }
 
-impl Fixed {
-    /// The words that end a message about a write.
-    pub(super) fn why(self) -> &'static str {
-        match self {
-            Fixed::Shared => "what a Shared holds is only read",
-            Fixed::Package => "a variable of the package is only read once the program has started",
-        }
-    }
-
-    pub(super) fn code(self) -> Code {
-        match self {
-            Fixed::Shared => Code::OwnSharedWrite,
-            Fixed::Package => Code::ConGlobalWrite,
-        }
-    }
-
-    /// What to do instead of the write, where nothing better is known.
-    pub(super) fn fix(self) -> &'static str {
-        match self {
-            Fixed::Shared => {
-                "put what changes in a Mutex or an Atomic, or own the value with a Unique"
-            }
-            Fixed::Package => "declare it as a sync.Atomic or a sync.Mutex, or set it in init",
-        }
-    }
-}
+/// What is said of a write to what a `Shared` holds.
+pub(super) const SHARED_WHY: &str = "what a Shared holds is only read";
+pub(super) const SHARED_FIX: &str =
+    "put what changes in a Mutex or an Atomic, or own the value with a Unique";
 
 /// What a variable of a range clause is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,12 +199,11 @@ impl<'a> Checker<'a> {
     /// part of one, in a body that runs when the program has started
     /// (CON-18).
     pub(super) fn fixed(&mut self, cx: &Cx<'a>, expr: ExprId) -> std::option::Option<Fixed> {
-        let started = !self.starting || !self.literals.is_empty();
         let mut expr = self.unparen(cx, expr);
         loop {
             self.steps += 1;
-            if started && self.package_variable(cx, expr) {
-                return Some(Fixed::Package);
+            if let Some(global) = self.global(cx, expr) {
+                return Some(Fixed::Package(Some(global)));
             }
             let of = match cx.tree.exprs[expr].kind {
                 ExprKind::Selector { x, .. }
@@ -248,27 +228,13 @@ impl<'a> Checker<'a> {
                         Some(pointer) => self.read_only.get(&pointer).copied(),
                         // A pointer that a variable of a package keeps
                         // points into one.
-                        None => self.fixed(cx, of).filter(|kept| *kept == Fixed::Package),
+                        None => (self.fixed(cx, of))
+                            .filter(|kept| matches!(kept, Fixed::Package(_)))
+                            .map(|_| Fixed::Package(None)),
                     };
                 }
                 _ => expr = of,
             }
-        }
-    }
-
-    /// Whether the expression names a variable of a package.
-    fn package_variable(&self, cx: &Cx<'a>, expr: ExprId) -> bool {
-        let variable = |package: &Package, id: ObjId| {
-            let object = package.objects.get(id.0 as usize);
-            object.is_some_and(|object| matches!(object.kind, ObjKind::Var))
-        };
-        match cx.body.uses.get(&expr) {
-            Some(&Ref::Object(object)) => variable(self.package, object),
-            Some(&Ref::Member { import, member }) => match &self.package.object(import).kind {
-                ObjKind::Import { package, .. } => variable(package, member),
-                _ => false,
-            },
-            _ => false,
         }
     }
 
@@ -389,23 +355,21 @@ impl<'a> Checker<'a> {
         let writes = known
             .as_ref()
             .is_none_or(|lends| lends.changes.first().copied().unwrap_or(false));
-        if !writes || !self.report_once((at, fixed.code())) {
+        if !writes || self.noted(fixed, at) || !self.report_once((at, Code::OwnSharedWrite)) {
             return;
         }
         let message = match known {
             Some(_) => format!(
                 "cannot use {method} as a function value: the method writes through its \
-                 receiver, and {}",
-                fixed.why()
+                 receiver, and {SHARED_WHY}"
             ),
             None => format!(
                 "cannot use {method} as a function value: nothing says that the method only \
-                 reads through its receiver, and {}",
-                fixed.why()
+                 reads through its receiver, and {SHARED_WHY}"
             ),
         };
-        let diagnostic = Diagnostic::new(fixed.code(), at, message);
-        self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fixed.fix().to_owned()));
+        let diagnostic = Diagnostic::new(Code::OwnSharedWrite, at, message);
+        self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, SHARED_FIX.to_owned()));
     }
 
     /// What a `Shared` holds is taken, at `at`, as a value of the type
@@ -473,25 +437,21 @@ impl<'a> Checker<'a> {
         let Some((name, home)) = unfit else {
             return;
         };
-        if !self.report_once((at, Code::OwnSharedWrite)) {
+        if self.noted(fixed, at) || !self.report_once((at, Code::OwnSharedWrite)) {
             return;
         }
         let method = self.names.resolve(&name).to_owned();
-        let place = match fixed {
-            Fixed::Shared => "in a Shared",
-            Fixed::Package => "here",
-        };
         let message = format!(
-            "cannot use {} as {} {place}: {}.{method} writes through its receiver, and {}",
+            "cannot use {} as {} in a Shared: {}.{method} writes through its receiver, and \
+             {SHARED_WHY}",
             self.type_string(child),
             self.type_string(parent),
             self.type_string(home),
-            fixed.why(),
         );
         let fix = format!(
             "put what {method} changes in a Mutex or an Atomic, or own the value with a Unique"
         );
-        let diagnostic = Diagnostic::new(fixed.code(), at, message);
+        let diagnostic = Diagnostic::new(Code::OwnSharedWrite, at, message);
         self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
     }
 
@@ -504,14 +464,12 @@ impl<'a> Checker<'a> {
         let Some(fixed) = self.fixed(cx, expr) else {
             return false;
         };
-        let through = match fixed {
-            Fixed::Shared => " through it",
-            Fixed::Package => "",
-        };
+        if self.noted(fixed, cx.tree.exprs[expr].span) {
+            return false;
+        }
         let message = format!(
-            "cannot {doing} {}: {}{through}",
-            self.expr_string(cx, expr),
-            fixed.why()
+            "cannot {doing} {}: {SHARED_WHY} through it",
+            self.expr_string(cx, expr)
         );
         // The variable at the root of the place: if it is the only
         // name of the value, a `Unique` is what is meant.
@@ -525,8 +483,8 @@ impl<'a> Checker<'a> {
         }
         let named = cx.tree.exprs[root].span;
         let span = cx.tree.exprs[expr].span;
-        if self.report_once((span, fixed.code())) {
-            self.shared_writes.push((span, message, named, fixed));
+        if self.report_once((span, Code::OwnSharedWrite)) {
+            self.shared_writes.push((span, message, named));
         }
         true
     }
@@ -556,13 +514,15 @@ impl<'a> Checker<'a> {
         if self.memo.is_none() {
             return;
         }
-        if let Some(fixed) = self.points_into_fixed(cx, expr) {
+        let span = cx.tree.exprs[expr].span;
+        if let Some(fixed) = self.points_into_fixed(cx, expr)
+            && !self.noted(fixed, span)
+        {
             let message = format!(
-                "cannot {doing} what {} points to: {}",
-                self.expr_string(cx, expr),
-                fixed.why()
+                "cannot {doing} what {} points to: {SHARED_WHY}",
+                self.expr_string(cx, expr)
             );
-            self.error(fixed.code(), cx.tree.exprs[expr].span, message);
+            self.error(Code::OwnSharedWrite, span, message);
         }
     }
 
@@ -575,12 +535,12 @@ impl<'a> Checker<'a> {
             return;
         }
         let only = self.only_names(cx);
-        for (span, message, named, fixed) in writes {
-            let fix = match fixed == Fixed::Shared && only.contains(&named.lo) {
+        for (span, message, named) in writes {
+            let fix = match only.contains(&named.lo) {
                 true => Self::only_name_fix(&cx.text[named.lo as usize..named.hi as usize]),
-                false => fixed.fix().to_owned(),
+                false => SHARED_FIX.to_owned(),
             };
-            let diagnostic = Diagnostic::new(fixed.code(), span, message);
+            let diagnostic = Diagnostic::new(Code::OwnSharedWrite, span, message);
             self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
         }
     }
@@ -588,9 +548,9 @@ impl<'a> Checker<'a> {
     /// Says the writes of a body that ended some other way, so that
     /// none is lost.
     pub(super) fn say_shared_writes_left(&mut self) {
-        for (span, message, _, fixed) in std::mem::take(&mut self.shared_writes) {
-            let diagnostic = Diagnostic::new(fixed.code(), span, message);
-            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fixed.fix().to_owned()));
+        for (span, message, _) in std::mem::take(&mut self.shared_writes) {
+            let diagnostic = Diagnostic::new(Code::OwnSharedWrite, span, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, SHARED_FIX.to_owned()));
         }
     }
 
@@ -721,6 +681,7 @@ impl<'a> Checker<'a> {
     /// The address of the place `expr` is taken.
     pub(super) fn addressed(&mut self, cx: &Cx<'a>, expr: ExprId) {
         self.lends = true;
+        self.touch_address(cx, expr);
         if self.literals.is_empty() {
             return;
         }
@@ -1082,6 +1043,7 @@ impl<'a> Checker<'a> {
                 let at = cx.tree.exprs[expr].span;
                 self.bound.push((at, holder, name, fixed));
             }
+            self.touch_method_value(cx, expr);
             self.operator_value(cx, expr, name);
             let holds = match bound {
                 true => MethodValue::Address,
@@ -1229,13 +1191,15 @@ impl<'a> Checker<'a> {
             if place.is_some_and(|place| self.shared_changed(cx, place, "take")) {
                 return;
             }
-            if let Some(fixed) = through {
+            let span = cx.tree.exprs[first].span;
+            if let Some(fixed) = through
+                && !self.noted(fixed, span)
+            {
                 let message = format!(
-                    "cannot take what {} points to: {}",
-                    self.expr_string(cx, first),
-                    fixed.why()
+                    "cannot take what {} points to: {SHARED_WHY}",
+                    self.expr_string(cx, first)
                 );
-                self.error(fixed.code(), cx.tree.exprs[first].span, message);
+                self.error(Code::OwnSharedWrite, span, message);
                 return;
             }
         }

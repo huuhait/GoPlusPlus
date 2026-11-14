@@ -1,8 +1,6 @@
 package main
 
-import "sync"
-
-var count sync.Atomic[int]
+var count int
 var scale float64
 
 type Meter struct{ ticks int }
@@ -10,19 +8,20 @@ type Meter struct{ ticks int }
 func (m Meter) twice() int { return m.ticks * 2 }
 
 func bump(by int) int {
-	return count.Add(by)
+	count += by
+	return count
 }
 
 func init() {
-	count.Store(40)
+	count = 40
 	scale = 0.5
 }
 
-func init() { count.Add(2) }
+func init() { count += 2 }
 
 func main() {
 	m := Meter{ticks: bump(0)}
-	println("count", count.Load(), m.twice(), bump(8), scale)
+	println("count", count, m.twice(), bump(8), scale)
 	print("no newline", "\n")
 	println()
 }

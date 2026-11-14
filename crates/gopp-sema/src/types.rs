@@ -575,6 +575,9 @@ struct Inner {
     /// What each method of a declared type does with the pointers that
     /// it is given.
     lends: FxHashMap<(NamedId, Spur), Arc<Lends>>,
+    /// What each function of the build names of the variables of
+    /// packages, and what it calls.
+    touches: FxHashMap<TouchKey, Arc<Touch>>,
     open_abstracts: FxHashMap<TypeId, Arc<Vec<(TypeId, Method)>>>,
     /// For a type that was asked: whether it is `Send` and `Sync`.
     labels: FxHashMap<TypeId, Labels>,
@@ -3139,7 +3142,7 @@ mod zero;
 pub use category::{Category, CopyRule, NotCopied};
 pub use constant::NotConstant;
 pub use fork::Imported;
-pub use hierarchy::{Held, Lends, PARENT};
+pub use hierarchy::{Global, Held, Lends, PARENT, Touch, TouchKey};
 pub use label::{Labels, Unlabeled};
 pub use methodset::MethodSet;
 pub use typeset::{NoCommon, TypeSet};

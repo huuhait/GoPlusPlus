@@ -1,11 +1,13 @@
 package main
 
+var saved = func(int) bool { return false }
+
+func leaky(yield func(int) bool) {
+	saved = yield
+	yield(1)
+}
+
 func main() {
-	saved := func(int) bool { return false }
-	leaky := func(yield func(int) bool) {
-		saved = yield
-		yield(1)
-	}
 	text := "kept"
 	for v := range leaky {
 		println(v, text)

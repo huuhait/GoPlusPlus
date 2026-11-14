@@ -661,14 +661,17 @@ pub fn explain(code: Code) -> Option<Explanation> {
              error\n\nfunc (s *Shape) drop() { s.log.Write(\"shape\") } // ok",
         ),
         ConGlobalWrite => (
-            "A variable of the package is written outside `init` and outside the value that \
-             it is declared with. Every goroutine reaches a variable of the package, so after \
-             the program has started it is only read; what changes then is a `sync.Atomic` \
-             or a `sync.Mutex`, which one goroutine at a time changes through its methods.",
-            "Declare the variable as a `sync.Atomic` or a `sync.Mutex`, set it in `init`, or \
-             keep what changes in a variable of a function and pass it on.",
-            "var counter int\n\nfunc Inc() { counter++ } // error\n\nvar hits \
-             sync.Atomic[int]\n\nfunc Hit() { hits.Add(1) } // ok",
+            "A variable of the package is changed, and a goroutine may use the same variable \
+             at the same time: a `go` statement starts a function that names it, or that \
+             calls one that does. Two goroutines that touch one variable, one of them \
+             writing, is a data race. A variable that no goroutine can reach is changed \
+             freely, and so is every variable in `init`.",
+            "Declare the variable as a `sync.Atomic` or a `sync.Mutex`, which one goroutine \
+             at a time changes through its methods; set it in `init`; or give the goroutine \
+             a value of its own.",
+            "var counter int\n\nfunc show() { println(counter) }\n\nfunc main() {\n\tgo \
+             show()\n\tcounter++ // error\n}\n\nvar hits sync.Atomic[int]\n\nfunc main() \
+             {\n\tgo show()\n\thits.Add(1) // ok\n}",
         ),
         GoCapture => (
             "A function literal that `go` runs uses a variable of the function around it \

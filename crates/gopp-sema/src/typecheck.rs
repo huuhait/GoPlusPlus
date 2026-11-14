@@ -31,6 +31,7 @@ mod ops;
 mod own;
 mod place;
 mod stmt;
+mod touches;
 
 use std::sync::Arc;
 
@@ -553,7 +554,17 @@ struct Checker<'a> {
     /// While a body is walked: the writes to what a `Shared` holds that
     /// are said when the body is walked, with where the variable of
     /// the place is named: what to do instead is known then.
-    shared_writes: Vec<(Span, String, Span, place::Fixed)>,
+    shared_writes: Vec<(Span, String, Span)>,
+    /// While a body is walked: its function and its function literals,
+    /// with the variables of packages that each names, and the one
+    /// that is walked. And those of all bodies, with the writes that
+    /// are found when every body is walked (CON-18).
+    touched: Vec<touches::Unit>,
+    touching: usize,
+    literal_units: FxHashMap<ExprId, usize>,
+    units: Vec<touches::Unit>,
+    late_writes: Vec<(std::option::Option<crate::types::Global>, Span)>,
+    program: crate::package::Program,
     /// While a body is walked: it is `init` or the value of a variable
     /// of the package, which run before the program has started.
     starting: bool,
@@ -620,6 +631,7 @@ struct BodyTypes {
     /// those who call it name it.
     lent: Vec<(usize, borrows::Problem)>,
     lender: Option<borrows::Callee>,
+    touched: Vec<touches::Unit>,
     captures: FxHashMap<ExprId, Vec<crate::object::Capture>>,
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     narrowed: FxHashSet<ExprId>,
@@ -737,6 +749,12 @@ pub fn declarations(
         made_shared: FxHashSet::default(),
         lent_handles: FxHashSet::default(),
         shared_writes: Vec::new(),
+        touched: Vec::new(),
+        touching: 0,
+        literal_units: FxHashMap::default(),
+        units: Vec::new(),
+        late_writes: Vec::new(),
+        program: crate::package::Program::default(),
         starting: false,
         seen_as_known: FxHashMap::default(),
         operands: place::Operands::Kept,
@@ -823,9 +841,11 @@ pub fn declarations(
         func_marks,
         operator_spans,
         lending,
+        program,
         ..
     } = checker;
     package.lends = lending;
+    package.program = Arc::new(program);
     package.operators = (operator_spans.into_iter())
         .map(|(method, span)| (span.lo, method))
         .collect();
@@ -1024,6 +1044,8 @@ impl<'a> Checker<'a> {
                         .map(|(decl, problem)| (file, decl, problem)),
                 );
                 lenders.extend(body.lender);
+                let touched = std::mem::take(&mut body.touched);
+                self.touch_merge(touched);
             }
         }
         let count = problems.len();
@@ -1132,6 +1154,8 @@ impl<'a> Checker<'a> {
                 self.bound_to_only_read((at, fixed), method, (holder, name), &done);
             }
         }
+        let first = units.first().and_then(|unit| unit.file.package.as_ref());
+        self.program = self.races(first.map(|name| name.span));
         // For those who call the functions of this package.
         for lender in lenders {
             let Some(lends) = done.get(&lender).cloned() else {
@@ -2764,7 +2788,9 @@ impl<'a> Checker<'a> {
                     self.signature_locals(cx, *ty);
                     self.literals.push((expr, cx.tree.exprs[expr].span));
                     let target = self.target.take();
+                    let outer = self.touch_enter(expr);
                     self.function_body(cx, *ty, sig, body);
+                    self.touch_leave(outer);
                     self.target = target;
                     self.literals.pop();
                 }
@@ -2892,6 +2918,7 @@ impl<'a> Checker<'a> {
             },
             Ref::Object(object) => {
                 self.need(object.0 as usize);
+                self.touch_named(cx, expr);
                 let ty = self.object_type(object, false);
                 let kind = &self.package.object(object).kind;
                 if matches!(kind, ObjKind::Var) {
@@ -2946,6 +2973,7 @@ impl<'a> Checker<'a> {
                 return Operand::UNKNOWN;
             };
             let object = package.object(member);
+            self.touch_named(cx, expr);
             // Package unsafe is built into the compiler: its functions take
             // any type.
             if package.path == "unsafe" {
@@ -3379,6 +3407,7 @@ impl<'a> Checker<'a> {
             }
             _ if callee.is_value() => {
                 self.called_or_received = true;
+                self.touch_call(cx, fun);
                 self.operands = match self.reads_operands(cx, called) {
                     true => place::Operands::Read,
                     false => place::Operands::Passed,
@@ -3739,6 +3768,7 @@ impl<'a> Checker<'a> {
         self.read_only.clear();
         self.seen_as.clear();
         self.bound.clear();
+        self.touch_start();
         self.made_shared.clear();
         self.lent_handles.clear();
         self.say_shared_writes_left();
@@ -3981,6 +4011,7 @@ impl<'a> Checker<'a> {
             last_uses,
             lent: lent.into_iter().map(|problem| (index, problem)).collect(),
             lender,
+            touched: self.touch_end(lender),
             captures,
             method_values: std::mem::take(&mut self.method_values),
             narrowed: std::mem::take(&mut self.narrowed),

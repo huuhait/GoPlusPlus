@@ -917,14 +917,16 @@ impl<'a> Checker<'a> {
                     Some(&Ref::Local(local)) => Some(local),
                     _ => None,
                 };
-                if let Some(&fixed) = local.and_then(|local| self.read_only.get(&local)) {
+                let span = cx.tree.exprs[pointer].span;
+                if let Some(&fixed) = local.and_then(|local| self.read_only.get(&local))
+                    && !self.noted(fixed, span)
+                {
                     let message = format!(
                         "cannot assign to what {} points to: {}",
                         self.expr_string(cx, pointer),
-                        fixed.why()
+                        place::SHARED_WHY
                     );
-                    let span = cx.tree.exprs[pointer].span;
-                    self.error(fixed.code(), span, message);
+                    self.error(Code::OwnSharedWrite, span, message);
                 }
             }
             // The pointer itself is assigned.

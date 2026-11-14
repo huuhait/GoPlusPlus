@@ -571,6 +571,7 @@ impl<'a> Checker<'a> {
                     of_headers: &self.foreign_uses,
                     package: self.package,
                     starting: self.starting,
+                    names: self.names,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -734,15 +735,20 @@ impl<'a> Checker<'a> {
             this.names.resolve(&name).to_owned()
         };
         let text = |at: Span| text[at.lo as usize..at.hi as usize].to_owned();
+        // What a variable of a package is given to is noted, unless
+        // the program has not started.
+        let noted = |this: &mut Self, fixed: place::Fixed, at: Span| match fixed {
+            place::Fixed::Shared => false,
+            place::Fixed::Package(_) if problem.started => this.noted(fixed, at),
+            place::Fixed::Package(_) => true,
+        };
+        let (code, why) = (Code::OwnSharedWrite, place::SHARED_WHY);
         for written in &found.written {
-            let (code, why) = (written.fixed.code(), written.fixed.why());
-            let through = match written.fixed {
-                place::Fixed::Shared => " through it",
-                place::Fixed::Package => "",
-            };
-            if !self.report_once((written.given, code)) {
+            if noted(self, written.fixed, written.given) || !self.report_once((written.given, code))
+            {
                 continue;
             }
+            let through = " through it";
             let (called, given) = (text(written.at), text(written.given));
             // The receiver is written in what names the method.
             let receiver = written.at.lo <= written.given.lo && written.given.hi <= written.at.hi;
@@ -769,31 +775,27 @@ impl<'a> Checker<'a> {
             let only = [at, at + 1]
                 .iter()
                 .any(|at| problem.only_names.contains(at));
-            let fix = match only && written.fixed == place::Fixed::Shared {
+            let fix = match only {
                 true => Self::only_name_fix(&given),
-                false => written.fixed.fix().to_owned(),
+                false => place::SHARED_FIX.to_owned(),
             };
             let diagnostic = Diagnostic::new(code, written.given, message);
             self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
         }
         for &(at, fixed, by_call) in &found.only_read {
-            if !self.report_once((at, fixed.code())) {
+            if noted(self, fixed, at) || !self.report_once((at, code)) {
                 continue;
             }
             let message = match by_call {
                 true => format!(
-                    "cannot call {}: it may write through a pointer into what is only read: {}",
-                    text(at),
-                    fixed.why()
+                    "cannot call {}: it may write through a pointer into what is only read: {why}",
+                    text(at)
                 ),
-                false => format!(
-                    "cannot change {}: it may be only read: {}",
-                    text(at),
-                    fixed.why()
-                ),
+                false => format!("cannot change {}: it may be only read: {why}", text(at)),
             };
-            let diagnostic = Diagnostic::new(fixed.code(), at, message);
-            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fixed.fix().to_owned()));
+            let diagnostic = Diagnostic::new(code, at, message);
+            let fix = place::SHARED_FIX.to_owned();
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
         }
         for broken in walked.iter().chain(&found.broken) {
             let owner = named(self, broken.of);

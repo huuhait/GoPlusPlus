@@ -6949,16 +6949,17 @@ func viaMutex() func() {
 
 // rule: CON-18
 #[test]
-fn a_variable_of_the_package_is_only_read_once_the_program_has_started() {
-    // `init` and the value that a variable is declared with set the
-    // variables of the package, by an assignment, a method and a call
-    // that is given a pointer. A function that they call does not
-    // (`setup`), nor a function literal in them, which may run later.
-    // After that every way to change one is refused (`bad`): of this
-    // package and of another, a part of one, through a pointer that a
-    // variable of the function or of the package keeps. Reading stays
-    // free, and a `sync.Atomic` and a `sync.Mutex` change (`good`).
-    let text = "package p
+fn a_variable_of_the_package_that_a_goroutine_may_use_is_not_changed() {
+    // A function changes the variables of its package and of another
+    // as it likes (`bad`, `setup`), as long as no goroutine may use
+    // them: the first time the program is checked, `start` calls
+    // `watch`, and nothing is said. The second time `start` runs it
+    // with `go`: every write to a variable that `watch` names is
+    // refused where it is written, also a part of one, through a
+    // pointer, by a method and by a call that is given a pointer.
+    // `init` and the value of a variable still set them, and a
+    // `sync.Atomic` and a `sync.Mutex` change (`good`).
+    let program = "package p
 
 import (
 	\"conf\"
@@ -7022,6 +7023,12 @@ func bad() {
 	}
 }
 
+func watch() int { return count + box.n + len(table) + conf.Level }
+
+func start() {
+	WATCH
+}
+
 func good() int {
 	n := count
 	n++
@@ -7033,60 +7040,183 @@ func good() int {
 	return n + b.Get() + box.Get() + read(&count) + read(p) + len(table) + hits.Load() + conf.Level
 }
 ";
-    let names = ThreadedRodeo::new();
-    let mut loader = with_sync(&names);
-    let conf = "package conf\n\nvar Level = 1\n";
-    let checked = check_texts("conf", &[("conf.gopp", conf)], &loader, &names);
-    loader
-        .packages
-        .insert("conf".to_owned(), Arc::new(checked.package));
-    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
-    let said: Vec<&str> = (checked.messages.iter())
-        .filter(|message| !message.starts_with("    "))
-        .map(|message| {
-            let message = message.strip_prefix("a.gopp:").unwrap_or(message);
-            let end = ": a variable of the package is only read once the program has started";
-            let message = message.strip_suffix(end).unwrap_or(message);
-            let end = ", and a variable of the package is only read once the program has started";
-            message.strip_suffix(end).unwrap_or(message)
-        })
-        .collect();
+    let said = |start: &str| {
+        let names = ThreadedRodeo::new();
+        let mut loader = with_sync(&names);
+        let conf = "package conf\n\nvar Level = 1\n";
+        let checked = check_texts("conf", &[("conf.gopp", conf)], &loader, &names);
+        loader
+            .packages
+            .insert("conf".to_owned(), Arc::new(checked.package));
+        let text = program.replace("WATCH", start);
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
+        let fix = "    declare it as a sync.Atomic or a sync.Mutex, or set it in init";
+        let started = "    a.gopp:68:5: a goroutine that may use it is started here";
+        let end = ": a goroutine may use it at the same time";
+        let said: Vec<String> = (checked.messages.iter())
+            .filter(|message| *message != fix && *message != started)
+            .map(|message| {
+                let message = message.strip_prefix("a.gopp:").unwrap_or(message);
+                message.strip_suffix(end).unwrap_or(message).to_owned()
+            })
+            .collect();
+        let notes = |note: &str| checked.messages.iter().filter(|said| *said == note).count();
+        assert_eq!(notes(fix), said.len());
+        assert_eq!(notes(started), said.len());
+        said
+    };
+    assert_eq!(said("watch()"), [] as [&str; 0]);
     let expected = [
-        "25:2: cannot assign to count",
-        "35:11: cannot assign to count",
-        "36:16: cannot give &count to bump: the function writes through it",
-        "43:2: cannot assign to count",
-        "44:2: cannot assign to count",
-        "45:2: cannot assign to box.n",
-        "46:2: cannot assign to box.items",
-        "47:2: cannot assign to box.items[0]",
-        "48:2: cannot assign to table[\"c\"]",
-        "49:9: cannot delete from table",
-        "50:8: cannot clear table",
-        "51:2: cannot assign to conf.Level",
-        "52:2: cannot call box.Set: the method writes through its receiver",
-        "53:7: cannot give &count to bump: the function writes through it",
-        "54:7: cannot give &box.n to bump: the function writes through it",
-        "56:2: cannot assign to *p",
-        "58:2: cannot assign to q.n",
-        "59:2: cannot call q.Set: the method writes through its receiver",
-        "60:2: cannot assign to where.n",
-        "61:6: cannot assign to count",
+        "25:2: cannot change count here",
+        "35:11: cannot change count here",
+        "43:2: cannot change count here",
+        "44:2: cannot change count here",
+        "45:2: cannot change box here",
+        "46:2: cannot change box here",
+        "47:2: cannot change box here",
+        "48:2: cannot change table here",
+        "49:9: cannot change table here",
+        "50:8: cannot change table here",
+        "51:2: cannot change conf.Level here",
+        "52:2: cannot change box here",
+        "53:7: cannot change count here",
+        "54:7: cannot change box here",
+        "56:2: cannot change count here",
+        "58:2: cannot change box here",
+        "59:2: cannot change box here",
+        "60:2: cannot write through this pointer: it may point into a variable of a package \
+         that a goroutine may use at the same time (count, box)",
+        "61:6: cannot change count here",
     ];
-    assert_eq!(said, expected);
-    let fix = "    declare it as a sync.Atomic or a sync.Mutex, or set it in init";
-    let fixes = checked.messages.iter().filter(|message| *message == fix);
-    assert_eq!(fixes.count(), said.len());
+    assert_eq!(said("go watch()"), expected);
 }
 
-// rule: CON-18, OWN-P8
+// rule: CON-18
+#[test]
+fn a_goroutine_is_followed_to_the_variables_that_it_may_use() {
+    // What a `go` statement starts is followed through the calls, into
+    // another package too: a function, a function literal, a method, a
+    // function that it calls. A function value that it calls may be
+    // any function that is used as a value, any function literal and
+    // any method. A write to a variable that is reached so is refused;
+    // one to another variable, one in `init`, and a `sync.Atomic` are
+    // not.
+    let conf =
+        "package conf\n\nvar Level = 1\n\nvar Other = 1\n\nfunc Read() int { return Level }\n";
+    let declared = "package p\n\nimport (\n\t\"conf\"\n\t\"sync\"\n)\n\nvar n int\nvar m int\nvar hits \
+                    sync.Atomic[int]\n\ntype T struct{ k int }\n\nfunc (t T) Read() int { return n + \
+                    t.k }\n\nfunc read() int { return n }\nfunc far() int { return read() }\nfunc \
+                    each(f func() int) int { return f() }\nfunc init() { n = conf.Other }\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "func main() {\n\tn++\n\tm++\n\tconf.Level++\n\tprintln(read(), conf.Read())\n}",
+            &[],
+        ),
+        ("func main() {\n\tgo read()\n\tn++\n\tm++\n}", &["22:2: n"]),
+        ("func main() {\n\tgo far()\n\tm++\n\tn = 2\n}", &["23:2: n"]),
+        (
+            "func main() {\n\tgo func() { println(n) }()\n\tn++\n}",
+            &["22:2: n"],
+        ),
+        (
+            "func main() {\n\tgo func() { n++ }()\n\tm++\n}",
+            &["21:14: n"],
+        ),
+        ("func main() {\n\tgo func() { println(m) }()\n\tn++\n}", &[]),
+        ("func main() {\n\tgo T{}.Read()\n\tn++\n}", &["22:2: n"]),
+        (
+            "func main() {\n\tgo conf.Read()\n\tconf.Level = 2\n\tconf.Other = 2\n}",
+            &["22:2: conf.Level"],
+        ),
+        // What is not known may be a function that is used as a value.
+        (
+            "func main() {\n\tf := read\n\tgo each(f)\n\tn++\n\tm++\n}",
+            &["23:2: n"],
+        ),
+        (
+            "func main() {\n\tgo each(func() int { return 1 })\n\tprintln(read())\n\tn++\n}",
+            &[],
+        ),
+        // A method that is used as a value is one of them; one that is
+        // only called is not.
+        (
+            "func main() {\n\tgo each(func() int { return 1 })\n\tprintln(T{}.Read())\n\tn++\n}",
+            &[],
+        ),
+        (
+            "func main() {\n\tg := T{}.Read\n\tgo each(g)\n\tn++\n}",
+            &["23:2: n"],
+        ),
+        // A method of an interface may be any method of its name.
+        (
+            "func main() {\n\tgo use(T{})\n\tn++\n\tm++\n}\n\ntype Reader interface{ Read() int \
+             }\n\nfunc use(r Reader) int { return r.Read() }",
+            &["22:2: n"],
+        ),
+        (
+            "func main() {\n\tgo read()\n\thits.Add(1)\n\tprintln(n)\n}",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let names = ThreadedRodeo::new();
+        let mut loader = with_sync(&names);
+        let checked = check_texts("conf", &[("conf.gopp", conf)], &loader, &names);
+        loader
+            .packages
+            .insert("conf".to_owned(), Arc::new(checked.package));
+        let text = format!("{declared}{body}\n");
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
+        let said: Vec<String> = (checked.messages.iter())
+            .filter(|message| !message.starts_with("    "))
+            .map(|message| {
+                let message = message.strip_prefix("a.gopp:").unwrap_or(message);
+                let end = " here: a goroutine may use it at the same time";
+                let message = message.strip_suffix(end).unwrap_or(message);
+                message.replace(" cannot change ", " ")
+            })
+            .collect();
+        assert_eq!(said, *expected, "{body}");
+    }
+}
+
+#[test]
+fn the_steps_of_what_goroutines_may_use_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // A chain of functions that each name a variable of their own and
+    // call the next, started by as many `go` statements; and as many
+    // functions that all call one another's neighbour and are all
+    // started.
+    let chain = |count: usize| {
+        let variables: String = (0..count).map(|i| format!("var g{i} int\n")).collect();
+        let functions: String = (0..count)
+            .map(|i| {
+                format!(
+                    "func f{i}() int {{ return g{i} + f{}() }}\n",
+                    (i + 1) % count
+                )
+            })
+            .collect();
+        let started: String = (0..count).map(|i| format!("\tgo f{i}()\n")).collect();
+        format!("package p\n{variables}{functions}func main() {{\n{started}}}\n")
+    };
+    let sizes = [100, 200, 400, 800];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+}
+
+// rule: OWN-P8
 #[test]
 fn a_built_in_function_changes_nothing_that_is_only_read() {
     // `clear`, `delete` and `copy` write what their first operand
-    // names or points to: not what a `Shared` holds or a variable of
-    // the package, at the place itself, through a pointer, or in a
-    // function that is given a pointer. What the function owns they
-    // change, also through a pointer. A function that is called under
+    // names or points to: not what a `Shared` holds, at the place
+    // itself, through a pointer, or in a function that is given a
+    // pointer. What the function owns they change, also through a
+    // pointer, and a variable of the package that no goroutine uses. A function that is called under
     // a loop over a map changes the map through no pointer: what it
     // says of itself does not tell `delete` from a new key.
     let text = "package p
@@ -7162,10 +7292,6 @@ func ranged() int {
         .filter(|message| !message.starts_with("    "))
         .map(|message| {
             let message = message.strip_prefix("a.gopp:").unwrap_or(&message);
-            let message = message.replace(
-                "a variable of the package is only read once the program has started",
-                "package",
-            );
             message.replace("what a Shared holds is only read", "shared")
         })
         .collect();
@@ -7178,11 +7304,6 @@ func ranged() int {
         "25:8: cannot clear what p points to: shared",
         "26:7: cannot copy into what p points to: shared",
         "28:9: cannot delete from what q points to: shared",
-        "33:8: cannot give &table to empty: the function writes through it, and package",
-        "34:7: cannot give &list to fill: the function writes through it, and package",
-        "35:8: cannot copy into list: package",
-        "37:8: cannot clear what p points to: package",
-        "39:9: cannot delete from what q points to: package",
         "61:3: cannot call empty: it may change m, which the loop ranges over",
         "64:3: cannot call remove: it may change m, which the loop ranges over",
     ];
@@ -7192,8 +7313,10 @@ func ranged() int {
 // rule: CON-18, OWN-P8
 #[test]
 fn a_pointer_into_what_is_only_read_is_followed() {
-    // A pointer into a variable of the package or into what a `Shared`
-    // holds is followed like any other: where it is assigned after its
+    // The program is checked twice: `start` calls `watch`, and then
+    // runs it with `go`, so that a goroutine may use `count` and `box`.
+    // A pointer into what a `Shared` holds, and then one into a
+    // variable of the package too, is followed like any other: where it is assigned after its
     // declaration (`later`, `joined`), kept in a field (`kept`), given
     // back by a function or given on to one (`returned`), and where a
     // call writes deeper than its argument points (`poke`, `wrap`).
@@ -7203,7 +7326,7 @@ fn a_pointer_into_what_is_only_read_is_followed() {
     // somewhere else by then, the same calls on what the function
     // owns, a method that only reads, and a call that only changes
     // the value that holds the pointer.
-    let text = "package p
+    let program = "package p
 
 type Box struct {
 	n     int
@@ -7324,35 +7447,55 @@ func good() int {
 	wrapReset(&k, &b)
 	return n + *give() + *field(&box) + u + b.n + k.p.n
 }
+
+func watch() int { return count + box.n }
+
+func start() {
+	WATCH
+}
 ";
-    let said: Vec<String> = (messages("a.gopp", text).into_iter())
-        .filter(|message| !message.starts_with("    "))
-        .map(|message| {
-            let message = message.strip_prefix("a.gopp:").unwrap_or(&message);
-            let message = message.replace(
-                "a variable of the package is only read once the program has started",
-                "package",
-            );
-            message.replace("what a Shared holds is only read", "shared")
-        })
-        .collect();
+    let said = |start: &str| {
+        let text = program.replace("WATCH", start);
+        let said: Vec<String> = (messages("a.gopp", &text).into_iter())
+            .filter(|message| !message.starts_with("    "))
+            .map(|message| {
+                let message = message.strip_prefix("a.gopp:").unwrap_or(&message);
+                let message = message.replace("a goroutine may use it at the same time", "raced");
+                let message = message.replace(
+                    "cannot write through this pointer: it may point into a variable of a \
+                     package that a goroutine may use at the same time (count, box)",
+                    "pointer",
+                );
+                message.replace("what a Shared holds is only read", "shared")
+            })
+            .collect();
+        said
+    };
+    let shared = [
+        "87:2: cannot change *field(s): it may be only read: shared",
+        "89:2: cannot change q.n: it may be only read: shared",
+        "91:2: cannot change h.p.n: it may be only read: shared",
+        "92:7: cannot use s.Set as a function value: the method writes through its receiver, \
+         and shared",
+        "96:3: cannot change x: it may be only read: shared",
+    ];
+    assert_eq!(said("watch()"), shared);
     let expected = [
-        "32:2: cannot change *p: it may be only read: package",
-        "37:2: cannot change h.p.n: it may be only read: package",
-        "38:2: cannot call fill: it may write through a pointer into what is only read: package",
-        "39:2: cannot call poke: it may write through a pointer into what is only read: package",
-        "40:2: cannot call wrap: it may write through a pointer into what is only read: package",
-        "44:2: cannot change *give(): it may be only read: package",
-        "46:2: cannot change *r: it may be only read: package",
-        "47:2: cannot call bump: it may write through a pointer into what is only read: package",
-        "49:2: cannot change *q: it may be only read: package",
-        "50:2: cannot change *same(&count): it may be only read: package",
-        "51:2: cannot change box.Self().n: it may be only read: package",
-        "55:7: cannot use box.Set as a function value: the method writes through its receiver, \
-         and package",
-        "64:3: cannot change x: it may be only read: package",
-        "76:2: cannot change p.n: it may be only read: package",
-        "79:3: cannot change q.n: it may be only read: package",
+        "32:2: pointer",
+        "37:2: pointer",
+        "38:2: pointer",
+        "39:2: pointer",
+        "40:2: pointer",
+        "44:2: pointer",
+        "46:2: pointer",
+        "47:2: pointer",
+        "49:2: pointer",
+        "50:2: pointer",
+        "51:2: pointer",
+        "55:7: cannot change box here: raced",
+        "64:3: pointer",
+        "76:2: pointer",
+        "79:3: pointer",
         "87:2: cannot change *field(s): it may be only read: shared",
         "89:2: cannot change q.n: it may be only read: shared",
         "91:2: cannot change h.p.n: it may be only read: shared",
@@ -7360,7 +7503,7 @@ func good() int {
          shared",
         "96:3: cannot change x: it may be only read: shared",
     ];
-    assert_eq!(said, expected);
+    assert_eq!(said("go watch()"), expected);
 }
 
 #[test]
@@ -7832,10 +7975,8 @@ func init() {
 ";
     let names = ThreadedRodeo::new();
     let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
-    // Outside `init` a variable of the package is not assigned to at
-    // all: that is what is said there.
     let said: Vec<&str> = (checked.messages.iter())
-        .filter(|message| !message.starts_with("    ") && !message.contains("is only read"))
+        .filter(|message| !message.starts_with("    "))
         .map(|message| message.split(": a pointer in it").next().unwrap_or(message))
         .collect();
     let expected = [
@@ -7851,6 +7992,10 @@ func init() {
         "a.gopp:38:6: cannot keep a Node in a slice that grows",
         "a.gopp:39:15: invalid type Unique[Node]: a Node holds a pointer, and what holds one is \
          not kept on the heap",
+        "a.gopp:40:9: cannot keep a Option[*Point] in a variable of the package",
+        "a.gopp:43:16: cannot keep a *Point in a variable of the package",
+        "a.gopp:45:2: cannot keep a *Point in a variable of the package",
+        "a.gopp:47:9: cannot keep a *Point in a variable of the package",
         "a.gopp:49:7: cannot keep a *Point in a slice",
         "a.gopp:51:7: cannot keep a Local[any] in a slice",
         "a.gopp:52:17: cannot keep a Local[any] in NewShared",
@@ -8329,8 +8474,6 @@ func fine3(h *Holder, p *T) {
          outlives mine",
         "a.gopp:87:2: cannot give what p points to to find().Set: the call may store it where it \
          outlives what p points to",
-        "a.gopp:87:2: cannot call find().Set: it may write through a pointer into what is only \
-         read: a variable of the package is only read once the program has started",
     ];
     assert_eq!(said, expected);
 }
@@ -8658,17 +8801,9 @@ func generic(p *T) {
              when what it points to has ended"
         )
     };
-    let fixed = |at: &str, place: &str| {
-        format!(
-            "a.gopp:{at}: cannot assign to {place}: a variable of the package is only read once \
-             the program has started"
-        )
-    };
     let expected = [
-        fixed("9:44", "handlers[name]"),
         "a.gopp:22:2: cannot return a pointer into x: x ends when the function returns".to_owned(),
         format!("a.gopp:28:2: cannot keep {}", uses("p")),
-        fixed("28:2", "kept"),
         "a.gopp:40:2: y ends here, and f points into it and is used later".to_owned(),
         format!("a.gopp:45:5: cannot keep {}", uses("p")),
         format!("a.gopp:49:2: cannot give register {}", uses("p")),
@@ -8678,7 +8813,6 @@ func generic(p *T) {
         "a.gopp:74:23: cannot keep what q points to in found: nothing says how long it is kept \
          there"
             .to_owned(),
-        fixed("99:2", "kept"),
         "a.gopp:109:2: *T does not satisfy Send (a *T borrows what it points to)".to_owned(),
         format!(
             "a.gopp:109:2: cannot use *T for X: the function is not for a type with a pointer \
@@ -10567,9 +10701,6 @@ func channel(ch chan File, f File) {
     let expected = [
         "a.gopp:26:9: f is used after it was moved: it has no value until it is assigned again",
         "    a.gopp:23:7: f is moved here",
-        "a.gopp:30:9: cannot assign to global: a variable of the package is only read once the \
-         program has started",
-        "    declare it as a sync.Atomic or a sync.Mutex, or set it in init",
         "a.gopp:35:7: cannot copy f (variable of struct type File): File has a drop method and no \
          Clone() File",
         "    use move(f) to give the value, or &f to lend it",
@@ -15120,9 +15251,6 @@ func (v V) Count() int { return counter }
     let expected = [
         "a.gopp:34:41: invalid @Const function bad: it uses a channel",
         "a.gopp:35:2: invalid @Const function bad: it uses the variable counter",
-        "a.gopp:35:2: cannot assign to counter: a variable of the package is only read once the \
-         program has started",
-        "    declare it as a sync.Atomic or a sync.Mutex, or set it in init",
         "a.gopp:36:7: invalid @Const function bad: it uses the variable counter",
         "a.gopp:36:17: invalid @Const function bad: it calls plain, which is not @Const",
         "a.gopp:37:7: invalid @Const function bad: it calls a method of an interface",

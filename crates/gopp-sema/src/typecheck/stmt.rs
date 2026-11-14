@@ -44,6 +44,7 @@ impl<'a> Checker<'a> {
         }
         if keyword == "go" && self.called(fun) == Called::Function {
             self.spawned(cx, call);
+            self.touch_spawn(cx, call);
         }
         let (code, what) = match self.called(fun) {
             Called::Conversion => (

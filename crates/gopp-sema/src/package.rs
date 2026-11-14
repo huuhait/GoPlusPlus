@@ -3,12 +3,35 @@
 use std::sync::Arc;
 
 use lasso::Spur;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::consteval::ConstEvaluator;
 use crate::decls::Initializer;
 use crate::foreign::ForeignPackage;
 use crate::object::{FileInfo, ObjId, Object};
+
+/// What a package and all that it imports do with the variables of
+/// packages: a variable that a goroutine may use is not changed by a
+/// plain write (CON-18).
+#[derive(Clone, Debug, Default)]
+pub struct Program {
+    /// What the `go` statements start.
+    pub roots: FxHashSet<crate::types::TouchKey>,
+    /// The functions that are used as values, with the function
+    /// literals: a call of a function value may run any of them. And
+    /// the methods by their names: a call of a method of an interface
+    /// may run any of that name.
+    pub valued: FxHashSet<crate::types::TouchKey>,
+    pub methods: FxHashMap<Spur, FxHashSet<crate::types::TouchKey>>,
+    /// The variables that are changed outside `init`; whether one is
+    /// changed through a pointer that may point into any of those
+    /// that a pointer is taken into.
+    pub written: FxHashSet<crate::types::Global>,
+    pub written_any: bool,
+    pub addressed: FxHashSet<crate::types::Global>,
+    /// The variables whose changes were refused.
+    pub refused: FxHashSet<crate::types::Global>,
+}
 
 #[derive(Debug, Default)]
 pub struct Package {
@@ -31,6 +54,9 @@ pub struct Package {
     /// What each function of the package with a body does with the
     /// pointers that it is given, for those who call it.
     pub lends: FxHashMap<ObjId, Arc<crate::types::Lends>>,
+    /// What the package and all that it imports do with the variables
+    /// of packages.
+    pub program: Arc<Program>,
     /// Stands in for a package that could not be loaded. Every name is
     /// taken to exist in it, so that one failed import is one error.
     pub fake: bool,

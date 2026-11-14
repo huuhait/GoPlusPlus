@@ -311,11 +311,14 @@ impl<'a> Checker<'a> {
             let Some(fixed) = self.points_into_fixed(cx, arg).filter(|_| !flag) else {
                 continue;
             };
+            if self.noted(fixed, self.span(cx, arg)) {
+                continue;
+            }
             let message = format!(
                 "cannot give {} to {}: the function may write through it, and {}",
                 self.expr_string(cx, arg),
                 self.expr_string(cx, fun),
-                fixed.why()
+                place::SHARED_WHY
             );
             self.error(Code::ForeignReadOnly, self.span(cx, arg), message);
         }

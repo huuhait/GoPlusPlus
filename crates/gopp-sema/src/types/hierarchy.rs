@@ -57,6 +57,37 @@ pub struct Lends {
     pub package: bool,
 }
 
+/// A variable of a package: the path of its package, and its object
+/// there.
+pub type Global = (lasso::Spur, crate::object::ObjId);
+
+/// A function as those who follow what runs in a goroutine name it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum TouchKey {
+    /// A function of the package with the path.
+    Func(lasso::Spur, crate::object::ObjId),
+    /// A method of a declared type, by its name.
+    Method(NamedId, lasso::Spur),
+    /// A function literal, `init` or the value of a variable of the
+    /// package with the path: its number there.
+    Body(lasso::Spur, u32),
+}
+
+/// The variables of packages that a function names itself, and what it
+/// calls (CON-18).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Touch {
+    pub uses: Vec<Global>,
+    pub calls: Vec<TouchKey>,
+    /// It calls a function value: any function that is used as a
+    /// value may run.
+    pub values: bool,
+    /// The names of the methods of interfaces, and of those that a
+    /// child may replace, that it calls: any method of the name may
+    /// run.
+    pub methods: Vec<lasso::Spur>,
+}
+
 impl Lends {
     /// Whether the function may give back what the argument at
     /// `position` of `count` reaches. The last parameter takes the
@@ -603,6 +634,16 @@ impl Types {
 
     pub fn lends(&self, named: NamedId, name: lasso::Spur) -> Option<Arc<Lends>> {
         self.read(|inner| inner.lends.get(&(named, name)).cloned())
+    }
+
+    /// Says which variables of packages the function names and what it
+    /// calls.
+    pub fn set_touch(&self, key: TouchKey, touch: Arc<Touch>) {
+        self.write(|inner| inner.touches.insert(key, touch));
+    }
+
+    pub fn touch(&self, key: TouchKey) -> Option<Arc<Touch>> {
+        self.read(|inner| inner.touches.get(&key).cloned())
     }
 
     /// Into what a declaration puts a value of the type parameter on

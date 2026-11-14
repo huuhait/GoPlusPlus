@@ -160,19 +160,27 @@ sync.Scope(func(s *sync.Scope) {
 
 **CON-17.** *`Atomic[T]`.* `Atomic[T]` is for integer types, `bool` and `unsafe.Pointer`. It has `Load`, `Store`, `Swap` and `CompareAndSwap`; for integer types it also has `Add`. Operations are **sequentially consistent only**: no weaker orderings are offered. An `Atomic[T]` is `Sync`. The `atomic.AddInt64(&x, 1)` style functions on plain variables are **removed**.
 
-**CON-18.** *Global variables.* A package-level variable is set by its initializer and in the body of `init` ([INI-1](15-program-init.md)). After that it is only read, whatever its type. Everywhere else a change is a compile error (`E0524`): an assignment to the variable or to a part of it, `delete`, `clear` and `copy` into it, a method that writes through its receiver, a call that writes through a pointer to it, and a write through a pointer that was taken into it. A function that `init` calls is not `init`, and a function literal in `init` is not either, because it may run later. What changes after initialization has a `Sync` type (`Atomic[T]`, `Mutex[T]`, …) and is changed through its methods.
+**CON-18.** *Global variables.* A package-level variable is changed like any other variable, as long as no goroutine can reach it. The compiler follows what every `go` statement starts: the function, the functions that it calls, in every package of the program. A call of a function value counts as a call of every function that is used as a value, and a call of an interface method as a call of every method of that name. A variable that is named on the way may be used by a goroutine; every change of such a variable outside `init` and its initializer ([INI-1](15-program-init.md)) is a compile error (`E0524`), where it is changed: an assignment to it or to a part of it, `delete`, `clear` and `copy` into it, a method that writes through its receiver, a call that writes through a pointer to it, and a write through a pointer that was taken into it. What a goroutine shares and changes has a `Sync` type (`Atomic[T]`, `Mutex[T]`, …) and is changed through its methods.
 
 ```go
-var hits sync.Atomic[int]                     // changed by hits.Add(1)
-var cache = sync.NewMutex(map[string]int{})   // changed by cache.With(...)
 var counter int
-var table = map[string]int{}
+var hits sync.Atomic[int]
 
-func init() { counter = 1; table["a"] = 1 }   // ok: the program has not started
+func add()  { counter++ }          // ok while no goroutine uses counter
+func show() { println(counter) }
 
-func Inc()  { counter++ }                     // error: a variable of the package is only read once the program has started
-func Hit()  { hits.Add(1) }                   // ok
-func Peek() int { return counter + table["a"] }   // ok: reading
+func main() {
+	add()
+	show()
+}
+```
+
+```go
+func main() {
+	go show()                      // a goroutine may use counter from here on
+	add()                          // so `counter++` in add is an error (E0524)
+	hits.Add(1)                    // ok: an Atomic
+}
 ```
 
 **CON-19.** *`Shared[T]` is read-only; a `Mutex` changes it* ([ADR-0042](../adr/0042-shared-is-read-only.md)).

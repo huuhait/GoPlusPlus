@@ -48,9 +48,10 @@ pub(super) struct Places<'a> {
     /// The names of the functions of headers that the body uses.
     pub of_headers: &'a FxHashMap<ExprId, crate::object::ForeignUse>,
     /// The package, and whether the body runs before the program has
-    /// started: a variable of a package is only read after that.
+    /// started: a variable of a package is changed freely until then.
     pub package: &'a Package,
     pub starting: bool,
+    pub names: &'a ThreadedRodeo,
     pub base: Spur,
 }
 
@@ -172,7 +173,7 @@ const OUTSIDE: LocalId = LocalId(u32::MAX);
 /// function.
 const ONLY_READ: [(LocalId, Fixed); 2] = [
     (LocalId(u32::MAX - 2), Fixed::Shared),
-    (LocalId(u32::MAX - 3), Fixed::Package),
+    (LocalId(u32::MAX - 3), Fixed::Package(None)),
 ];
 
 fn only_read(root: LocalId) -> Option<Fixed> {
@@ -1286,10 +1287,8 @@ impl<'a> Walk<'a> {
         let types = places.types;
         let mut expr = self.unparen(expr);
         loop {
-            // A function literal may run at any time.
-            let started = !places.starting || !self.top;
-            if started && self.package_variable(places.package, expr) {
-                return Some(Fixed::Package);
+            if let Some(global) = self.global(places, expr) {
+                return Some(Fixed::Package(Some(global)));
             }
             let of = match self.tree.exprs[expr].kind {
                 ExprKind::Selector { x, .. }
@@ -1311,7 +1310,9 @@ impl<'a> Walk<'a> {
                 Type::Pointer(_) => {
                     return match self.local(of) {
                         Some(pointer) => places.read_only.get(&pointer).copied(),
-                        None => self.fixed(of).filter(|kept| *kept == Fixed::Package),
+                        None => (self.fixed(of))
+                            .filter(|kept| matches!(kept, Fixed::Package(_)))
+                            .map(|_| Fixed::Package(None)),
                     };
                 }
                 _ => expr = of,
@@ -1319,19 +1320,24 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// Whether the expression names a variable of a package.
-    fn package_variable(&self, package: &Package, expr: ExprId) -> bool {
+    /// The variable of a package that the expression names.
+    fn global(&self, places: &Places, expr: ExprId) -> Option<crate::types::Global> {
         let variable = |package: &Package, id: ObjId| {
             let object = package.objects.get(id.0 as usize);
             object.is_some_and(|object| matches!(object.kind, ObjKind::Var))
         };
+        let path = |package: &Package| places.names.get_or_intern(&package.path);
         match self.body.uses.get(&expr) {
-            Some(&Ref::Object(object)) => variable(package, object),
-            Some(&Ref::Member { import, member }) => match &package.object(import).kind {
-                ObjKind::Import { package, .. } => variable(package, member),
-                _ => false,
+            Some(&Ref::Object(object)) if variable(places.package, object) => {
+                Some((path(places.package), object))
+            }
+            Some(&Ref::Member { import, member }) => match &places.package.object(import).kind {
+                ObjKind::Import { package, .. } if variable(package, member) => {
+                    Some((path(package), member))
+                }
+                _ => None,
             },
-            _ => false,
+            _ => None,
         }
     }
 
@@ -2159,7 +2165,6 @@ impl Problem {
             &lists(count, &self.edges, false),
         );
         let mut known = Known::new(self.within);
-        known.started = self.started;
         let mut sets = Sets::new(ROOM);
 
         // Forward: the facts at the end of each block.
@@ -2719,7 +2724,7 @@ impl Problem {
                 continue;
             }
             match only_read(*of) {
-                Some(Fixed::Package) => {
+                Some(Fixed::Package(_)) => {
                     lent.lends.package |= places.is_none();
                     continue;
                 }
@@ -2823,10 +2828,8 @@ const ROOM: usize = 1 << 24;
 struct Known {
     /// The loan of what is outside the function.
     outside: u32,
-    /// The loans of what is only read, and whether the body runs when
-    /// the program has started.
+    /// The loans of what is only read.
     fixed: [u32; 2],
-    started: bool,
     loans: Vec<(LocalId, Vec<Step>, Span)>,
     loan_ids: FxHashMap<(LocalId, Vec<Step>), u32>,
     facts: Vec<(LocalId, u32)>,
@@ -2852,7 +2855,6 @@ impl Known {
         let mut known = Known {
             outside: 0,
             fixed: [0; 2],
-            started: false,
             loans: Vec::new(),
             loan_ids: FxHashMap::default(),
             facts: Vec::new(),
@@ -2904,7 +2906,7 @@ impl Known {
     fn marker(&self, fixed: Fixed) -> u32 {
         match fixed {
             Fixed::Shared => self.fixed[0],
-            Fixed::Package => self.fixed[1],
+            Fixed::Package(_) => self.fixed[1],
         }
     }
 
@@ -3039,8 +3041,8 @@ impl Known {
                         if says.is_none_or(|lends| lends.outside) {
                             given.push(self.outside);
                         }
-                        if self.started && of.says(*call).is_some_and(|lends| lends.package) {
-                            given.push(self.marker(Fixed::Package));
+                        if of.says(*call).is_some_and(|lends| lends.package) {
+                            given.push(self.marker(Fixed::Package(None)));
                         }
                         for (position, &arg) in args.iter().enumerate() {
                             let counts =

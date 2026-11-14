@@ -68,6 +68,7 @@ impl Inner {
             owning: self.owning.clone(),
             kept: self.kept.clone(),
             lends: self.lends.clone(),
+            touches: self.touches.clone(),
             open_abstracts: open_abstracts
                 .map(|(&ty, open)| (ty, Arc::new((**open).clone())))
                 .collect(),
