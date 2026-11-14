@@ -266,6 +266,15 @@ pub(super) struct Walk<'a> {
     breaks: Vec<(Option<Spur>, u32)>,
     continues: Vec<(Option<Spur>, u32)>,
     labels: FxHashMap<Spur, u32>,
+    /// How many statements with variables of their own are around
+    /// where a `break` or a `continue` goes, by its block, and around
+    /// each label: a jump ends the variables of those that it leaves.
+    depths: FxHashMap<u32, usize>,
+    label_depths: FxHashMap<Spur, usize>,
+    /// Each `goto` to a label that comes later: the block that the
+    /// jump goes through, the label, the variables that the statements
+    /// around the jump had declared, and where it is.
+    gotos: Vec<(u32, Spur, Vec<Vec<LocalId>>, Span)>,
     /// The label of the statement that is walked next.
     label: Option<Spur>,
     /// Where `fallthrough` goes.
@@ -349,6 +358,9 @@ pub(super) fn of(
         breaks: Vec::new(),
         continues: Vec::new(),
         labels: FxHashMap::default(),
+        depths: FxHashMap::default(),
+        label_depths: FxHashMap::default(),
+        gotos: Vec::new(),
         label: None,
         falls: None,
         held: FxHashMap::default(),
@@ -943,6 +955,9 @@ impl<'a> Walk<'a> {
         self.blocks.clear();
         self.edges.clear();
         self.labels.clear();
+        self.depths.clear();
+        self.label_depths.clear();
+        self.gotos.clear();
         self.held.clear();
         self.viewed.clear();
         self.results.clear();
@@ -953,6 +968,17 @@ impl<'a> Walk<'a> {
 
     fn leave(&mut self) {
         self.jump(self.exit);
+        // A `goto` to a label that came later goes through a block of
+        // its own, where the variables end that it leaves.
+        for (through, label, frames, at) in std::mem::take(&mut self.gotos) {
+            let depth = self.label_depths.get(&label).copied().unwrap_or(0);
+            self.start(through);
+            for frame in frames.iter().skip(depth) {
+                self.ended(frame, at);
+            }
+            let to = self.label_block(label);
+            self.jump(to);
+        }
         self.start(self.exit);
         self.solve();
     }
@@ -1322,6 +1348,7 @@ impl<'a> Walk<'a> {
         match &tree.stmts[stmt].kind {
             StmtKind::Bad | StmtKind::Empty => {}
             StmtKind::Labeled { label, stmt } => {
+                self.label_depths.insert(label.name, self.frames.len());
                 let at = self.label_block(label.name);
                 self.jump(at);
                 self.start(at);
@@ -1402,12 +1429,40 @@ impl<'a> Walk<'a> {
                 self.dead();
             }
             StmtKind::Branch { kind, label } => {
+                let at = tree.stmts[stmt].span;
                 let to = match kind {
                     BranchKind::Break => self.target(&self.breaks, *label),
                     BranchKind::Continue => self.target(&self.continues, *label),
-                    BranchKind::Goto => label.map(|label| self.label_block(label.name)),
+                    // A label that comes later says where it is when
+                    // the function is walked.
+                    BranchKind::Goto => {
+                        label.map(|label| match self.label_depths.contains_key(&label.name) {
+                            true => self.label_block(label.name),
+                            false => {
+                                let through = self.block();
+                                let frames = self.frames.clone();
+                                self.gotos.push((through, label.name, frames, at));
+                                through
+                            }
+                        })
+                    }
                     BranchKind::Fallthrough => self.falls,
                 };
+                // The variables of the statements that the jump leaves
+                // end with it.
+                let depth = match (kind, label, to) {
+                    (BranchKind::Goto, Some(label), _) => {
+                        self.label_depths.get(&label.name).copied()
+                    }
+                    (BranchKind::Break | BranchKind::Continue, _, Some(to)) => {
+                        self.depths.get(&to).copied()
+                    }
+                    _ => None,
+                };
+                for frame in depth.unwrap_or(usize::MAX)..self.frames.len() {
+                    let ending = self.frames[frame].clone();
+                    self.ended(&ending, at);
+                }
                 if let Some(to) = to {
                     self.jump(to);
                 }
@@ -1433,7 +1488,9 @@ impl<'a> Walk<'a> {
                 self.jump(turn);
                 self.start(turn);
                 self.breaks.push((label, after));
+                self.depths.insert(after, self.frames.len());
                 self.continues.push((label, next));
+                self.depths.insert(next, self.frames.len());
                 self.stmts(&body.stmts);
                 self.breaks.pop();
                 self.continues.pop();
@@ -1491,7 +1548,9 @@ impl<'a> Walk<'a> {
                     *self.viewed.entry(viewed).or_default() += 1;
                 }
                 self.breaks.push((label, after));
+                self.depths.insert(after, self.frames.len());
                 self.continues.push((label, head));
+                self.depths.insert(head, self.frames.len());
                 // The loop reads what it ranges over until it is left.
                 let looped = self.ranges(*x);
                 self.stmts(&body.stmts);
@@ -1546,6 +1605,7 @@ impl<'a> Walk<'a> {
                 tested.iter().for_each(|&local| self.release(Some(local)));
                 self.hold(switched);
                 self.breaks.push((label, after));
+                self.depths.insert(after, self.frames.len());
                 let vars = self.body.switch_vars.get(&stmt);
                 for (at, clause) in clauses.iter().enumerate() {
                     self.start(bodies[at]);
@@ -1580,6 +1640,7 @@ impl<'a> Walk<'a> {
                 let entry = self.current;
                 let after = self.block();
                 self.breaks.push((label, after));
+                self.depths.insert(after, self.frames.len());
                 for clause in clauses {
                     let at = self.block();
                     self.edges.push((entry, at));

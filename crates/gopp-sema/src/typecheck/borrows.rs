@@ -1312,11 +1312,17 @@ impl<'a> Walk<'a> {
             lo: at.hi.saturating_sub(1),
             ..at
         };
-        for local in frame {
+        self.ended(&frame, end);
+    }
+
+    /// The variables end at `at`: where their statement ends, or where
+    /// a jump leaves it.
+    pub(super) fn ended(&mut self, locals: &[LocalId], at: Span) {
+        for &local in locals {
             self.changes.push(Change {
                 root: local,
                 steps: Vec::new(),
-                at: end,
+                at,
                 what: What::End,
             });
             self.events

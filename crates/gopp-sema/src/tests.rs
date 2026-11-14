@@ -6011,8 +6011,33 @@ fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
             count - 1
         )
     };
+    // Many blocks, each left by a `goto` to a label that comes later,
+    // with a pointer of its own.
+    let jumps = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\t{{\n\t\tx{i} := {i}\n\t\tp{i} := &x{i}\n\t\tif *p{i} > n {{\n\t\t\tgoto \
+                     l{i}\n\t\t}}\n\t\tn += *p{i}\n\t}}\nl{i}:\n"
+                )
+            })
+            .collect();
+        format!("package p\nfunc f(n int) int {{\n{each}\treturn n\n}}\n")
+    };
+    // Blocks in blocks, and one jump out of all of them.
+    let left = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("{{\nx{i} := {i}\np{i} := &x{i}\n*p{i}++\n"))
+            .collect();
+        let close = "}\n".repeat(depth);
+        format!(
+            "package p\nfunc f(n int) int {{\n{open}if n > 0 {{\ngoto out\n}}\n{close}out:\nreturn \
+             n\n}}\n"
+        )
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(jumps(n)));
     linear::assert_near_linear(&sizes, |n| steps(wide(n)));
     linear::assert_near_linear(&sizes, |n| steps(chain(n)));
     linear::assert_near_linear(&sizes, |n| steps(stored(n)));
@@ -6020,6 +6045,7 @@ fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(through(n)));
     // The parser takes no deeper nesting.
     linear::assert_near_linear(&[100, 200, 400], |n| steps(nested(n)));
+    linear::assert_near_linear(&[100, 200, 400], |n| steps(left(n)));
     linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
 }
 
@@ -7232,6 +7258,117 @@ func views(xs *[]int, n *Node) int {
         "a.gopp:39:2: cannot give a to visit: the function points into what the value owns",
         "a.gopp:39:2: cannot call visit: it may change n, and p points into n and is used later",
         "a.gopp:41:7: cannot point into g.Items[0]",
+    ];
+    assert_eq!(said, expected);
+}
+
+// rule: OWN-B2
+#[test]
+fn a_jump_ends_the_variables_of_the_statements_that_it_leaves() {
+    // A pointer into a variable of a statement is not used after a
+    // jump out of the statement: a `break` (where the loop ends), a
+    // `continue` (where the variable is declared again), a `goto` to a
+    // label that comes later or came before, a `break` with a label.
+    // A pointer that is set to something else before the jump is fine.
+    let text = "package p
+
+type T struct{ n int }
+
+var origin T
+
+func viaBreak(n int) int {
+	p := &origin
+	for i := 0; i < n; i++ {
+		x := T{i}
+		if i == 3 {
+			p = &x
+			break
+		}
+	}
+	return p.n
+}
+
+func viaContinue(n int) int {
+	p := &origin
+	total := 0
+	for i := 0; i < n; i++ {
+		total += p.n
+		x := T{i}
+		if i == 3 {
+			p = &x
+			continue
+		}
+	}
+	return total
+}
+
+func viaGoto(n int) int {
+	p := &origin
+	{
+		x := T{n}
+		if n > 0 {
+			p = &x
+			goto done
+		}
+	}
+done:
+	return p.n
+}
+
+func viaLabel(n int) int {
+	p := &origin
+outer:
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			x := T{j}
+			if j == 2 {
+				p = &x
+				break outer
+			}
+		}
+	}
+	return p.n
+}
+
+func fine(n int) int {
+	p := &origin
+	total := 0
+	for i := 0; i < n; i++ {
+		x := T{i}
+		p = &x
+		total += p.n
+		if i == 3 {
+			p = &origin
+			break
+		}
+		p = &origin
+	}
+	return total + p.n
+}
+
+func back(n int) int {
+	p := &origin
+again:
+	if n > 0 {
+		x := T{n}
+		p = &x
+		n--
+		goto again
+	}
+	return p.n
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let expected = [
+        "a.gopp:15:2: x ends here, and p points into it and is used later",
+        "a.gopp:24:3: x is declared again here, and p points into it and is used later",
+        "a.gopp:39:4: x ends here, and p points into it and is used later",
+        "a.gopp:54:5: x ends here, and p points into it and is used later",
+        // At the jump, and where the statement ends for the turn after.
+        "a.gopp:84:3: x ends here, and p points into it and is used later",
+        "a.gopp:85:2: x ends here, and p points into it and is used later",
     ];
     assert_eq!(said, expected);
 }
