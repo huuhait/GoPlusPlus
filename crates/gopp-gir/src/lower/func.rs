@@ -2697,6 +2697,34 @@ impl FuncCx<'_, '_> {
         self.runtime_call("_gopp_extend", &params, vec![list, kept, held, drop])
     }
 
+    /// The body of a loop over a function knows a variable of a block
+    /// of the function with the loop, which a `defer` statement may
+    /// borrow: its cell has what the list keeps of it, as it was made
+    /// (`new_cell`), so a `defer` statement of the body borrows it too.
+    pub fn adopt_extended(&mut self, local: CheckedLocalId) -> Built {
+        let Some(&cell) = self.cells.get(&local) else {
+            return Ok(());
+        };
+        if !self.facts.extended.contains(&local) || self.region_place().is_none() {
+            return Ok(());
+        }
+        let declared = &self.body.locals[local.0 as usize];
+        let (checked, span) = (declared.ty, declared.span);
+        let ty = self.lower(checked, span);
+        let drop = match self.flat(ty) {
+            true => None,
+            false => self.drop_glue(Some(checked), span)?,
+        };
+        let word = self.b.types().int(64, false);
+        let bytes = self.bytes_ty();
+        let glue = self.glue_sig(Glue::Drop);
+        let types = self.b.types();
+        let kept = types.tuple(&[bytes, word, bytes, glue]);
+        let whole = types.tuple(&[word, ty, kept]);
+        self.extendable.insert(local, (cell, whole, drop));
+        Ok(())
+    }
+
     /// Whether the variable lives in a cell here: its own, or one of a
     /// function around this one.
     pub fn in_cell(&self, local: CheckedLocalId) -> bool {

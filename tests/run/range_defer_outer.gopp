@@ -1,0 +1,119 @@
+package main
+
+type Problem struct{ what string }
+
+func (p Problem) Error() string { return "problem: " + p.what }
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r *Res) Show() { println("  show", r.name) }
+
+func each(yield func(int) bool) {
+	for i := 0; i < 3; i++ {
+		if !yield(i) {
+			return
+		}
+	}
+}
+
+func closeIt!(n int) {
+	println("  close", n)
+	if n == 1 {
+		return Problem{what: "close"}
+	}
+}
+
+func note(p *int) { println("  note", *p) }
+
+// The error of a deferred call with `!` in the body of a loop over a
+// function is that of the function with the loop, if it has none.
+func fails!() int {
+	for i := range each {
+		defer closeIt!(i)
+	}
+	println("  body done")
+	return 7
+}
+
+func named() (n int, err error) {
+	for i := range each {
+		if i == 2 {
+			break
+		}
+		defer closeIt!(i + 1)
+	}
+	return 5, nil
+}
+
+func inner!() int {
+	for i := range each {
+		for j := range each {
+			if i == 0 && j == 1 {
+				defer closeIt!(j)
+			}
+		}
+	}
+	return 9
+}
+
+func quiet!() int {
+	for i := range each {
+		defer closeIt!(i * 10)
+	}
+	return 3
+}
+
+// In a function that cannot fail the error is a panic.
+func must() {
+	defer func() { println("  recovered:", recover() != nil) }()
+	for i := range each {
+		defer closeIt!(i)
+	}
+}
+
+// A variable of a block around the loop that a deferred call of the
+// body borrows lives until the function is left.
+func around() {
+	{
+		total := 10
+		held := Res{"held"}
+		for i := range each {
+			total += i
+			defer note(&total)
+			if i == 1 {
+				defer held.Show()
+			}
+		}
+		println("  total", total)
+	}
+	println("  after the block")
+}
+
+func nested() {
+	for i := range each {
+		kept := Res{"kept"}
+		kept.name += "!"
+		for j := range each {
+			if i == 2 && j == 0 {
+				defer kept.Show()
+			}
+		}
+	}
+	println("  after the loops")
+}
+
+func main() {
+	n, err := fails()
+	println(n, err != nil)
+	n, err = named()
+	println(n, err != nil)
+	n, err = inner()
+	println(n, err != nil)
+	n, err = quiet()
+	println(n, err == nil)
+	must()
+	around()
+	nested()
+}

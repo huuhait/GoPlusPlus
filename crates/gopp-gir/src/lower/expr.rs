@@ -2414,13 +2414,6 @@ impl<'a> FuncCx<'a, '_> {
             return Ok(());
         };
         let callee = Shared::unparen(self.tree, *fun);
-        // The error of the call would be that of the function with the
-        // loop, whose results the body does not have.
-        if *unwrap && self.ranged.is_some() {
-            let what = "a deferred call with `!` in the body of a range over a function";
-            self.unsupported(span, what);
-            return Ok(());
-        }
         let known = self.body.types.contains_key(&callee);
         let built_in = self.builtin_of(callee).filter(|_| !known);
         let prints = match built_in {
@@ -2624,11 +2617,12 @@ impl<'a> FuncCx<'a, '_> {
         }
         let sets = self.body.bangs.get(&expr) == Some(&gopp_sema::Bang::SetError);
         if sets {
-            let Some(own) = self.results.last().copied().flatten() else {
+            // In the body of a loop over a function, the result of the
+            // function with the loop.
+            let Some(own) = self.error_result()? else {
                 self.unsupported(span, "a deferred call with `!` in this function");
                 return Ok(None);
             };
-            let own = self.var_place(own)?;
             let at = self.b.assign_temp(Rvalue::AddrOf(own, Mutability::Mut))?;
             slots.push((at, None));
         }
@@ -2750,13 +2744,13 @@ impl<'a> FuncCx<'a, '_> {
             let Some(local) = self.root_local(inner).filter(|_| by_address) else {
                 continue;
             };
-            // In the body of a loop over a function only a variable of
-            // the whole function with the loop lives until the call.
-            // A variable of the body lives on in the list of the block
-            // with the loop, if that block has one.
+            // In the body of a loop over a function a variable of the
+            // whole function with the loop lives until the call. A
+            // variable of a block, of the body or around the loop,
+            // lives on in the list of the function, if it has one.
             let declared = self.body.locals[local.0 as usize].span;
             let passes = |ranged: &super::ranged::Leaving| match ranged.outside(declared) {
-                true => self.extended(local),
+                true => self.extended(local) && !self.extends(local),
                 false => !self.extends(local),
             };
             if self.ranged.as_ref().is_some_and(passes) {

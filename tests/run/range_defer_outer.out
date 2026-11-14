@@ -1,0 +1,30 @@
+  body done
+  close 2
+  close 1
+  close 0
+7 true
+  close 2
+  close 1
+5 true
+  close 1
+9 true
+  close 20
+  close 10
+  close 0
+3 true
+  close 2
+  close 1
+  close 0
+  recovered: true
+  total 13
+  after the block
+  note 13
+  show held
+  note 13
+  note 13
+  end held
+  end kept!
+  end kept!
+  after the loops
+  show kept!
+  end kept!

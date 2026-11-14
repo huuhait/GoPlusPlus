@@ -5251,8 +5251,6 @@ func f!() {
         [
             "a.gopp:14:2: not supported yet: a range over a function whose variable is the value \
              itself",
-            "a.gopp:19:9: not supported yet: a deferred call with `!` in the body of a range over \
-             a function",
         ]
     );
     // The calls of the `defer` statements in the body of a loop are

@@ -74,6 +74,10 @@ pub(crate) struct Ranged {
     /// the body is given the list of the block with the loop, and the
     /// count of the variables that were declared.
     extends: bool,
+    /// The body has `defer` statements, and the function with the
+    /// loop has a result for its error: the body is given its address,
+    /// for a deferred call with `!` (ERR-11a).
+    errs: bool,
 }
 
 /// What the loops over functions of a job use of what is around them.
@@ -118,6 +122,8 @@ pub(crate) struct Leaving {
     /// the function with the loop is left (PAN-3).
     pub region: Option<Place>,
     pub declared: Option<Place>,
+    /// The result of the function with the loop that has its error.
+    pub error: Option<Place>,
 }
 
 impl Leaving {
@@ -302,6 +308,19 @@ impl<'a> FuncCx<'a, '_> {
         yields.unwrap_or_default()
     }
 
+    /// The result of the function that has its error, if it has one:
+    /// in the body of a loop over a function, that of the function
+    /// with the loop.
+    pub(super) fn error_result(&mut self) -> Built<Option<Place>> {
+        if let Some(ranged) = &self.ranged {
+            return Ok(ranged.error.clone());
+        }
+        match self.results.last().copied().flatten() {
+            Some(own) => self.var_place(own).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// The type of the cell of a loop: its count, then the state of the
     /// loop and the address of the frame. And the type of the
     /// environment of the body, which has that cell.
@@ -424,15 +443,29 @@ impl<'a> FuncCx<'a, '_> {
         let mut frame = self.frame_parts(&captured)?;
         // And for the variables of the body that its `defer` statements
         // borrow: the list of this block, and the count.
-        let extends = self.region_place().is_some() && self.extended_within(whole);
+        // Or for a variable of a block around the loop that one of them
+        // borrows.
+        let borrowed = captured.iter().any(|&local| self.extended(local));
+        let extends = self.region_place().is_some() && (self.extended_within(whole) || borrowed);
         let (region, counted) = match extends {
             true => (self.region_place(), Some(self.declared_place())),
             false => (None, None),
         };
-        for place in [Some(exit.clone()), returned.clone(), list, region, counted]
-            .into_iter()
-            .flatten()
-        {
+        // And the result with the error, for a deferred call with `!`.
+        let error = match defers.is_empty() {
+            true => None,
+            false => self.error_result()?,
+        };
+        let errs = error.is_some();
+        let places = [
+            Some(exit.clone()),
+            returned.clone(),
+            list,
+            region,
+            counted,
+            error,
+        ];
+        for place in places.into_iter().flatten() {
             let address = Rvalue::AddrOf(place, Mutability::Mut);
             frame.push(Operand::Copy(Place::local(self.b.assign_temp(address)?)));
         }
@@ -479,6 +512,7 @@ impl<'a> FuncCx<'a, '_> {
             defers,
             base,
             extends,
+            errs,
         };
         let key = (std::ptr::from_ref(job), stmt);
         if self.memo.ranged.insert(key, Rc::new(ranged)).is_none() {
@@ -605,6 +639,10 @@ impl<'a> FuncCx<'a, '_> {
             more.push(self.b.types().ptr(bytes));
             more.push(self.b.types().ptr(word));
         }
+        if ranged.errs {
+            let error = self.lower(self.shared.types.error(), whole);
+            more.push(self.b.types().ptr(error));
+        }
         let frame = self.open_frame(frame, &ranged.captured, &more)?;
         let behind = |this: &mut Self, at: u32| -> Built<Place> {
             let address = Operand::Copy(this.b.field(&frame, at)?);
@@ -626,8 +664,15 @@ impl<'a> FuncCx<'a, '_> {
             }
         };
         let (region, declared) = match ranged.extends {
-            true => (Some(behind(self, next)?), Some(behind(self, next + 1)?)),
+            true => {
+                next += 2;
+                (Some(behind(self, next - 2)?), Some(behind(self, next - 1)?))
+            }
             false => (None, None),
+        };
+        let error = match ranged.errs {
+            true => Some(behind(self, next)?),
+            false => None,
         };
         let deferred = |&(stmt, list): &(StmtId, Option<usize>)| Deferred {
             stmt,
@@ -646,7 +691,11 @@ impl<'a> FuncCx<'a, '_> {
             owner: ranged.within,
             region,
             declared,
+            error,
         });
+        for &local in &ranged.captured {
+            self.adopt_extended(local)?;
+        }
         for (at, &left) in lhs.iter().enumerate().take(yielded.len()) {
             let given = Place::local(self.b.param(1 + at as u32));
             self.set_range_var(left, *define, Operand::Copy(given), true)?;
