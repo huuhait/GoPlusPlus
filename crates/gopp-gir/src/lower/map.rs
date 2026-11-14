@@ -264,6 +264,15 @@ impl FuncCx<'_, '_> {
                 }
             });
         }
+        // What a new value starts as, or null for all zero.
+        let bytes = self.bytes_ty();
+        parts.push(match self.blank_at(of.value)? {
+            Some(blank) => blank,
+            None => Operand::Const(Constant {
+                kind: ConstantKind::Null,
+                ty: bytes,
+            }),
+        });
         let record = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;
         self.record(record)
     }

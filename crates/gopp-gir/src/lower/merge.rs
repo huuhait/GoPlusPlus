@@ -172,7 +172,7 @@ fn constant(constant: &mut Constant, names: &mut impl Names) {
     match &mut constant.kind {
         ConstantKind::Str(string) => names.string(string),
         ConstantKind::Func(func) => names.func(func),
-        ConstantKind::Global(global) => names.global(global),
+        ConstantKind::Global(global) | ConstantKind::Value(global) => names.global(global),
         ConstantKind::Int(_)
         | ConstantKind::Float(_)
         | ConstantKind::Bool(_)
@@ -523,7 +523,7 @@ impl Source {
                     ConstantKind::Func(func) => {
                         *func = self.func(merged, func.into_raw().into_u32() as usize);
                     }
-                    ConstantKind::Global(global) => {
+                    ConstantKind::Global(global) | ConstantKind::Value(global) => {
                         *global = self.placed(merged, global.into_raw().into_u32() as usize);
                     }
                     _ => {}

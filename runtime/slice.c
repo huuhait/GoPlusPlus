@@ -194,6 +194,17 @@ void _gopp_slice_clear(const void *slice, uint64_t size) {
   }
 }
 
+// Makes each element of the slice the value at `blank`, which is what a
+// new value of the type starts as when that is not all zero: a value
+// that holds values with type tables has their addresses from the
+// start.
+void _gopp_slice_fill(const void *slice, const void *blank, uint64_t size) {
+  const gopp_slice *of = slice;
+  for (uint64_t at = 0; at < of->len; at++) {
+    __builtin_memcpy((uint8_t *)of->ptr + at * size, blank, size);
+  }
+}
+
 // `[]byte(text)`.
 void _gopp_bytes_from_string(void *slice, gopp_string text) {
   gopp_slice bytes = fresh(text.len, text.len, 1);

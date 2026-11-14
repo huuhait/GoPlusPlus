@@ -627,6 +627,7 @@ impl Writer<'_, '_> {
                     (false, false) => format!("(({})&{})", cx.spelled(ty), global_name(at)),
                 }
             }
+            (ConstantKind::Value(global), _) => global_name(global.into_raw().into_u32() as usize),
             (ConstantKind::Null, _) => format!("(({})0)", cx.spelled(ty)),
             (ConstantKind::Zero, Type::Bool) => "false".to_owned(),
             (ConstantKind::Zero, Type::Int { bits, signed }) => int_literal(0, *bits, *signed),

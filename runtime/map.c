@@ -35,7 +35,19 @@ typedef struct gopp_mapinfo {
   // entry.
   void (*copy_key)(uint8_t *key);
   void (*drop_key)(uint8_t *key);
+  // What a new value starts as, if that is not all zero: a value that
+  // holds values with type tables has their addresses from the start.
+  const uint8_t *value_blank;
 } gopp_mapinfo;
+
+// Makes the value at the address the one that a new value starts as.
+static void blank_value(const gopp_mapinfo *info, void *value) {
+  if (info->value_blank) {
+    __builtin_memcpy(value, info->value_blank, info->value_size);
+  } else {
+    __builtin_memset(value, 0, info->value_size);
+  }
+}
 
 enum { KEY_BYTES = 0, KEY_STRING = 1, KEY_FLOAT32 = 2, KEY_FLOAT64 = 3, KEY_GLUE = 4 };
 
@@ -319,7 +331,7 @@ bool _gopp_map_read(const void *map, const void *shape, const void *key, void *v
   const gopp_map *of = map;
   const uint8_t *slot = of && of->count > 0 ? find(of, info, key, hash_key(info, key, of->seed)) : 0;
   if (!slot) {
-    __builtin_memset(value, 0, info->value_size);
+    blank_value(info, value);
     return false;
   }
   __builtin_memcpy(value, slot + info->value_offset, info->value_size);
@@ -353,7 +365,7 @@ void *_gopp_map_set(void *place_of_map, const void *shape, const void *key) {
   if (info->copy_key) {
     info->copy_key(slot);
   }
-  __builtin_memset(slot + info->value_offset, 0, info->value_size);
+  blank_value(info, slot + info->value_offset);
   map->count++;
   return slot + info->value_offset;
 }

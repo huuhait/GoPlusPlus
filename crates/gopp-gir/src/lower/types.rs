@@ -316,6 +316,10 @@ impl Memo<'_> {
         if own_table {
             self.tabled.insert(lowered);
         }
+        // No value is of a type that leaves a method open.
+        if shared.types.has_table(ty) && !shared.types.is_abstract(ty, shared.names) {
+            self.with_tables.insert(lowered, ty);
+        }
         Ok(lowered)
     }
 

@@ -301,19 +301,6 @@ impl<'a> FuncCx<'a, '_> {
         // A pointer to a value where one to a part of a parent of it
         // fits is the address of that part (EXP-13).
         if let (Type::Ptr(_), Type::Ptr(_)) = (self.kind(own), self.kind(ty)) {
-            let types = self.shared.types;
-            let pointer = self.checked_as(expr, own);
-            // An option of a pointer is the pointer, nil when it is unset.
-            let pointer = pointer.map(|pointer| match &*types.get(types.underlying(pointer)) {
-                CheckedType::Option(held) => *held,
-                _ => pointer,
-            });
-            let of = pointer.and_then(|pointer| match &*types.get(types.underlying(pointer)) {
-                CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
-                    Some(*to)
-                }
-                _ => None,
-            });
             // A handle is lent as the address of its value first.
             let mut handle = self.operand_of(value)?;
             if let Some(held) = self.memo.held(own) {
@@ -321,7 +308,7 @@ impl<'a> FuncCx<'a, '_> {
                 let lent = Rvalue::Cast(CastKind::PtrToPtr, handle, to);
                 handle = Operand::Copy(Place::local(self.b.assign_temp(lent)?));
             }
-            match self.upcast(handle.clone(), ty, of)? {
+            match self.upcast(handle.clone(), ty)? {
                 Some(Ok(part)) => return Ok(part),
                 Some(Err(what)) => {
                     let span = self.tree.exprs[expr].span;
@@ -772,7 +759,8 @@ impl<'a> FuncCx<'a, '_> {
         let Some(id) = known else {
             // A variable without a value, or of a type that is not
             // supported, which was reported: no global stands for it.
-            let nothing = self.b.assign_temp(Rvalue::Use(self.zero(ty)))?;
+            let zero = Rvalue::Use(self.zero(ty));
+            let nothing = self.b.assign_temp(zero)?;
             return Ok(Place::local(nothing));
         };
         let kind = ConstantKind::Global(id);
@@ -975,9 +963,8 @@ impl<'a> FuncCx<'a, '_> {
             _ => {
                 self.unsupported(span, "an index of a value of this type");
                 let ty = self.ty_of(expr);
-                return Ok(Place::local(
-                    self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
-                ));
+                let zero = Rvalue::Use(self.zero(ty));
+                return Ok(Place::local(self.b.assign_temp(zero)?));
             }
         };
         let known = self
@@ -1015,7 +1002,8 @@ impl<'a> FuncCx<'a, '_> {
             }
             _ => {
                 self.unsupported(span, "an index that is no integer");
-                let at = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                let zero = Rvalue::Use(self.zero(word));
+                let at = self.b.assign_temp(zero)?;
                 (at, at)
             }
         })
@@ -1636,7 +1624,8 @@ impl<'a> FuncCx<'a, '_> {
                 Some(places) => places[at],
                 None => {
                     let record = self.pointee(param);
-                    let record = self.slot_of(Rvalue::Use(self.zero(record)))?;
+                    let zero = Rvalue::Use(self.zero(record));
+                    let record = self.slot_of(zero)?;
                     self.b
                         .assign_temp(Rvalue::AddrOf(record, Mutability::Mut))?
                 }
@@ -2728,29 +2717,7 @@ impl<'a> FuncCx<'a, '_> {
         wanted: TypeId,
     ) -> Built<Operand> {
         let mut mode = PlaceMode::default();
-        let mut base = self.place(x, &mut mode)?;
-        // A method of a parent may call what the type replaces: the
-        // value has the addresses of its tables before a part of it is
-        // given (TYP-22).
-        if path.iter().any(|step| step & PARENT != 0) {
-            let types = self.shared.types;
-            let based = self
-                .based(x)
-                .map(|local| self.body.locals[local.0 as usize].ty);
-            let mut of = self.body.types.get(&x).map(|typed| typed.ty).or(based);
-            while let Some(
-                CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to),
-            ) = of.map(|of| types.get(types.underlying(of))).as_deref()
-            {
-                of = Some(*to);
-            }
-            if let Some(of) = of.filter(|&of| types.has_table(of)) {
-                base = self.through(base, &mut mode)?;
-                if let Err(what) = self.set_tables(&base, of)? {
-                    self.unsupported(span, what);
-                }
-            }
-        }
+        let base = self.place(x, &mut mode)?;
         let place = self.steps(base, path, span, &mut mode)?;
         let have = self.b.place_ty(&place);
         if self.pointee(wanted) == have && wanted != have {
@@ -3191,7 +3158,8 @@ impl<'a> FuncCx<'a, '_> {
                     }
                 }
                 let made = Rvalue::Aggregate(AggKind::Of(ty), parts);
-                if later.is_empty() {
+                let tables = self.memo.with_tables.get(&ty).copied();
+                if later.is_empty() && tables.is_none() {
                     return Ok(made);
                 }
                 let whole = self.slot_of(made)?;
@@ -3201,6 +3169,13 @@ impl<'a> FuncCx<'a, '_> {
                         place = self.b.field(&place, step)?;
                     }
                     self.b.assign(place, Rvalue::Use(value))?;
+                }
+                // The parts of the parents have the tables of their own
+                // types: the value has those of its type from here.
+                if let Some(checked) = tables
+                    && let Err(what) = self.put_tables(&whole, checked)?
+                {
+                    self.unsupported(span, what);
                 }
                 Ok(Rvalue::Use(Operand::Copy(whole)))
             }
@@ -3228,7 +3203,8 @@ impl<'a> FuncCx<'a, '_> {
                     }
                     return Ok(Rvalue::Aggregate(AggKind::Array(of), parts));
                 }
-                let whole = Place::local(self.b.assign_temp(Rvalue::Use(self.zero(ty)))?);
+                let zero = Rvalue::Use(self.zero(ty));
+                let whole = Place::local(self.b.assign_temp(zero)?);
                 for (&(at, _), value) in set.iter().zip(values) {
                     let element = self.b.const_index(&whole, at)?;
                     self.b.assign(element, Rvalue::Use(value))?;
@@ -3265,9 +3241,8 @@ impl<'a> FuncCx<'a, '_> {
     /// not supported, which was reported, takes nothing.
     pub fn store(&mut self, place: Place, value: Rvalue) -> Built {
         if self.b.place_ty(&place) == TypeInterner::UNIT {
-            return self
-                .b
-                .assign(place, Rvalue::Use(self.zero(TypeInterner::UNIT)));
+            let zero = Rvalue::Use(self.zero(TypeInterner::UNIT));
+            return self.b.assign(place, zero);
         }
         let reads = |operand: &Operand| match operand {
             Operand::Copy(read) | Operand::Move(read) => read.local == place.local,

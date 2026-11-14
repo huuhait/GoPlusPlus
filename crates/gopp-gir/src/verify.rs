@@ -631,6 +631,15 @@ impl<'m> Verifier<'m> {
                 (global.into_raw().into_u32() as usize) < self.module.globals.len()
                     && *types.get(ty) == Type::Ptr(self.module.globals[global].ty)
             }
+            // The value itself, of a global that nothing writes.
+            ConstantKind::Value(global) => {
+                let held = self
+                    .module
+                    .globals
+                    .iter()
+                    .nth(global.into_raw().into_u32() as usize);
+                held.is_some_and(|(_, held)| held.ty == ty && !held.mutable)
+            }
         };
         if !fits {
             let message = format!("the constant {:?} is no {}", constant.kind, self.shown(ty));

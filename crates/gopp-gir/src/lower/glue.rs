@@ -578,7 +578,8 @@ impl FuncCx<'_, '_> {
                     self.runtime_call("_gopp_slice_copy", &[bytes, word], args)?;
                 }
                 if let Some(glue) = of_part {
-                    let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                    let zero = Rvalue::Use(self.zero(word));
+                    let none = self.b.assign_temp(zero)?;
                     let first = self.b.index(&value, none)?;
                     let count = self.b.assign_temp(Rvalue::Len(value))?;
                     let count = Operand::Copy(Place::local(count));

@@ -69,7 +69,8 @@ impl FuncCx<'_, '_> {
         if !self.is_iface(ty) {
             return Ok(self.placeholder(span, ty, "`recover` for a place of this type"));
         }
-        let value = self.slot_of(Rvalue::Use(self.zero(ty)))?;
+        let zero = Rvalue::Use(self.zero(ty));
+        let value = self.slot_of(zero)?;
         let bytes = self.bytes_ty();
         let at = self.record(value.clone())?;
         self.runtime_call("_gopp_recover", &[bytes], vec![at])?;

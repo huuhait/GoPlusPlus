@@ -334,7 +334,8 @@ impl FuncCx<'_, '_> {
             }
         };
         self.keep_temps(mark)?;
-        let counter = self.b.assign_temp(Rvalue::Use(self.zero(counts)))?;
+        let zero = Rvalue::Use(self.zero(counts));
+        let counter = self.b.assign_temp(zero)?;
         let [head, inside, after, exit] = [(); 4].map(|()| self.b.new_block());
         self.b.goto(head)?;
         self.b.switch_to(head);
@@ -816,7 +817,8 @@ impl FuncCx<'_, '_> {
             let mut value = Rvalue::Use(Operand::Copy(var.clone()));
             if !self.flat(part) {
                 value = Rvalue::Use(Operand::Copy(self.slot_of(value)?));
-                self.b.assign(var, Rvalue::Use(self.zero(part)))?;
+                let zero = Rvalue::Use(self.zero(part));
+                self.b.assign(var, zero)?;
             }
             given.push(value);
         }

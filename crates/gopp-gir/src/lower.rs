@@ -648,6 +648,14 @@ pub(crate) struct Memo<'a> {
     pub names: FxHashMap<Spur, Box<str>>,
     /// Which field of a struct has a name.
     pub fields: FxHashMap<(TypeId, Spur), Option<usize>>,
+    /// The type of the checker of each struct of the module whose
+    /// values start with the addresses of tables.
+    pub with_tables: FxHashMap<TypeId, CheckedTypeId>,
+    /// Whether a value of a type of the module holds a value with
+    /// tables, and the global that a new value of such a type starts
+    /// as: none for a type without one.
+    pub holds_tables: FxHashMap<TypeId, bool>,
+    pub blanks: FxHashMap<TypeId, Option<GlobalId>>,
     /// Which types of the module cross to C.
     pub c_rules: crate::CTypeRules,
     /// For each type that was asked: its first part that C has no type
@@ -696,6 +704,9 @@ impl<'a> Memo<'a> {
             callees: FxHashMap::default(),
             names: FxHashMap::default(),
             fields: FxHashMap::default(),
+            with_tables: FxHashMap::default(),
+            holds_tables: FxHashMap::default(),
+            blanks: FxHashMap::default(),
             c_rules: crate::CTypeRules::new(Some(shared.layout)),
             c_parts: FxHashMap::default(),
             diagnostics: Vec::new(),

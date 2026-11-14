@@ -449,7 +449,8 @@ impl FuncCx<'_, '_> {
             // The bytes of the value are the first of the word, and the
             // rest of the word is zero.
             (true, _) => {
-                let word = self.slot_of(Rvalue::Use(self.zero(bytes)))?;
+                let zero = Rvalue::Use(self.zero(bytes));
+                let word = self.slot_of(zero)?;
                 let at = self
                     .b
                     .assign_temp(Rvalue::AddrOf(word.clone(), Mutability::Mut))?;
@@ -702,7 +703,8 @@ impl FuncCx<'_, '_> {
         };
         let (holds, table) = self.holds(&looked, wanted)?;
         let holds = self.stable(holds)?;
-        let value = self.slot_of(Rvalue::Use(self.zero(ty)))?;
+        let zero = Rvalue::Use(self.zero(ty));
+        let value = self.slot_of(zero)?;
         let [held, done] = [(); 2].map(|()| self.b.new_block());
         self.b.switch(holds.clone(), vec![(0, done)], held)?;
         self.b.switch_to(held);
@@ -845,7 +847,8 @@ impl<'a> FuncCx<'a, '_> {
     /// table, or null for nil, which has no table.
     fn info_of(&mut self, first: Operand) -> Built<Operand> {
         let bytes = self.bytes_ty();
-        let info = self.slot_of(Rvalue::Use(self.zero(bytes)))?;
+        let zero = Rvalue::Use(self.zero(bytes));
+        let info = self.slot_of(zero)?;
         let set = Rvalue::Binary(BinOp::Ne, first.clone(), self.zero(bytes));
         let set = Operand::Copy(Place::local(self.b.assign_temp(set)?));
         let [reads, done] = [(); 2].map(|()| self.b.new_block());
@@ -1309,12 +1312,6 @@ impl<'a> FuncCx<'a, '_> {
                 self.not_nil(&at)?;
             }
             let mut value = self.b.deref(&at)?;
-            // A method of a parent may call what the type replaces.
-            if !found.path.is_empty()
-                && let Err(what) = self.set_tables(&value, ty)?
-            {
-                return Ok(Err(what));
-            }
             for &step in &found.path {
                 if let Type::Ptr(_) = self.kind(self.b.place_ty(&value)) {
                     self.not_nil(&value)?;

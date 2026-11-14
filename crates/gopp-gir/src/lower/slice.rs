@@ -373,13 +373,28 @@ impl FuncCx<'_, '_> {
 
     /// A slice of `len` zero elements with room for `cap`.
     fn made(&mut self, ty: TypeId, of: TypeId, len: Operand, cap: Operand) -> Built<Rvalue> {
-        let out = self.slot_of(Rvalue::Use(self.zero(ty)))?;
+        let zero = Rvalue::Use(self.zero(ty));
+        let out = self.slot_of(zero)?;
         let [size, _] = self.element_facts(of)?;
         let record = self.record(out.clone())?;
         let wide = self.b.types().int(64, true);
         let params = [self.bytes_ty(), wide, wide, self.b.operand_ty(&size)];
-        self.runtime_call("_gopp_slice_make", &params, vec![record, len, cap, size])?;
+        let args = vec![record.clone(), len, cap, size.clone()];
+        self.runtime_call("_gopp_slice_make", &params, args)?;
+        self.filled(record, of, size)?;
         Ok(Rvalue::Use(Operand::Copy(out)))
+    }
+
+    /// Gives each element of the slice at the address the value that a
+    /// new value of its type starts as, if that is not all zero: the
+    /// runtime made the elements zero.
+    fn filled(&mut self, slice: Operand, of: TypeId, size: Operand) -> Built {
+        let Some(blank) = self.blank_at(of)? else {
+            return Ok(());
+        };
+        let bytes = self.bytes_ty();
+        let params = [bytes, bytes, self.b.operand_ty(&size)];
+        self.runtime_call("_gopp_slice_fill", &params, vec![slice, blank, size])
     }
 
     /// `[]T{...}`: a slice with the elements at their places; `set` has
@@ -536,7 +551,8 @@ impl FuncCx<'_, '_> {
             let checked = checked.and_then(|slice| self.element_of(slice));
             if let Some(drop) = self.drop_glue(checked, span)? {
                 let word = self.b.operand_ty(&size);
-                let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                let zero = Rvalue::Use(self.zero(word));
+                let none = self.b.assign_temp(zero)?;
                 let first = self.b.index(&of, none)?;
                 let count = self.b.assign_temp(Rvalue::Len(of.clone()))?;
                 self.each(first, slot(count), elem, drop)?;
@@ -544,7 +560,10 @@ impl FuncCx<'_, '_> {
         }
         let params = [self.bytes_ty(), self.b.operand_ty(&size)];
         let args = vec![self.record(of)?, size];
-        self.runtime_call("_gopp_slice_clear", &params, args)?;
+        self.runtime_call("_gopp_slice_clear", &params, args.clone())?;
+        if let [slice, size] = &args[..] {
+            self.filled(slice.clone(), elem, size.clone())?;
+        }
         Ok(true)
     }
 
@@ -580,7 +599,8 @@ impl FuncCx<'_, '_> {
     /// `[]byte(text)` and `[]rune(text)`: the function `name` of the
     /// runtime fills the slice.
     pub fn slice_of_text(&mut self, name: &str, ty: TypeId, text: Operand) -> Built<Rvalue> {
-        let out = self.slot_of(Rvalue::Use(self.zero(ty)))?;
+        let zero = Rvalue::Use(self.zero(ty));
+        let out = self.slot_of(zero)?;
         let params = [self.bytes_ty(), self.b.operand_ty(&text)];
         let args = vec![self.record(out.clone())?, text];
         self.runtime_call(name, &params, args)?;
@@ -637,7 +657,8 @@ impl FuncCx<'_, '_> {
         let lo = match lo {
             Some(lo) => self.index_slots(lo, span)?,
             None => {
-                let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                let zero = Rvalue::Use(self.zero(word));
+                let none = self.b.assign_temp(zero)?;
                 (none, none)
             }
         };
@@ -673,7 +694,8 @@ impl FuncCx<'_, '_> {
             let checked = self.checked_as(expr, slice);
             let checked = checked.and_then(|slice| self.element_of(slice));
             if let Some(drop) = self.drop_glue(checked, span)? {
-                let none = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                let zero = Rvalue::Use(self.zero(word));
+                let none = self.b.assign_temp(zero)?;
                 let head = self.b.index(&whole, none)?;
                 self.each(head, slot(lo.0), of, drop)?;
                 let tail = self.b.index(&whole, hi.0)?;

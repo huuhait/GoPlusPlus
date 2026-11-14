@@ -1150,7 +1150,8 @@ impl FuncCx<'_, '_> {
                 (Some(&list), _) => self.record(Place::local(list))?,
                 (None, Some((record, ty))) => {
                     let record = Place::local(record);
-                    self.b.assign(record.clone(), Rvalue::Use(self.zero(ty)))?;
+                    let zero = Rvalue::Use(self.zero(ty));
+                    self.b.assign(record.clone(), zero)?;
                     self.record(record)?
                 }
                 // A statement that was refused keeps nothing.
@@ -1723,12 +1724,15 @@ impl FuncCx<'_, '_> {
         self.b.types().get(ty).clone()
     }
 
-    /// The zero of the type.
-    pub fn zero(&self, ty: TypeId) -> Operand {
-        Operand::Const(Constant {
-            kind: ConstantKind::Zero,
-            ty,
-        })
+    /// The zero of the type: the value that a new value starts as. It
+    /// is all zero bytes but for the addresses of the tables of the
+    /// values with tables that it holds.
+    pub fn zero(&mut self, ty: TypeId) -> Operand {
+        let kind = match self.blank(ty) {
+            Some(blank) => ConstantKind::Value(blank),
+            None => ConstantKind::Zero,
+        };
+        Operand::Const(Constant { kind, ty })
     }
 
     // ---- variables and scopes
@@ -2115,7 +2119,8 @@ impl FuncCx<'_, '_> {
     /// before anything is stored, called or left.
     pub fn empty_moved(&mut self) -> Built {
         for (place, ty) in std::mem::take(&mut self.moved) {
-            self.b.assign(place, Rvalue::Use(self.zero(ty)))?;
+            let zero = Rvalue::Use(self.zero(ty));
+            self.b.assign(place, zero)?;
         }
         Ok(())
     }

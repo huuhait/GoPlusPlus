@@ -1,0 +1,97 @@
+// A value of a type with a type table has the address of its table
+// from where it is made, however it is made: nothing writes it later,
+// so a value that is only read is only read (TYP-22).
+package main
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape" }
+
+@Extends(Shape)
+type Circle struct{ r int }
+
+@Override
+func (c *Circle) Kind() string { return "circle" }
+
+type Tagged struct{ tag int }
+
+@Virtual
+func (t *Tagged) Tag() int { return t.tag }
+
+// Two parents with tables: two addresses in one value.
+@Extends(Shape)
+@Extends(Tagged)
+type Label struct{ text string }
+
+@Override
+func (l *Label) Kind() string { return "label" }
+
+@Override
+func (l *Label) Tag() int { return l.tag + 100 }
+
+func tag(t *Tagged) int { return t.Tag() }
+
+type Scene struct {
+	id   int
+	c    Circle
+	pair [2]Circle
+}
+
+func kind(s *Shape) string { return s.Kind() }
+
+func named() (c Circle) { return }
+
+
+func main() {
+	var c Circle
+	println("var", kind(&c))
+	var sc Scene
+	println("field", kind(&sc.c), kind(&sc.pair[1]))
+	var arr [3]Circle
+	println("array", kind(&arr[2]))
+	xs := make([]Circle, 3)
+	println("make", kind(&xs[1]))
+	m := map[string]Circle{}
+	v := m["none"]
+	println("map", kind(&v))
+	w, ok := m["none"]
+	println("map ok", kind(&w), ok)
+	n := named()
+	println("result", kind(&n))
+	lit := Circle{r: 1}
+	println("literal", kind(&lit))
+	sl := []Circle{{r: 1}, {}}
+	println("slice literal", kind(&sl[1]))
+	u := NewUnique(Circle{})
+	println("unique", u.Kind())
+	var o Option[Circle]
+	o = Circle{}
+	if got, ok := o.Get(); ok {
+		println("option", kind(&got))
+	}
+	f := func() string { return kind(&c) }
+	println("captured", f())
+	clear(xs)
+	println("clear", kind(&xs[0]))
+	var s Shape
+	println("parent", kind(&s))
+	var held any = Circle{}
+	if cc, ok := held.(Circle); ok {
+		println("assert", kind(&cc))
+	}
+	z, is := held.(Scene)
+	println("failed assert", kind(&z.c), is)
+	ys := append(xs, Circle{})
+	println("append", kind(&ys[3]))
+	var l Label
+	println("two parents", kind(&l), tag(&l))
+	ls := make([]Label, 2)
+	copied := ls[1]
+	println("two parents made", kind(&ls[1]), tag(&ls[1]), tag(&copied))
+	byKey := map[string]Label{}
+	byKey["a"] = Label{text: "a"}
+	here := byKey["a"]
+	gone := byKey["b"]
+	println("two parents in a map", tag(&here), tag(&gone), kind(&gone))
+}

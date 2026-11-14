@@ -98,6 +98,9 @@ fn constant(module: &Module, constant: &Constant) -> String {
         ConstantKind::Global(global) => {
             format!("const global @{}", module.globals[global].name)
         }
+        ConstantKind::Value(global) => {
+            format!("const value @{}", module.globals[global].name)
+        }
     }
 }
 

@@ -3793,7 +3793,8 @@ func main() {
     // `t.(*Square)` asks.
     let record = said("_GPTsN4mainE6SquareB5_");
     let lines: Vec<&str> = record.lines().map(str::trim).collect();
-    assert_eq!(lines[0], "const str#1 \"main.Square\"", "{record}");
+    let named = lines[0].starts_with("const str#") && lines[0].ends_with(" \"main.Square\"");
+    assert!(named, "{record}");
     assert_eq!(lines[1], "const 40: u64", "{record}");
     assert!(lines[2].starts_with("const zero"), "{record}");
     assert!(lines[3].starts_with("const zero"), "{record}");
@@ -5470,4 +5471,134 @@ fn the_steps_grow_with_what_crosses_to_c() {
              func main() {{\n\tvar p Pair\n{calls}}}\n"
         ))
     });
+}
+
+// rule: TYP-22
+#[test]
+fn a_value_has_the_addresses_of_its_tables_from_where_it_is_made() {
+    let text = "package main
+
+type Shape struct{ side int }
+
+@Virtual
+func (s *Shape) Kind() int { return 0 }
+
+type Tagged struct{ tag int }
+
+@Virtual
+func (t *Tagged) Tag() int { return t.tag }
+
+@Extends(Shape)
+@Extends(Tagged)
+type Square struct{ extra int }
+
+@Override
+func (s *Square) Kind() int { return 4 }
+
+type Scene struct {
+	id   int
+	one  Square
+	pair [2]Shape
+}
+
+func kind(s *Shape) int { return s.Kind() }
+
+func zero() int {
+	var sq Square
+	var scene Scene
+	return kind(&sq) + kind(&scene.one)
+}
+
+func literal() int {
+	sq := Square{extra: 2}
+	return kind(&sq)
+}
+
+func many(n int) int {
+	xs := make([]Square, n)
+	m := map[int]Square{}
+	return kind(&xs[0]) + m[1].extra
+}
+
+func main() { println(zero(), literal(), many(1)) }
+";
+    let module = gir(text);
+    let function = |name: &str| {
+        let start = module.find(&format!("\nfn {name}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let said = |name: &str| {
+        let start = module.find(&format!("\nglobal const @{name}: ")).unwrap();
+        let from = start + module[start..].find("]\n").unwrap() + 2;
+        &module[from..][..module[from..].find("\n\n").unwrap()]
+    };
+    // A variable without a value starts as the value that the package
+    // says once for its type: all zero, but for the address of the
+    // table of each part with one.
+    let zero = function("_GPF4mainE4zero");
+    assert!(
+        zero.contains("= const value @gopp.blank._GPTiN4mainE6Square"),
+        "{zero}"
+    );
+    assert!(
+        zero.contains("= const value @gopp.blank._GPTiN4mainE5Scene"),
+        "{zero}"
+    );
+    let square = "    const global @_GPTvN4mainE6Square\n    const zero: i64\n    \
+                  const global @_GPTsN4mainE6SquareN4mainE6Tagged\n    const zero: i64\n    \
+                  const zero: i64";
+    assert_eq!(said("gopp.blank._GPTiN4mainE6Square"), square);
+    // A value in a struct and the elements of an array have theirs.
+    let scene = said("gopp.blank._GPTiN4mainE5Scene");
+    let tables: Vec<&str> = (scene.lines())
+        .filter_map(|line| line.trim().strip_prefix("const global @"))
+        .collect();
+    let expected = [
+        "_GPTvN4mainE6Square",
+        "_GPTsN4mainE6SquareN4mainE6Tagged",
+        "_GPTvN4mainE5Shape",
+        "_GPTvN4mainE5Shape",
+    ];
+    assert_eq!(tables, expected, "{scene}");
+    // A literal is put together from parts that have the tables of
+    // their own types, and gets those of its type.
+    let literal = function("_GPF4mainE7literal");
+    assert!(
+        literal.contains("const value @gopp.blank._GPTiN4mainE5Shape"),
+        "{literal}"
+    );
+    for table in ["_GPTvN4mainE6Square", "_GPTsN4mainE6SquareN4mainE6Tagged"] {
+        assert!(
+            literal.contains(&format!(" = ptr_to_ptr(const global @{table}) as *u8")),
+            "{table}\n{literal}"
+        );
+    }
+    // What the runtime makes is filled with that value: the elements
+    // of a slice that is made, and what a map gives for a key that it
+    // does not have.
+    let many = function("_GPF4mainE4many");
+    assert!(many.contains("call const fn @_gopp_slice_fill("), "{many}");
+    let shape =
+        (many.lines()).find(|line| line.contains(" = tuple {const ") && line.contains("fn "));
+    assert!(
+        shape.is_some_and(|shape| !shape.contains("const null: *u8}")),
+        "{many}"
+    );
+    // Nothing writes an address where a value is only used: a call
+    // through a table reads the table, and a pointer to a part is the
+    // address of the part.
+    let kind = function("_GPF4mainE4kind");
+    assert!(
+        !kind.contains("const global @_GPT") && !kind.contains("switch"),
+        "{kind}"
+    );
+    // A value of more parts than static data has is refused.
+    let large = "package main\n\ntype Shape struct{ side int }\n\n@Virtual\n\
+                 func (s *Shape) Kind() int { return 0 }\n\n\
+                 func main() {\n\tvar all [600000]Shape\n\tprintln(all[0].side)\n}\n";
+    let (_, messages) = lowered_with(&[("a.gopp", large)], usize::MAX);
+    let refused = messages.iter().any(|message| {
+        message.contains("not supported yet: a value of more parts than static data has")
+    });
+    assert!(refused, "{messages:?}");
 }

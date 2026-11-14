@@ -332,6 +332,9 @@ pub enum ConstantKind {
     Zero,
     /// The address of a global.
     Global(GlobalId),
+    /// What a global that the program never writes holds: the value
+    /// that a new value of a type with tables starts as.
+    Value(GlobalId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

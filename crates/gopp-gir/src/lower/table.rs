@@ -28,6 +28,7 @@ use crate::{
     BinOp, CallConv, CastKind, Constant, ConstantKind, FuncType, GlobalId, Mutability, Operand,
     Place, Rvalue, Type, TypeId, TypeInterner,
 };
+use gopp_diag::{Code as Fault, Diagnostic};
 
 impl Shared<'_> {
     /// Whether the method of the type may be replaced by a child, or
@@ -339,9 +340,9 @@ impl FuncCx<'_, '_> {
         let Some(from) = self.body.types.get(&x).map(|typed| typed.ty) else {
             return Ok(None);
         };
-        let Some(of) = pointee(from).filter(|&of| types.has_table(of)) else {
+        if !pointee(from).is_some_and(|of| types.has_table(of)) {
             return Ok(None);
-        };
+        }
         let Some(typed) = self.body.types.get(&expr) else {
             return Ok(Some(Err("a value whose type is not known")));
         };
@@ -357,9 +358,6 @@ impl FuncCx<'_, '_> {
         let mut mode = PlaceMode::default();
         let base = self.place(x, &mut mode)?;
         let value = self.through(base, &mut mode)?;
-        if let Err(what) = self.set_tables(&value, of)? {
-            return Ok(Some(Err(what)));
-        }
         let record = match self.whole(target)? {
             Ok(record) => record,
             Err(what) => return Ok(Some(Err(what))),
@@ -418,15 +416,12 @@ impl FuncCx<'_, '_> {
         let Some(checked) = self.body.types.get(&x).map(|typed| typed.ty) else {
             return Ok(None);
         };
-        let Some(of) = pointee(checked).filter(|&of| types.has_table(of)) else {
+        if !pointee(checked).is_some_and(|of| types.has_table(of)) {
             return Ok(None);
-        };
+        }
         let mut mode = PlaceMode::default();
         let base = self.place(x, &mut mode)?;
         let value = self.through(base, &mut mode)?;
-        if let Err(what) = self.set_tables(&value, of)? {
-            return Ok(Some(Err(what)));
-        }
         let bytes = self.bytes_ty();
         let pointer = self.b.assign_temp(Rvalue::AddrOf(value, Mutability::Mut))?;
         let pointer = Place::local(pointer);
@@ -590,33 +585,17 @@ impl FuncCx<'_, '_> {
         self.b.deref(&Place::local(at))
     }
 
-    /// Gives the value at the place, of the type `checked`, the
-    /// addresses of its tables if it has none yet: a value that was
-    /// made all zero.
-    pub(super) fn set_tables(
+    /// Writes the addresses of the tables of the type `checked` into
+    /// the value at the place: a value that was put together from
+    /// parts, each of which has those of its own type.
+    pub(super) fn put_tables(
         &mut self,
         value: &Place,
         checked: CheckedTypeId,
     ) -> Built<Result<(), &'static str>> {
         let shared = self.shared;
-        let types = shared.types;
-        // No value is of a type that leaves a method open.
-        if !types.has_table(checked) || types.is_abstract(checked, shared.names) {
-            return Ok(Ok(()));
-        }
         let bytes = self.bytes_ty();
-        let word = self.table_word(value)?;
-        let none = self.zero(bytes);
-        let set = self
-            .b
-            .assign_temp(Rvalue::Binary(BinOp::Ne, Operand::Copy(word), none))?;
-        let [unset, done] = [(); 2].map(|()| self.b.new_block());
-        self.b
-            .switch(Operand::Copy(Place::local(set)), vec![(0, unset)], done)?;
-        self.b.switch_to(unset);
-        // The word that says whether the value has its tables is
-        // written last: who finds it set finds the others set.
-        for (way, head) in shared.tables_of(checked).into_iter().rev() {
+        for (way, head) in shared.tables_of(checked) {
             let table = match self.table(checked, &way, head)? {
                 Ok(table) => table,
                 Err(what) => return Ok(Err(what)),
@@ -634,9 +613,217 @@ impl FuncCx<'_, '_> {
             self.b
                 .assign(word, Rvalue::Cast(CastKind::PtrToPtr, address, bytes))?;
         }
-        self.b.goto(done)?;
-        self.b.switch_to(done);
         Ok(Ok(()))
+    }
+
+    /// Whether a value of the type holds a value with tables: by
+    /// itself, in a field or in an element, never behind a pointer.
+    pub(super) fn holds_tables(&mut self, ty: TypeId) -> bool {
+        if let Some(&known) = self.memo.holds_tables.get(&ty) {
+            return known;
+        }
+        let parts = match self.kind(ty) {
+            Type::Struct(id) => (self.b.types().struct_fields(id).unwrap_or_default()).to_vec(),
+            Type::Tuple(parts) => parts.to_vec(),
+            Type::Array(of, count) if count > 0 => vec![of],
+            _ => Vec::new(),
+        };
+        let own = self.memo.with_tables.contains_key(&ty);
+        // A struct in a struct in a struct: as deep as the program
+        // declares them.
+        let holds = own
+            || stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+                parts.into_iter().any(|part| self.holds_tables(part))
+            });
+        self.memo.holds_tables.insert(ty, holds);
+        holds
+    }
+
+    /// How many leaves a value of the type has (`TypeInterner::leaves`).
+    fn leaf_count(&mut self, ty: TypeId) -> Option<usize> {
+        let leaves = self.b.types().leaves(ty, crate::verify::MAX_LEAVES);
+        leaves.map(|leaves| leaves.len())
+    }
+
+    /// Which leaves of a new value of the type are the addresses of
+    /// tables, counted from `base`: for each the table.
+    fn table_leaves(
+        &mut self,
+        ty: TypeId,
+        base: usize,
+        out: &mut std::collections::BTreeMap<usize, GlobalId>,
+    ) -> Built<Result<(), &'static str>> {
+        if !self.holds_tables(ty) {
+            return Ok(Ok(()));
+        }
+        let too_many = "a value of more parts than static data has that holds values with tables";
+        let parts: Vec<TypeId> = match self.kind(ty) {
+            Type::Struct(id) => (self.b.types().struct_fields(id).unwrap_or_default()).to_vec(),
+            Type::Tuple(parts) => parts.to_vec(),
+            Type::Array(of, count) => {
+                // Each element has the leaves of the first.
+                let mut first = std::collections::BTreeMap::new();
+                if let Err(what) = self.table_leaves(of, 0, &mut first)? {
+                    return Ok(Err(what));
+                }
+                let Some(each) = self.leaf_count(of) else {
+                    return Ok(Err(too_many));
+                };
+                for at in 0..count as usize {
+                    out.extend(
+                        first
+                            .iter()
+                            .map(|(leaf, table)| (base + at * each + leaf, *table)),
+                    );
+                }
+                return Ok(Ok(()));
+            }
+            _ => Vec::new(),
+        };
+        // The fields, each with the tables of its own type; then the
+        // tables of the type itself, which the parts of its parents
+        // have in the place of their own.
+        let mut starts = Vec::with_capacity(parts.len());
+        let mut next = base;
+        for &part in &parts {
+            starts.push(next);
+            let nested = stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+                self.table_leaves(part, next, out)
+            })?;
+            if let Err(what) = nested {
+                return Ok(Err(what));
+            }
+            let Some(leaves) = self.leaf_count(part) else {
+                return Ok(Err(too_many));
+            };
+            next += leaves;
+        }
+        let Some(&checked) = self.memo.with_tables.get(&ty) else {
+            return Ok(Ok(()));
+        };
+        for (way, head) in self.shared.tables_of(checked) {
+            let table = match self.table(checked, &way, head)? {
+                Ok(table) => table,
+                Err(what) => return Ok(Err(what)),
+            };
+            // The part at the end of the way starts with the address.
+            let (mut at, mut part) = (base, ty);
+            for &step in &way {
+                let Type::Struct(id) = self.kind(part) else {
+                    return Ok(Err("a part of what is no struct"));
+                };
+                let fields = (self.b.types().struct_fields(id).unwrap_or_default()).to_vec();
+                let field =
+                    usize::from(self.memo.tabled.contains(&part)) + (step & !PARENT) as usize;
+                for &before in fields.iter().take(field) {
+                    let Some(leaves) = self.leaf_count(before) else {
+                        return Ok(Err(too_many));
+                    };
+                    at += leaves;
+                }
+                let Some(&next) = fields.get(field) else {
+                    return Ok(Err("a part that its type does not have"));
+                };
+                part = next;
+            }
+            out.insert(at, table);
+        }
+        Ok(Ok(()))
+    }
+
+    /// The global that a new value of the type starts as, if a value
+    /// of the type holds a value with tables: all zero but for the
+    /// addresses of the tables. A value has its tables from where it is
+    /// made, so nothing writes them later into a value that is only
+    /// read (TYP-22).
+    pub(super) fn blank(&mut self, ty: TypeId) -> Option<GlobalId> {
+        if let Some(&known) = self.memo.blanks.get(&ty) {
+            return known;
+        }
+        let made = match self.blank_new(ty) {
+            Ok(Ok(made)) => made,
+            Ok(Err(what)) => {
+                self.unmade(what);
+                None
+            }
+            Err(error) => {
+                self.unmade(&error.to_string());
+                None
+            }
+        };
+        self.memo.blanks.insert(ty, made);
+        made
+    }
+
+    /// The address of what a new value of the type starts as, as the
+    /// runtime takes it: none for a type whose new values are all
+    /// zero.
+    pub(super) fn blank_at(&mut self, ty: TypeId) -> Built<Option<Operand>> {
+        let Some(blank) = self.blank(ty) else {
+            return Ok(None);
+        };
+        let address = Operand::Const(Constant {
+            kind: ConstantKind::Global(blank),
+            ty: self.b.types().ptr(ty),
+        });
+        let bytes = self.bytes_ty();
+        let at = Rvalue::Cast(CastKind::PtrToPtr, address, bytes);
+        Ok(Some(Operand::Copy(Place::local(self.b.assign_temp(at)?))))
+    }
+
+    fn blank_new(&mut self, ty: TypeId) -> Built<Result<Option<GlobalId>, &'static str>> {
+        if !self.holds_tables(ty) {
+            return Ok(Ok(None));
+        }
+        let Some(leaves) = self.b.types().leaves(ty, crate::verify::MAX_LEAVES) else {
+            let what = "a value of more parts than static data has that holds values with tables";
+            return Ok(Err(what));
+        };
+        let mut tables = std::collections::BTreeMap::new();
+        if let Err(what) = self.table_leaves(ty, 0, &mut tables)? {
+            return Ok(Err(what));
+        }
+        let mut parts = Vec::with_capacity(leaves.len());
+        for (at, leaf) in leaves.into_iter().enumerate() {
+            self.memo.steps += 1;
+            parts.push(match tables.get(&at) {
+                Some(&table) => {
+                    let record = self.b.module().globals[table].ty;
+                    let kind = ConstantKind::Global(table);
+                    let ty = self.b.types().ptr(record);
+                    Constant { kind, ty }
+                }
+                None => Constant {
+                    kind: ConstantKind::Zero,
+                    ty: leaf,
+                },
+            });
+        }
+        // A symbol of the type as the module writes it, with what a
+        // symbol does not have written as its number.
+        let mut symbol = "gopp.blank.".to_owned();
+        for letter in self.b.types().display(ty).bytes() {
+            match letter.is_ascii_alphanumeric() || letter == b'_' || letter == b'.' {
+                true => symbol.push(letter as char),
+                false => symbol.push_str(&format!("${letter:02x}")),
+            }
+        }
+        if let Some(&known) = self.memo.globals.get(&symbol) {
+            return Ok(Ok(Some(known)));
+        }
+        Ok(Ok(Some(self.said(symbol, ty, parts))))
+    }
+
+    /// Says once that the value that a new value starts as could not
+    /// be made, at the start of the package.
+    fn unmade(&mut self, what: &str) {
+        let (tree, _) = self.shared.files[0];
+        let first = tree.decl_nodes.iter().next().map(|(_, decl)| decl.span);
+        if let Some(span) = tree.package.map(|name| name.span).or(first) {
+            let message = format!("not supported yet: {what}");
+            let diagnostic = Diagnostic::new(Fault::GirUnsupported, span, message);
+            self.memo.diagnostics.push(diagnostic);
+        }
     }
 
     /// The call of a method that may be replaced, through a pointer or
@@ -732,9 +919,6 @@ impl FuncCx<'_, '_> {
             Ok(code) => code,
             Err(what) => return Ok(Err(what)),
         };
-        if let Err(what) = self.set_tables(&value, of)? {
-            return Ok(Err(what));
-        }
         let mut part = value;
         for &step in &way {
             part = self.part(&part, step)?;
@@ -787,13 +971,11 @@ impl FuncCx<'_, '_> {
 
     /// A pointer to a value where one to a part of a parent of it is
     /// wanted (EXP-13): the address of that part. `None` if the types
-    /// are not those of such pointers. `checked` is the type of what
-    /// the pointer points to.
+    /// are not those of such pointers.
     pub(super) fn upcast(
         &mut self,
         pointer: Operand,
         to: TypeId,
-        checked: Option<CheckedTypeId>,
     ) -> Built<Option<Result<Rvalue, &'static str>>> {
         let from = self.b.operand_ty(&pointer);
         let (Type::Ptr(child), Type::Ptr(parent)) = (self.kind(from), self.kind(to)) else {
@@ -802,13 +984,9 @@ impl FuncCx<'_, '_> {
         let Some(way) = self.way_to(child, parent).filter(|way| !way.is_empty()) else {
             return Ok(None);
         };
-        let Some(checked) = checked else {
-            return Ok(Some(Err(
-                "a pointer to a part of a value whose type is not known",
-            )));
-        };
         let held = self.slot_of(Rvalue::Use(pointer))?;
-        let made = self.slot_of(Rvalue::Use(self.zero(to)))?;
+        let zero = Rvalue::Use(self.zero(to));
+        let made = self.slot_of(zero)?;
         // An option of a pointer that is unset has no part.
         let none = self.zero(from);
         let set = Rvalue::Binary(BinOp::Ne, Operand::Copy(held.clone()), none);
@@ -817,9 +995,6 @@ impl FuncCx<'_, '_> {
         self.b.switch(set, vec![(0, done)], some)?;
         self.b.switch_to(some);
         let value = self.b.deref(&held)?;
-        if let Err(what) = self.set_tables(&value, checked)? {
-            return Ok(Some(Err(what)));
-        }
         let mut part = value;
         for &step in &way {
             part = self.b.field(&part, step)?;
@@ -904,7 +1079,8 @@ impl FuncCx<'_, '_> {
         let value = self.taken(expr, own, value)?;
         let from = self.operand_of(value)?;
         let from = self.stable(from)?;
-        let made = self.slot_of(Rvalue::Use(self.zero(ty)))?;
+        let zero = Rvalue::Use(self.zero(ty));
+        let made = self.slot_of(zero)?;
         // An option of a handle that is unset has no part.
         let none = self.zero(own);
         let set = Rvalue::Binary(BinOp::Ne, from.clone(), none);
@@ -915,9 +1091,6 @@ impl FuncCx<'_, '_> {
         let to = self.b.types().ptr(child);
         let whole = self.slot_of(Rvalue::Cast(CastKind::PtrToPtr, from, to))?;
         let whole = self.b.deref(&whole)?;
-        if let Err(what) = self.set_tables(&whole, held)? {
-            return Ok(Some(Err(what)));
-        }
         let mut part = whole;
         for &step in &way {
             part = self.b.field(&part, step)?;
