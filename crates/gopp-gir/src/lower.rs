@@ -378,6 +378,9 @@ enum Named {
     Func(u32, ObjId),
     /// A method of the instance of a generic type.
     Method(CheckedTypeId, Spur),
+    /// An `@Operator` method of the instance of a generic type: which
+    /// of them, in the order of their declarations.
+    Operator(CheckedTypeId, u32),
     /// A method with type parameters of its own, of the type.
     OwnMethod(CheckedTypeId, Spur),
 }
@@ -448,6 +451,8 @@ pub(crate) struct Shared<'a> {
     /// those that it imports, each by its place among those of its
     /// type; and those of each type as the checker has them.
     operators: FxHashMap<(NamedId, u32), Method>,
+    /// The `@Operator` methods of the instances of generic types.
+    instance_operators: FxHashMap<(CheckedTypeId, u32), Method>,
     operator_decls: FxHashMap<CheckedTypeId, Vec<gopp_sema::types::DeclaredMethod>>,
     /// For each type that a function declares: which job, and which of
     /// the types of its name there, from 0.
@@ -823,6 +828,7 @@ impl<'a> Shared<'a> {
             refused: Vec::new(),
             methods: FxHashMap::default(),
             operators: FxHashMap::default(),
+            instance_operators: FxHashMap::default(),
             operator_decls: FxHashMap::default(),
             locals: FxHashMap::default(),
             no_body: Body::default(),
@@ -1224,11 +1230,13 @@ impl<'a> Shared<'a> {
         Some(gopp_sema::LocalId(at as u32))
     }
 
-    /// The `@Operator` method of the declared type `holder` that is
-    /// the one at `which` among them.
+    /// The `@Operator` method of the declared type `holder`, or of the
+    /// instance of a generic type, that is the one at `which` among
+    /// them.
     pub fn operator(&self, holder: CheckedTypeId, which: u32) -> Option<&Method> {
         match &*self.types.get(holder) {
             CheckedType::Named { id, args } if args.is_empty() => self.operators.get(&(*id, which)),
+            CheckedType::Named { .. } => self.instance_operators.get(&(holder, which)),
             _ => None,
         }
     }
@@ -1431,6 +1439,7 @@ impl<'a> Shared<'a> {
             let mut found: Vec<Found> = Vec::new();
             let mut known: FxHashMap<(Used, Vec<CheckedTypeId>), usize> = FxHashMap::default();
             let mut of_types: Vec<((CheckedTypeId, Spur), usize, bool)> = Vec::new();
+            let mut of_operators = Vec::new();
             let mut steps = 0;
             // The first instance that is refused: the report, and the
             // use that asks for the instance.
@@ -1617,15 +1626,49 @@ impl<'a> Shared<'a> {
                     let Some((name, pointer)) = of.method else {
                         continue;
                     };
-                    let path = self.path_of(of.file);
-                    let found_method = self.types.lookup(ty, name, path, self.names, false);
-                    let sig = match found_method.map(|found| found.member) {
-                        Ok(gopp_sema::types::Member::Method { sig, .. }) => sig,
-                        _ => continue,
+                    // An `@Operator` method is the one at its place
+                    // among those of the type: two may have one name.
+                    let (tree, _) = self.files[of.file as usize];
+                    let which = match &tree.decl_nodes[of.decl].kind {
+                        DeclKind::Func { name, .. } => {
+                            let operators = &self.home(of.file).operators;
+                            operators.get(&name.span.lo).map(|&(_, which)| which)
+                        }
+                        _ => None,
                     };
-                    let entity = Entity::Method { receiver: ty, name };
+                    let declared = match which {
+                        Some(_) => self.types.declared_operators(*id),
+                        None => Vec::new(),
+                    };
+                    let (sig, entity) = match which.map(|which| &declared[which as usize]) {
+                        Some(method) => {
+                            let mut own = self.types.operators(ty, name).into_iter();
+                            let own = own.find(|own| own.holder == ty && Some(own.at) == which);
+                            let Some(own) = own else {
+                                continue;
+                            };
+                            let entity = Entity::Operator {
+                                receiver: ty,
+                                method,
+                            };
+                            (own.sig, entity)
+                        }
+                        None => {
+                            let path = self.path_of(of.file);
+                            let found = self.types.lookup(ty, name, path, self.names, false);
+                            let sig = match found.map(|found| found.member) {
+                                Ok(gopp_sema::types::Member::Method { sig, .. }) => sig,
+                                _ => continue,
+                            };
+                            (sig, Entity::Method { receiver: ty, name })
+                        }
+                    };
                     let Ok(symbol) = symbol_of(&mut namer, entity) else {
                         continue;
+                    };
+                    let named = match which {
+                        Some(which) => Named::Operator(ty, which),
+                        None => Named::Method(ty, name),
                     };
                     steps += 1;
                     let job = match by_symbol.get(&symbol) {
@@ -1643,7 +1686,7 @@ impl<'a> Shared<'a> {
                             found.push(Found {
                                 of,
                                 by,
-                                named: Named::Method(ty, name),
+                                named,
                                 args: args.to_vec(),
                                 of_receiver: args.len(),
                                 sig,
@@ -1652,7 +1695,15 @@ impl<'a> Shared<'a> {
                             job
                         }
                     };
-                    of_types.push(((ty, name), job, pointer));
+                    // The one `@Operator` method of its name is called
+                    // by the name like any other method.
+                    let alone = declared.iter().filter(|other| other.method.name == name);
+                    if which.is_none() || alone.count() == 1 {
+                        of_types.push(((ty, name), job, pointer));
+                    }
+                    if let Some(which) = which {
+                        of_operators.push(((ty, which), job, declared));
+                    }
                 }
             }
             self.found_steps += steps;
@@ -1690,6 +1741,9 @@ impl<'a> Shared<'a> {
                         (JobName::Instance(package, object, made), None)
                     }
                     Named::Method(ty, name) => (JobName::Method(ty, name), Some(receiver(ty))),
+                    Named::Operator(ty, which) => {
+                        (JobName::Operator(ty, which), Some(receiver(ty)))
+                    }
                     Named::OwnMethod(ty, name) => {
                         (JobName::OwnMethod(ty, name, made), Some(receiver(ty)))
                     }
@@ -1730,6 +1784,19 @@ impl<'a> Shared<'a> {
                     sig: job.sig,
                 };
                 self.instance_methods.insert(key, method);
+            }
+            for (key, job, declared) in of_operators {
+                self.operator_decls.entry(key.0).or_insert(declared);
+                let job = &self.jobs[job];
+                let Some(receiver) = job.receiver else {
+                    continue;
+                };
+                let method = Method {
+                    symbol: job.symbol.clone(),
+                    receiver,
+                    sig: job.sig,
+                };
+                self.instance_operators.insert(key, method);
             }
             level = start..self.jobs.len();
         }

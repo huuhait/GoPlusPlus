@@ -1,0 +1,107 @@
+package main
+
+type Vec[T int | float64] struct{ x, y T }
+
+@Operator
+func (a Vec[T]) Add(b Vec[T]) Vec[T] { return Vec[T]{a.x + b.x, a.y + b.y} }
+
+@Operator
+func (a Vec[T]) Add(k T) Vec[T] { return Vec[T]{a.x + k, a.y + k} }
+
+@Operator
+@Right
+func (a Vec[T]) Mul(k T) Vec[T] { return Vec[T]{k * a.x, k * a.y} }
+
+@Operator
+func (a *Vec[T]) AddAssign(b Vec[T]) {
+	a.x += b.x
+	a.y += b.y
+}
+
+@Operator
+func (a Vec[T]) Eq(b Vec[T]) bool { return a.x == b.x && a.y == b.y }
+
+@Operator
+func (a Vec[T]) Cmp(b Vec[T]) int {
+	if a.x < b.x {
+		return -1
+	}
+	if a.x > b.x {
+		return 1
+	}
+	return 0
+}
+
+@Operator
+func (a Vec[T]) Neg() Vec[T] { return Vec[T]{-a.x, -a.y} }
+
+@Operator
+func (a Vec[T]) Index(i int) T {
+	if i == 0 {
+		return a.x
+	}
+	return a.y
+}
+
+@Operator
+func (a *Vec[T]) SetIndex(i int, v T) {
+	if i == 0 {
+		a.x = v
+	} else {
+		a.y = v
+	}
+}
+
+type Grid[T Clone] struct{ cells []T }
+
+@Operator
+func (g Grid[T]) Index(i int) T { return g.cells[i] }
+
+type Adder[T any] interface {
+	Copy
+	Add(b T) T
+}
+
+func Sum[T Adder[T]](xs []T, zero T) T {
+	total := zero
+	for _, x := range xs {
+		total = total + x
+	}
+	return total
+}
+
+func Twice[T int | float64](v Vec[T]) Vec[T] {
+	w := v + v
+	w += v
+	return -w + v
+}
+
+type Num struct{ n int }
+
+@Operator
+func (a Num) Add(b Num) Num { return Num{a.n + b.n} }
+
+func main() {
+	a := Vec[int]{1, 2}
+	b := Vec[int]{3, 4}
+	c := a + b
+	d := c + 10
+	e := 2 * d
+	e += a
+	println(c.x, c.y, d.x, d.y, e.x, e.y)
+	println(a == b, a != b, a < b, a >= b, (-a).x, c[0], c[1])
+	c[1] = 40
+	println(c[1])
+	f := Vec[float64]{1.5, 2} + Vec[float64]{1, 1}
+	println(f.x == 2.5, f.y == 3)
+	t := Twice(a)
+	println(t.x, t.y, Twice(Vec[float64]{1, 2}).x == -2)
+	g := Grid[string]{[]string{"a", "b"}}
+	println(g[1], Sum([]Num{{1}, {2}, {3}}, Num{}).n, Sum([]Vec[int]{a, b}, Vec[int]{}).y)
+	switch a {
+	case b:
+		println("b")
+	case Vec[int]{1, 2}:
+		println("same")
+	}
+}

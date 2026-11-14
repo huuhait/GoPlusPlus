@@ -20,10 +20,22 @@ impl FuncCx<'_, '_> {
         receiver: ExprId,
         args: &[ExprId],
     ) -> Built<Result<Rvalue, &'static str>> {
-        // A `@Convert` method is found by its name alone.
-        let key = match used.method {
-            Some(which) => CalleeKey::Operator(used.holder, which),
-            None => CalleeKey::Method(used.holder, used.name),
+        let types = self.shared.types;
+        // A `@Convert` method is found by its name alone, and so is the
+        // method that a constraint lists: of the `@Operator` methods of
+        // that name which the type has, it is the one of that type.
+        let listed = match used.method {
+            Some(_) => None,
+            None => {
+                let mut all = types.operators(used.holder, used.name).into_iter();
+                all.find(|operator| types.identical(operator.sig, used.sig))
+            }
+        };
+        let holder = listed.as_ref().map_or(used.holder, |listed| listed.holder);
+        let key = match (used.method, &listed) {
+            (Some(which), _) => CalleeKey::Operator(holder, which),
+            (None, Some(listed)) => CalleeKey::Operator(holder, listed.at),
+            (None, None) => CalleeKey::Method(holder, used.name),
         };
         let called = match self.callee(key)? {
             Ok(called) => called,
@@ -35,7 +47,6 @@ impl FuncCx<'_, '_> {
         };
         // A method of an ancestor has the part of that parent as its
         // receiver (EXP-30).
-        let types = self.shared.types;
         let mut own = self.body.types.get(&receiver).map(|typed| typed.ty);
         while let Some(
             CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to),
@@ -43,10 +54,10 @@ impl FuncCx<'_, '_> {
         {
             own = Some(*to);
         }
-        let way = own.and_then(|own| types.ancestor_path(own, used.holder));
+        let way = own.and_then(|own| types.ancestor_path(own, holder));
         let way: Vec<u32> = way.unwrap_or_default();
         let way: Vec<u32> = way.iter().map(|step| step | PARENT).collect();
-        let holder = (!way.is_empty()).then_some(used.holder);
+        let holder = (!way.is_empty()).then_some(holder);
         self.method_call(expr, called, Some((receiver, &way)), holder, args)
             .map(Ok)
     }
