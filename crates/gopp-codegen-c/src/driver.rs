@@ -116,9 +116,11 @@ impl ClangDriver<'_> {
             flags.push(format!("-march={cpu}"));
         }
         flags.push(self.opt.flag().to_owned());
-        // DWARF, where the debuggers of the target read it.
+        // DWARF, where the debuggers of the target read it. A column
+        // would be one of the unit, which says lines of the source only.
         if self.debug && self.target.object == ObjectFormat::Elf {
-            flags.extend(["-gdwarf-5".to_owned(), "-fno-omit-frame-pointer".to_owned()]);
+            let dwarf = ["-gdwarf-5", "-gno-column-info", "-fno-omit-frame-pointer"];
+            flags.extend(dwarf.map(str::to_owned));
         }
         // A unit for a debugger declares each variable in a block of C
         // for its scope. The block is no lifetime: a variable keeps its

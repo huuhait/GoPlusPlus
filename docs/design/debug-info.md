@@ -2,7 +2,7 @@
 
 Debug information is produced jointly by `crates/gopp-gir` (`Function::Scopes`, [gir.md](gir.md) section 14) and `crates/gopp-codegen-c` compiling with **Clang 23 (`-gdwarf-5 -fno-omit-frame-pointer` at `-opt=0`)** ([ADR-0001](../adr/0001-implementation-language.md), [ADR-0002](../adr/0002-clang-version-policy.md)). Unless `-no-debug` is passed, `gopp-codegen-c` emits `#line <line> "<file>"` directives from GIR `Span`s, mirrors `DebugScope::Block` trees as nested C23 `{ ... }` lexical blocks, emits source-named C23 `struct`s and `Local::Source` variables, and binds mangled symbol names with `__asm__("_GP...")` so DWARF retains human-readable Go++ names while object symbols keep exact `_GP...` mangling.
 
-`gopp build` writes debug information unless `-no-debug` is given; `gopp test-run` builds its programs without it unless `-debug` is given. A unit names the line of the source before every line of C that it writes, because C counts on from a line that it is told. The flags of Clang are those of an ELF target; on `windows/amd64` the unit has its `#line` directives and Clang is given no debug flag yet (section 5).
+`gopp build` writes debug information unless `-no-debug` is given; `gopp test-run` builds its programs without it unless `-debug` is given. A unit names the line of the source before every line of C that it writes, because C counts on from a line that it is told. It can name no column, so Clang is given `-gno-column-info`: a column would be one of the unit. The flags of Clang are those of an ELF target; on `windows/amd64` the unit has its `#line` directives and Clang is given no debug flag yet (section 5).
 
 ## 1. DWARF structure emitted via C23 + Clang 23
 

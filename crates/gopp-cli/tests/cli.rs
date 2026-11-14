@@ -1912,4 +1912,23 @@ func main() {
     assert!(said.contains("\n$4 = 3\n"), "{said}");
     assert!(said.contains("\n$5 = 6\n"), "{said}");
     assert!(said.contains("\n$6 = \"hi bob\"\n"), "{said}");
+    // `lldb` reads the same: the line without a column, which would be
+    // one of the unit, and the variables of the blocks.
+    let program = dir.path().join("steps.bin");
+    let mut lldb = Command::new("lldb");
+    lldb.arg("-b");
+    for command in ["breakpoint set -f steps.gopp -l 7", "run", "frame variable"] {
+        lldb.args(["-o", command]);
+    }
+    let ran = run_beside(lldb.arg(&program));
+    let said = format!("{}{}", stdout(&ran), stderr(&ran));
+    assert!(said.contains(" at steps.gopp:7\n"), "{said}");
+    for variable in [
+        "(int64_t) a = 3",
+        "(int64_t) sum = 7",
+        "(int64_t) i = 0",
+        "(int64_t) twice = 0",
+    ] {
+        assert!(said.contains(variable), "{variable}\n{said}");
+    }
 }
