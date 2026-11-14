@@ -2166,6 +2166,13 @@ impl<'a> FuncCx<'a, '_> {
             return Ok(());
         };
         let callee = Shared::unparen(self.tree, *fun);
+        // The error of the call would be that of the function with the
+        // loop, whose results the body does not have.
+        if *unwrap && self.ranged.is_some() {
+            let what = "a deferred call with `!` in the body of a range over a function";
+            self.unsupported(span, what);
+            return Ok(());
+        }
         let known = self.body.types.contains_key(&callee);
         let built_in = self.builtin_of(callee).filter(|_| !known);
         let prints = match built_in {
@@ -2181,8 +2188,12 @@ impl<'a> FuncCx<'a, '_> {
             _ => false,
         };
         let refused = match () {
-            // Its deferred calls would have no function to make them.
-            () if !self.defers_calls() => Some("a defer statement in a function without a symbol"),
+            // Its deferred calls would have no function to make them;
+            // those of the body of a loop over a function are made by
+            // the function with the loop.
+            () if !self.defers_calls() && self.ranged.is_none() => {
+                Some("a defer statement in a function without a symbol")
+            }
             () if !known && prints.is_none() && !other => {
                 Some("a defer statement of this built-in function or of a conversion")
             }
@@ -2248,8 +2259,10 @@ impl<'a> FuncCx<'a, '_> {
                         0 => self.ty_of(part),
                         at => sig.params[at],
                     };
-                    let value = self.rvalue_as(part, ty)?;
-                    let value = self.taken(part, ty, value)?;
+                    self.deferring = (at == 0).then_some(callee);
+                    let value = self.rvalue_as(part, ty);
+                    self.deferring = None;
+                    let value = self.taken(part, ty, value?)?;
                     slots.push(self.kept(part, ty, value)?);
                 }
                 if let (Some(checked), Some(&ty)) = (packed, sig.params.last()) {
@@ -2455,6 +2468,17 @@ impl<'a> FuncCx<'a, '_> {
             let Some(local) = self.root_local(inner).filter(|_| by_address) else {
                 continue;
             };
+            // In the body of a loop over a function only a variable of
+            // the whole function with the loop lives until the call.
+            let declared = self.body.locals[local.0 as usize].span;
+            let passes =
+                |ranged: &super::ranged::Leaving| !ranged.outside(declared) || self.extended(local);
+            if self.ranged.as_ref().is_some_and(passes) {
+                let what = "a deferred call that holds a variable of a block, in the body of a \
+                            range over a function";
+                self.unsupported(span, what);
+                return None;
+            }
             if self.of_block(local) && !self.in_cell(local) {
                 self.unsupported(span, "a deferred call that holds a variable of a block");
                 return None;
@@ -2539,12 +2563,14 @@ impl<'a> FuncCx<'a, '_> {
         let list = self.defers[at].list.and_then(|list| self.defer_list(list));
         let bytes = self.bytes_ty();
         let word = self.b.types().int(64, false);
-        let (mut fields, mut kept) = match list {
+        // The number of the statement in its function.
+        let number = at + self.ranged.as_ref().map_or(0, |ranged| ranged.base);
+        let (mut fields, mut kept) = match &list {
             Some(list) => (
                 vec![bytes, word],
                 vec![
-                    Operand::Copy(Place::local(list)),
-                    self.b.const_int(word, at as u64)?,
+                    Operand::Copy(list.clone()),
+                    self.b.const_int(word, number as u64)?,
                 ],
             ),
             None => (vec![TypeInterner::BOOL], vec![self.b.const_bool(true)]),
@@ -2573,7 +2599,7 @@ impl<'a> FuncCx<'a, '_> {
                 // behind a pointer.
                 let whole = Operand::Copy(self.slot_of(whole)?);
                 self.b.assign(inside, Rvalue::Use(whole))?;
-                self.b.assign(Place::local(list), Rvalue::Use(made))?;
+                self.b.assign(list, Rvalue::Use(made))?;
                 None
             }
             None => {

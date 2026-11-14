@@ -4,7 +4,8 @@
 // with a count of the function values that share it and has the cells
 // of the variables that the function captured; the last value that
 // goes lets the cells go and frees it. An environment in the frame of
-// a function is never counted or freed.
+// a function is never counted or freed. One that is made of addresses
+// only and is not in a frame is counted, and has no cells to let go.
 //
 // A captured variable lives in a cell: a count of what shares it, the
 // function around it and every environment that has it, and then the
@@ -13,6 +14,9 @@
 #include "internal.h"
 
 void free(void *room);
+
+// The bit of the count of an environment without cells.
+#define ENV_PLAIN ((uint64_t)1 << 63)
 
 typedef struct gopp_func {
   uint8_t *code;
@@ -35,12 +39,16 @@ void _gopp_func_drop(uint8_t *value) {
   if (env == 0 || env->count == GOPP_ENV_IN_FRAME) {
     return;
   }
-  if (__atomic_fetch_sub(&env->count, 1, __ATOMIC_ACQ_REL) == 1) {
+  uint64_t before = __atomic_fetch_sub(&env->count, 1, __ATOMIC_ACQ_REL);
+  if ((before & ~ENV_PLAIN) != 1) {
+    return;
+  }
+  if ((before & ENV_PLAIN) == 0) {
     for (uint64_t at = 0; at < env->cells; at++) {
       _gopp_cell_release(env->all[at].cell, env->all[at].drop);
     }
-    free(env);
   }
+  free(env);
 }
 
 // An environment for so many cells, which one function value has.

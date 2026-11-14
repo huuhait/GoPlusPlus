@@ -1,0 +1,85 @@
+package main
+
+func upTo(n int) func(func(int) bool) {
+	return func(yield func(int) bool) {
+		for i := 0; i < n; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+}
+
+type Log struct{ lines []string }
+
+func (l *Log) Add(s string) { l.lines = append(l.lines, s) }
+
+func (l Log) Count() int { return len(l.lines) }
+
+type Tag struct{ name string }
+
+func (t Tag) Show(n int) { println("tag", t.name, n) }
+
+func whole() (out string) {
+	count := 0
+	for i := range upTo(3) {
+		defer func() {
+			count++
+			out += "x"
+		}()
+		if i == 1 {
+			continue
+		}
+	}
+	defer func() { println("count before the loop's calls", count) }()
+	return "r"
+}
+
+func methods() int {
+	var log Log
+	tag := Tag{"t"}
+	for i := range upTo(3) {
+		defer log.Add("late")
+		defer tag.Show(i)
+		defer Tag{"lit"}.Show(i * 10)
+		log.Add("now")
+	}
+	return log.Count()
+}
+
+func recovered() (out int) {
+	defer func() {
+		if r := recover(); r != nil {
+			println("recovered")
+			out = -1
+		}
+	}()
+	for i := range upTo(5) {
+		defer println("before the panic", i)
+		if i == 2 {
+			panic("stop")
+		}
+	}
+	return 1
+}
+
+func broken() {
+	for i := range upTo(10) {
+		defer println("broken", i)
+		if i == 1 {
+			break
+		}
+	}
+	println("after the break")
+}
+
+func main() {
+	println(whole())
+	println(methods())
+	println(recovered())
+	broken()
+	for i := range upTo(2) {
+		defer println("main", i)
+	}
+	panic("at the end")
+}

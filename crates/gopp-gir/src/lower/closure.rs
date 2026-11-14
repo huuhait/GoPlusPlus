@@ -26,6 +26,10 @@ use crate::{
 /// ends its variable.
 const ENV_HEAD: u32 = 2;
 
+/// The bit of the count of an environment that is made of addresses
+/// only and is counted: the runtime frees it, and lets no cells go.
+const ENV_PLAIN: u64 = 1 << 63;
+
 /// The type of the code of a function value that a `defer` statement
 /// calls, and the type of the slice that the statement makes of its
 /// last arguments, if it makes one.
@@ -149,6 +153,32 @@ impl FuncCx<'_, '_> {
         // A literal whose value cannot outlive its variables has an
         // environment in this frame, with the address of each variable
         // where it is, or of its cell (CLO-1).
+        // What a `defer` statement in the body of a loop over a
+        // function calls runs when that body has returned: its
+        // environment is not in the frame of the body, and is counted.
+        if self.framed(expr) && self.ranged.is_some() && self.deferring == Some(expr) {
+            let word = self.b.types().int(64, false);
+            let bytes = self.bytes_ty();
+            let mut parts = self.frame_parts(&captured)?;
+            parts[0] = self.b.const_int(word, ENV_PLAIN | 1)?;
+            let env = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;
+            let env_ty = self.b.place_ty(&env);
+            let layout = self.b.types().layout(env_ty, self.shared.layout);
+            let size = self
+                .b
+                .const_int(word, layout.map_or(0, |layout| layout.size))?;
+            let made = self.runtime("_gopp_cell_new", &[word], bytes, vec![size])?;
+            let to = self.b.types().ptr(env_ty);
+            let typed = Rvalue::Cast(CastKind::PtrToPtr, made.clone(), to);
+            let typed = Place::local(self.b.assign_temp(typed)?);
+            let inside = self.b.deref(&typed)?;
+            self.b.assign(inside, Rvalue::Use(Operand::Copy(env)))?;
+            let code = Operand::Const(Constant {
+                kind: ConstantKind::Func(code),
+                ty: code_ty,
+            });
+            return Ok(Rvalue::Aggregate(AggKind::Tuple, vec![code, made]));
+        }
         if self.framed(expr) {
             let parts = self.frame_parts(&captured)?;
             let env = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;

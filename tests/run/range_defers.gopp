@@ -1,0 +1,108 @@
+package main
+
+// A `defer` statement in the body of a loop over a function (RNG-6a):
+// its call is made where the function with the loop is left, a function
+// literal too, and what it keeps lives until then.
+type File struct {
+	fd   int
+	name string
+}
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd, f.name)
+	}
+}
+
+func (f File) Clone() File { return File{fd: f.fd + 100, name: f.name} }
+
+func files(n int) func(func(File) bool) {
+	return func(yield func(File) bool) {
+		for i := 1; i <= n; i++ {
+			if !yield(File{fd: i, name: "f"}) {
+				return
+			}
+		}
+	}
+}
+
+func upTo(n int) func(func(int) bool) {
+	return func(yield func(int) bool) {
+		for i := 0; i < n; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+}
+
+func keep(f File) { println("keep", f.fd) }
+
+// A value that a deferred call is given is the call's own.
+func given() {
+	for f := range files(2) {
+		defer keep(f)
+	}
+	println("given is leaving")
+}
+
+// A function literal uses a variable of the pass, which lives in a
+// cell until the call, and a variable of the function with the loop.
+func used() (seen int) {
+	for f := range files(2) {
+		defer func() {
+			seen += f.fd
+			println("used", f.fd)
+		}()
+	}
+	return 0
+}
+
+// The function with the loop is a function literal.
+func inLiteral() int {
+	total := 0
+	run := func(n int) {
+		for i := range upTo(n) {
+			defer func() { total += i }()
+			defer println("in a literal", i)
+		}
+		println("the literal is leaving")
+	}
+	run(3)
+	return total
+}
+
+// Only variables of the whole function: the environment of the literal
+// outlives the pass.
+func whole() (out string) {
+	count := 0
+	for range upTo(3) {
+		defer func() {
+			count++
+			out += "x"
+		}()
+	}
+	defer func() { println("count", count) }()
+	return "r"
+}
+
+type Log struct{ lines []string }
+
+func (l *Log) Add(s string) { l.lines = append(l.lines, s) }
+
+func counted() int {
+	var log Log
+	for range upTo(3) {
+		defer log.Add("late")
+	}
+	defer func() { println("lines", len(log.lines)) }()
+	return len(log.lines)
+}
+
+func main() {
+	given()
+	println(used())
+	println(inLiteral())
+	println(whole())
+	println(counted())
+}

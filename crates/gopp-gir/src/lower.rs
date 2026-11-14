@@ -605,6 +605,11 @@ pub(crate) struct Memo<'a> {
     /// The places where the body of a job names its variables, in the
     /// order of the source, and its receiver.
     pub named: FxHashMap<*const Job, std::rc::Rc<ranged::Named>>,
+    /// The functions whose deferred calls are lowered when the bodies
+    /// of their loops over functions are, and what the `defer`
+    /// statements of those bodies call, by the function or the literal.
+    pub later: Vec<func::Later<'a>>,
+    pub late: FxHashMap<(*const Job, Option<ExprId>), Vec<func::Late>>,
     /// The type that every interface value has, once an interface type
     /// is lowered.
     pub iface: Option<TypeId>,
@@ -703,6 +708,8 @@ impl<'a> Memo<'a> {
             ranges: Vec::new(),
             ranged: FxHashMap::default(),
             named: FxHashMap::default(),
+            later: Vec::new(),
+            late: FxHashMap::default(),
             iface: None,
             infos: FxHashMap::default(),
             itypes: FxHashMap::default(),
@@ -2327,7 +2334,7 @@ impl<'a> Shared<'a> {
                     func::lower_literal(self, &mut module, &mut memo, job, literal);
                 } else if let Some((job, stmt)) = memo.ranges.pop() {
                     func::lower_ranged(self, &mut module, &mut memo, job, stmt);
-                } else {
+                } else if !func::lower_later(self, &mut module, &mut memo) {
                     break;
                 }
             }

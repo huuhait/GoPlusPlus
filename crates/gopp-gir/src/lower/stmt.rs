@@ -108,12 +108,6 @@ impl FuncCx<'_, '_> {
                 body,
             } => self.range_stmt((id, label), node.span, lhs, *define, *x, body)?,
             StmtKind::Go(_) => self.unsupported(node.span, "a go statement"),
-            // The deferred calls of a function are made where it is
-            // left, which the body of a loop over a function is not.
-            StmtKind::Defer(_) if self.ranged.is_some() => {
-                let what = "a defer statement in the body of a range over a function";
-                self.unsupported(node.span, what);
-            }
             StmtKind::Defer(call) => self.defer_call(id, *call)?,
             StmtKind::Send { .. } => self.unsupported(node.span, "a send"),
             StmtKind::Select { .. } => self.unsupported(node.span, "a select statement"),

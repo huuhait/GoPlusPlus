@@ -162,6 +162,9 @@ struct Frame {
 /// The deferred calls of a function, for the function that makes them.
 pub(super) struct Outlined {
     symbol: String,
+    /// A loop over a function has `defer` statements in its body: what
+    /// they call is known when the body is lowered.
+    late: bool,
     /// How many addresses the function has for it.
     count: usize,
     /// The list of each statement, and its call if it has one.
@@ -235,6 +238,12 @@ pub(super) struct FuncCx<'a, 'm> {
     /// What the body of a loop over a function, which is lowered as a
     /// function of its own, has of the function with the loop.
     pub ranged: Option<super::ranged::Leaving>,
+    /// The body of a loop over a function has `defer` statements of
+    /// this function.
+    pub late_defers: bool,
+    /// The function literal that a `defer` statement in such a body
+    /// calls, while its value is worked out.
+    pub deferring: Option<ExprId>,
     /// The local of each variable that is another name of what a cell
     /// holds.
     cell_vars: FxHashMap<LocalId, CheckedLocalId>,
@@ -400,6 +409,10 @@ pub(super) fn lower_function<'a>(
         Ok(outlined)
     });
     let built = built.and_then(|outlined| match outlined {
+        Some(outlined) if outlined.late => {
+            memo.later.push(Later(job, None, loc, outlined));
+            Ok(())
+        }
         Some(outlined) => lower_deferred(shared, module, memo, job, loc, outlined),
         None => Ok(()),
     });
@@ -595,6 +608,10 @@ pub(super) fn lower_literal<'a>(
         Ok(outlined)
     });
     let built = built.and_then(|outlined| match outlined {
+        Some(outlined) if outlined.late => {
+            memo.later.push(Later(job, Some(literal), loc, outlined));
+            Ok(())
+        }
         Some(outlined) => lower_deferred(shared, module, memo, job, loc, outlined),
         None => Ok(()),
     });
@@ -602,6 +619,41 @@ pub(super) fn lower_literal<'a>(
         let message = format!("{symbol} could not be lowered: {error}");
         report(memo, Code::GirVerify, message);
     }
+}
+
+/// The deferred calls of a function, or of a function literal, whose
+/// loops over functions have `defer` statements in their bodies: they
+/// are lowered when those bodies are.
+pub(crate) struct Later<'a>(&'a Job, Option<ExprId>, Span, Outlined);
+
+/// What a `defer` statement in the body of a loop over a function
+/// calls, with the number of the statement in its function.
+pub(crate) struct Late(usize, Pending);
+
+/// Adds the function that makes the deferred calls of one function
+/// that waited for the bodies of its loops; whether there was one.
+pub(super) fn lower_later<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+) -> bool {
+    let Some(Later(job, literal, loc, mut outlined)) = memo.later.pop() else {
+        return false;
+    };
+    let late = memo.late.remove(&(std::ptr::from_ref(job), literal));
+    for Late(at, call) in late.unwrap_or_default() {
+        if let Some((_, known)) = outlined.calls.get_mut(at) {
+            *known = Some(call);
+        }
+    }
+    let symbol = outlined.symbol.clone();
+    if let Err(error) = lower_deferred(shared, module, memo, job, loc, outlined) {
+        let message = format!("{symbol} could not be lowered: {error}");
+        let span = shared.files[job.file as usize].0.decl_nodes[job.decl].span;
+        memo.diagnostics
+            .push(Diagnostic::new(Code::GirVerify, span, message));
+    }
+    true
 }
 
 /// Adds the function of the body of a loop over a function to the
@@ -635,6 +687,7 @@ pub(super) fn lower_ranged<'a>(
             cx.owner = Some((job, ranged.within));
             cx.ranged_body(stmt, &ranged)?;
             cx.b.drop_unreached();
+            cx.late_calls(job);
             cx.b.finish().map(drop)
         });
     if let Err(error) = built {
@@ -914,6 +967,8 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             captured: Vec::new(),
             in_frame: false,
             ranged: None,
+            late_defers: false,
+            deferring: None,
             cell_vars: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
@@ -1286,6 +1341,7 @@ impl FuncCx<'_, '_> {
         let count = calls.len() + self.pinned_results().len();
         Some(Outlined {
             symbol,
+            late: self.late_defers,
             count,
             calls,
         })
@@ -1345,9 +1401,33 @@ impl FuncCx<'_, '_> {
         }
     }
 
-    /// The slot with the first record of the list.
-    pub fn defer_list(&self, list: usize) -> Option<LocalId> {
-        self.lists.get(list).copied()
+    /// The place with the first record of the list. The body of a
+    /// loop over a function has the list of the function with the
+    /// loop, which all its `defer` statements share.
+    pub fn defer_list(&self, list: usize) -> Option<Place> {
+        match &self.ranged {
+            Some(ranged) => ranged.list.clone(),
+            None => self.lists.get(list).map(|&list| Place::local(list)),
+        }
+    }
+
+    /// What the `defer` statements of the body of a loop over a
+    /// function call, each with its number in the function with the
+    /// loop, whose deferred calls are lowered after this.
+    fn late_calls(&mut self, job: &Job) {
+        let Some((base, within)) = self
+            .ranged
+            .as_ref()
+            .map(|ranged| (ranged.base, ranged.owner))
+        else {
+            return;
+        };
+        let calls = self.defers.drain(..).enumerate();
+        let calls: Vec<Late> = calls
+            .filter_map(|(at, deferred)| Some(Late(base + at, deferred.call?)))
+            .collect();
+        let key = (std::ptr::from_ref(job), within);
+        self.memo.late.entry(key).or_default().extend(calls);
     }
 
     /// The function is left: the calls of its `defer` statements are
@@ -2280,6 +2360,12 @@ impl FuncCx<'_, '_> {
     /// which then lives in a cell.
     pub fn celled(&self, local: CheckedLocalId) -> bool {
         self.facts.celled.contains(&local)
+    }
+
+    /// Whether a `defer` statement borrows the local, a variable of a
+    /// block.
+    pub fn extended(&self, local: CheckedLocalId) -> bool {
+        self.facts.extended.contains(&local)
     }
 
     /// The type of the cell of a variable of the type: the count of

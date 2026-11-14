@@ -1,0 +1,100 @@
+package main
+
+import "fmt"
+
+func upTo(n int) func(func(int) bool) {
+	return func(yield func(int) bool) {
+		for i := 0; i < n; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+}
+
+func words(yield func(string) bool) {
+	for _, w := range []string{"one", "two", "three"} {
+		if !yield(w + "!") {
+			return
+		}
+	}
+}
+
+func note(tag string, n int) int {
+	println("note", tag, n)
+	return n
+}
+
+func plain() {
+	for i := range upTo(3) {
+		defer println("deferred", i)
+		println("pass", i)
+	}
+	println("plain is leaving")
+}
+
+func calls() (total int) {
+	for i := range upTo(3) {
+		defer note("call", i)
+		defer fmt.Println("fmt", i)
+		total += i
+	}
+	defer println("last statement")
+	return total
+}
+
+func literals() string {
+	out := ""
+	for w := range words {
+		defer func() { out += w }()
+		defer func(n int) { println("literal", w, n) }(len(w))
+	}
+	defer func() { println("out is", out) }()
+	return out
+}
+
+func early() int {
+	defer println("first of early")
+	for i := range upTo(10) {
+		defer println("early", i)
+		if i == 2 {
+			return i * 10
+		}
+	}
+	return -1
+}
+
+func nested() {
+	for a := range upTo(2) {
+		defer println("outer", a)
+		for b := range upTo(2) {
+			defer println("inner", a, b)
+		}
+	}
+}
+
+func mixed() {
+	for round := 0; round < 2; round++ {
+		for i := range upTo(2) {
+			defer println("mixed", round, i)
+		}
+		defer println("round", round)
+	}
+}
+
+func value() {
+	show := func(s string) { println("value", s) }
+	for w := range words {
+		defer show(w)
+	}
+}
+
+func main() {
+	plain()
+	println(calls())
+	println(literals() == "")
+	println(early())
+	nested()
+	mixed()
+	value()
+}

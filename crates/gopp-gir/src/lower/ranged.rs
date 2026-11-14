@@ -26,7 +26,7 @@ use gopp_syntax::ast::{BranchKind, ExprId, ExprKind, Ident, StmtId, StmtKind};
 use lasso::Spur;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::func::{Built, FuncCx, Target};
+use super::func::{Built, Deferred, FuncCx, Target};
 use super::glue::{Ends, Glue};
 use super::{Job, Shared};
 use crate::{
@@ -66,6 +66,10 @@ pub(crate) struct Ranged {
     /// whether it can fail.
     parts: Vec<TypeId>,
     fails: bool,
+    /// The `defer` statements in the body, each with its list, and the
+    /// number of the first of them in their function.
+    defers: Vec<(StmtId, Option<usize>)>,
+    base: usize,
 }
 
 /// What the loops over functions of a job use of what is around them.
@@ -97,6 +101,13 @@ pub(crate) struct Leaving {
     /// Where the statement is written: what is declared there is the
     /// body's own.
     within: (u32, u32),
+    /// The list of the function with the loop that has the records of
+    /// the `defer` statements of the body, the number of the first of
+    /// those statements in that function, and the function literal that
+    /// it is, if it is one.
+    pub list: Option<Place>,
+    pub base: usize,
+    pub owner: Option<ExprId>,
 }
 
 impl Leaving {
@@ -359,10 +370,30 @@ impl<'a> FuncCx<'a, '_> {
             }
             None => None,
         };
-        // The frame: the variables that the body uses, then those two.
+        // The `defer` statements of the body are those of this function
+        // that are written in the loop: their records are in its list.
+        let whole = self.tree.stmts[stmt].span;
+        let starts = |deferred: &Deferred| self.tree.stmts[deferred.stmt].span.lo;
+        let from = self
+            .defers
+            .partition_point(|deferred| starts(deferred) < whole.lo);
+        let to = self
+            .defers
+            .partition_point(|deferred| starts(deferred) < whole.hi);
+        let defers: Vec<(StmtId, Option<usize>)> = (self.defers[from..to].iter())
+            .map(|deferred| (deferred.stmt, deferred.list))
+            .collect();
+        let list = defers.first().and_then(|&(_, list)| self.defer_list(list?));
+        self.late_defers |= list.is_some();
+        let base = from + self.ranged.as_ref().map_or(0, |ranged| ranged.base);
+        // The frame: the variables that the body uses, then those two,
+        // then that list.
         let (captured, labels) = self.loop_uses(job, stmt);
         let mut frame = self.frame_parts(&captured)?;
-        for place in [Some(exit.clone()), returned.clone()].into_iter().flatten() {
+        for place in [Some(exit.clone()), returned.clone(), list]
+            .into_iter()
+            .flatten()
+        {
             let address = Rvalue::AddrOf(place, Mutability::Mut);
             frame.push(Operand::Copy(Place::local(self.b.assign_temp(address)?)));
         }
@@ -406,6 +437,8 @@ impl<'a> FuncCx<'a, '_> {
             labels: labels.clone(),
             parts: parts.clone(),
             fails: self.fails,
+            defers,
+            base,
         };
         let key = (std::ptr::from_ref(job), stmt);
         if self.memo.ranged.insert(key, Rc::new(ranged)).is_none() {
@@ -525,6 +558,9 @@ impl<'a> FuncCx<'a, '_> {
         let returned = self.returned_type(&ranged.parts);
         let mut more = vec![self.b.types().ptr(word)];
         more.extend(returned.map(|ty| self.b.types().ptr(ty)));
+        if !ranged.defers.is_empty() {
+            more.push(self.b.types().ptr(bytes));
+        }
         let frame = self.open_frame(frame, &ranged.captured, &more)?;
         let behind = |this: &mut Self, at: u32| -> Built<Place> {
             let address = Operand::Copy(this.b.field(&frame, at)?);
@@ -537,12 +573,25 @@ impl<'a> FuncCx<'a, '_> {
             Some(_) => Some(behind(self, first + 1)?),
             None => None,
         };
+        let list = match ranged.defers.is_empty() {
+            true => None,
+            false => Some(behind(self, first + 1 + u32::from(returned.is_some()))?),
+        };
+        let deferred = |&(stmt, list): &(StmtId, Option<usize>)| Deferred {
+            stmt,
+            list,
+            call: None,
+        };
+        self.defers = ranged.defers.iter().map(deferred).collect();
         self.ranged = Some(Leaving {
             parts: ranged.parts.clone(),
             state: state.clone(),
             exit,
             returned,
             within: (whole.lo, whole.hi),
+            list,
+            base: ranged.base,
+            owner: ranged.within,
         });
         for (at, &left) in lhs.iter().enumerate().take(yielded.len()) {
             let given = Place::local(self.b.param(1 + at as u32));

@@ -1,0 +1,40 @@
+pass 0
+pass 1
+pass 2
+plain is leaving
+deferred 2
+deferred 1
+deferred 0
+last statement
+fmt 2
+note call 2
+fmt 1
+note call 1
+fmt 0
+note call 0
+3
+out is 
+literal three! 6
+literal two! 4
+literal one! 4
+true
+early 2
+early 1
+early 0
+first of early
+20
+inner 1 1
+inner 1 0
+outer 1
+inner 0 1
+inner 0 0
+outer 0
+round 1
+mixed 1 1
+mixed 1 0
+round 0
+mixed 0 1
+mixed 0 0
+value three!
+value two!
+value one!

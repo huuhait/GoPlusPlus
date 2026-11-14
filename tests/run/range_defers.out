@@ -1,0 +1,21 @@
+close 1 f
+close 2 f
+given is leaving
+keep 102
+close 102 f
+keep 101
+close 101 f
+used 2
+close 2 f
+used 1
+close 1 f
+3
+the literal is leaving
+in a literal 2
+in a literal 1
+in a literal 0
+3
+count 0
+rxxx
+lines 0
+0

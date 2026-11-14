@@ -4507,6 +4507,17 @@ fn the_steps_grow_with_the_loops_over_functions() {
         let inside = "\t\tif x > 3 {\n\t\t\tbreak all\n\t\t}\n";
         with(&format!("all:\n{open}{inside}{}", "\t}\n".repeat(n)))
     });
+    // A `defer` statement in each body, whose call the function with
+    // the loop makes.
+    assert_near_linear(&sizes, |n| {
+        with(&"\tfor v := range seq {\n\t\tdefer println(v)\n\t}\n".repeat(n))
+    });
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| format!("\tfor v{at} := range seq {{\n\t\tdefer println(v{at})\n"))
+            .collect();
+        with(&format!("{open}{}", "\t}\n".repeat(n)))
+    });
 }
 
 // rule: RNG-6a
@@ -4546,14 +4557,23 @@ func total(c *Counter, limit int) (sum int) {
     // What is not lowered yet is said.
     let refused = "package main
 
+type Count struct{ n int }
+
+func (c *Count) Up() { c.n++ }
+
 func seq(yield func(int, *int) bool) {}
 
-func f() {
+func counts(yield func(Count) bool) {}
+
+func fails!() {}
+
+func f!() {
 	for _, &v := range seq {
 		v++
 	}
-	for range seq {
-		defer println(1)
+	for c := range counts {
+		defer c.Up()
+		defer fails!()
 	}
 }
 ";
@@ -4561,11 +4581,36 @@ func f() {
     assert_eq!(
         messages,
         [
-            "a.gopp:6:2: not supported yet: a range over a function whose variable is the value \
+            "a.gopp:14:2: not supported yet: a range over a function whose variable is the value \
              itself",
-            "a.gopp:10:3: not supported yet: a defer statement in the body of a range over a \
-             function",
+            "a.gopp:18:9: not supported yet: a deferred call that holds a variable of a block, in \
+             the body of a range over a function",
+            "a.gopp:19:9: not supported yet: a deferred call with `!` in the body of a range over \
+             a function",
         ]
+    );
+    // The calls of the `defer` statements in the body of a loop are
+    // made by the function with the loop: its function for them has
+    // the call, and the body has none of its own.
+    let deferred = "package main
+
+func seq(yield func(int) bool) {}
+
+func show(n int) { println(n) }
+
+func f() {
+	for v := range seq {
+		defer show(v)
+	}
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", deferred)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let text = print_module(&lowered.module);
+    assert_eq!(
+        text.matches("call const fn @_GPF4mainE4show(").count(),
+        1,
+        "{text}"
     );
 }
 
