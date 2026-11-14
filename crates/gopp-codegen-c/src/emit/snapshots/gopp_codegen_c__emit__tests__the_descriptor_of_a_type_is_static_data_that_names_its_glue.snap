@@ -1065,68 +1065,98 @@ bb32:
 
 struct gopp_f9_own {
   int64_t state;
+  gopp_string _3;
+  bool _5;
 };
 
 [[maybe_unused]] static inline __attribute__((always_inline)) void gopp_f9_unwind(struct gopp_f9_own *gopp_own) {
   switch (gopp_own->state) {
   case 0: return;
+  case 1: goto bb1;
   default: _gopp_panic_drop();
   }
+bb1:
+  gopp_own->_5 = (gopp_own->_3.backing != ((uint8_t *)0));
+  if (!gopp_own->_5) goto bb4;
+  goto bb2;
+bb2:
+  _gopp_string_release(gopp_own->_3);
+  goto bb3;
+bb3:
+  goto bb4;
+bb4:
+  return;
 }
 
 GOPP_ONCE GOPP_CALL int64_t gopp_f9(GOPP_ENV uint8_t * _1, int64_t _2, gopp_string _3) {
   [[maybe_unused]] int64_t _0;
   [[maybe_unused]] int64_t _4;
-  [[maybe_unused]] bool _5;
+  [[maybe_unused]] bool _7;
   struct gopp_f9_own gopp_owned __attribute__((cleanup(gopp_f9_unwind)));
   struct gopp_f9_own *const gopp_own = &gopp_owned;
   gopp_own->state = 0;
+  gopp_own->_3 = _3;
 
-  gopp_own->state = 0; _4 = gopp_f4(_2, _3);
-  goto bb1;
-bb1:
-  _5 = (_3.backing != ((uint8_t *)0));
-  if (!_5) goto bb3;
-  goto bb2;
-bb2:
-  gopp_own->state = -1; _gopp_string_release(_3);
-  goto bb3;
-bb3:
+  gopp_own->state = 1; _4 = gopp_f4(_2, gopp_own->_3);
+  goto bb5;
+bb5:
+  _7 = (gopp_own->_3.backing != ((uint8_t *)0));
+  if (!_7) goto bb7;
+  goto bb6;
+bb6:
+  gopp_own->state = -1; _gopp_string_release(gopp_own->_3);
+  goto bb7;
+bb7:
   _0 = _4;
   gopp_own->state = 0; return _0;
 }
 
 struct gopp_f10_own {
   int64_t state;
+  gopp_string _3;
+  bool _7;
 };
 
 [[maybe_unused]] static inline __attribute__((always_inline)) void gopp_f10_unwind(struct gopp_f10_own *gopp_own) {
   switch (gopp_own->state) {
   case 0: return;
+  case 1: goto bb1;
   default: _gopp_panic_drop();
   }
+bb1:
+  gopp_own->_7 = (gopp_own->_3.backing != ((uint8_t *)0));
+  if (!gopp_own->_7) goto bb4;
+  goto bb2;
+bb2:
+  _gopp_string_release(gopp_own->_3);
+  goto bb3;
+bb3:
+  goto bb4;
+bb4:
+  return;
 }
 
 GOPP_ONCE GOPP_CALL void gopp_f10(uint8_t * _1, int64_t _2, gopp_string _3) {
   [[maybe_unused]] T3 * * _4;
   [[maybe_unused]] T3 * _5;
-  [[maybe_unused]] bool _7;
+  [[maybe_unused]] bool _9;
   struct gopp_f10_own gopp_owned __attribute__((cleanup(gopp_f10_unwind)));
   struct gopp_f10_own *const gopp_own = &gopp_owned;
   gopp_own->state = 0;
+  gopp_own->_3 = _3;
 
   _4 = ((T3 * *)_1);
   _5 = (*_4);
-  gopp_own->state = 0; gopp_f1(_5, _2, _3);
-  goto bb1;
-bb1:
-  _7 = (_3.backing != ((uint8_t *)0));
-  if (!_7) goto bb3;
-  goto bb2;
-bb2:
-  gopp_own->state = -1; _gopp_string_release(_3);
-  goto bb3;
-bb3:
+  gopp_own->state = 1; gopp_f1(_5, _2, gopp_own->_3);
+  goto bb5;
+bb5:
+  _9 = (gopp_own->_3.backing != ((uint8_t *)0));
+  if (!_9) goto bb7;
+  goto bb6;
+bb6:
+  gopp_own->state = -1; _gopp_string_release(gopp_own->_3);
+  goto bb7;
+bb7:
   gopp_own->state = 0; return;
 }
 
@@ -1278,35 +1308,50 @@ bb1:
 
 struct gopp_f21_own {
   int64_t state;
+  gopp_string _3;
+  bool _7;
 };
 
 [[maybe_unused]] static inline __attribute__((always_inline)) void gopp_f21_unwind(struct gopp_f21_own *gopp_own) {
   switch (gopp_own->state) {
   case 0: return;
+  case 1: goto bb1;
   default: _gopp_panic_drop();
   }
+bb1:
+  gopp_own->_7 = (gopp_own->_3.backing != ((uint8_t *)0));
+  if (!gopp_own->_7) goto bb4;
+  goto bb2;
+bb2:
+  _gopp_string_release(gopp_own->_3);
+  goto bb3;
+bb3:
+  goto bb4;
+bb4:
+  return;
 }
 
 GOPP_ONCE GOPP_CALL void gopp_f21(uint8_t * _1, int64_t _2, gopp_string _3) {
   [[maybe_unused]] T3 * * _4;
   [[maybe_unused]] T3 * _5;
-  [[maybe_unused]] bool _7;
+  [[maybe_unused]] bool _9;
   struct gopp_f21_own gopp_owned __attribute__((cleanup(gopp_f21_unwind)));
   struct gopp_f21_own *const gopp_own = &gopp_owned;
   gopp_own->state = 0;
+  gopp_own->_3 = _3;
 
   _4 = ((T3 * *)_1);
   _5 = (*_4);
-  gopp_own->state = 0; gopp_f1(_5, _2, _3);
-  goto bb1;
-bb1:
-  _7 = (_3.backing != ((uint8_t *)0));
-  if (!_7) goto bb3;
-  goto bb2;
-bb2:
-  gopp_own->state = -1; _gopp_string_release(_3);
-  goto bb3;
-bb3:
+  gopp_own->state = 1; gopp_f1(_5, _2, gopp_own->_3);
+  goto bb5;
+bb5:
+  _9 = (gopp_own->_3.backing != ((uint8_t *)0));
+  if (!_9) goto bb7;
+  goto bb6;
+bb6:
+  gopp_own->state = -1; _gopp_string_release(gopp_own->_3);
+  goto bb7;
+bb7:
   gopp_own->state = 0; return;
 }
 

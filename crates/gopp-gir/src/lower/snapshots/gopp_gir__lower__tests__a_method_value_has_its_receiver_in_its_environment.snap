@@ -550,14 +550,25 @@ fn _GPTEM3AddN4mainE4List(_1: *u8, _2: *_GPTiN4mainE4List, _3: string) -> () [go
   let _4: ()
   let _5: bool
   let _6: ()
+  let _7: bool
+  let _8: ()
   bb0:
-    _4 = call const fn @_GPM3AddN4mainE4List(copy _2, copy _3) -> [return: bb1, unwind: continue]
-  bb1:
+    _4 = call const fn @_GPM3AddN4mainE4List(copy _2, copy _3) -> [return: bb5, unwind: cleanup bb1]
+  bb1: [cleanup]
     _5 = ne(copy _3.2, const zero: *u8)
-    switch copy _5 [0: bb3, otherwise: bb2]
-  bb2:
+    switch copy _5 [0: bb4, otherwise: bb2]
+  bb2: [cleanup]
     _6 = call const fn @_gopp_string_release(copy _3) -> [return: bb3, unwind: terminate]
-  bb3:
+  bb3: [cleanup]
+    goto bb4
+  bb4: [cleanup]
+    resume
+  bb5:
+    _7 = ne(copy _3.2, const zero: *u8)
+    switch copy _7 [0: bb7, otherwise: bb6]
+  bb6:
+    _8 = call const fn @_gopp_string_release(copy _3) -> [return: bb7, unwind: terminate]
+  bb7:
     return
 }
 
@@ -567,13 +578,22 @@ fn _GPTEM3LenN4mainE4List(_1: *u8, _2: _GPTiN4mainE4List) -> i64 [go, linkonce_o
   let _4: *_GPTiN4mainE4List
   let _5: *u8
   let _6: ()
+  let _7: *_GPTiN4mainE4List
+  let _8: *u8
+  let _9: ()
   bb0:
-    _3 = call const fn @_GPM3LenN4mainE4List(copy _2) -> [return: bb1, unwind: continue]
-  bb1:
+    _3 = call const fn @_GPM3LenN4mainE4List(copy _2) -> [return: bb3, unwind: cleanup bb1]
+  bb1: [cleanup]
     _4 = &mut _2
     _5 = ptr_to_ptr(copy _4) as *u8
     _6 = call const fn @_GPTdN4mainE4List(copy _5) -> [return: bb2, unwind: terminate]
-  bb2:
+  bb2: [cleanup]
+    resume
+  bb3:
+    _7 = &mut _2
+    _8 = ptr_to_ptr(copy _7) as *u8
+    _9 = call const fn @_GPTdN4mainE4List(copy _8) -> [return: bb4, unwind: terminate]
+  bb4:
     _0 = copy _3
     return
 }
@@ -599,16 +619,27 @@ fn _GPTIM3AddN4mainE4List(_1: *u8, _2: string) -> () [go, linkonce_odr] {
   let _5: ()
   let _6: bool
   let _7: ()
+  let _8: bool
+  let _9: ()
   bb0:
     _3 = ptr_to_ptr(copy _1) as **_GPTiN4mainE4List
     _4 = copy (*_3)
-    _5 = call const fn @_GPM3AddN4mainE4List(copy _4, copy _2) -> [return: bb1, unwind: continue]
-  bb1:
+    _5 = call const fn @_GPM3AddN4mainE4List(copy _4, copy _2) -> [return: bb5, unwind: cleanup bb1]
+  bb1: [cleanup]
     _6 = ne(copy _2.2, const zero: *u8)
-    switch copy _6 [0: bb3, otherwise: bb2]
-  bb2:
+    switch copy _6 [0: bb4, otherwise: bb2]
+  bb2: [cleanup]
     _7 = call const fn @_gopp_string_release(copy _2) -> [return: bb3, unwind: terminate]
-  bb3:
+  bb3: [cleanup]
+    goto bb4
+  bb4: [cleanup]
+    resume
+  bb5:
+    _8 = ne(copy _2.2, const zero: *u8)
+    switch copy _8 [0: bb7, otherwise: bb6]
+  bb6:
+    _9 = call const fn @_gopp_string_release(copy _2) -> [return: bb7, unwind: terminate]
+  bb7:
     return
 }
 
@@ -633,16 +664,27 @@ fn _GPTVM3AddN4mainE4List(_1: *u8, _2: string) -> () [go, linkonce_odr] {
   let _5: ()
   let _6: bool
   let _7: ()
+  let _8: bool
+  let _9: ()
   bb0:
     _3 = ptr_to_ptr(copy _1) as *(u64, u64, *(u64, *_GPTiN4mainE4List), fn "C"(*u8) -> ())
     _4 = copy (*_3).2
-    _5 = call const fn @_GPM3AddN4mainE4List(copy (*_4).1, copy _2) -> [return: bb1, unwind: continue]
-  bb1:
+    _5 = call const fn @_GPM3AddN4mainE4List(copy (*_4).1, copy _2) -> [return: bb5, unwind: cleanup bb1]
+  bb1: [cleanup]
     _6 = ne(copy _2.2, const zero: *u8)
-    switch copy _6 [0: bb3, otherwise: bb2]
-  bb2:
+    switch copy _6 [0: bb4, otherwise: bb2]
+  bb2: [cleanup]
     _7 = call const fn @_gopp_string_release(copy _2) -> [return: bb3, unwind: terminate]
-  bb3:
+  bb3: [cleanup]
+    goto bb4
+  bb4: [cleanup]
+    resume
+  bb5:
+    _8 = ne(copy _2.2, const zero: *u8)
+    switch copy _8 [0: bb7, otherwise: bb6]
+  bb6:
+    _9 = call const fn @_gopp_string_release(copy _2) -> [return: bb7, unwind: terminate]
+  bb7:
     return
 }
 

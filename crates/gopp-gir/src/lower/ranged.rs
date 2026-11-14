@@ -70,6 +70,10 @@ pub(crate) struct Ranged {
     /// number of the first of them in their function.
     defers: Vec<(StmtId, Option<usize>)>,
     base: usize,
+    /// A `defer` statement of the body borrows a variable of the body:
+    /// the body is given the list of the block with the loop, and the
+    /// count of the variables that were declared.
+    extends: bool,
 }
 
 /// What the loops over functions of a job use of what is around them.
@@ -108,6 +112,12 @@ pub(crate) struct Leaving {
     pub list: Option<Place>,
     pub base: usize,
     pub owner: Option<ExprId>,
+    /// The list of the block with the loop for the variables that
+    /// `defer` statements borrow, and the count of those that were
+    /// declared: a variable of the body that is borrowed lives until
+    /// the function with the loop is left (PAN-3).
+    pub region: Option<Place>,
+    pub declared: Option<Place>,
 }
 
 impl Leaving {
@@ -390,7 +400,14 @@ impl<'a> FuncCx<'a, '_> {
         // then that list.
         let (captured, labels) = self.loop_uses(job, stmt);
         let mut frame = self.frame_parts(&captured)?;
-        for place in [Some(exit.clone()), returned.clone(), list]
+        // And for the variables of the body that its `defer` statements
+        // borrow: the list of this block, and the count.
+        let extends = self.region_place().is_some() && self.extended_within(whole);
+        let (region, counted) = match extends {
+            true => (self.region_place(), Some(self.declared_place())),
+            false => (None, None),
+        };
+        for place in [Some(exit.clone()), returned.clone(), list, region, counted]
             .into_iter()
             .flatten()
         {
@@ -439,6 +456,7 @@ impl<'a> FuncCx<'a, '_> {
             fails: self.fails,
             defers,
             base,
+            extends,
         };
         let key = (std::ptr::from_ref(job), stmt);
         if self.memo.ranged.insert(key, Rc::new(ranged)).is_none() {
@@ -561,6 +579,10 @@ impl<'a> FuncCx<'a, '_> {
         if !ranged.defers.is_empty() {
             more.push(self.b.types().ptr(bytes));
         }
+        if ranged.extends {
+            more.push(self.b.types().ptr(bytes));
+            more.push(self.b.types().ptr(word));
+        }
         let frame = self.open_frame(frame, &ranged.captured, &more)?;
         let behind = |this: &mut Self, at: u32| -> Built<Place> {
             let address = Operand::Copy(this.b.field(&frame, at)?);
@@ -573,9 +595,17 @@ impl<'a> FuncCx<'a, '_> {
             Some(_) => Some(behind(self, first + 1)?),
             None => None,
         };
+        let mut next = first + 1 + u32::from(returned.is_some());
         let list = match ranged.defers.is_empty() {
             true => None,
-            false => Some(behind(self, first + 1 + u32::from(returned.is_some()))?),
+            false => {
+                next += 1;
+                Some(behind(self, next - 1)?)
+            }
+        };
+        let (region, declared) = match ranged.extends {
+            true => (Some(behind(self, next)?), Some(behind(self, next + 1)?)),
+            false => (None, None),
         };
         let deferred = |&(stmt, list): &(StmtId, Option<usize>)| Deferred {
             stmt,
@@ -592,6 +622,8 @@ impl<'a> FuncCx<'a, '_> {
             list,
             base: ranged.base,
             owner: ranged.within,
+            region,
+            declared,
         });
         for (at, &left) in lhs.iter().enumerate().take(yielded.len()) {
             let given = Place::local(self.b.param(1 + at as u32));

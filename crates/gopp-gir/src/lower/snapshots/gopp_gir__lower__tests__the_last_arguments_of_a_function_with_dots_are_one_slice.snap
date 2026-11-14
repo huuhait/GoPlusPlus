@@ -674,13 +674,22 @@ fn _GPTEF4mainE3sum(_1: *u8, _2: []i64) -> i64 [go, linkonce_odr] {
   let _4: *[]i64
   let _5: *u8
   let _6: ()
+  let _7: *[]i64
+  let _8: *u8
+  let _9: ()
   bb0:
-    _3 = call const fn @_GPF4mainE3sum(copy _2) -> [return: bb1, unwind: continue]
-  bb1:
+    _3 = call const fn @_GPF4mainE3sum(copy _2) -> [return: bb3, unwind: cleanup bb1]
+  bb1: [cleanup]
     _4 = &mut _2
     _5 = ptr_to_ptr(copy _4) as *u8
     _6 = call const fn @_GPTdSi(copy _5) -> [return: bb2, unwind: terminate]
-  bb2:
+  bb2: [cleanup]
+    resume
+  bb3:
+    _7 = &mut _2
+    _8 = ptr_to_ptr(copy _7) as *u8
+    _9 = call const fn @_GPTdSi(copy _8) -> [return: bb4, unwind: terminate]
+  bb4:
     _0 = copy _3
     return
 }

@@ -2171,14 +2171,15 @@ func main() {
     };
     // A call through a value gives every argument away: `plain` only
     // reads its string, so its code as a value ends the string, and
-    // that of `keeps`, which stores a copy, ends it too.
+    // that of `keeps`, which stores a copy, ends it too. Each does so
+    // after its call, and where a panic leaves the call.
     let released = |name: &str| body(name).matches("@_gopp_string_release").count();
     assert_eq!(
         [
             released("_GPTEF4mainE5plain"),
             released("_GPTEF4mainE5keeps")
         ],
-        [1, 1]
+        [2, 2]
     );
     // The call in `apply` reads the code and passes the environment
     // first; the function is lent its parameter and ends nothing.
@@ -4903,8 +4904,6 @@ func f!() {
         [
             "a.gopp:14:2: not supported yet: a range over a function whose variable is the value \
              itself",
-            "a.gopp:18:9: not supported yet: a deferred call that holds a variable of a block, in \
-             the body of a range over a function",
             "a.gopp:19:9: not supported yet: a deferred call with `!` in the body of a range over \
              a function",
         ]

@@ -1,0 +1,58 @@
+package main
+
+// A call that cannot see the function that runs gives every argument
+// by value away: a function value, a method of an interface, a method
+// value, a function literal. A copy is made only where the argument is
+// read again, and every value ends once, also where the function itself
+// would only read its parameter.
+
+type R struct{ name string }
+
+func (r *R) drop() {
+	if r.name != "" {
+		println("  end", r.name)
+	}
+}
+
+func (r R) Clone() R {
+	println("  copy", r.name)
+	return R{r.name + "'"}
+}
+
+func show(r R) { println("  show", r.name) }
+
+func own(r R) {
+	r.name += "!"
+	println("  own", r.name)
+}
+
+type T struct{ id int }
+
+func (t T) Show(r R) { println("  T.Show", r.name) }
+
+type Shower interface{ Show(r R) }
+
+func main() {
+	println("function value, parameter that is only read")
+	f := show
+	f(R{"a"})
+	x := R{"b"}
+	f(x)
+	println(x.name)
+	println("function value, parameter that is owned")
+	g := own
+	g(R{"c"})
+	println("method of an interface")
+	var s Shower = T{1}
+	s.Show(R{"d"})
+	y := R{"e"}
+	s.Show(y)
+	println(y.name)
+	println("method value")
+	m := T{2}.Show
+	m(R{"f"})
+	println("function literal")
+	h := func(r R) { println("  lit", r.name) }
+	h(R{"g"})
+	println("done")
+}

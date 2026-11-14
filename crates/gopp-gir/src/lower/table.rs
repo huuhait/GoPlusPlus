@@ -1152,12 +1152,7 @@ impl FuncCx<'_, '_> {
             kind: ConstantKind::Func(called.func),
             ty: called.sig,
         });
-        let result = Place::local(self.b.temp(called.ret));
-        let next = self.b.new_block();
-        let unwind = self.unwind()?;
-        self.b
-            .call(callee, args, result.clone(), Some(next), unwind)?;
-        self.b.switch_to(next);
+        let mut owned = Vec::new();
         if let CheckedType::Func { params, .. } = &*shared.types.get(checked) {
             for (at, &param) in params.iter().enumerate() {
                 let read = called.lent.get(at + 1) == Some(&true);
@@ -1168,11 +1163,12 @@ impl FuncCx<'_, '_> {
                     continue;
                 }
                 match self.ends_quietly(param)? {
-                    Ok(ends) => self.end(Place::local(self.b.param(at as u32 + 1)), ends)?,
+                    Ok(ends) => owned.push((Place::local(self.b.param(at as u32 + 1)), ends)),
                     Err(what) => return Ok(Err(what)),
                 }
             }
         }
+        let result = self.call_between(callee, args, called.ret, owned)?;
         if called.ret != TypeInterner::UNIT {
             let whole = Place::local(self.b.result());
             self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;

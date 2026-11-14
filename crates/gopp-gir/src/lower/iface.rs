@@ -1350,6 +1350,31 @@ impl<'a> FuncCx<'a, '_> {
 
     /// How a place of the type ends its value, without a report: for
     /// what the package makes.
+    /// The call that a function makes which stands between a call and
+    /// its function. `owned` is what this function was given and the
+    /// function that it calls only reads, each with how it ends: after
+    /// the call, also where a panic leaves it.
+    pub fn call_between(
+        &mut self,
+        callee: Operand,
+        args: Vec<Operand>,
+        ret: TypeId,
+        owned: Vec<(Place, Ends)>,
+    ) -> Built<Place> {
+        self.open_scope();
+        for (place, ends) in owned {
+            self.hold(place, ends);
+        }
+        let result = Place::local(self.b.temp(ret));
+        let next = self.b.new_block();
+        let unwind = self.unwind()?;
+        self.b
+            .call(callee, args, result.clone(), Some(next), unwind)?;
+        self.b.switch_to(next);
+        self.close_scope_here()?;
+        Ok(result)
+    }
+
     pub fn ends_quietly(&mut self, ty: CheckedTypeId) -> Built<Result<Ends, &'static str>> {
         let shared = self.shared;
         let lowered = self.memo.lower_type(shared, self.b.types(), ty);
@@ -1532,14 +1557,9 @@ impl<'a> FuncCx<'a, '_> {
         for at in 1..params {
             args.push(Operand::Copy(Place::local(self.b.param(at as u32))));
         }
-        let result = Place::local(self.b.temp(ret));
-        let next = self.b.new_block();
-        let unwind = self.unwind()?;
-        self.b
-            .call(callee, args, result.clone(), Some(next), unwind)?;
-        self.b.switch_to(next);
         // A method that is called through a table again was given
         // every argument.
+        let mut owned = Vec::new();
         if let (Some(called), CheckedType::Func { params, .. }) =
             (&called, &*shared.types.get(checked))
         {
@@ -1553,11 +1573,12 @@ impl<'a> FuncCx<'a, '_> {
                     continue;
                 }
                 match self.ends_quietly(param)? {
-                    Ok(ends) => self.end(Place::local(self.b.param(at as u32)), ends)?,
+                    Ok(ends) => owned.push((Place::local(self.b.param(at as u32)), ends)),
                     Err(what) => return Ok(Err(what)),
                 }
             }
         }
+        let result = self.call_between(callee, args, ret, owned)?;
         if ret != TypeInterner::UNIT {
             let whole = Place::local(self.b.result());
             self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;

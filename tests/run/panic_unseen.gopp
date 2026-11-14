@@ -1,0 +1,70 @@
+package main
+
+// A panic leaves a function that was called through a function value,
+// a method of an interface or a method value, and that only reads what
+// it was given: the argument ends where the panic leaves the call, once,
+// as it does after a call that returns.
+
+type R struct{ name string }
+
+func (r *R) drop() {
+	if r.name != "" {
+		println("  end", r.name)
+	}
+}
+
+func (r R) Clone() R {
+	println("  copy", r.name)
+	return R{r.name + "'"}
+}
+
+func show(r R) {
+	if r.name != "ok" {
+		panic("show " + r.name)
+	}
+	println("  show", r.name)
+}
+
+type T struct{ id int }
+
+func (t T) Show(r R) { show(r) }
+
+type Shower interface{ Show(r R) }
+
+func names(yield func(string) bool) {
+	for _, n := range []string{"a", "b"} {
+		if !yield(n) {
+			return
+		}
+	}
+}
+
+func try(name string, f func()) {
+	defer func() { println(name, "stopped:", recover() != nil) }()
+	f()
+}
+
+func main() {
+	for _, name := range []string{"ok", "bad"} {
+		try("value", func() {
+			f := show
+			f(R{name})
+		})
+		try("interface", func() {
+			var s Shower = T{1}
+			s.Show(R{name})
+		})
+		try("method value", func() {
+			m := T{2}.Show
+			m(R{name})
+		})
+		try("loop", func() {
+			for n := range names {
+				if n == "b" && name == "bad" {
+					panic("in the body")
+				}
+			}
+		})
+	}
+	println("done")
+}

@@ -1,0 +1,87 @@
+package main
+
+// A deferred call in the body of a loop over a function borrows a
+// variable of the body: the variable lives until the function with the
+// loop is left, after the deferred calls, like one of any other loop.
+
+type F struct{ name string }
+
+func (f *F) drop() {
+	if f.name != "" {
+		println("  end", f.name)
+	}
+}
+
+func (f *F) Close() { println("  close", f.name) }
+
+func show(f *F) { println("  show", f.name) }
+
+func names(yield func(string) bool) {
+	for _, n := range []string{"a", "b", "c"} {
+		if !yield(n) {
+			return
+		}
+	}
+}
+
+func all() {
+	first := F{"first"}
+	defer first.Close()
+	for n := range names {
+		f := F{n}
+		defer f.Close()
+		if n == "b" {
+			g := F{n + "2"}
+			defer show(&g)
+		}
+		println("  pass", f.name)
+	}
+	println("  leaves")
+}
+
+func stops() {
+	for n := range names {
+		f := F{n}
+		defer func() { println("  lit", f.name) }()
+		if n == "b" {
+			return
+		}
+	}
+}
+
+func fails() {
+	defer func() { println("  stopped:", recover() != nil) }()
+	for n := range names {
+		f := F{n}
+		defer f.Close()
+		if n == "b" {
+			panic("in the body")
+		}
+	}
+}
+
+func inner() {
+	for n := range names {
+		for m := range names {
+			f := F{n + m}
+			if m == "b" {
+				defer show(&f)
+			}
+			if n == "b" {
+				break
+			}
+		}
+	}
+}
+
+func main() {
+	println("all")
+	all()
+	println("stops")
+	stops()
+	println("fails")
+	fails()
+	println("inner")
+	inner()
+	println("done")
+}

@@ -1938,6 +1938,12 @@ impl FuncCx<'_, '_> {
     /// `span`: its variables are dead from here.
     pub fn close_scope(&mut self, span: SourceSpan) -> Built {
         self.at_end(span);
+        self.close_scope_here()
+    }
+
+    /// `close_scope`, in a function that is written nowhere in the
+    /// source.
+    pub fn close_scope_here(&mut self) -> Built {
         self.exit_scopes(self.scopes.len() - 1)?;
         if self.scopes.pop().is_some_and(|scope| scope.debug) {
             self.b.pop_scope();
@@ -2468,7 +2474,7 @@ impl FuncCx<'_, '_> {
         let plain = self.cell_type(ty);
         let word = self.b.types().int(64, false);
         let bytes = self.bytes_ty();
-        let extended = self.facts.extended.contains(&local) && self.frame.is_some();
+        let extended = self.facts.extended.contains(&local) && self.region_place().is_some();
         let whole = match extended {
             true => {
                 let glue = self.glue_sig(Glue::Drop);
@@ -2487,11 +2493,7 @@ impl FuncCx<'_, '_> {
         let cell = Rvalue::Cast(crate::CastKind::PtrToPtr, made.clone(), to);
         let cell = self.b.assign_temp(cell)?;
         if extended {
-            let count = match self.declared {
-                Some(count) => count,
-                None => *self.declared.insert(self.b.temp(word)),
-            };
-            let count = Place::local(count);
+            let count = self.declared_place();
             let one = self.b.const_int(word, 1)?;
             let next = Rvalue::Binary(crate::BinOp::Add, Operand::Copy(count.clone()), one);
             self.b.assign(count.clone(), next)?;
@@ -2507,6 +2509,46 @@ impl FuncCx<'_, '_> {
         Ok(cell)
     }
 
+    /// The list of the block that is lowered now for the variables
+    /// that `defer` statements borrow: of this function, or, in the
+    /// body of a loop over a function, of the function with the loop.
+    pub fn region_place(&self) -> Option<Place> {
+        let own = self.region.filter(|_| self.frame.is_some());
+        (own.map(Place::local)).or_else(|| self.ranged.as_ref()?.region.clone())
+    }
+
+    /// The count of the variables that were declared and that `defer`
+    /// statements may borrow: of the function that has the list.
+    pub fn declared_place(&mut self) -> Place {
+        if let Some(place) = self
+            .ranged
+            .as_ref()
+            .and_then(|ranged| ranged.declared.clone())
+        {
+            return place;
+        }
+        let word = self.b.types().int(64, false);
+        match self.declared {
+            Some(count) => Place::local(count),
+            None => Place::local(*self.declared.insert(self.b.temp(word))),
+        }
+    }
+
+    /// Whether a `defer` statement borrows a variable of a block that
+    /// is declared in what is written at `span`.
+    pub fn extended_within(&self, span: SourceSpan) -> bool {
+        self.facts.extended.iter().any(|local| {
+            let at = self.body.locals[local.0 as usize].span.lo;
+            span.lo <= at && at < span.hi
+        })
+    }
+
+    /// Whether a `defer` statement that borrows the variable keeps it
+    /// until the function is left: it has what the list keeps of it.
+    pub fn extends(&self, local: CheckedLocalId) -> bool {
+        self.extendable.contains_key(&local)
+    }
+
     /// A `defer` statement that runs borrows the variable: if it is a
     /// variable of a block that this function declares, it lives until
     /// the function is left, after the deferred calls (PAN-3, PAN-4).
@@ -2517,10 +2559,10 @@ impl FuncCx<'_, '_> {
         let bytes = self.bytes_ty();
         // A variable of a block is declared in a block of the function,
         // which has a list.
-        let Some(list) = self.region else {
+        let Some(list) = self.region_place() else {
             return Ok(());
         };
-        let list = self.record(Place::local(list))?;
+        let list = self.record(list)?;
         let held = Operand::Copy(Place::local(cell));
         let to = self.b.types().ptr(whole);
         let all = Rvalue::Cast(crate::CastKind::PtrToPtr, held.clone(), to);

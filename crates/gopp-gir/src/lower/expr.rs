@@ -2512,9 +2512,13 @@ impl<'a> FuncCx<'a, '_> {
             };
             // In the body of a loop over a function only a variable of
             // the whole function with the loop lives until the call.
+            // A variable of the body lives on in the list of the block
+            // with the loop, if that block has one.
             let declared = self.body.locals[local.0 as usize].span;
-            let passes =
-                |ranged: &super::ranged::Leaving| !ranged.outside(declared) || self.extended(local);
+            let passes = |ranged: &super::ranged::Leaving| match ranged.outside(declared) {
+                true => self.extended(local),
+                false => !self.extends(local),
+            };
             if self.ranged.as_ref().is_some_and(passes) {
                 let what = "a deferred call that holds a variable of a block, in the body of a \
                             range over a function";

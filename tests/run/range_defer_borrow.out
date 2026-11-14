@@ -1,0 +1,37 @@
+all
+  pass a
+  pass b
+  pass c
+  leaves
+  close c
+  show b2
+  close b
+  close a
+  close first
+  end c
+  end b2
+  end b
+  end a
+  end first
+stops
+  lit b
+  lit a
+  end b
+  end a
+fails
+  close b
+  close a
+  stopped: true
+  end b
+  end a
+inner
+  end aa
+  end ac
+  end ba
+  end ca
+  end cc
+  show cb
+  show ab
+  end cb
+  end ab
+done

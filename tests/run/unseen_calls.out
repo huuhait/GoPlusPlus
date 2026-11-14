@@ -1,0 +1,26 @@
+function value, parameter that is only read
+  show a
+  end a
+  copy b
+  show b'
+  end b'
+b
+function value, parameter that is owned
+  own c!
+  end c!
+method of an interface
+  T.Show d
+  end d
+  copy e
+  T.Show e'
+  end e'
+e
+method value
+  T.Show f
+  end f
+function literal
+  lit g
+  end g
+done
+  end e
+  end b

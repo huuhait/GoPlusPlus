@@ -6,8 +6,8 @@ close 102 f
 keep 101
 close 101 f
 used 2
-close 2 f
 used 1
+close 2 f
 close 1 f
 3
 the literal is leaving

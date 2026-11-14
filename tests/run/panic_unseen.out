@@ -1,0 +1,18 @@
+  show ok
+  end ok
+value stopped: false
+  show ok
+  end ok
+interface stopped: false
+  show ok
+  end ok
+method value stopped: false
+loop stopped: false
+value stopped: true
+  end bad
+interface stopped: true
+  end bad
+method value stopped: true
+  end bad
+loop stopped: true
+done

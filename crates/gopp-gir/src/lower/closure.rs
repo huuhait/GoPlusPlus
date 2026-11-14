@@ -464,12 +464,7 @@ impl FuncCx<'_, '_> {
             kind: ConstantKind::Func(function),
             ty: sig,
         });
-        let result = Place::local(self.b.temp(plain.ret));
-        let next = self.b.new_block();
-        let unwind = self.unwind()?;
-        self.b
-            .call(callee, args, result.clone(), Some(next), unwind)?;
-        self.b.switch_to(next);
+        let mut owned = Vec::new();
         let lent = shared.lent.get(of);
         if let (Some(lent), CheckedType::Func { params, .. }) = (lent, &*shared.types.get(ty)) {
             for (at, &param) in params.iter().enumerate() {
@@ -480,12 +475,14 @@ impl FuncCx<'_, '_> {
                 if self.flat(lowered) {
                     continue;
                 }
+                let slot = Place::local(self.b.param(at as u32 + before));
                 match self.ends_quietly(param)? {
-                    Ok(ends) => self.end(Place::local(self.b.param(at as u32 + before)), ends)?,
+                    Ok(ends) => owned.push((slot, ends)),
                     Err(what) => return Ok(Err(what)),
                 }
             }
         }
+        let result = self.call_between(callee, args, plain.ret, owned)?;
         if plain.ret != TypeInterner::UNIT {
             let whole = Place::local(self.b.result());
             self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;
@@ -965,18 +962,13 @@ impl FuncCx<'_, '_> {
         for at in before..own.1.params.len() as u32 {
             args.push(Operand::Copy(Place::local(self.b.param(at))));
         }
-        let result = Place::local(self.b.temp(ret));
-        let next = self.b.new_block();
-        let unwind = self.unwind()?;
-        self.b
-            .call(callee, args, result.clone(), Some(next), unwind)?;
-        self.b.switch_to(next);
         // The interface value that an expression was given is this
         // function's own: the method had the value that it holds for
         // the call only.
+        let mut owned = Vec::new();
         if dynamic && first.is_some() {
             let drop = self.iface_glue(Glue::Drop)?;
-            self.end(Place::local(self.b.param(1)), Ends::Glue(drop))?;
+            owned.push((Place::local(self.b.param(1)), Ends::Glue(drop)));
         }
         if let (Some(called), CheckedType::Func { params, .. }) =
             (&called, &*shared.types.get(checked))
@@ -986,7 +978,7 @@ impl FuncCx<'_, '_> {
             let by_value = first == Some(false) && called.params.first() == Some(&own.1.params[1]);
             if by_value && called.lent.first() == Some(&true) && !self.flat(own.1.params[1]) {
                 match self.ends_quietly(ty)? {
-                    Ok(ends) => self.end(Place::local(self.b.param(1)), ends)?,
+                    Ok(ends) => owned.push((Place::local(self.b.param(1)), ends)),
                     Err(what) => return Ok(Err(what)),
                 }
             }
@@ -1000,11 +992,12 @@ impl FuncCx<'_, '_> {
                 }
                 let slot = Place::local(self.b.param(before + at as u32));
                 match self.ends_quietly(param)? {
-                    Ok(ends) => self.end(slot, ends)?,
+                    Ok(ends) => owned.push((slot, ends)),
                     Err(what) => return Ok(Err(what)),
                 }
             }
         }
+        let result = self.call_between(callee, args, ret, owned)?;
         if ret != TypeInterner::UNIT {
             let whole = Place::local(self.b.result());
             self.b.assign(whole, Rvalue::Use(Operand::Copy(result)))?;
