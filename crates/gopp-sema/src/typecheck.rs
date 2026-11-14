@@ -540,6 +540,16 @@ struct Checker<'a> {
     /// While a body is walked: where what a `Shared` holds is taken as
     /// a value of a parent of its type, with the child and the parent.
     seen_as: Vec<(Span, TypeId, TypeId)>,
+    /// While a body is walked: the variables that are declared with a
+    /// value which `NewShared` made.
+    made_shared: FxHashSet<LocalId>,
+    /// While a body is walked: the names of handles that are lent
+    /// where a pointer is taken, which makes no second name.
+    lent_handles: FxHashSet<ExprId>,
+    /// While a body is walked: the writes to what a `Shared` holds that
+    /// are said when the body is walked, with where the variable of
+    /// the place is named: what to do instead is known then.
+    shared_writes: Vec<(Span, String, Span)>,
     /// For a child and a parent that were asked: the method of the
     /// child, with its type, that keeps the child from being seen as
     /// the parent in a `Shared`.
@@ -716,6 +726,9 @@ pub fn declarations(
         required_addresses: Vec::new(),
         read_only: FxHashSet::default(),
         seen_as: Vec::new(),
+        made_shared: FxHashSet::default(),
+        lent_handles: FxHashSet::default(),
+        shared_writes: Vec::new(),
         seen_as_known: FxHashMap::default(),
         operands: place::Operands::Kept,
         target: None,
@@ -1012,6 +1025,7 @@ impl<'a> Checker<'a> {
         // What is known before any problem is looked at: of a function
         // of another package, and of one of this package that does
         // nothing with pointers.
+        self.say_shared_writes_left();
         let nothing = Arc::new(Lends::default());
         let mut done: FxHashMap<Callee, Arc<Lends>> = FxHashMap::default();
         for &lender in &lenders {
@@ -1100,7 +1114,7 @@ impl<'a> Checker<'a> {
                     found.map(|&(_, ty)| ty)
                 }
             };
-            self.lent((body, text), &carried, &problem.broken, found);
+            self.lent((body, text), &carried, problem, found);
             for &(at, child, parent) in &problem.seen_as {
                 self.shared_as_parent(at, child, parent, &done);
             }
@@ -3711,6 +3725,9 @@ impl<'a> Checker<'a> {
         self.bindings.clear();
         self.read_only.clear();
         self.seen_as.clear();
+        self.made_shared.clear();
+        self.lent_handles.clear();
+        self.say_shared_writes_left();
         self.flow = flow::Flow::default();
         self.local_groups.clear();
         self.shifted.clear();
@@ -3921,6 +3938,7 @@ impl<'a> Checker<'a> {
             ))
         };
         self.addresses_of_required(&cx);
+        self.say_shared_writes(&cx);
         let captures = self.captured_by_literal();
         let lender = self.lender(&cx, &tree.decl_nodes[decl]);
         let (last_uses, lent) = self.moves(&cx, &captures, (&tree.decl_nodes[decl], lender));

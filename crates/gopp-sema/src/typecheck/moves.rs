@@ -577,6 +577,10 @@ impl<'a> Checker<'a> {
         // first problem of the body.
         let mut found = found;
         let seen_as = std::mem::take(&mut self.seen_as);
+        let only_names = Arc::new(self.only_names(cx));
+        for problem in &mut found.lent {
+            problem.only_names = only_names.clone();
+        }
         if let Some(first) = found.lent.first_mut() {
             first.seen_as = seen_as;
         }
@@ -694,9 +698,10 @@ impl<'a> Checker<'a> {
         &mut self,
         (body, text): (&Body, &str),
         carried: &dyn Fn(borrows::Carrier) -> Option<TypeId>,
-        walked: &[borrows::Broken],
+        problem: &borrows::Problem,
         found: &borrows::Lent,
     ) {
+        let walked = &problem.broken;
         use borrows::What;
         let named = |this: &Self, local: LocalId| {
             let name = body.locals[local.0 as usize].name;
@@ -728,9 +733,19 @@ impl<'a> Checker<'a> {
                      through it, and what a Shared holds is only read"
                 ),
             };
-            let fix = "put what changes in a Mutex or an Atomic, or own the value with a Unique";
+            // The value has one name: a `Unique` is what is meant. The
+            // name may stand behind `&`.
+            let at = written.given.lo;
+            let only = [at, at + 1]
+                .iter()
+                .any(|at| problem.only_names.contains(at));
+            let fix = match only {
+                true => Self::only_name_fix(&given),
+                false => "put what changes in a Mutex or an Atomic, or own the value with a Unique"
+                    .to_owned(),
+            };
             let diagnostic = Diagnostic::new(Code::OwnSharedWrite, written.given, message);
-            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix.to_owned()));
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
         }
         for broken in walked.iter().chain(&found.broken) {
             let owner = named(self, broken.of);

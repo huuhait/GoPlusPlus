@@ -298,6 +298,9 @@ pub(super) struct Problem {
     /// Where the body takes what a `Shared` holds as a value of a
     /// parent of its type: the child, the parent, and where.
     pub seen_as: Vec<(Span, TypeId, TypeId)>,
+    /// Where the body names a variable that is the only name of what
+    /// `NewShared` made: a `Unique` would do.
+    pub only_names: Arc<FxHashSet<u32>>,
 }
 
 /// Two pointers that one call is given and that may point to one place
@@ -1841,6 +1844,7 @@ impl<'a> Walk<'a> {
             locals: self.body.locals.len() as u32,
             within: self.within,
             seen_as: Vec::new(),
+            only_names: Arc::default(),
         }
     }
 }

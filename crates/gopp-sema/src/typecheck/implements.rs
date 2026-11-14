@@ -203,6 +203,14 @@ impl<'a> Checker<'a> {
         let fit = self.fit_own(x, to, writes);
         if let Some((from, to)) = fit {
             self.note_seen_as(cx, expr, x.ty, (from, to));
+            let is = |ty: TypeId, pointer: bool| match &*self.types.get(self.types.underlying(ty)) {
+                Type::Pointer(_) => pointer,
+                Type::Shared(_) => !pointer,
+                _ => false,
+            };
+            if is(x.ty, false) && is(to, true) {
+                self.lent_handles.insert(self.unparen(cx, expr));
+            }
         }
         let into = fit.and_then(|(from, to)| self.types.into_interface(from, to, self.names));
         match into.filter(|&(_, from, _)| !self.open(from)) {

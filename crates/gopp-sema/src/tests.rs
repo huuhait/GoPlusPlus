@@ -6146,36 +6146,39 @@ func reads() {
 	set(&u.in, In{2})
 }
 ";
+    // `s` is the only name of the value, which the calls on it say.
+    let only =
+        "    s is the only name of this value: make it with NewUnique, and it can be changed";
     let fix = "    put what changes in a Mutex or an Atomic, or own the value with a Unique";
     let expected = [
         "a.gopp:43:2: cannot call s.Up: the method writes through its receiver, and what a Shared holds is only \
          read through it",
-        fix,
+        only,
         "a.gopp:44:2: cannot call s.UpTwice: the method writes through its receiver, and what a Shared holds is \
          only read through it",
-        fix,
+        only,
         "a.gopp:45:5: cannot give s to up: the function writes through it, and what a Shared holds is only read",
-        fix,
+        only,
         "a.gopp:46:7: cannot give &s.in to setk: the function writes through it, and what a Shared holds is only \
          read",
-        fix,
+        only,
         "a.gopp:47:10: cannot give &s.in to through: the function writes through it, and what a Shared holds is \
          only read",
-        fix,
+        only,
         "a.gopp:49:7: cannot give p to setk: the function writes through it, and what a Shared holds is only read",
         fix,
         "a.gopp:50:6: cannot give &s.in to set: the function writes through it, and what a Shared holds is only \
          read",
-        fix,
+        only,
         "a.gopp:51:13: cannot give &s.in to r.Read: nothing says that the function only reads through it, and what \
          a Shared holds is only read",
-        fix,
+        only,
         "a.gopp:52:6: cannot give &s.in to run: nothing says that the function only reads through it, and what a \
          Shared holds is only read",
-        fix,
+        only,
         "a.gopp:53:11: cannot give s to run2: nothing says that the function only reads through it, and what a \
          Shared holds is only read",
-        fix,
+        only,
     ];
     assert_eq!(messages("a.gopp", text), expected);
 }
@@ -6459,6 +6462,89 @@ fn the_steps_of_children_seen_as_parents_grow_with_the_input_not_faster() {
     let sizes = [100, 200, 400, 800];
     linear::assert_near_linear(&sizes, |n| steps(methods(n)));
     linear::assert_near_linear(&sizes, |n| steps(places(n)));
+}
+
+// rule: OWN-P8
+#[test]
+fn a_shared_with_one_name_is_told_to_be_a_unique() {
+    // `one` makes a value with `NewShared` and never copies, gives,
+    // stores or returns the handle: every write that is refused says
+    // that a `Unique` is what is meant. A handle that is lent where a
+    // pointer is taken is no second name. The other functions have a
+    // second name, give the handle away, return it, or were given it.
+    let text = "package p
+
+type Dog struct {
+	name  string
+	barks int
+	tags  []string
+}
+
+func (d *Dog) Bark() { d.barks++ }
+
+func rename(d *Dog) { d.name = \"x\" }
+
+func keep(d Shared[Dog]) {}
+
+func one() {
+	dog := NewShared(Dog{name: \"rex\"})
+	dog.barks++
+	dog.name = \"max\"
+	dog.tags = append(dog.tags, \"a\")
+	dog.Bark()
+	rename(dog)
+	println(dog.name)
+}
+
+func two() {
+	dog := NewShared(Dog{name: \"rex\"})
+	other := dog
+	dog.barks++
+	println(other.name)
+}
+
+func given() {
+	dog := NewShared(Dog{name: \"rex\"})
+	keep(dog)
+	dog.barks++
+}
+
+func returned() Shared[Dog] {
+	dog := NewShared(Dog{name: \"rex\"})
+	dog.barks++
+	return dog
+}
+
+func param(dog Shared[Dog]) {
+	dog.barks++
+}
+";
+    let only =
+        "    dog is the only name of this value: make it with NewUnique, and it can be changed";
+    let fix = "    put what changes in a Mutex or an Atomic, or own the value with a Unique";
+    let expected = [
+        "a.gopp:17:2: cannot assign to dog.barks: what a Shared holds is only read through it",
+        only,
+        "a.gopp:18:2: cannot assign to dog.name: what a Shared holds is only read through it",
+        only,
+        "a.gopp:19:2: cannot assign to dog.tags: what a Shared holds is only read through it",
+        only,
+        "a.gopp:20:2: cannot call dog.Bark: the method writes through its receiver, and what a Shared holds is \
+         only read through it",
+        only,
+        "a.gopp:21:9: cannot give dog to rename: the function writes through it, and what a Shared holds is only \
+         read",
+        only,
+        "a.gopp:28:2: cannot assign to dog.barks: what a Shared holds is only read through it",
+        fix,
+        "a.gopp:35:2: cannot assign to dog.barks: what a Shared holds is only read through it",
+        fix,
+        "a.gopp:40:2: cannot assign to dog.barks: what a Shared holds is only read through it",
+        fix,
+        "a.gopp:45:2: cannot assign to dog.barks: what a Shared holds is only read through it",
+        fix,
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
 }
 
 // rule: PAN-3

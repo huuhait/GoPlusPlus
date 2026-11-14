@@ -254,6 +254,14 @@ impl<'a> Checker<'a> {
             {
                 self.read_only.insert(local);
             }
+            // What `NewShared` made has this one name so far.
+            let value = self.unparen(cx, value);
+            if let (Some(local), ExprKind::Call { fun, .. }) = (*local, &cx.tree.exprs[value].kind)
+                && cx.body.uses.get(&self.unparen(cx, *fun))
+                    == Some(&Ref::Universe(Predeclared::NewShared))
+            {
+                self.made_shared.insert(local);
+            }
         }
     }
 
@@ -387,15 +395,96 @@ impl<'a> Checker<'a> {
             "cannot {doing} {}: what a Shared holds is only read through it",
             self.expr_string(cx, expr)
         );
-        let fix = "put what changes in a Mutex or an Atomic, or own the value with a Unique";
+        // The variable at the root of the place: if it is the only
+        // name of the value, a `Unique` is what is meant.
+        let mut root = self.unparen(cx, expr);
+        while let ExprKind::Selector { x, .. }
+        | ExprKind::Index { x, .. }
+        | ExprKind::Slice { x, .. }
+        | ExprKind::Unary { x, .. } = cx.tree.exprs[root].kind
+        {
+            root = self.unparen(cx, x);
+        }
+        let named = cx.tree.exprs[root].span;
         let span = cx.tree.exprs[expr].span;
-        self.error_with_fix(
-            Code::OwnSharedWrite,
-            span,
-            message,
-            (Code::NoteOwnFixOption, fix.to_owned()),
-        );
+        if self.report_once((span, Code::OwnSharedWrite)) {
+            self.shared_writes.push((span, message, named));
+        }
         true
+    }
+
+    /// Says the writes to what a `Shared` holds that the body made,
+    /// each with what to do instead: if the variable is the only name
+    /// of the value, a `Unique` is what is meant.
+    pub(super) fn say_shared_writes(&mut self, cx: &Cx<'a>) {
+        let writes = std::mem::take(&mut self.shared_writes);
+        if writes.is_empty() {
+            return;
+        }
+        let only = self.only_names(cx);
+        for (span, message, named) in writes {
+            let fix = match only.contains(&named.lo) {
+                true => Self::only_name_fix(&cx.text[named.lo as usize..named.hi as usize]),
+                false => "put what changes in a Mutex or an Atomic, or own the value with a Unique"
+                    .to_owned(),
+            };
+            let diagnostic = Diagnostic::new(Code::OwnSharedWrite, span, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
+        }
+    }
+
+    /// Says the writes of a body that ended some other way, so that
+    /// none is lost.
+    pub(super) fn say_shared_writes_left(&mut self) {
+        for (span, message, _) in std::mem::take(&mut self.shared_writes) {
+            let fix = "put what changes in a Mutex or an Atomic, or own the value with a Unique";
+            let diagnostic = Diagnostic::new(Code::OwnSharedWrite, span, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix.to_owned()));
+        }
+    }
+
+    /// What to do where the variable that is written as `given` is the
+    /// only name of a value in a `Shared`.
+    pub(super) fn only_name_fix(given: &str) -> String {
+        let name = given.trim_start_matches('&');
+        let name = name.split(['.', '[']).next().unwrap_or(name);
+        format!(
+            "{name} is the only name of this value: make it with NewUnique, and it can be changed"
+        )
+    }
+
+    /// Where the body names a variable that `NewShared` made and that
+    /// is the only name of the value: each time it is named, a part of
+    /// it is read or a method is called on it, so the handle is never
+    /// copied, given, stored or returned.
+    pub(super) fn only_names(&mut self, cx: &Cx<'a>) -> FxHashSet<u32> {
+        let mut places = FxHashSet::default();
+        if self.made_shared.is_empty() {
+            return places;
+        }
+        let mut whole: FxHashSet<LocalId> = FxHashSet::default();
+        let mut named: Vec<(LocalId, u32)> = Vec::new();
+        for (&expr, used) in &cx.body.uses {
+            self.steps += 1;
+            let Ref::Local(local) = *used else {
+                continue;
+            };
+            if !self.made_shared.contains(&local) {
+                continue;
+            }
+            let span = cx.tree.exprs[expr].span;
+            let after = cx.text[span.hi as usize..].trim_start_matches([' ', ')']);
+            match after.starts_with(['.', '[']) || self.lent_handles.contains(&expr) {
+                true => named.push((local, span.lo)),
+                false => drop(whole.insert(local)),
+            }
+        }
+        places.extend(
+            (named.iter())
+                .filter(|(local, _)| !whole.contains(local))
+                .map(|&(_, at)| at),
+        );
+        places
     }
 
     /// The function literals that are being walked and do not declare the
