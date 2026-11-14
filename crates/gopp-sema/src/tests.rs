@@ -6797,6 +6797,85 @@ func array() int {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+// rule: GEN-11
+#[test]
+fn generic_code_gives_to_a_goroutine_only_what_its_constraint_allows() {
+    // Plain code may not give a `Local` function to a goroutine, or
+    // keep a function that uses one as a plain function. Generic code
+    // that does the same with a value of its type parameter needs the
+    // constraint, `Send` for a goroutine and `Sync` for a function
+    // that is kept; with it the body is accepted, and a use with a
+    // type that lacks the label is refused.
+    let text = "package p
+
+func plainGo(f Local[func()]) {
+	go func() { f() }()
+}
+
+func genericGo[T any](x T) {
+	go func() { _ = &x }()
+}
+
+func sendGo[T Send](x T) {
+	go func() { _ = &x }()
+}
+
+func plainKept(f Local[func()]) func() {
+	return func() { f() }
+}
+
+func genericKept[T comparable](x T) func() bool {
+	return func() bool { return x == x }
+}
+
+type Shared2 interface {
+	comparable
+	Sync
+}
+
+func syncKept[T Shared2](x T) func() bool {
+	return func() bool { return x == x }
+}
+
+func given[T comparable](x T, run func(func() bool)) {
+	run(func() bool { return x == x })
+}
+
+func givenSync[T Shared2](x T, run func(func() bool)) {
+	run(func() bool { return x == x })
+}
+
+func use(f Local[func()], run func(func() bool)) {
+	sendGo(f)
+	sendGo(1)
+	_ = syncKept(1)
+	givenSync(1, run)
+}
+";
+    let expected = [
+        "a.gopp:4:2: cannot use f in a new goroutine: a Local[func()] stays with one goroutine",
+        "    give the goroutine a variable of its own, put what changes in a sync.Atomic or a \
+         sync.Mutex, or send the result on a channel",
+        "a.gopp:8:2: cannot use x in a new goroutine: T is not constrained by Send",
+        "    give the goroutine a variable of its own, put what changes in a sync.Atomic or a \
+         sync.Mutex, or send the result on a channel",
+        "a.gopp:16:2: cannot keep a function that uses f as a func value, which may run on another \
+         goroutine: a Local[func()] stays with one goroutine",
+        "    keep it as a Local[func(...)], which stays with one goroutine, or put f in a \
+         sync.Atomic or a sync.Mutex",
+        "a.gopp:20:2: cannot keep a function that uses x as a func value, which may run on another \
+         goroutine: T is not constrained by Sync",
+        "    keep it as a Local[func(...)], which stays with one goroutine, or put x in a \
+         sync.Atomic or a sync.Mutex",
+        "a.gopp:33:2: cannot keep a function that uses x as a func value, which may run on another \
+         goroutine: T is not constrained by Sync",
+        "    keep it as a Local[func(...)], which stays with one goroutine, or put x in a \
+         sync.Atomic or a sync.Mutex",
+        "a.gopp:41:2: Local[func()] does not satisfy Send (a Local[func()] stays with one goroutine)",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 // rule: PAN-3
 #[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {
@@ -7996,7 +8075,7 @@ func fine4(f func() int) {
 	kept = f
 }
 
-func later[X any](first X) {
+func later[X Send](first X) {
 	x := move(first)
 	go func() { _ = &x }()
 }
@@ -8027,6 +8106,7 @@ func generic(p *T) {
         "a.gopp:74:23: cannot keep what q points to in found: nothing says how long it is kept \
          there"
             .to_owned(),
+        "a.gopp:109:2: *T does not satisfy Send (a *T borrows what it points to)".to_owned(),
         format!(
             "a.gopp:109:2: cannot use *T for X: the function is not for a type with a pointer \
              in it: cannot keep {}",
@@ -8688,7 +8768,8 @@ fn generic_code_keeps_no_function_that_changes_what_it_uses_either() {
     // What a kept function does to a variable is the same for every
     // type argument: it is said of the generic body (`keep`), as of
     // the plain one (`plain`, `pointer`). A `Local` function may
-    // (`local`), and so may one that only reads (`reads`).
+    // (`local`), and so may one that only reads what may be shared
+    // (`reads`).
     let text = "\
 package p
 
@@ -8710,7 +8791,7 @@ func local[T any](first T) Local[func() int] {
 	}
 }
 
-func reads[T Clone](first T) func() T {
+func reads[T interface{ Clone; Sync }](first T) func() T {
 	x := first
 	return func() T { return x }
 }

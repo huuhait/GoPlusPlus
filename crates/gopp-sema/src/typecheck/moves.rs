@@ -661,8 +661,13 @@ impl<'a> Checker<'a> {
             let Some(ty) = self.locals.get(&found.local).map(|x| x.ty) else {
                 continue;
             };
-            // A pointer in it is the borrow check's.
-            if self.open(ty) || self.types.may_hold_pointer(ty) {
+            // A pointer in it is the borrow check's. Where only a type
+            // parameter says that there may be one, the parameter says
+            // by its constraint whether its values go to a goroutine.
+            let by_params =
+                matches!(self.types.held(ty), Held::Params(params) if !params.is_empty());
+            let invalid = self.types.underlying(ty) == Types::INVALID;
+            if invalid || (self.types.may_hold_pointer(ty) && !by_params) {
                 continue;
             }
             let name = cx.body.locals[found.local.0 as usize].name;
@@ -1038,6 +1043,16 @@ impl<'a> Checker<'a> {
             // of every one of them.
             if escaped.changes && self.report_once((escaped.at, Code::FuncSharesCapture)) {
                 let why = format!("{owner} is changed by it or by another function");
+                self.emit(shares_capture(escaped.at, &owner, &why));
+            }
+            // And so is that the type of the variable may not be
+            // shared, which its constraint says.
+            let ty = carried(borrows::Carrier::Local(escaped.of));
+            let unshared = ty.and_then(|ty| self.types.unlabeled(ty, crate::types::Marker::Sync));
+            if let (true, Some((part, why))) = (escaped.unshared, unshared)
+                && self.report_once((escaped.at, Code::FuncSharesCapture))
+            {
+                let why = self.unlabeled_text(part, why, "Sync");
                 self.emit(shares_capture(escaped.at, &owner, &why));
             }
         }

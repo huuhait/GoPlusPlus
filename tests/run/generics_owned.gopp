@@ -73,7 +73,10 @@ func Each[T any](xs *[]T, visit func(*T)) {
 	}
 }
 
-func Later[T Clone](x T) func() T {
+func Later[T interface {
+	Clone
+	Sync
+}](x T) func() T {
 	return func() T { return x }
 }
 

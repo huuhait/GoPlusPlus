@@ -227,6 +227,8 @@ pub(super) struct Escaped {
     /// variable: where only a type parameter says that the variable may
     /// hold a pointer, that is what is said (CLO-2).
     pub changes: bool,
+    /// And its type may not be shared between goroutines.
+    pub unshared: bool,
     pub carrier: Option<Carrier>,
 }
 
@@ -1430,7 +1432,15 @@ impl<'a> Walk<'a> {
                         // changed while this one may run.
                         let writes = capture.how != crate::object::CaptureUse::Read
                             || self.changed_by_other(expr, local);
-                        let unshared = !lends
+                        // A variable of the type of a type parameter may
+                        // hold a pointer, and is shared like any other.
+                        let by_params = self.local_type(local).is_some_and(|ty| {
+                            let types = self.places.map(|places| places.types);
+                            types.is_some_and(|all| {
+                                matches!(all.held(ty), crate::types::Held::Params(of) if !of.is_empty())
+                            })
+                        });
+                        let unshared = (!lends || by_params)
                             && self.local_type(local).is_some_and(|ty| {
                                 let types = self.places.map(|places| places.types);
                                 let sync = crate::types::Marker::Sync;
@@ -2415,6 +2425,7 @@ impl Problem {
                 given,
                 captured: capture,
                 changes: plain && matches!(way[..], [Step::Captured(_, true, _)]),
+                unshared: plain && matches!(way[..], [Step::Captured(_, _, true)]),
                 // The variable that a literal uses says whether what
                 // is found depends on a type parameter.
                 carrier: match capture {
