@@ -195,19 +195,64 @@ const RUNTIME_PREFIX: &str = "_gopp_";
 
 /// The name of each function in the unit. A module that names a
 /// function of the runtime that the runtime does not have is refused.
-fn func_names(module: &Module) -> Result<Vec<String>, EmitError> {
-    let named = |(at, func): (usize, &Function)| {
+/// For a debugger a function of the source has the name that a trace
+/// writes for it, with `$` where a name of C takes no other letter.
+fn func_names(module: &Module, debug: bool) -> Result<Vec<String>, EmitError> {
+    let mut given = std::collections::HashSet::new();
+    let mut named = |(at, func): (usize, &Function)| {
         let name = func.name();
-        match func.is_declaration() && name.starts_with(RUNTIME_PREFIX) {
-            true if crate::runtime::is_func(name) => Ok(name.to_owned()),
-            true => Err(EmitError::Unsupported {
+        let readable = match debug && !func.is_declaration() && func.loc().file != 0 {
+            true => debugger_name(name).filter(|(written, _)| given.insert(written.clone())),
+            false => None,
+        };
+        match (
+            func.is_declaration() && name.starts_with(RUNTIME_PREFIX),
+            readable,
+        ) {
+            (true, _) if crate::runtime::is_func(name) => Ok(name.to_owned()),
+            (true, _) => Err(EmitError::Unsupported {
                 func: Some(name.to_owned()),
                 what: "a function that the runtime does not have",
             }),
-            false => Ok(format!("gopp_f{at}")),
+            (false, Some((written, _))) => Ok(written),
+            (false, None) => Ok(format!("gopp_f{at}")),
         }
     };
-    module.funcs.values().enumerate().map(named).collect()
+    module.funcs.values().enumerate().map(&mut named).collect()
+}
+
+/// What a function with the symbol is called for a debugger: its name
+/// as the unit writes it, and the name that it stands for, which has
+/// as many bytes. A name of C has no `.` and no bracket, so the unit
+/// writes `$` for each, and what Clang made is given the name itself
+/// afterwards. None for a symbol that is no symbol of Go++, and for a
+/// name that is not written in ASCII.
+fn debugger_name(symbol: &str) -> Option<(String, String)> {
+    let readable = gopp_mangle::demangle(symbol.as_bytes(), MAX_TRACE_NAME).ok()?;
+    let starts = readable
+        .bytes()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic());
+    if !starts || !readable.is_ascii() || readable.contains('$') {
+        return None;
+    }
+    let letter = |byte: u8| match byte.is_ascii_alphanumeric() || byte == b'_' {
+        true => byte as char,
+        false => '$',
+    };
+    Some((readable.bytes().map(letter).collect(), readable))
+}
+
+/// For each function of the module that a unit for a debugger names in
+/// its own way: that name, and the name of the source that it stands
+/// for (`debugger_name`).
+pub fn debugger_names(module: &Module) -> Vec<(String, String)> {
+    let mut given = std::collections::HashSet::new();
+    let of_source = |func: &&Function| !func.is_declaration() && func.loc().file != 0;
+    (module.funcs.values().filter(of_source))
+        .filter_map(|func| debugger_name(func.name()))
+        .filter(|(written, _)| given.insert(written.clone()))
+        .collect()
 }
 
 pub(crate) fn global_name(at: usize) -> String {
@@ -254,7 +299,7 @@ pub(crate) fn emit_counted(
         layouts,
         spelled,
         globals: module.globals.values().map(|global| global.ty).collect(),
-        funcs: func_names(module)?,
+        funcs: func_names(module, options.debug)?,
         debug: options.debug,
         tags,
         fields,

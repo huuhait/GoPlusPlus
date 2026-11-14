@@ -2298,3 +2298,85 @@ fn a_program_links_for_linux_with_the_c_library_that_it_is_told_of() {
     let made = object::File::parse(&bytes[..]).unwrap();
     assert!(symbols(&made).0.contains("_GPF4mainE4main"));
 }
+
+/// A debugger knows each function by the name that the source and a
+/// trace give it, with its dots: a function, a method, an instance of
+/// a generic function and a function literal. The symbol in the file
+/// is the one that the linker knows.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_debugger_knows_a_function_by_its_name_of_the_source() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main
+
+type Vec struct{ x, y int }
+
+func (v Vec) Len() int { return v.x + v.y }
+
+func Max[T int | float64](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func add(a, b int) int { return a + b }
+
+func main() {
+	v := Vec{3, 4}
+	f := func(n int) int { return add(n, v.Len()) }
+	println(f(1), Max[int](1, 2))
+}
+";
+    let commands = [
+        "break main.add",
+        "break main.Vec.Len",
+        "break main.Max[int]",
+        "run",
+        "bt",
+        "continue",
+        "bt",
+        "continue",
+        "bt",
+    ];
+    let said = debugged(&dir, text, &[], &commands);
+    let frames: Vec<&str> = said.lines().filter(|line| line.starts_with('#')).collect();
+    let named = |frame: &str, name: &str| frame.contains(&format!(" {name} ("));
+    assert!(named(frames[0], "main.Vec.Len"), "{said}");
+    assert!(named(frames[1], "main.main.func1"), "{said}");
+    assert!(named(frames[2], "main.main"), "{said}");
+    let add = frames.iter().position(|frame| named(frame, "main.add"));
+    let add = add.unwrap_or_else(|| panic!("{said}"));
+    assert!(frames[add].contains("(a=1, b=7)"), "{said}");
+    assert!(named(frames[add + 1], "main.main.func1"), "{said}");
+    assert!(
+        frames.iter().any(|frame| named(frame, "main.Max[int]")),
+        "{said}"
+    );
+    assert!(!said.contains("_GPF") && !said.contains('$'), "{said}");
+    // `lldb` reads the same names.
+    let program = dir.path().join("steps.bin");
+    let mut lldb = Command::new("lldb");
+    lldb.args([
+        "-b",
+        "-o",
+        "breakpoint set -n main.Vec.Len",
+        "-o",
+        "run",
+        "-o",
+        "bt",
+    ]);
+    let ran = run_beside(lldb.arg(&program));
+    let said = format!("{}{}", stdout(&ran), stderr(&ran));
+    assert!(
+        said.contains("`main.Vec.Len(v=") && said.contains("`main.main.func1("),
+        "{said}"
+    );
+    // The file itself has the symbols of Go++.
+    let bytes = fs::read(&program).unwrap();
+    let (defined, _) = symbols(&object::File::parse(&bytes[..]).unwrap());
+    assert!(defined.contains("_GPF4mainE3add") && !defined.contains("main.add"));
+    // Without debug information nothing is named so.
+    let said = debugged(&dir, text, &["-no-debug"], &["break main.add"]);
+    assert!(said.contains("\"main.add\" not defined"), "{said}");
+}

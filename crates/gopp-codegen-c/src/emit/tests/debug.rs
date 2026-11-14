@@ -17,8 +17,9 @@ fn defined(unit: &str, symbol: &str) -> String {
     let labeled = format!(" __asm__(\"{symbol}\");");
     let declared = (unit.lines()).find(|line| line.ends_with(&labeled));
     let declared = declared.unwrap_or_else(|| panic!("no function {symbol}\n{unit}"));
-    let start = declared.find(" gopp_f").unwrap() + 1;
-    let name = &declared[start..start + declared[start..].find('(').unwrap()];
+    // The name is what stands before the parameters.
+    let before = &declared[..declared.find('(').unwrap()];
+    let name = before.rsplit(' ').next().unwrap();
     let head = format!(" {name}(");
     let mut lines = (unit.lines())
         .filter(|line| !line.starts_with("#line "))
@@ -94,8 +95,10 @@ func main() {
 fn a_variable_has_its_name_in_the_block_of_its_scope() {
     let unit = emit_c23(&module("a.gopp", SCOPES), &debug()).unwrap();
     let add = defined(&unit, "_GPF4mainE3add");
+    // The function has the name that a trace writes for it, with `$`
+    // where a name of C takes no `.`.
     assert!(
-        add.starts_with("GOPP_CALL int64_t gopp_f0(int64_t a, int64_t b) {\n"),
+        add.starts_with("GOPP_CALL int64_t main$add(int64_t a, int64_t b) {\n"),
         "{add}"
     );
     let named: Vec<(String, usize)> = declared(&add)
@@ -179,7 +182,7 @@ fn a_name_that_c_takes_for_something_else_is_not_used() {
     }
     // What a cleanup block ends is a field of the record of the
     // function, under its name.
-    let record = unit.find("struct gopp_f1_own {\n").unwrap();
+    let record = unit.find("struct main$greet_own {\n").unwrap();
     let record = &unit[record..record + unit[record..].find("};").unwrap()];
     assert!(record.contains("  gopp_string text;\n"), "{record}");
     assert!(greet.contains("gopp_own->text = "), "{greet}");
@@ -356,4 +359,55 @@ fn the_steps_of_naming_grow_with_the_scopes() {
             "package main\n\nfunc f(x int) int {{\n{blocks}\treturn x\n}}\n\nfunc main() {{ println(f(1)) }}\n"
         ))
     });
+}
+
+#[test]
+fn a_function_of_the_source_has_its_name_with_a_mark_for_what_c_does_not_write() {
+    let text = "package main
+
+type Vec struct{ x, y int }
+
+func (v Vec) Len() int { return v.x + v.y }
+
+func Max[T int | float64](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Vec_Len() int { return 0 }
+
+func main() {
+	f := func(n int) int { return n + 1 }
+	println(Vec{1, 2}.Len(), Max[int](1, 2), Vec_Len(), f(1))
+}
+";
+    let module = module("a.gopp", text);
+    // Each name that the unit writes, and the name that it stands for:
+    // as many bytes, so that one can be put in the place of the other.
+    let names = crate::debugger_names(&module);
+    let stands_for = |written: &str| {
+        let found = names.iter().find(|(name, _)| name == written);
+        found.map(|(_, readable)| readable.as_str())
+    };
+    assert_eq!(stands_for("main$main"), Some("main.main"));
+    assert_eq!(stands_for("main$Vec$Len"), Some("main.Vec.Len"));
+    assert_eq!(stands_for("main$Max$int$"), Some("main.Max[int]"));
+    assert_eq!(stands_for("main$main$func1"), Some("main.main.func1"));
+    assert_eq!(stands_for("main$Vec_Len"), Some("main.Vec_Len"));
+    assert!(
+        names
+            .iter()
+            .all(|(written, readable)| written.len() == readable.len())
+    );
+    // The unit names its functions so, and those that the compiler
+    // makes itself as before.
+    let unit = emit_c23(&module, &debug()).unwrap();
+    for (written, _) in &names {
+        assert!(unit.contains(&format!(" {written}(")), "{written}\n{unit}");
+    }
+    assert!(unit.contains(" gopp_f"), "{unit}");
+    let plain = emit_c23(&module, &options(Entry::Main)).unwrap();
+    assert!(!plain.contains("main$"), "{plain}");
 }

@@ -163,6 +163,9 @@ impl ClangDriver<'_> {
         if self.debug && self.target.object == ObjectFormat::Elf {
             let dwarf = ["-gdwarf-5", "-gno-column-info", "-fno-omit-frame-pointer"];
             flags.extend(dwarf.map(str::to_owned));
+            // A debugger shows the name of a function, which is that
+            // of the source, and not its symbol.
+            flags.extend(["-mllvm", "-dwarf-linkage-names=Abstract"].map(str::to_owned));
         }
         // A unit for a debugger declares each variable in a block of C
         // for its scope. The block is no lifetime: a variable keeps its

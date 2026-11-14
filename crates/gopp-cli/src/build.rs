@@ -11,7 +11,7 @@ use gopp_codegen_c::driver::{ClangDriver, LinkInputs, OptLevel, Output, TIME_TRA
 use gopp_codegen_c::pipeline::{PipelineRequest, Stage, select_pipeline};
 use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
-use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
+use gopp_codegen_c::{EmitOptions, Entry, debugger_names, emit_c23};
 use gopp_diag::{Code, Diagnostic, Severity, Sink, render_text};
 use gopp_gir::{Checked, Imported, Module, Summaries, inline_trivial, lower_with, print_module};
 use gopp_sema::types::Types;
@@ -332,9 +332,60 @@ pub fn run(options: &Options) -> ExitCode {
     if let Err(error) = driver.build(&unit, dir.path(), &output, kind, &link_with) {
         return codegen(error);
     }
+    // A debugger shows each function under its name of the source.
+    if pipeline.debug && kind != Output::Assembly {
+        let modules = [&module]
+            .into_iter()
+            .chain(imports.iter().map(|(_, module)| module));
+        let names: Vec<(String, String)> = modules.flat_map(debugger_names).collect();
+        if let Err(error) = named_for_debugger(&output, &names) {
+            return stopped(format!("{}: {error}", output.display()));
+        }
+    }
     clock.end(Stage::ClangCompile, compiling);
     said_times(options, &clock, &traces);
     ExitCode::SUCCESS
+}
+
+/// Gives the functions their names of the source in what a debugger
+/// reads of the file that Clang made. A name of C has no `.`, so a unit
+/// names a function `main$add`; the strings of the debug information
+/// have that name, and each is made the name that it stands for, which
+/// has as many bytes. A file without such strings is left as it is.
+fn named_for_debugger(file: &std::path::Path, names: &[(String, String)]) -> io::Result<()> {
+    use object::{Object, ObjectSection};
+
+    let mut bytes = std::fs::read(file)?;
+    let strings = object::File::parse(&bytes[..]).ok().and_then(|object| {
+        let section = object.section_by_name(".debug_str")?;
+        let (start, size) = section.file_range()?;
+        Some(start as usize..(start + size) as usize)
+    });
+    let Some(strings) = strings.filter(|range| range.end <= bytes.len()) else {
+        return Ok(());
+    };
+    let stands_for: std::collections::HashMap<&[u8], &[u8]> = (names.iter())
+        .filter(|(written, readable)| written.len() == readable.len())
+        .map(|(written, readable)| (written.as_bytes(), readable.as_bytes()))
+        .collect();
+    let mut changed = false;
+    let mut at = strings.start;
+    while at < strings.end {
+        let section = &bytes[at..strings.end];
+        let len = section
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(section.len());
+        if let Some(&readable) = stands_for.get(&bytes[at..at + len]) {
+            bytes[at..at + len].copy_from_slice(readable);
+            changed = true;
+        }
+        at += len + 1;
+    }
+    match changed {
+        true => std::fs::write(file, bytes),
+        false => Ok(()),
+    }
 }
 
 /// Says how long the stages took, to standard error and to the file of
