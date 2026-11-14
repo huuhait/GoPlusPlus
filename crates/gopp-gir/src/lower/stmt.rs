@@ -261,6 +261,11 @@ impl FuncCx<'_, '_> {
             self.unsupported(span, "a range key that is the key itself");
             return Ok(());
         }
+        // A value with an `Iter` method is walked by what the method
+        // gives, whatever it is itself.
+        if self.body.range_operators.contains_key(&x) {
+            return self.range_func((stmt, label), span, lhs, x);
+        }
         if self.holds_map(x) {
             let copied = self.copied_range(stmt);
             return self.range_map(label, span, lhs, define, (x, copied), body);
@@ -529,6 +534,16 @@ impl FuncCx<'_, '_> {
         let on = self.operand_as(tag, ty)?;
         let on = self.stable(on)?;
         self.keep_temps(mark)?;
+        // A tag that does more than read is that value for the cases
+        // that a method compares it with.
+        let inner = Shared::unparen(self.tree, tag);
+        let once = match &on {
+            Operand::Copy(place) if self.has_effects(inner) => {
+                self.worked_out.insert(inner, place.clone());
+                true
+            }
+            _ => false,
+        };
         let known = |this: &Self, case: ExprId| match this.body.types.get(&case) {
             Some(typed) if !this.body.case_operators.contains_key(&case) => {
                 typed.value.to_int().low_bits()
@@ -588,6 +603,9 @@ impl FuncCx<'_, '_> {
             let equal = Operand::Copy(Place::local(equal));
             self.b.switch(equal, vec![(0, next)], body)?;
             self.b.switch_to(next);
+        }
+        if once {
+            self.forget(&[inner]);
         }
         self.b.goto(otherwise)
     }

@@ -84,8 +84,8 @@ impl FuncCx<'_, '_> {
     }
 
     /// Whether the tag of a switch is equal to a case by an `Eq`
-    /// method. The tag is read again for each case, so it must do no
-    /// more than read.
+    /// method. The tag is read again for each case: one that does more
+    /// than read was worked out before, by the switch.
     pub(super) fn operator_case(
         &mut self,
         tag: ExprId,
@@ -100,6 +100,29 @@ impl FuncCx<'_, '_> {
             false => (tag, case),
         };
         self.operator_call(case, used, receiver, &[other])
+    }
+
+    /// The function that `for ... := range x` walks by the `Iter`
+    /// method of `x` (RNG-6b): the call of the method, whose value
+    /// has the type `given`.
+    pub(super) fn operator_iter(
+        &mut self,
+        x: ExprId,
+        used: &OperatorUse,
+        given: gopp_sema::types::TypeId,
+    ) -> Built<Result<Rvalue, &'static str>> {
+        let outer = self.iterated.replace((x, given));
+        let made = self.operator_call(x, used, x, &[]);
+        self.iterated = outer;
+        made
+    }
+
+    /// The type of what the `Iter` method gives.
+    pub(super) fn iter_given(&self, used: &OperatorUse) -> Option<gopp_sema::types::TypeId> {
+        match &*self.shared.types.get(used.sig) {
+            CheckedType::Func { results, .. } => results.first().copied(),
+            _ => None,
+        }
     }
 
     /// The value of an expression that an `@Operator` method stands
@@ -118,11 +141,17 @@ impl FuncCx<'_, '_> {
                     true => (y, x),
                     false => (x, y),
                 };
-                if used.swapped && self.has_effects(x) {
-                    let what = "a `@Right` operator whose left operand does more than read";
-                    return Ok(self.placeholder(span, ty, what));
+                // The left operand is worked out first, also where it
+                // is the argument of a method of the right one.
+                let first = used.swapped && self.has_effects(x);
+                if first {
+                    self.work_out(x, false)?;
                 }
-                let said = match self.operator_call(expr, &used, receiver, &[other])? {
+                let said = self.operator_call(expr, &used, receiver, &[other])?;
+                if first {
+                    self.forget(&[super::Shared::unparen(self.tree, x)]);
+                }
+                let said = match said {
                     Ok(said) => said,
                     Err(what) => return Ok(self.placeholder(span, ty, what)),
                 };

@@ -14278,6 +14278,7 @@ fn operator_uses(text: &str) -> Vec<String> {
             ("op= ", &body.op_assigns),
             ("store ", &body.index_stores),
             ("case ", &body.case_operators),
+            ("range ", &body.range_operators),
         ];
         for (order, (kind, table)) in tables.into_iter().enumerate() {
             for (&expr, used) in table {
@@ -14793,8 +14794,8 @@ func use(m, n Matrix, pm *Matrix, cells Cells) float64 {
         "48: op= m: Matrix.Sub(Matrix) Matrix",
         "49: op= pm: Matrix.AddAssign(Matrix)",
         "50: op= cells.at[\"a\"]: Matrix.Add(Matrix) Matrix",
-        "51: m: Matrix.Iter() func(func(int, float64) bool)",
-        "54: pm: Matrix.Iter() func(func(int, float64) bool)",
+        "51: range m: Matrix.Iter() func(func(int, float64) bool)",
+        "54: range pm: Matrix.Iter() func(func(int, float64) bool)",
         "57: int(m): Matrix.Size() int",
     ];
     assert_eq!(operator_uses(&format!("{declared}{good}")), expected);

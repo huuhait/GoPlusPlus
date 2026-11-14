@@ -4655,6 +4655,121 @@ func main() {
     assert!(module.contains(corner), "{module}");
 }
 
+// rule: EXP-19, EXP-20, RNG-6b
+#[test]
+fn what_an_operator_method_reads_twice_is_worked_out_once() {
+    // `x op= y` by a method that gives the new value names the place
+    // twice, a `@Right` method has its left operand as its argument,
+    // and a tag is compared with each case: what does more than read
+    // is called once, in the order of the source. A loop over a value
+    // with an `Iter` method calls the method once and walks what it
+    // gives.
+    let text = "package main
+
+type V struct{ n int }
+
+@Operator
+func (a V) Add(b V) V { return V{a.n + b.n} }
+
+@Operator
+@Right
+func (a V) Mul(k int) V { return V{a.n * k} }
+
+@Operator
+func (a V) Eq(b V) bool { return a.n == b.n }
+
+@Operator
+func (a V) Iter() func(yield func(int) bool) {
+	return func(yield func(int) bool) { yield(a.n) }
+}
+
+func at() int { return 0 }
+
+func made() V { return V{1} }
+
+func place(vs *[]V) {
+	vs[at()] += made()
+}
+
+func right() V { return at() * made() }
+
+func tag() int {
+	switch made() {
+	case V{1}:
+		return 1
+	case V{2}:
+		return 2
+	}
+	return 0
+}
+
+func walk(v V) int {
+	n := 0
+	for x := range v {
+		n += x
+	}
+	return n
+}
+";
+    let module = gir(text);
+    let body = |function: &str| {
+        let start = module.find(&format!("\nfn _GPF4mainE{function}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let calls = |function: &str, called: &str| body(function).matches(called).count();
+    assert_eq!(
+        calls("5place", "call const fn @_GPF4mainE2at("),
+        1,
+        "{}",
+        body("5place")
+    );
+    assert_eq!(calls("5place", "call const fn @_GPF4mainE4made("), 1);
+    let right = body("5right");
+    let (at, made) = (
+        right.find("@_GPF4mainE2at(").unwrap(),
+        right.find("@_GPF4mainE4made(").unwrap(),
+    );
+    assert!(at < made, "{right}");
+    assert_eq!(
+        calls("3tag", "call const fn @_GPF4mainE4made("),
+        1,
+        "{}",
+        body("3tag")
+    );
+    assert_eq!(
+        calls("3tag", "call const fn @_GPTo5op_Eq"),
+        2,
+        "{}",
+        body("3tag")
+    );
+    assert_eq!(
+        calls("4walk", "call const fn @_GPTo7op_Iter"),
+        1,
+        "{}",
+        body("4walk")
+    );
+}
+
+#[test]
+fn the_steps_of_places_that_are_worked_out_once_grow_with_the_input_not_faster() {
+    let sizes = [100, 200, 400, 800];
+    let declared = "package main\n\ntype V struct{ n int }\n\n@Operator\nfunc (a V) Add(b V) V { return \
+                    V{a.n + b.n} }\n\nfunc at() int { return 0 }\n";
+    // As many statements that each change an element by a method, and
+    // one whose place is behind as many indices.
+    assert_near_linear(&sizes, |n| {
+        let each: String = (0..n).map(|_| "\tvs[at()] += V{1}\n").collect();
+        steps_of(&format!("{declared}\nfunc f(vs *[]V) {{\n{each}}}\n"))
+    });
+    assert_near_linear(&sizes, |n| {
+        let ty = format!("{}V", "[1]".repeat(n));
+        let way = "[at()]".repeat(n);
+        steps_of(&format!(
+            "{declared}\nfunc f(vs *{ty}) {{\n\tvs{way} += V{{1}}\n}}\n"
+        ))
+    });
+}
+
 #[test]
 fn the_steps_of_constants_of_several_parts_grow_with_the_input_not_faster() {
     let sizes = [100, 200, 400, 800];

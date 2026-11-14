@@ -133,6 +133,7 @@ impl Body {
             operators(&self.index_stores),
             operators(&self.case_operators),
         );
+        let range_operators = operators(&self.range_operators);
         // A value of a type parameter that is put into an interface is
         // an interface value itself if the type argument is one: it
         // goes on as it is, or says its type another way.
@@ -240,6 +241,7 @@ impl Body {
             op_assigns,
             index_stores,
             case_operators,
+            range_operators,
             iface_changes,
             part_conversions,
             case_types,

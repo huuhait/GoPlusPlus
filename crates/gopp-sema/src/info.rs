@@ -101,6 +101,7 @@ impl Writer<'_> {
             ("op assign", &body.op_assigns),
             ("index store", &body.index_stores),
             ("case operator", &body.case_operators),
+            ("range operator", &body.range_operators),
         ];
         for (table, uses) in tables {
             for (&expr, used) in uses {

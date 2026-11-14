@@ -1,0 +1,207 @@
+package main
+
+type Vec struct{ X, Y int }
+
+@Operator
+func (a Vec) Add(b Vec) Vec { return Vec{a.X + b.X, a.Y + b.Y} }
+
+@Operator
+@Right
+func (a Vec) Mul(s int) Vec { return Vec{a.X * s, a.Y * s} }
+
+@Operator
+func (a Vec) Eq(b Vec) bool { return a.X == b.X && a.Y == b.Y }
+
+// A value that owns its bytes, repeated by a count on the left.
+type Word struct{ text string }
+
+@Operator
+@Right
+func (w Word) Mul(sep string) Word { return Word{sep + w.text + sep} }
+
+@Operator
+func (w Word) Add(o Word) Word { return Word{w.text + o.text} }
+
+@Operator
+func (w Word) Eq(o Word) bool { return w.text == o.text }
+
+type Bag struct{ items []int }
+
+@Operator
+func (b Bag) Iter() func(yield func(int) bool) {
+	return func(yield func(int) bool) {
+		for _, x := range b.items {
+			if !yield(x) {
+				return
+			}
+		}
+	}
+}
+
+@Operator
+func (b Bag) Add(o Bag) Bag { return Bag{append(b.items, o.items...)} }
+
+type Pairs struct{ keys []string }
+
+@Operator
+func (p *Pairs) Iter() func(yield func(int, string) bool) {
+	return func(yield func(int, string) bool) {
+		for i, key := range p.keys {
+			if !yield(i, key) {
+				return
+			}
+		}
+	}
+}
+
+// A table that is read and written by methods.
+type Table struct{ cells map[string]Word }
+
+@Operator
+func (t Table) Index(key string) Word { return t.cells[key] }
+
+@Operator
+func (t *Table) SetIndex(key string, w Word) { t.cells[key] = w }
+
+// A grid whose cells are plain numbers and whose rows have names.
+type Grid struct {
+	cells [4]int
+	names map[string]string
+}
+
+@Operator
+func (g Grid) Index(i int) int { return g.cells[i] }
+
+@Operator
+func (g *Grid) SetIndex(i int, v int) { g.cells[i] = v }
+
+@Operator
+func (g Grid) Index(name string) string { return g.names[name] }
+
+@Operator
+func (g *Grid) SetIndex(name string, v string) { g.names[name] = v }
+
+type Counter struct {
+	calls int
+	trace string
+}
+
+func (c *Counter) next() int {
+	c.calls++
+	c.trace += "n"
+	return c.calls
+}
+
+func (c *Counter) vec() Vec {
+	c.calls++
+	c.trace += "v"
+	return Vec{c.calls, c.calls}
+}
+
+func (c *Counter) key(k string) string {
+	c.calls++
+	c.trace += k
+	return k + k
+}
+
+func (c *Counter) word(text string) Word {
+	c.calls++
+	c.trace += "w"
+	return Word{text}
+}
+
+func (c *Counter) at(vs *[]Vec, i int) *Vec {
+	c.calls++
+	c.trace += "@"
+	return &vs[i]
+}
+
+func ranges(c *Counter) {
+	b := Bag{items: []int{1, 2, 3}}
+	sum := 0
+	for x := range b {
+		sum += x
+	}
+	for x := range b + (Bag{items: []int{10}}) {
+		if x == 3 {
+			continue
+		}
+		sum += x
+	}
+	p := Pairs{keys: []string{"a", "b", "c"}}
+	last := ""
+	for i, key := range p {
+		if i == 2 {
+			break
+		}
+		last += key
+	}
+	println(sum, last)
+}
+
+func right(c *Counter) {
+	// The left operand is worked out before the right one.
+	v := c.next() * c.vec()
+	println(v.X, v.Y, c.trace)
+	w := c.key("-") * c.word("go")
+	println(w.text, c.trace)
+}
+
+func places(c *Counter) {
+	vs := []Vec{{1, 1}, {2, 2}, {3, 3}}
+	vs[c.next()-5] += c.vec()
+	println(vs[0].X, vs[1].X, vs[2].X, c.calls, c.trace)
+	c.at(&vs, 2).X += 1
+	*c.at(&vs, 1) += Vec{100, 100}
+	println(vs[1].X, vs[2].X, c.calls, c.trace)
+	words := map[string]Word{}
+	words[c.key("k")] += c.word("a")
+	words[c.key("k")] += Word{"b"}
+	println(words["kk"].text, len(words), c.calls, c.trace)
+	t := Table{cells: map[string]Word{}}
+	t[c.key("x")] += c.word("1")
+	t[c.key("x")] += Word{"2"}
+	println(t["xx"].text, len(t.cells), c.calls, c.trace)
+}
+
+func cells(c *Counter) {
+	g := Grid{names: map[string]string{}}
+	g[c.next()-19] += 5
+	g[1] += 2
+	g[1] *= 10
+	g[2]++
+	g[c.next()-18]--
+	println(g[0], g[1], g[2], g[3], c.calls)
+	g[c.key("r")] += "a"
+	g[c.key("r")] += c.key("b")
+	println(g["rr"], len(g.names), c.calls, c.trace)
+}
+
+func tags(c *Counter) {
+	switch c.vec() {
+	case Vec{1, 1}:
+		println("one")
+	case Vec{c.next(), 20}:
+		println("no")
+	case Vec{20, 20}, Vec{21, 21}:
+		println("twenty", c.calls)
+	default:
+		println("other", c.calls)
+	}
+	switch c.word("go") {
+	case Word{"stop"}:
+		println("stop")
+	case c.word("g") + Word{"o"}:
+		println("go", c.calls)
+	}
+	println(c.trace)
+}
+
+func main() {
+	c := Counter{}
+	ranges(&c)
+	right(&c)
+	places(&c)
+	tags(&c)
+	cells(&c)
+}

@@ -237,6 +237,7 @@ impl BodyTypes {
             &mut self.op_assigns,
             &mut self.index_stores,
             &mut self.case_operators,
+            &mut self.range_operators,
         ];
         for used in tables.into_iter().flat_map(|table| table.values_mut()) {
             used.holder = to(used.holder);
@@ -373,6 +374,7 @@ struct Checker<'a> {
     op_assigns: FxHashMap<ExprId, crate::object::OperatorUse>,
     index_stores: FxHashMap<ExprId, crate::object::OperatorUse>,
     case_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
+    range_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
     /// The type parameters of the package and what each is instantiated
     /// as.
     mono: mono::Mono,
@@ -646,6 +648,7 @@ struct BodyTypes {
     op_assigns: FxHashMap<ExprId, crate::object::OperatorUse>,
     index_stores: FxHashMap<ExprId, crate::object::OperatorUse>,
     case_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
+    range_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
     foreign_uses: FxHashMap<ExprId, crate::object::ForeignUse>,
 }
 
@@ -724,6 +727,7 @@ pub fn declarations(
         op_assigns: FxHashMap::default(),
         index_stores: FxHashMap::default(),
         case_operators: FxHashMap::default(),
+        range_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
         kept: kept::Kept::default(),
         lending: FxHashMap::default(),
@@ -885,6 +889,7 @@ pub fn declarations(
             body.op_assigns = found.op_assigns;
             body.index_stores = found.index_stores;
             body.case_operators = found.case_operators;
+            body.range_operators = found.range_operators;
             body.foreign_uses = found.foreign_uses;
             body.iface_conversions = found.iface_conversions;
             body.case_types = found.case_types;
@@ -4031,6 +4036,7 @@ impl<'a> Checker<'a> {
             op_assigns: std::mem::take(&mut self.op_assigns),
             index_stores: std::mem::take(&mut self.index_stores),
             case_operators: std::mem::take(&mut self.case_operators),
+            range_operators: std::mem::take(&mut self.range_operators),
             foreign_uses: std::mem::take(&mut self.foreign_uses),
             iface_conversions: std::mem::take(&mut self.iface_conversions),
             case_types: std::mem::take(&mut self.case_types),

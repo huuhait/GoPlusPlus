@@ -330,6 +330,13 @@ impl FuncCx<'_, '_> {
     /// through a pointer, a `Unique` or a `Shared`.
     pub fn checked_as(&mut self, expr: ExprId, ty: TypeId) -> Option<CheckedTypeId> {
         let types = self.shared.types;
+        // What an `Iter` method gives for the expression of a loop.
+        if let Some((of, given)) = self.iterated
+            && of == expr
+            && self.memo.lower_type(self.shared, self.b.types(), given) == Ok(ty)
+        {
+            return Some(given);
+        }
         // A part of the value that is the receiver of a method.
         if let Some(&part) = self.parts.get(&expr) {
             let lowered = self.memo.lower_type(self.shared, self.b.types(), part);

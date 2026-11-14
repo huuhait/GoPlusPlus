@@ -271,6 +271,15 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The place on the right of `s = append(s, ...)` and of
     /// `s = s[i:j]`: its slice is used where it is, and not copied.
     pub reused: Option<ExprId>,
+    /// The expressions that were worked out already, each with the
+    /// place of its value: where one is read again, it is that place.
+    /// And the places whose parts with effects are all worked out.
+    pub worked_out: FxHashMap<ExprId, Place>,
+    pub settled: FxHashSet<ExprId>,
+    /// The expression that a loop ranges over by an `Iter` method,
+    /// with the type of what the method gives: the call that is
+    /// lowered for it gives a value of that type.
+    pub iterated: Option<(ExprId, CheckedTypeId)>,
     /// The variables `&v` of range clauses: each holds the address of
     /// the element that it names.
     pub aliases: FxHashSet<LocalId>,
@@ -1036,6 +1045,9 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             effects: FxHashMap::default(),
             reported: FxHashSet::default(),
             reused: None,
+            worked_out: FxHashMap::default(),
+            settled: FxHashSet::default(),
+            iterated: None,
             aliases: FxHashSet::default(),
             element_names: FxHashMap::default(),
             views: Vec::new(),

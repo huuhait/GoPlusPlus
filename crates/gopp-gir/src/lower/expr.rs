@@ -601,6 +601,14 @@ impl<'a> FuncCx<'a, '_> {
 
     fn rvalue_here(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         self.memo.steps += 1;
+        if let Some(place) = self.worked_out.get(&expr).cloned() {
+            let have = self.b.place_ty(&place);
+            let place = match have != ty && self.pointee(have) == ty {
+                true => self.b.deref(&place)?,
+                false => place,
+            };
+            return Ok(Rvalue::Use(Operand::Copy(place)));
+        }
         let node = &self.tree.exprs[expr];
         let span = node.span;
         if self.body.operators.contains_key(&expr) {
@@ -773,6 +781,9 @@ impl<'a> FuncCx<'a, '_> {
 
     fn place_here(&mut self, expr: ExprId, mode: &mut PlaceMode) -> Built<Place> {
         self.memo.steps += 1;
+        if let Some(place) = self.worked_out.get(&expr) {
+            return Ok(place.clone());
+        }
         let node = &self.tree.exprs[expr];
         let span = node.span;
         match &node.kind {
@@ -1472,9 +1483,107 @@ impl<'a> FuncCx<'a, '_> {
         Ok(Rvalue::Binary(lowered, first, second))
     }
 
+    /// Works the expression out now, once: where it is read again, it
+    /// is the place of that value, until `forget`. The value is the
+    /// statement's own: the first that takes it has it, unless `kept`
+    /// says that it is read more than once, and then it lives as long
+    /// as the scope.
+    pub(super) fn work_out(&mut self, expr: ExprId, kept: bool) -> Built {
+        let inner = Shared::unparen(self.tree, expr);
+        let ty = self.ty_of(inner);
+        if ty == TypeInterner::UNIT || self.worked_out.contains_key(&inner) {
+            return Ok(());
+        }
+        let mark = self.temps.len();
+        let values = self.owned_values(&[inner], &[Some(ty)])?;
+        let Some(value) = values.into_iter().next() else {
+            return Ok(());
+        };
+        let value = self.fresh(inner, ty, value)?;
+        let place = self.slot_of(value.clone())?;
+        // The slot is the owner in the place of the temporary.
+        if let Rvalue::Use(Operand::Copy(made)) = &value
+            && self.take_temp(made)
+        {
+            let checked = self.checked_as(inner, ty);
+            if let Some(ends) = self.ends_of(checked, self.tree.exprs[inner].span)? {
+                self.own_temp(place.clone(), ends);
+            }
+        }
+        if kept {
+            self.keep_temps(mark)?;
+        }
+        self.worked_out.insert(inner, place);
+        Ok(())
+    }
+
+    /// Works out, once and from left to right, every part of the place
+    /// that does more than read: an index, and what a pointer on the
+    /// way to the place comes from. The place may be read and written
+    /// after that as often as it is named. What was worked out is
+    /// added to `done`, for `forget`.
+    pub(super) fn settle(&mut self, expr: ExprId, done: &mut Vec<ExprId>) -> Built {
+        let inner = Shared::unparen(self.tree, expr);
+        if !self.has_effects(inner) {
+            return Ok(());
+        }
+        self.memo.steps += 1;
+        let field = |this: &Self| {
+            let selection = this.body.selections.get(&inner);
+            selection.is_some_and(|selection| {
+                matches!(
+                    selection.kind,
+                    SelectionKind::Field | SelectionKind::BaseField
+                )
+            })
+        };
+        match &self.tree.exprs[inner].kind {
+            ExprKind::Index { x, indices } if !self.body.instances.contains_key(&inner) => {
+                let (x, indices) = (*x, indices.clone());
+                deeper(|| self.settle(x, done))?;
+                for index in indices {
+                    if self.has_effects(index) {
+                        self.work_out(index, true)?;
+                        done.push(Shared::unparen(self.tree, index));
+                    }
+                }
+            }
+            ExprKind::Selector { x, .. } if field(self) => {
+                let x = *x;
+                deeper(|| self.settle(x, done))?;
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Star,
+                x,
+            } => {
+                let x = *x;
+                deeper(|| self.settle(x, done))?;
+            }
+            _ => {
+                self.work_out(inner, true)?;
+                done.push(inner);
+                return Ok(());
+            }
+        }
+        self.settled.insert(inner);
+        done.push(inner);
+        Ok(())
+    }
+
+    /// What was worked out for the expressions is used no more.
+    pub(super) fn forget(&mut self, done: &[ExprId]) {
+        for expr in done {
+            self.worked_out.remove(expr);
+            self.settled.remove(expr);
+        }
+    }
+
     /// Whether evaluating the expression can change what another
     /// expression of the same statement reads: it calls a function.
     pub fn has_effects(&mut self, expr: ExprId) -> bool {
+        if self.worked_out.contains_key(&expr) || self.settled.contains(&expr) {
+            return false;
+        }
         if let Some(known) = self.effects_known(expr) {
             return known;
         }

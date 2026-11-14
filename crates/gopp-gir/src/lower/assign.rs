@@ -361,9 +361,23 @@ impl FuncCx<'_, '_> {
         if let Some(used) = self.body.op_assigns.get(&inner).cloned() {
             return self.operator_assign(x, &used, y);
         }
-        if self.body.index_stores.contains_key(&inner) {
-            self.unsupported(span, "an operator method");
-            return Ok(());
+        // `x[i] op= y` of an operator that the language has, read by
+        // an `Index` method and stored by a `SetIndex` method: the
+        // indices are worked out once.
+        if let Some(set) = self.body.index_stores.get(&inner).cloned() {
+            self.open_scope();
+            let mut done = Vec::new();
+            self.settle(inner, &mut done)?;
+            let ty = self.ty_of(inner);
+            let first = self.operand_as(inner, ty)?;
+            let first = self.stable(first)?;
+            let (second, nonzero) = self.second(op, y, ty)?;
+            let value = self.arith(span, op, first, second, nonzero)?;
+            let value = self.fresh(inner, ty, value)?;
+            let stored = self.store_index(inner, &set, value);
+            self.forget(&done);
+            stored?;
+            return self.close_scope(span);
         }
         let later = y.is_some_and(|y| self.has_effects(y));
         let mut mode = PlaceMode {
@@ -425,22 +439,39 @@ impl FuncCx<'_, '_> {
         y: Option<ExprId>,
     ) -> Built {
         let span = self.tree.exprs[x].span;
+        let types = self.shared.types;
+        let in_place = matches!(&*types.get(used.sig),
+            CheckedType::Func { results, .. } if results.is_empty());
+        // `x = x op y` names the place twice: what does more than read
+        // on the way to it is worked out once, before `y`.
+        if in_place || !self.has_effects(x) {
+            return self.operator_assign_to(x, used, y, in_place);
+        }
+        self.open_scope();
+        let mut done = Vec::new();
+        self.settle(x, &mut done)?;
+        let made = self.operator_assign_to(x, used, y, in_place);
+        self.forget(&done);
+        made?;
+        self.close_scope(span)
+    }
+
+    fn operator_assign_to(
+        &mut self,
+        x: ExprId,
+        used: &gopp_sema::OperatorUse,
+        y: Option<ExprId>,
+        in_place: bool,
+    ) -> Built {
+        let span = self.tree.exprs[x].span;
         let Some(y) = y else {
             self.unsupported(span, "an operator method");
             return Ok(());
         };
-        let types = self.shared.types;
-        let in_place = matches!(&*types.get(used.sig),
-            CheckedType::Func { results, .. } if results.is_empty());
         let (receiver, other) = match used.swapped {
             true => (y, x),
             false => (x, y),
         };
-        if !in_place && self.has_effects(x) {
-            let what = "an operator method for a place that does more than read";
-            self.unsupported(span, what);
-            return Ok(());
-        }
         let value = match self.operator_call(x, used, receiver, &[other])? {
             Ok(value) => value,
             Err(what) => {
@@ -451,15 +482,41 @@ impl FuncCx<'_, '_> {
         if in_place {
             return Ok(());
         }
+        // `x[i] op= y` where a `SetIndex` method stores: the new value
+        // is given to it in the place of `y`.
+        let inner = Shared::unparen(self.tree, x);
+        if let Some(set) = self.body.index_stores.get(&inner).cloned() {
+            return self.store_index(inner, &set, value);
+        }
+        // The place is the new owner of the value: of an entry of a
+        // map too.
         let dest = self.dest(x, false, false)?;
-        let value = match &dest {
-            Dest::Place(place, ..) => {
-                let ty = self.b.place_ty(place);
-                self.taken(x, ty, value)?
-            }
-            _ => value,
+        let ty = match &dest {
+            Dest::Place(place, ..) => Some(self.b.place_ty(place)),
+            Dest::Entry(_, _, way) => way.last().map(|(of, _)| of.value),
+            _ => None,
+        };
+        let value = match ty {
+            Some(ty) => self.taken(x, ty, value)?,
+            None => value,
         };
         self.put(dest, value)
+    }
+
+    /// Gives the new value of `x[i] op= y` to the `SetIndex` method
+    /// that stores it: for that call, the place stands for the value.
+    fn store_index(&mut self, place: ExprId, set: &gopp_sema::OperatorUse, value: Rvalue) -> Built {
+        let new = match value {
+            Rvalue::Use(Operand::Copy(new)) => new,
+            value => self.slot_of(value)?,
+        };
+        let before = self.worked_out.insert(place, new);
+        let stored = self.operator_store(place, set, place);
+        match before {
+            Some(before) => drop(self.worked_out.insert(place, before)),
+            None => drop(self.worked_out.remove(&place)),
+        }
+        stored
     }
 
     /// The value of `x op= y` before it is stored: a string that was

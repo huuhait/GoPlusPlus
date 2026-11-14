@@ -156,9 +156,10 @@ impl<'a> FuncCx<'a, '_> {
         let types = self.shared.types;
         let over_func = |x: ExprId| {
             let ty = self.body.types.get(&x).map(|typed| typed.ty);
-            ty.is_some_and(|ty| {
+            let function = ty.is_some_and(|ty| {
                 matches!(&*types.get(types.underlying(ty)), CheckedType::Func { .. })
-            })
+            });
+            function || self.body.range_operators.contains_key(&x)
         };
         let mut met: Vec<(u32, Met)> = Vec::new();
         let mut labels: FxHashMap<Spur, Vec<(u32, u32)>> = FxHashMap::default();
@@ -292,7 +293,11 @@ impl<'a> FuncCx<'a, '_> {
             CheckedType::Func { params, .. } => Some(params.to_vec()),
             _ => None,
         };
-        let walks = self.body.types.get(&x).and_then(|typed| params(typed.ty));
+        let walked = match self.body.range_operators.get(&x) {
+            Some(used) => self.iter_given(used),
+            None => self.body.types.get(&x).map(|typed| typed.ty),
+        };
+        let walks = walked.and_then(params);
         let yields = walks.and_then(|walks| params(*walks.first()?));
         yields.unwrap_or_default()
     }
@@ -330,7 +335,15 @@ impl<'a> FuncCx<'a, '_> {
         lhs: &[ExprId],
         x: ExprId,
     ) -> Built {
-        let walked = self.ty_of(x);
+        // What walks: the function itself, or what the `Iter` method
+        // of the value gives.
+        let iter = self.body.range_operators.get(&x).cloned();
+        let given = iter.as_ref().and_then(|used| self.iter_given(used));
+        let walked = match (&iter, given) {
+            (Some(_), Some(given)) => self.lower(given, span),
+            (Some(_), None) => crate::TypeInterner::UNIT,
+            (None, _) => self.ty_of(x),
+        };
         let code = self.code_type(walked);
         let yields = code.and_then(|code| match self.kind(code) {
             Type::Func(sig) => sig.params.get(1).copied(),
@@ -361,7 +374,16 @@ impl<'a> FuncCx<'a, '_> {
         self.at(self.tree.exprs[x].span);
         // The function that walks lives as long as the loop.
         let mark = self.temps.len();
-        let walks = self.operand(x)?;
+        let walks = match (&iter, given) {
+            (Some(used), Some(given)) => match self.operator_iter(x, used, given)? {
+                Ok(made) => self.operand_of(made)?,
+                Err(what) => {
+                    self.unsupported(span, what);
+                    return self.close_scope(span);
+                }
+            },
+            _ => self.operand(x)?,
+        };
         let walks = self.slot_of(Rvalue::Use(walks))?;
         self.keep_temps(mark)?;
         let word = self.b.types().int(64, false);

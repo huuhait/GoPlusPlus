@@ -978,8 +978,10 @@ impl<'a> Checker<'a> {
             self.error(Code::OpNotAddressable, self.span(cx, of), message);
             return Operand::UNKNOWN;
         }
+        // Apart from the operators: what is ranged over may be an
+        // expression that a method stands for itself.
         let used = self.operator_used(cx, self.span(cx, of), method, &[], false);
-        self.operators.insert(of, used);
+        self.range_operators.insert(of, used);
         let (_, results, _) = self.func_parts(method.sig);
         Operand::value(results[0])
     }

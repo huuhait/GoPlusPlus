@@ -273,7 +273,10 @@ impl FuncCx<'_, '_> {
     /// is read where it is (`lent`); of any other place a copy is made
     /// first, which the call cannot change (PAR-1).
     pub fn lent_value(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
-        if self.flat(ty) || self.lent.contains(&Shared::unparen(self.tree, expr)) {
+        let inner = Shared::unparen(self.tree, expr);
+        // What was worked out before is in a place that no call
+        // changes.
+        if self.flat(ty) || self.lent.contains(&inner) || self.worked_out.contains_key(&inner) {
             return Ok(value);
         }
         match &value {
