@@ -2796,16 +2796,9 @@ impl<'a> FuncCx<'a, '_> {
     fn least(&mut self, expr: ExprId, ty: TypeId, most: bool, args: &[ExprId]) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let mut operands = Vec::with_capacity(args.len());
-        let text = matches!(self.kind(ty), Type::String);
         for &arg in args {
             let operand = self.operand_as(arg, ty)?;
-            // A constant string is named once: it is read from a slot.
-            operands.push(match (&operand, text) {
-                (Operand::Const(_), true) => {
-                    Operand::Copy(Place::local(self.b.assign_temp(Rvalue::Use(operand))?))
-                }
-                _ => self.stable(operand)?,
-            });
+            operands.push(self.stable(operand)?);
         }
         let best = Place::local(self.b.temp(ty));
         for (at, next) in operands.into_iter().enumerate() {
@@ -2849,7 +2842,7 @@ impl<'a> FuncCx<'a, '_> {
             self.b.switch_to(after);
         }
         // The string that is given shares its bytes with its operand.
-        if text {
+        if let Type::String = self.kind(ty) {
             self.counted(best.clone(), true)?;
             return self.fresh(expr, ty, Rvalue::Use(Operand::Copy(best)));
         }

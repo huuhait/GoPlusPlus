@@ -288,10 +288,11 @@ pub(super) fn merge(shared: &Shared<'_>, mut sources: Vec<Source>) -> (Module, u
         for global in globals {
             source.global(&mut merged, global.into_raw().into_u32() as usize);
         }
-        // A string of a run is named once.
+        // A string that a run names more than once is in the module as
+        // often: each place that names it has its own.
         let start = merged.module.strings.len() as u32;
         for string in strings {
-            let text = source.strings.get_mut(string as usize).map(std::mem::take);
+            let text = source.strings.get(string as usize).cloned();
             merged.module.strings.push(text.unwrap_or_default());
         }
         if let Some((_, _, strings_at)) = &mut source.bodies[at] {

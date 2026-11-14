@@ -11,7 +11,20 @@ func part(from, to int) string {
 	return text[from:to]
 }
 
+// A constant string that is compared with each case is the same string
+// each time.
+func pick(a, b string) int {
+	switch "b" {
+	case a:
+		return 1
+	case b:
+		return 2
+	}
+	return 0
+}
+
 func main() {
+	println(pick("x", "b"), pick("b", "b"), pick("x", "y"))
 	println(hex(0), hex(0x4f), hex(255))
 	println(part(0, 3), part(3, 8), len(part(2, 2)))
 	const local = "xyz"
