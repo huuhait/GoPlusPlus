@@ -604,6 +604,18 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "go work(&x)           // error\ngo work2(x)           // ok: a copy\ngo func() { \
              srv.Run() }() // ok, if nothing else uses srv",
         ),
+        FuncSharesCapture => (
+            "A function literal is kept as a plain `func(...)`: it is returned, stored, or \
+             given to a call that keeps it. A plain function value may be given to another \
+             goroutine, and it uses the variables around it where they are. So it does not \
+             change one of them, and each that it uses is of a type that may be shared.",
+            "Write the type of the place as `Local[func(...)]`: such a function stays with \
+             one goroutine and may change what it uses. Or put what changes in a \
+             `sync.Atomic` or a `sync.Mutex`.",
+            "func counter() func() int {\n\tn := 0\n\treturn func() int { n++; return n } // \
+             error\n}\n\nfunc counter() Local[func() int] {\n\tn := 0\n\treturn func() int { \
+             n++; return n } // ok\n}",
+        ),
         GoCapture => (
             "A function literal that `go` runs uses a variable of the function around it \
              that something else still touches: the function after the `go` statement, a \

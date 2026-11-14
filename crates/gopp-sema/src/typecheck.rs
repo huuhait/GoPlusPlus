@@ -331,6 +331,10 @@ struct Checker<'a> {
     /// While a body is walked: the selectors that name a method with
     /// a pointer receiver, whose call is given a pointer to it.
     pointer_methods: FxHashSet<ExprId>,
+    /// While a body is walked: the values with a plain function that
+    /// are given to a place which holds none, a `Local` one: there the
+    /// function stays with one goroutine (CLO-2).
+    localized: FxHashSet<ExprId>,
     /// While a body is walked: how its places give their values, the
     /// places that swaps assign to, and the uses that are assigned over.
     var_modes: FxHashMap<ExprId, crate::object::Transfer>,
@@ -653,6 +657,7 @@ pub fn declarations(
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
         pointer_methods: FxHashSet::default(),
+        localized: FxHashSet::default(),
         var_modes: FxHashMap::default(),
         swaps: FxHashSet::default(),
         self_moves: FxHashSet::default(),
@@ -2696,6 +2701,8 @@ impl<'a> Checker<'a> {
                 }
             }
             ExprKind::FuncLit { ty, body } => {
+                // What a function literal uses, it may lend.
+                self.lends = true;
                 let sig = self.typ(cx, *ty);
                 // Its body is walked with the body it is in.
                 if self.memo.is_some() {
@@ -3671,6 +3678,7 @@ impl<'a> Checker<'a> {
         let mut cx = self.cx(&Decl { unit, body, form }, None);
         self.locals.clear();
         self.pointer_methods.clear();
+        self.localized.clear();
         self.bindings.clear();
         self.read_only.clear();
         self.flow = flow::Flow::default();
@@ -3807,6 +3815,21 @@ impl<'a> Checker<'a> {
                     let Some(ty) = object.and_then(|object| self.ty.get(object).copied()) else {
                         continue;
                     };
+                    // Every goroutine reaches a variable of the package,
+                    // and a `Local` function or interface stays with one.
+                    let send = crate::types::Marker::Send;
+                    if let Some((part, crate::types::Unlabeled::Local)) =
+                        self.types.unlabeled(ty, send)
+                    {
+                        let message = format!(
+                            "cannot keep a {} in a variable of the package: every goroutine may \
+                             use the variable, and a {} stays with one goroutine",
+                            self.type_string(ty),
+                            self.type_string(part)
+                        );
+                        self.error(Code::FuncSharesCapture, name.span, message);
+                        continue;
+                    }
                     let value = values.get(position).copied().filter(|_| one_each);
                     let stays = match value {
                         Some(value) => self.points_to_packages(&cx, value),

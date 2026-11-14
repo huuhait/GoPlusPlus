@@ -39,6 +39,9 @@ pub(super) struct Places<'a> {
     pub instances: &'a FxHashMap<ExprId, crate::object::Instance>,
     /// The selectors that name a method with a pointer receiver.
     pub pointer_methods: &'a FxHashSet<ExprId>,
+    /// The values with a plain function that are given to a place
+    /// which holds none, a `Local` one.
+    pub localized: &'a FxHashSet<ExprId>,
     pub base: Spur,
 }
 
@@ -56,8 +59,9 @@ pub(super) enum Step {
     /// The variable as a function literal uses it: where it is, at
     /// any time. With the first flag the variable may lend: it may be
     /// assigned, and not ended or moved, while the literal is used.
-    /// With the second the literal may change it.
-    Captured(bool, bool),
+    /// With the second the literal may change it. With the third its
+    /// type is not one that may be shared between goroutines.
+    Captured(bool, bool, bool),
 }
 
 /// What a variable may get loans from.
@@ -100,8 +104,10 @@ pub(super) struct Call {
     /// The arguments that lead to a place which may be given a pointer.
     pub sinks: Vec<bool>,
     /// The arguments that hold a function value and no pointer: the
-    /// function may keep them.
+    /// function may keep them. And those of them that are given as
+    /// plain functions, to no `Local` parameter.
     pub funcs: Vec<bool>,
+    pub plain: Vec<bool>,
     /// The arguments through which the function may change what they
     /// reach: those that may hold a pointer.
     pub changes: Vec<bool>,
@@ -255,6 +261,9 @@ pub(super) struct Problem {
     /// What carries the loans of a `Returned` or a `Stored` event, by
     /// the number of its first source.
     pub carriers: FxHashMap<u32, Carrier>,
+    /// The `Returned`, `Stored` and `Left` events, by the number of
+    /// their first source, whose value is kept as a plain function.
+    pub plain: FxHashSet<u32>,
     /// How many variables the body has, and where the function is.
     pub locals: u32,
     pub within: Span,
@@ -269,12 +278,22 @@ pub(super) struct Aliased {
     pub of: LocalId,
 }
 
+/// A function literal that is kept as a plain function at `at`, and
+/// changes the variable or uses it though its type may not be shared
+/// (CLO-2).
+pub(super) struct Shared {
+    pub at: Span,
+    pub of: LocalId,
+    pub changes: bool,
+}
+
 /// What the passes found in a problem.
 pub(super) struct Lent {
     pub broken: Vec<Broken>,
     pub escaped: Vec<Escaped>,
     pub aliased: Vec<Aliased>,
     pub reached: Vec<Reached>,
+    pub shared: Vec<Shared>,
     /// What the function does with the pointers that it is given.
     pub lends: Lends,
     pub steps: u64,
@@ -710,6 +729,9 @@ impl<'a> Walk<'a> {
             args: vec![(0, 0); count],
             sinks: vec![false; count],
             funcs: vec![false; count],
+            plain: (before.iter().chain(args.iter()))
+                .map(|&arg| self.kept_plain(arg))
+                .collect(),
             changes: vec![false; count],
             owns: vec![false; count],
             pointees: vec![None; count],
@@ -760,9 +782,24 @@ impl<'a> Walk<'a> {
         ty.is_none_or(|ty| self.only_lends(ty))
     }
 
+    /// Whether the value is kept as a plain function where it is
+    /// given: its type holds one, and the place that gets it does too.
+    fn kept_plain(&self, value: ExprId) -> bool {
+        let value = self.unparen(value);
+        let Some(places) = self.places else {
+            return false;
+        };
+        let holds = self
+            .type_of(value)
+            .is_none_or(|ty| places.types.holds_func(ty));
+        holds && !places.localized.contains(&value)
+    }
+
     /// What the sources of the values say is put where the function
-    /// does not follow it.
-    pub(super) fn left(&mut self, values: &[ExprId], at: Span) {
+    /// does not follow it. With `taken`, a new goroutine runs the
+    /// value and nothing else does: what it may change is said of the
+    /// variables that it uses (CON-13).
+    pub(super) fn left(&mut self, values: &[ExprId], at: Span, taken: bool) {
         if self.places.is_none() {
             return;
         }
@@ -780,6 +817,9 @@ impl<'a> Walk<'a> {
             let to = self.sources.len() as u32;
             if to > from {
                 self.carriers.insert(from, Carrier::Expr(value));
+                if self.kept_plain(value) && !taken {
+                    self.plain.insert(from);
+                }
                 self.events.push(Event::Left(from, to, at));
             }
         }
@@ -1089,13 +1129,26 @@ impl<'a> Walk<'a> {
                 ExprKind::FuncLit { .. } => {
                     for capture in self.captured(expr) {
                         let local = capture.local;
-                        let lends = self.local_type(local).is_some_and(|ty| self.may_point(ty));
-                        let writes = capture.how != crate::object::CaptureUse::Read;
-                        if self.own(local) && (lends || writes) {
-                            let step = Step::Captured(lends, writes);
+                        let reaches = self.local_type(local).is_some_and(|ty| self.may_point(ty));
+                        let lends = self.local_type(local).is_some_and(|ty| {
+                            let types = self.places.map(|places| places.types);
+                            types.is_some_and(|all| all.may_hold_pointer(ty))
+                        });
+                        // What another function literal changes is
+                        // changed while this one may run.
+                        let writes = capture.how != crate::object::CaptureUse::Read
+                            || self.changed_by_other(expr, local);
+                        let unshared = !lends
+                            && self.local_type(local).is_some_and(|ty| {
+                                let types = self.places.map(|places| places.types);
+                                let sync = crate::types::Marker::Sync;
+                                types.is_some_and(|all| all.unlabeled(ty, sync).is_some())
+                            });
+                        if self.own(local) && (lends || writes || unshared) {
+                            let step = Step::Captured(lends, writes, unshared);
                             found.push(Source::Place(local, vec![step], span));
                         }
-                        if self.own(local) && lends {
+                        if self.own(local) && reaches {
                             found.push(Source::Holder(local, 0, true));
                         }
                     }
@@ -1185,7 +1238,7 @@ impl<'a> Walk<'a> {
                                 true => &values[at..=at],
                                 false => values,
                             };
-                            self.left(values, self.tree.exprs[inner].span);
+                            self.left(values, self.tree.exprs[inner].span, false);
                         }
                         continue;
                     }
@@ -1213,6 +1266,9 @@ impl<'a> Walk<'a> {
                     let behind = behind.min(u8::MAX as usize) as u8;
                     let at = self.tree.exprs[inner].span;
                     self.carriers.insert(from, Carrier::Expr(inner));
+                    if values.iter().any(|&value| self.kept_plain(value)) {
+                        self.plain.insert(from);
+                    }
                     self.events.push(Event::Stored(root, from, to, behind, at));
                 }
             }
@@ -1451,6 +1507,11 @@ impl<'a> Walk<'a> {
                     let from = self.sources.len() as u32;
                     self.sources.push(Source::Holder(result, 0, false));
                     self.carriers.insert(from, Carrier::Local(result));
+                    let types = self.places.map(|places| places.types);
+                    let ty = self.local_type(result);
+                    if types.zip(ty).is_some_and(|(all, ty)| all.holds_func(ty)) {
+                        self.plain.insert(from);
+                    }
                     self.events.push(Event::Returned(from, from + 1, at));
                 }
             }
@@ -1474,6 +1535,9 @@ impl<'a> Walk<'a> {
             let to = self.sources.len() as u32;
             if to > from {
                 self.carriers.insert(from, Carrier::Expr(value));
+                if self.kept_plain(value) {
+                    self.plain.insert(from);
+                }
                 self.events.push(Event::Returned(from, to, at));
             }
         }
@@ -1492,6 +1556,7 @@ impl<'a> Walk<'a> {
             params: std::mem::take(&mut self.params),
             funcs: std::mem::take(&mut self.funcs),
             carriers: std::mem::take(&mut self.carriers),
+            plain: std::mem::take(&mut self.plain),
             changes: std::mem::take(&mut self.changes),
             borrows: std::mem::take(&mut self.borrows),
             loops: std::mem::take(&mut self.loops),
@@ -1519,6 +1584,7 @@ impl Problem {
             escaped: Vec::new(),
             aliased: Vec::new(),
             reached: Vec::new(),
+            shared: Vec::new(),
             lends: Lends {
                 gives: vec![false; self.params.len()],
                 stores: Vec::new(),
@@ -1748,7 +1814,7 @@ impl Problem {
                                 // where it is: what is assigned to
                                 // it, the literal sees.
                                 Lies::Above if matches!(held[..], [Step::Captured(..)]) => {
-                                    matches!(held[..], [Step::Captured(true, _)])
+                                    matches!(held[..], [Step::Captured(true, ..)])
                                         && matches!(
                                             change.what,
                                             What::End | What::Declare | What::Move
@@ -1804,14 +1870,16 @@ impl Problem {
                     Event::Returned(from, to, span) => {
                         let given = known.given(&sets, set, sources, (from, to));
                         let how = (span, Leaves::Returned, self.carriers.get(&from).copied());
-                        self.leaves(&known, None, &given, how, true, &mut lent);
+                        let plain = self.plain.contains(&from);
+                        self.leaves(&known, None, &given, how, (true, plain), &mut lent);
                     }
                     Event::Stored(root, from, to, behind, span) => {
                         let places = known.read(&sets, set, root, behind, false);
                         let given = known.given(&sets, set, sources, (from, to));
                         let carrier = self.carriers.get(&from).copied();
                         let how = (span, Leaves::Stored(root), carrier);
-                        self.leaves(&known, Some(&places), &given, how, true, &mut lent);
+                        let plain = self.plain.contains(&from);
+                        self.leaves(&known, Some(&places), &given, how, (true, plain), &mut lent);
                     }
                     Event::Borrowed(borrow) => {
                         let borrow = &self.borrows[borrow as usize];
@@ -1822,7 +1890,8 @@ impl Problem {
                     Event::Left(from, to, span) => {
                         let given = known.given(&sets, set, sources, (from, to));
                         let how = (span, Leaves::Left, self.carriers.get(&from).copied());
-                        self.leaves(&known, Some(&[]), &given, how, true, &mut lent);
+                        let plain = self.plain.contains(&from);
+                        self.leaves(&known, Some(&[]), &given, how, (true, plain), &mut lent);
                     }
                     Event::Called(call) => {
                         let record = &self.calls[call as usize];
@@ -1860,14 +1929,16 @@ impl Problem {
                             let given = known.given_by(&sets, set, sources, run, true);
                             let carrier = Some(Carrier::Expr(record.exprs[arg]));
                             let how = (record.at, Leaves::Kept, carrier);
-                            self.leaves(&known, Some(&[]), &given, how, true, &mut lent);
+                            let plain = record.plain[arg];
+                            self.leaves(&known, Some(&[]), &given, how, (true, plain), &mut lent);
                         }
                         for stored in known.stored_by(&sets, set, sources, call) {
                             for (from, given) in &stored.given {
                                 let carrier = Some(Carrier::Expr(record.exprs[*from]));
                                 let how = (record.at, Leaves::Called, carrier);
                                 let places = Some(&stored.places[..]);
-                                self.leaves(&known, places, given, how, sure, &mut lent);
+                                let plain = record.plain[*from];
+                                self.leaves(&known, places, given, how, (sure, plain), &mut lent);
                             }
                         }
                     }
@@ -1925,7 +1996,7 @@ impl Problem {
         places: Option<&[u32]>,
         given: &[u32],
         (at, how, carrier): (Span, Leaves, Option<Carrier>),
-        sure: bool,
+        (sure, plain): (bool, bool),
         lent: &mut Lent,
     ) {
         let param = |local: LocalId| self.params.iter().position(|param| *param == Some(local));
@@ -1954,8 +2025,12 @@ impl Problem {
         // Where the loans go is followed by those who call the
         // function: as a result, or behind a parameter.
         let followed = places.is_none() || !(unknown || nowhere);
-        let captured =
-            |loan: &u32| matches!(known.loans[*loan as usize].1[..], [Step::Captured(true, _)]);
+        let captured = |loan: &u32| {
+            matches!(
+                known.loans[*loan as usize].1[..],
+                [Step::Captured(true, ..)]
+            )
+        };
         let uses = given.iter().any(captured);
         for &loan in given {
             let (of, way, made) = &known.loans[loan as usize];
@@ -1963,8 +2038,24 @@ impl Problem {
             // as the literal: what it holds is what counts, where the
             // literal is followed. Where it is not, the literal uses
             // what it may not, and that is all that is said.
+            // A plain function that is kept may run on another
+            // goroutine: it changes no variable that it uses, and
+            // each is of a type that may be shared (CLO-2).
+            let lends = matches!(way[..], [Step::Captured(true, ..)]);
+            if let [Step::Captured(_, changes, unshared)] = way[..]
+                && plain
+                && (changes || unshared)
+                && (followed || !lends)
+            {
+                lent.shared.push(Shared {
+                    at,
+                    of: *of,
+                    changes,
+                });
+                continue;
+            }
             // A variable that cannot lend is kept with the literal.
-            if matches!(way[..], [Step::Captured(false, _)]) {
+            if matches!(way[..], [Step::Captured(false, ..)]) {
                 continue;
             }
             let capture = matches!(way[..], [Step::Captured(..)]);
@@ -2411,7 +2502,7 @@ impl Known {
                 }
                 let (root, way, _) = &self.loans[loan as usize];
                 match way[..] {
-                    [Step::Captured(_, true)] => written.push((*root, Vec::new(), false)),
+                    [Step::Captured(_, true, _)] => written.push((*root, Vec::new(), false)),
                     [Step::Captured(..)] => {}
                     _ => written.push((*root, way.clone(), true)),
                 }

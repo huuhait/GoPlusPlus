@@ -2055,7 +2055,7 @@ func main() {
 fn a_variable_that_a_function_literal_uses_lives_in_a_cell() {
     let text = "package main
 
-func counter(start int, name string) (func() int, func() string) {
+func counter(start int, name string) (Local[func() int], func() string) {
 	n := start
 	inc := func() int {
 		n++

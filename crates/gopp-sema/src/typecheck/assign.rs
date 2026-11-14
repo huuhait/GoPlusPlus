@@ -31,6 +31,13 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown {
             return x;
         }
+        if let Some(to) = to
+            && self.memo.is_some()
+            && self.types.holds_func(x.ty)
+            && !self.types.holds_func(to)
+        {
+            self.localized.insert(self.unparen(cx, expr));
+        }
         // A generic function is the function that the place asks for.
         if self.types.generic_func(x.ty).is_some() {
             use super::infer::Place;

@@ -56,11 +56,12 @@ var handlers = map[string]func(int) int{
 
 var counter = makeCounter()
 
+// A function value in a variable of the package may run on every
+// goroutine: it changes nothing that it uses.
 func makeCounter() func() int {
 	n := second
 	return func() int {
-		n++
-		return n
+		return n + 1
 	}
 }
 

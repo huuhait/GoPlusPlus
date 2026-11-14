@@ -7529,8 +7529,103 @@ func fine(n int) {
          the goroutine reads it",
         "a.gopp:32:2: cannot use a in a new goroutine: a is changed after the go statement, while \
          the goroutine reads it",
-        "a.gopp:36:5: cannot keep a function that uses lf: lf may hold a pointer, and the \
-         function may run when what it points to has ended",
+        "a.gopp:36:2: cannot use lf in a new goroutine: a Local[func()] stays with one goroutine",
+    ];
+    assert_eq!(said, expected);
+}
+
+// rule: CLO-2
+#[test]
+fn a_function_that_is_kept_as_a_func_changes_nothing_that_it_uses() {
+    // A plain function value may run on another goroutine. One that is
+    // kept (returned, put into a variable of the package) changes no
+    // variable around it (`counter`, `register`), uses none that
+    // another function literal changes (`pair`) and none of a type
+    // that may not be shared (`reader`). A `Local` function stays with
+    // one goroutine and may (`localCounter`, `locals`), and so may a
+    // function that is only called (`each`). No variable of the
+    // package holds a `Local` one, and `go` runs none that changes
+    // what it uses, unless it is the literal itself (`spawn`).
+    let text = "package p
+
+type I interface{ M() int }
+
+var handlers []func() int
+
+
+func each(xs []int, f func(int)) {
+	for _, x := range xs {
+		f(x)
+	}
+}
+
+func counter() func() int {
+	n := 0
+	return func() int { n++; return n }
+}
+
+func localCounter() Local[func() int] {
+	n := 0
+	return func() int { n++; return n }
+}
+
+func reader(i I) func() int {
+	return func() int { return i.M() }
+}
+
+func register(xs []int) {
+	sent := 0
+	handlers = append(handlers, func() int { sent++; return sent })
+	var locals []Local[func() int]
+	locals = append(locals, func() int { sent++; return sent })
+	total := 0
+	each(xs, func(x int) { total += x })
+	name, sum := \"n\", total
+	handlers = append(handlers, func() int { return len(name) + sum + len(locals) })
+}
+
+func pair() (func() int, func() int) {
+	n := 0
+	inc := func() int { n++; return n }
+	get := func() int { return n }
+	inc()
+	return get, get
+}
+
+var held Local[func() int] = localCounter()
+
+func spawn() {
+	next := counter()
+	go next()
+	n := 0
+	bump := func() { n++ }
+	go bump()
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let kept = |at: &str, name: &str, why: &str| {
+        format!(
+            "a.gopp:{at}: cannot keep a function that uses {name} as a func value, which may run \
+             on another goroutine: {why}"
+        )
+    };
+    let changed = |name: &str| format!("{name} is changed by it or by another function");
+    let expected = [
+        kept("16:2", "n", &changed("n")),
+        kept("25:2", "i", "I does not embed Sync"),
+        kept("30:2", "sent", &changed("sent")),
+        kept(
+            "36:2",
+            "locals",
+            "a Local[func() int] stays with one goroutine",
+        ),
+        kept("44:2", "n", &changed("n")),
+        "a.gopp:47:5: cannot keep a Local[func() int] in a variable of the package: every \
+         goroutine may use the variable, and a Local[func() int] stays with one goroutine"
+            .to_owned(),
+        kept("54:5", "n", &changed("n")),
     ];
     assert_eq!(said, expected);
 }
@@ -8023,7 +8118,7 @@ func (t *Twice) Each() int {
 	return up()
 }
 
-func (t Twice) Later() func() int {
+func (t Twice) Later() Local[func() int] {
 	return func() int { return base[Count].n }
 }
 ";
@@ -9067,7 +9162,7 @@ type Namer interface{ Bye() string }
 func sortFunc(xs *[]int, less func(a, b int) int) {}
 func show(args ...any)                           {}
 
-func counter() (func() int, func() int) {
+func counter() (Local[func() int], Local[func() int]) {
 	n := 0
 	inc := func() int { n++; return n }
 	get := func() int { return n }
@@ -10677,9 +10772,12 @@ fn labels_of(text: &str) -> Vec<String> {
     let names = ThreadedRodeo::new();
     let loader = Loader::default();
     let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
-    // The variables only name their types.
+    // The variables only name their types: also those of a type that
+    // no variable of a package has.
     let unset = |message: &&String| {
-        !(message.contains(" without a value: ") || message.starts_with("    give "))
+        !(message.contains(" without a value: ")
+            || message.starts_with("    give ")
+            || message.contains("stays with one goroutine"))
     };
     let said: Vec<&String> = checked.messages.iter().filter(unset).collect();
     assert_eq!(said, [] as [&String; 0]);

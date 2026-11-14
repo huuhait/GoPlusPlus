@@ -1,8 +1,9 @@
 package main
 
+// A function that changes what it uses stays with one goroutine.
 type Counter struct {
-	inc func() int
-	get func() int
+	inc Local[func() int]
+	get Local[func() int]
 }
 
 func counter(start int) Counter {
@@ -50,9 +51,9 @@ func join(parts []string) string {
 	return out
 }
 
-func nested(a int) func() func() int {
+func nested(a int) Local[func() Local[func() int]] {
 	b := a * 2
-	return func() func() int {
+	return func() Local[func() int] {
 		c := b + 1
 		return func() int {
 			a++
@@ -128,7 +129,7 @@ func main() {
 		func() { x *= 2 }()
 	}()
 	println(x)
-	param := func(p int) func() int {
+	param := func(p int) Local[func() int] {
 		return func() int { p++; return p }
 	}(5)
 	println(param(), param())

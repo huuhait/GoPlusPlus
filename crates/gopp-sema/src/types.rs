@@ -566,7 +566,7 @@ struct Inner {
     /// heap.
     holding: FxHashMap<TypeId, Held>,
     leading: FxHashMap<TypeId, bool>,
-    lending: FxHashMap<TypeId, bool>,
+    lending: FxHashMap<(TypeId, bool), bool>,
     owning: FxHashMap<(TypeId, bool), bool>,
     kept: FxHashMap<TypeId, Arc<str>>,
     /// What each method of a declared type does with the pointers that

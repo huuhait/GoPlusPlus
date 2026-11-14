@@ -316,7 +316,12 @@ impl Types {
             _ => Vec::new(),
         };
         let mut found = match &*self.get(under) {
-            Type::Pointer(_) | Type::Local(_) => Held::Pointer,
+            Type::Pointer(_) => Held::Pointer,
+            // A `Local` interface may be made of a pointer; a `Local`
+            // function is a function value.
+            Type::Local(of) if !matches!(&*self.get(self.underlying(*of)), Type::Func { .. }) => {
+                Held::Pointer
+            }
             Type::Param(_) => Held::Params([under].into()),
             _ => Held::default(),
         };
@@ -357,13 +362,21 @@ impl Types {
     /// function that made it. A function value counts behind a slice,
     /// a map, a channel and a handle too: it is kept there.
     pub fn may_lend(&self, ty: TypeId) -> bool {
-        self.may_hold_pointer(ty) || self.has_func(ty, &mut (FxHashSet::default(), 0))
+        self.may_hold_pointer(ty) || self.has_func(ty, false, &mut (FxHashSet::default(), 0))
     }
 
-    /// Whether a value of the type holds or leads to a function value,
-    /// kept as `holds` keeps what it finds.
-    fn has_func(&self, ty: TypeId, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
-        if let Some(known) = self.read(|inner| inner.lending.get(&ty).copied()) {
+    /// Whether a value of the type holds or leads to a plain function
+    /// value: one that may be given to another goroutine, no `Local`
+    /// one.
+    pub fn holds_func(&self, ty: TypeId) -> bool {
+        self.has_func(ty, true, &mut (FxHashSet::default(), 0))
+    }
+
+    /// Whether a value of the type holds or leads to a function value:
+    /// with `plain`, to one that is no `Local` one. Kept as `holds`
+    /// keeps what it finds.
+    fn has_func(&self, ty: TypeId, plain: bool, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
+        if let Some(known) = self.read(|inner| inner.lending.get(&(ty, plain)).copied()) {
             return known;
         }
         // What a type that needs instances without end is made of is
@@ -381,6 +394,9 @@ impl Types {
         let mut parts: Vec<TypeId> = Vec::new();
         let found = match &*self.get(self.underlying(ty)) {
             Type::Func { .. } => true,
+            Type::Local(of) => {
+                !plain && matches!(&*self.get(self.underlying(*of)), Type::Func { .. })
+            }
             Type::Struct(fields) => {
                 parts.extend(fields.iter().map(|field| field.ty));
                 parts.extend(self.parents(ty));
@@ -406,11 +422,11 @@ impl Types {
             }
             _ => false,
         };
-        let found =
-            found || (parts.into_iter()).any(|part| super::deep(|| self.has_func(part, seen)));
+        let found = found
+            || (parts.into_iter()).any(|part| super::deep(|| self.has_func(part, plain, seen)));
         seen.0.remove(&ty);
         if found || seen.1 == before {
-            self.write(|inner| inner.lending.insert(ty, found));
+            self.write(|inner| inner.lending.insert((ty, plain), found));
         }
         found
     }

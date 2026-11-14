@@ -13,7 +13,7 @@ func (f File) Clone() File {
 	return File{fd: f.fd + 100}
 }
 
-func logger(prefix string) (func(string), func() []string) {
+func logger(prefix string) (Local[func(string)], Local[func() []string]) {
 	var lines []string
 	add := func(s string) { lines = append(lines, prefix+s) }
 	all := func() []string { return lines }

@@ -522,3 +522,4 @@ E0516 err_go_not_send
 E0517 err_chan_not_send
 E0518 err_go_capture
 E0519 note_go_fix_share
+E0520 err_func_shares_capture

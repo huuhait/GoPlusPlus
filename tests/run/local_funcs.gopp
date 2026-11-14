@@ -1,0 +1,49 @@
+package main
+
+// A `Local` function value stays with one goroutine, so it may change
+// what it uses of the function that made it.
+
+type Tally struct {
+	add   Local[func(int)]
+	total Local[func() int]
+}
+
+func counter(start int) Local[func() int] {
+	n := start
+	return func() int { n++; return n }
+}
+
+func tally() Tally {
+	sum := 0
+	return Tally{
+		add:   func(n int) { sum += n },
+		total: func() int { return sum },
+	}
+}
+
+func each(n int, f Local[func(int)]) {
+	for i := 0; i < n; i++ {
+		f(i)
+	}
+}
+
+func twice(f func() int) Local[func() int] {
+	calls := 0
+	return func() int { calls++; return f()*2 + calls }
+}
+
+func main() {
+	next := counter(10)
+	next()
+	println(next(), next())
+	t := tally()
+	each(4, t.add)
+	t.add(10)
+	println(t.total())
+	// A plain function is a `Local` one where one is asked for.
+	doubled := twice(func() int { return 7 })
+	println(doubled(), doubled())
+	var steps []Local[func() int]
+	steps = append(steps, next, doubled)
+	println(steps[0](), steps[1](), len(steps))
+}

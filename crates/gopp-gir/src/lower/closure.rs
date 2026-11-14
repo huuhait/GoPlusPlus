@@ -333,12 +333,17 @@ impl FuncCx<'_, '_> {
         let Some(typed) = self.body.types.get(&callee) else {
             return Ok(None);
         };
-        let checked = types.get(types.underlying(typed.ty));
+        // A `Local` function value is a function value.
+        let mut of = types.underlying(typed.ty);
+        if let CheckedType::Local(inner) = &*types.get(of) {
+            of = types.underlying(*inner);
+        }
+        let checked = types.get(of);
         let declared = match &*checked {
             CheckedType::Func { params, .. } => params.len(),
             _ => return Ok(None),
         };
-        let rest = super::expr::rest_of(self.shared, typed.ty);
+        let rest = super::expr::rest_of(self.shared, of);
         if spread && rest.is_none() {
             return Ok(Some(Err("a call with `...`")));
         }

@@ -313,6 +313,9 @@ pub(super) struct Walk<'a> {
     reached: FxHashSet<LocalId>,
     /// The function literals that are walked later.
     literals: Vec<ExprId>,
+    /// For each variable, how many function literals of the body may
+    /// change it.
+    literal_writes: FxHashMap<LocalId, u32>,
     /// The function literals that `go` statements run, each with where
     /// its statement is; and the variables whose address is taken.
     spawns: Vec<(Span, ExprId)>,
@@ -328,6 +331,9 @@ pub(super) struct Walk<'a> {
     pub args: Vec<borrows::Source>,
     pub call_ids: FxHashMap<ExprId, u32>,
     pub carriers: FxHashMap<u32, borrows::Carrier>,
+    /// The `Returned`, `Stored` and `Left` events, by the number of
+    /// their first source, whose value is kept as a plain function.
+    pub plain: FxHashSet<u32>,
     /// The function of the declaration, if others call it by its name;
     /// whether it is the one that is walked; and its parameters, the
     /// receiver first.
@@ -393,6 +399,15 @@ pub(super) fn of(
         seen: FxHashMap::default(),
         reached: FxHashSet::default(),
         literals: Vec::new(),
+        literal_writes: {
+            let mut writes: FxHashMap<LocalId, u32> = FxHashMap::default();
+            for capture in captures.values().flatten() {
+                if capture.how != crate::object::CaptureUse::Read {
+                    *writes.entry(capture.local).or_default() += 1;
+                }
+            }
+            writes
+        },
         spawns: Vec::new(),
         addressed: FxHashSet::default(),
         found: Found::default(),
@@ -402,6 +417,7 @@ pub(super) fn of(
         args: Vec::new(),
         call_ids: FxHashMap::default(),
         carriers: FxHashMap::default(),
+        plain: FxHashSet::default(),
         owner,
         top: true,
         params: Vec::new(),
@@ -532,6 +548,7 @@ impl<'a> Checker<'a> {
                     locals: &self.locals,
                     instances: &self.instantiated,
                     pointer_methods: &self.pointer_methods,
+                    localized: &self.localized,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -753,6 +770,29 @@ impl<'a> Checker<'a> {
                 self.emit(diagnostic);
             }
         }
+        for shared in &found.shared {
+            if !self.report_once((shared.at, Code::FuncSharesCapture)) {
+                continue;
+            }
+            let name = named(self, shared.of);
+            let ty = carried(borrows::Carrier::Local(shared.of));
+            let unshared = ty.and_then(|ty| self.types.unlabeled(ty, crate::types::Marker::Sync));
+            let why = match (shared.changes, unshared) {
+                (true, _) => format!("{name} is changed by it or by another function"),
+                (false, Some((part, why))) => self.unlabeled_text(part, why, "Sync"),
+                (false, None) => continue,
+            };
+            let message = format!(
+                "cannot keep a function that uses {name} as a func value, which may run on \
+                 another goroutine: {why}"
+            );
+            let fix = format!(
+                "keep it as a Local[func(...)], which stays with one goroutine, or put {name} \
+                 in a sync.Atomic or a sync.Mutex"
+            );
+            let diagnostic = Diagnostic::new(Code::FuncSharesCapture, shared.at, message);
+            self.emit(diagnostic.with_note(Code::NoteGoFixShare, None, fix));
+        }
         for reached in &found.reached {
             if !self.report_once((reached.at, Code::OwnBorrowIntoArena)) {
                 continue;
@@ -935,6 +975,20 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Whether a function literal other than `literal` may change the
+    /// variable.
+    pub(super) fn changed_by_other(&self, literal: ExprId, local: LocalId) -> bool {
+        let writes = |capture: &&Capture| {
+            capture.local == local && capture.how != crate::object::CaptureUse::Read
+        };
+        let own = self
+            .captured(literal)
+            .iter()
+            .any(|capture| writes(&capture));
+        let all = self.literal_writes.get(&local).copied().unwrap_or(0);
+        all > u32::from(own)
+    }
+
     /// The variables that the function literal uses of the functions
     /// around it.
     pub(super) fn captured(&self, literal: ExprId) -> &'a [Capture] {
@@ -1021,6 +1075,7 @@ impl<'a> Walk<'a> {
         self.args.clear();
         self.call_ids.clear();
         self.carriers.clear();
+        self.plain.clear();
         self.params.clear();
         self.funcs.clear();
         self.frames.clear();
@@ -1447,7 +1502,9 @@ impl<'a> Walk<'a> {
                 if let ExprKind::Call { fun, .. } = &tree.exprs[self.unparen(*x)].kind
                     && self.runs_function(*fun)
                 {
-                    self.left(&[*fun], tree.exprs[*fun].span);
+                    let literal = self.unparen(*fun);
+                    let taken = matches!(tree.exprs[literal].kind, ExprKind::FuncLit { .. });
+                    self.left(&[*fun], tree.exprs[*fun].span, taken);
                 }
                 // What a literal that it runs uses is the goroutine's
                 // from here on (CON-13).
@@ -1462,7 +1519,7 @@ impl<'a> Walk<'a> {
             }
             StmtKind::Send { chan, value } => {
                 self.unit(&[*chan, *value]);
-                self.left(&[*value], tree.exprs[*value].span);
+                self.left(&[*value], tree.exprs[*value].span, false);
             }
             StmtKind::Decl(decls) => {
                 for &decl in decls {

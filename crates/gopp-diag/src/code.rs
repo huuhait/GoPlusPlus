@@ -376,6 +376,7 @@ codes! {
     517 ChanNotSend "err_chan_not_send",
     518 GoCapture "err_go_capture",
     519 NoteGoFixShare "note_go_fix_share",
+    520 FuncSharesCapture "err_func_shares_capture",
 }
 
 impl Code {
