@@ -2995,12 +2995,23 @@ fn the_steps_of_moves_and_last_uses_grow_with_the_input_not_faster() {
             .collect();
         format!("package p\nfunc f(c bool, n int, s string) {{\nfor c {{\n{each}}}\n}}\n")
     };
+    // Many loops over one parameter, each with a write through its
+    // `&` variable that the same turn reads, and one read at the end.
+    let aliased = |count: usize| {
+        let loops: String = (0..count)
+            .map(|i| {
+                format!("\tfor _, &x{i} := range xs {{\n\t\tx{i} += {i}\n\t\tn += x{i}\n\t}}\n")
+            })
+            .collect();
+        format!("package p\nfunc f(xs []int) int {{\n\tn := 0\n{loops}\treturn n + len(xs)\n}}\n")
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(spawned(n)));
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&sizes, |n| steps(long_lived(n)));
     linear::assert_near_linear(&sizes, |n| steps(jumps(n)));
     linear::assert_near_linear(&sizes, |n| steps(written(n)));
+    linear::assert_near_linear(&sizes, |n| steps(aliased(n)));
     // The parser takes no deeper nesting, and a set of more than 64
     // variables is one level higher, which costs a step more.
     let depths = [100, 200, 400];
@@ -6217,6 +6228,76 @@ func use() {
         "a.gopp:30:6: cannot call a.Count: the method writes through its receiver, and what a Shared \
          holds is only read through it",
         "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+// rule: PAR-1
+#[test]
+fn a_write_through_the_variable_of_a_loop_over_a_parameter_is_lost_too() {
+    // The `&` variable of a loop names an element of the function's
+    // own copy. A write through it is lost unless the variable is read
+    // in the same turn, or the parameter is read or given afterwards.
+    // What is behind a pointer, and a variable of the function, are no
+    // copies of the caller's.
+    let text = "package p
+
+func lost(xs []int) {
+	for _, &x := range xs {
+		x++
+	}
+}
+
+func lostField(ps []struct{ n int }) {
+	for _, &p := range ps {
+		p.n = 1
+	}
+}
+
+func readInTheTurn(xs []int) int {
+	sum := 0
+	for _, &x := range xs {
+		x *= 2
+		sum += x
+	}
+	return sum
+}
+
+func readAfter(xs []int) int {
+	for _, &x := range xs {
+		x++
+	}
+	return xs[0]
+}
+
+func given(xs []int) []int {
+	for _, &x := range xs {
+		x++
+	}
+	return xs
+}
+
+func behind(xs *[]int) {
+	for _, &x := range xs {
+		x++
+	}
+}
+
+func local() int {
+	xs := []int{1}
+	for _, &x := range xs {
+		x++
+	}
+	return 0
+}
+";
+    let expected = [
+        "a.gopp:5:3: this write to xs is lost: xs is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare xs *[]int to change the value of the caller, or return xs",
+        "a.gopp:11:3: this write to ps is lost: ps is the function's own copy, and nothing reads it \
+         afterwards",
+        "    declare ps *[]struct{n int} to change the value of the caller, or return ps",
     ];
     assert_eq!(messages("a.gopp", text), expected);
 }
@@ -9596,7 +9677,7 @@ func good(docs []Doc, nums []int, grid [][]int, ptrs []*Doc, ch chan Key, byName
 		_ = &d
 	}
 	for k, &d := range byName {
-		d.N += len(k)
+		d.N += len(k) + len(byName)
 	}
 	for _, x := range nums {
 		x *= 2
@@ -14521,7 +14602,7 @@ fn the_steps_of_places_grow_with_the_input_not_faster() {
         let path = ".f".repeat(depth);
         format!(
             "{header}{types}type T{depth} struct{{ f Doc }}\n\
-             func f(v T0, vs []T0) Doc {{\n\tv{path}.f.Title = \"x\"\n\tfor _, &e := range vs {{ \
+             func f(v T0, vs *[]T0) Doc {{\n\tv{path}.f.Title = \"x\"\n\tfor _, &e := range vs {{ \
              e{path}.f.Tags[0] = \"x\" }}\n\tshow(v{path}.f)\n\treturn built(){path}.f\n}}\n\
              func built() T0 {{ panic(0) }}\n"
         )
@@ -15175,6 +15256,7 @@ func f(xs []Doc, arr [3]Doc, m map[string]Doc, s string, c chan Doc, p *[]Doc) {
 	for _, &d := range plain {
 		_ = d
 	}
+	_ = len(xs) + len(m)
 }
 "#;
     let expected = [

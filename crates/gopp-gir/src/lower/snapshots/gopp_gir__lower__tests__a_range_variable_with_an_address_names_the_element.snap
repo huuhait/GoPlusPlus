@@ -1,6 +1,6 @@
 ---
 source: crates/gopp-gir/src/lower/tests.rs
-expression: "gir(\"package main\n\nfunc twice(nums []int, grid [2]int, rows [][]int, hits map[string]int) int {\n\tfor _, &n := range nums {\n\t\tn *= 2\n\t}\n\tfor i, &cell := range grid {\n\t\tcell = i\n\t}\n\tfor _, &row := range rows {\n\t\trow = append(row, len(row))\n\t}\n\tfor key, &hit := range hits {\n\t\thit += len(key)\n\t}\n\treturn grid[1]\n}\n\nfunc runes(text string, points []rune) ([]rune, string) {\n\treturn []rune(text), string(points)\n}\n\")"
+expression: "gir(\"package main\n\nfunc twice(nums []int, grid [2]int, rows [][]int, hits map[string]int) int {\n\tfor _, &n := range nums {\n\t\tn *= 2\n\t}\n\tfor i, &cell := range grid {\n\t\tcell = i\n\t}\n\tfor _, &row := range rows {\n\t\trow = append(row, len(row))\n\t}\n\tfor key, &hit := range hits {\n\t\thit += len(key)\n\t}\n\treturn grid[1] + len(nums) + len(rows) + len(hits)\n}\n\nfunc runes(text string, points []rune) ([]rune, string) {\n\treturn []rune(text), string(points)\n}\n\")"
 ---
 module "main"
 file 0 "a.gopp"
@@ -66,15 +66,24 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
   let _53: u64
   let _54: i64
   let _55: ()
-  let _56: **gopp.map
-  let _57: *u8
-  let _58: ()
-  let _59: *[][]i64
-  let _60: *u8
-  let _61: ()
-  let _62: *[]i64
-  let _63: *u8
-  let _64: ()
+  let _56: u64
+  let _57: i64
+  let _58: i64
+  let _59: u64
+  let _60: i64
+  let _61: i64
+  let _62: *gopp.map
+  let _63: u64
+  let _64: i64
+  let _65: **gopp.map
+  let _66: *u8
+  let _67: ()
+  let _68: *[][]i64
+  let _69: *u8
+  let _70: ()
+  let _71: *[]i64
+  let _72: *u8
+  let _73: ()
   bb0:
     _5 = copy _1  ; a.gopp:4:21
     _6 = len(_5)  ; a.gopp:4:21
@@ -192,19 +201,29 @@ fn _GPF4mainE5twice(_1: []i64, _2: [2]i64, _3: [][]i64, _4: *gopp.map) -> i64 [g
   bb26:
     _55 = call const fn @_gopp_map_iter_end(copy _39) -> [return: bb27, unwind: terminate]  ; a.gopp:15:2
   bb27:
-    _0 = copy _2[1]  ; a.gopp:16:2
-    _56 = &mut _4  ; a.gopp:16:2
-    _57 = ptr_to_ptr(copy _56) as *u8  ; a.gopp:16:2
-    _58 = call const fn @_GPTdHri(copy _57) -> [return: bb28, unwind: terminate]  ; a.gopp:16:2
+    _56 = len(_1)  ; a.gopp:16:2
+    _57 = int_to_int(copy _56) as i64  ; a.gopp:16:2
+    _58 = add(copy _2[1], copy _57)  ; a.gopp:16:2
+    _59 = len(_3)  ; a.gopp:16:2
+    _60 = int_to_int(copy _59) as i64  ; a.gopp:16:2
+    _61 = add(copy _58, copy _60)  ; a.gopp:16:2
+    _62 = copy _4  ; a.gopp:16:2
+    _63 = call const fn @_gopp_map_len(copy _62) -> [return: bb28, unwind: cleanup bb15]  ; a.gopp:16:2
   bb28:
-    _59 = &mut _3  ; a.gopp:16:2
-    _60 = ptr_to_ptr(copy _59) as *u8  ; a.gopp:16:2
-    _61 = call const fn @_GPTdSSi(copy _60) -> [return: bb29, unwind: terminate]  ; a.gopp:16:2
+    _64 = int_to_int(copy _63) as i64  ; a.gopp:16:2
+    _0 = add(copy _61, copy _64)  ; a.gopp:16:2
+    _65 = &mut _4  ; a.gopp:16:2
+    _66 = ptr_to_ptr(copy _65) as *u8  ; a.gopp:16:2
+    _67 = call const fn @_GPTdHri(copy _66) -> [return: bb29, unwind: terminate]  ; a.gopp:16:2
   bb29:
-    _62 = &mut _1  ; a.gopp:16:2
-    _63 = ptr_to_ptr(copy _62) as *u8  ; a.gopp:16:2
-    _64 = call const fn @_GPTdSi(copy _63) -> [return: bb30, unwind: terminate]  ; a.gopp:16:2
+    _68 = &mut _3  ; a.gopp:16:2
+    _69 = ptr_to_ptr(copy _68) as *u8  ; a.gopp:16:2
+    _70 = call const fn @_GPTdSSi(copy _69) -> [return: bb30, unwind: terminate]  ; a.gopp:16:2
   bb30:
+    _71 = &mut _1  ; a.gopp:16:2
+    _72 = ptr_to_ptr(copy _71) as *u8  ; a.gopp:16:2
+    _73 = call const fn @_GPTdSi(copy _72) -> [return: bb31, unwind: terminate]  ; a.gopp:16:2
+  bb31:
     return  ; a.gopp:16:2
 }
 
@@ -344,6 +363,8 @@ declare fn _gopp_map_iter_start(_1: *u8, _2: *gopp.map) -> () [c, external]
 declare fn _gopp_map_iter_next(_1: *u8, _2: *u8, _3: *u8) -> *u8 [c, external]
 
 declare fn _gopp_map_iter_end(_1: *u8) -> () [c, external]
+
+declare fn _gopp_map_len(_1: *gopp.map) -> u64 [c, external]
 
 declare fn _gopp_runes_from_string(_1: *u8, _2: string) -> () [c, external]
 

@@ -307,6 +307,11 @@ pub(super) struct Walk<'a> {
     /// The variables that a loop ranges over with a variable for the
     /// elements: what is written to an element may be read through it.
     viewed: FxHashMap<LocalId, u32>,
+    /// The `&` variables of the loops that are walked now, each with
+    /// the parameter that it names an element of; and where a write
+    /// through one is, with the variable.
+    aliases: FxHashMap<LocalId, LocalId>,
+    alias_writes: FxHashMap<u32, LocalId>,
     seen: FxHashMap<LocalId, u32>,
     /// The variables that a function literal uses or whose address is
     /// taken: they may be read at any time, and have no last use.
@@ -396,6 +401,8 @@ pub(super) fn of(
         falls: None,
         held: FxHashMap::default(),
         viewed: FxHashMap::default(),
+        aliases: FxHashMap::default(),
+        alias_writes: FxHashMap::default(),
         seen: FxHashMap::default(),
         reached: FxHashSet::default(),
         literals: Vec::new(),
@@ -1155,6 +1162,8 @@ impl<'a> Walk<'a> {
         self.gotos.clear();
         self.held.clear();
         self.viewed.clear();
+        self.aliases.clear();
+        self.alias_writes.clear();
         self.results.clear();
         self.given = 0;
         self.current = self.block();
@@ -1401,10 +1410,13 @@ impl<'a> Walk<'a> {
                     self.events.push(Event::Written(local));
                 }
                 self.events.push(Event::Set(local));
+                self.wrote_through(local, span);
             }
         } else if let Some(local) = self.root(inner) {
             self.events.push(Event::Written(local));
-            self.wrote(local, span);
+            if !self.wrote_through(local, span) {
+                self.wrote(local, span);
+            }
         }
         self.change(inner, self.change);
     }
@@ -1412,6 +1424,20 @@ impl<'a> Walk<'a> {
     /// A part of the variable is written. For a parameter that is
     /// watched the write is one that may be lost, unless a loop around
     /// it has a variable for the elements, which sees it.
+    /// A write to the `&` variable of a loop over a parameter writes
+    /// an element of the parameter: it is read through the variable
+    /// until the next turn, and in the parameter after that. Whether
+    /// the variable is one.
+    fn wrote_through(&mut self, local: LocalId, span: Span) -> bool {
+        let Some(&of) = self.aliases.get(&local) else {
+            return false;
+        };
+        self.alias_writes.insert(span.lo, local);
+        self.events.push(Event::Wrote(local, span));
+        self.events.push(Event::Wrote(of, span));
+        true
+    }
+
     fn wrote(&mut self, local: LocalId, span: Span) {
         let viewed = self.viewed.get(&local).is_some_and(|&count| count > 0);
         self.events
@@ -1750,6 +1776,7 @@ impl<'a> Walk<'a> {
                 self.jump(head);
                 self.start(head);
                 let mut elements = false;
+                let mut named_alias = None;
                 for (at, &left) in lhs.iter().enumerate() {
                     let mut left = self.unparen(left);
                     // `&v` is a variable too.
@@ -1772,6 +1799,13 @@ impl<'a> Walk<'a> {
                     if at == 1 {
                         self.ranged(left, *x, alias);
                     }
+                    let declared = self.body.defs.get(&tree.exprs[left].span.lo).copied();
+                    let named = declared.or_else(|| self.local(left));
+                    let of = ranged.filter(|of| alias && self.watched.contains(of));
+                    if let (1, Some(named), Some(of)) = (at, named, of) {
+                        self.aliases.insert(named, of);
+                        named_alias = Some(named);
+                    }
                 }
                 self.jump(after);
                 self.jump(turn);
@@ -1791,6 +1825,9 @@ impl<'a> Walk<'a> {
                 let looped = self.ranges(*x);
                 self.stmts(&body.stmts);
                 self.ranged_out(looped);
+                if let Some(named) = named_alias {
+                    self.aliases.remove(&named);
+                }
                 self.breaks.pop();
                 self.continues.pop();
                 if let Some(count) = viewed.and_then(|viewed| self.viewed.get_mut(&viewed)) {
@@ -2276,10 +2313,25 @@ impl<'a> Walk<'a> {
         };
         // What a function literal uses or a pointer leads to may be read
         // at any time.
-        for at in self.not_read_later(before, after, asked, effect) {
+        let found = self.not_read_later(before, after, asked, effect);
+        let mut lost: FxHashSet<(LocalId, u32)> = FxHashSet::default();
+        for &at in &found {
             if let Event::Wrote(local, span) = self.events[at]
                 && !self.reached.contains(&local)
             {
+                lost.insert((local, span.lo));
+            }
+        }
+        for at in found {
+            let Event::Wrote(local, span) = self.events[at] else {
+                continue;
+            };
+            // A write through the `&` variable of a loop is lost if
+            // neither the variable nor the parameter is read later.
+            let through = self.alias_writes.get(&span.lo);
+            let read =
+                through.is_some_and(|&alias| alias == local || !lost.contains(&(alias, span.lo)));
+            if lost.contains(&(local, span.lo)) && !read {
                 self.found.lost.push((local, span));
             }
         }

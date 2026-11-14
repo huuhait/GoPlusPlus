@@ -775,7 +775,7 @@ func twice(nums []int, grid [2]int, rows [][]int, hits map[string]int) int {
 	for key, &hit := range hits {
 		hit += len(key)
 	}
-	return grid[1]
+	return grid[1] + len(nums) + len(rows) + len(hits)
 }
 
 func runes(text string, points []rune) ([]rune, string) {
@@ -933,7 +933,7 @@ func more(a, b, c, d, e []int, f map[int]int, g box) []int {
 	copy(&d, e)
 	delete(f, 1)
 	g.add(2)
-	println(len(c), len(f))
+	println(len(b), len(c), len(f))
 	return e
 }
 
