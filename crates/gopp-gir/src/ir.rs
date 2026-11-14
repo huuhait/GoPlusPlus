@@ -189,6 +189,10 @@ pub struct Statement {
     pub kind: StatementKind,
     pub loc: Span,
     pub scope: ScopeId,
+    /// The copy of an argument or of a result of a call that was
+    /// replaced by the body of its function: what is worked out on one
+    /// side of it is not put together with what is on the other.
+    pub boundary: bool,
 }
 
 #[derive(Clone, Debug)]

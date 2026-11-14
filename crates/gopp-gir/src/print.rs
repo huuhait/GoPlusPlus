@@ -241,7 +241,15 @@ impl Printer<'_> {
                     }
                     StatementKind::Nop => "nop".to_owned(),
                 };
-                let _ = writeln!(out, "    {text}{}", self.loc(stmt.loc, stmt.scope));
+                let crossing = match stmt.boundary {
+                    true => "boundary ",
+                    false => "",
+                };
+                let _ = writeln!(
+                    out,
+                    "    {crossing}{text}{}",
+                    self.loc(stmt.loc, stmt.scope)
+                );
             }
             let term = &block.term;
             let _ = writeln!(

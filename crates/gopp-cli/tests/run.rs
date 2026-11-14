@@ -165,12 +165,13 @@ fn every_program_does_the_same_when_it_is_built_for_a_debugger() {
 }
 
 /// What crosses to C is passed as C passes it at every level of
-/// Clang: the C side is compiled with the program.
+/// Clang: the C side is compiled with the program. And a product is
+/// fused with no sum at any level.
 #[test]
 #[ignore = "long: builds the runtime and the programs that call C at three levels"]
 fn the_programs_that_call_c_do_the_same_at_every_level() {
-    let programs = programs(|name| name.starts_with("cabi_"));
-    assert!(programs.len() >= 3);
+    let programs = programs(|name| name.starts_with("cabi_") || name.starts_with("float_"));
+    assert!(programs.len() >= 4);
     for level in ["--opt=0", "--opt=2", "--opt=3"] {
         for real in [&[][..], &["--real"]] {
             let flags = [&[level], real].concat();

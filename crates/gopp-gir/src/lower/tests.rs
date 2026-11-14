@@ -137,9 +137,14 @@ fn without_cleanup(text: &str) -> String {
 }
 
 fn gir(text: &str) -> String {
+    print_module(&module_of(text))
+}
+
+/// The module of one file of Go++, which must lower without a report.
+pub(crate) fn module_of(text: &str) -> Module {
     let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
     assert_eq!(messages, [] as [&str; 0]);
-    print_module(&lowered.module)
+    lowered.module
 }
 
 #[test]

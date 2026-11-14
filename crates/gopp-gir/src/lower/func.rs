@@ -380,6 +380,15 @@ pub(super) fn lower_function<'a>(
         let body = shared.body(job);
         let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
         cx.owner = Some((job, None));
+        // `@Inline` and `@NoInline`, of which a declaration has one.
+        let own = tree.decl_nodes[job.decl].attrs.iter();
+        for attr in own.filter(|attr| attr.path.package.is_none()) {
+            match shared.names.resolve(&attr.path.name.name) {
+                "Inline" => cx.b.set_inline(crate::Inline::Always),
+                "NoInline" => cx.b.set_inline(crate::Inline::Never),
+                _ => {}
+            }
+        }
         cx.function(receiver.as_ref(), *ty, block, 0)?;
         cx.b.drop_unreached();
         let outlined = cx.outlined();

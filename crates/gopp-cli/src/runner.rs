@@ -182,6 +182,10 @@ impl Run<'_> {
         let Some(package) = lowered(&sources, (target, false), false, &mut said) else {
             return Err(said);
         };
+        let package = match self.driver.debug {
+            true => package,
+            false => package.inlined(),
+        };
         if !package.is_main {
             return Err(
                 "error: the package is not `main`: there is no program to run\n".to_owned(),

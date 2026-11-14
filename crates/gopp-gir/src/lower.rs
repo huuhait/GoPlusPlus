@@ -25,7 +25,7 @@ mod table;
 mod types;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_mangle::{Entity, Locals, Namer, symbol_of};

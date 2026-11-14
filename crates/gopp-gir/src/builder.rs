@@ -540,7 +540,13 @@ impl<'m> FuncBuilder<'m> {
 
     fn push(&mut self, kind: StatementKind) -> Result<(), BuildError> {
         let (loc, scope) = (self.loc, self.scope());
-        self.open()?.stmts.push(Statement { kind, loc, scope });
+        let boundary = false;
+        self.open()?.stmts.push(Statement {
+            kind,
+            loc,
+            scope,
+            boundary,
+        });
         Ok(())
     }
 

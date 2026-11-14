@@ -12,7 +12,7 @@ use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
 use gopp_codegen_c::{EmitOptions, Entry, emit_c23};
 use gopp_diag::{Code, Diagnostic, Severity, Sink, render_text};
-use gopp_gir::{Checked, Imported, Module, Summaries, lower_with, print_module};
+use gopp_gir::{Checked, Imported, Module, Summaries, inline_trivial, lower_with, print_module};
 use gopp_sema::types::Types;
 use gopp_span::{SourceFile, SourceMap};
 use gopp_syntax::ast::File;
@@ -75,6 +75,18 @@ pub(crate) struct Lowered {
     /// The packages that it needs, each after those that it imports,
     /// with their import paths.
     pub imports: Vec<(String, Module)>,
+}
+
+impl Lowered {
+    /// The package and those that it imports, each with the calls of
+    /// its small functions replaced by their bodies (pipelines.md §3).
+    pub fn inlined(mut self) -> Self {
+        let imported = self.imports.iter_mut().map(|(_, module)| module);
+        for module in [&mut self.module].into_iter().chain(imported) {
+            inline_trivial(module);
+        }
+        self
+    }
 }
 
 /// Checks and lowers the one package that `paths` name, and the
@@ -205,9 +217,28 @@ pub fn run(options: &Options) -> ExitCode {
     else {
         return ExitCode::from(EXIT_ERRORS);
     };
+    // The module as it is lowered is what `-emit=gir` shows.
     if options.emit == EmitBuilt::Gir {
         return written(options.output.as_ref(), &print_module(&module));
     }
+    let whole = Lowered {
+        module,
+        is_main,
+        name,
+        imports,
+    };
+    // A call that is replaced has no frame, and C cannot say that a
+    // function was put into another: what is built for a debugger
+    // keeps its calls.
+    let Lowered {
+        module,
+        is_main,
+        name,
+        imports,
+    } = match options.debug {
+        true => whole,
+        false => whole.inlined(),
+    };
     let paths: Vec<String> = imports.iter().map(|(path, _)| path.clone()).collect();
     let emit = EmitOptions {
         layout: target.layout(),

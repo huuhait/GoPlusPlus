@@ -44,7 +44,7 @@ Local       Kind (Return, Arg, Var, Temp), Ty, Name, Mutable, Owned, Glue, Loc
             Source (declared by the program), Scope, ArgNo, Origin, Deref
 BasicBlock  Stmts[], Term, Cleanup, Catch, Cold
 Statement   Assign(Dest place, Rvalue) | StorageLive(L) | StorageDead(L) | Nop
-            Boundary: a copy made by GIR inlining (never read from a file)
+            Boundary: the mark of an Assign that GIR inlining made to copy an argument or a result
             Prologue: entry-block setup emitted before body line numbers
             DropOld: store replaces a live owned place
             Scope: the debug scope it is in (section 14)

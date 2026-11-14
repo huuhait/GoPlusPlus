@@ -69,7 +69,9 @@ fn prototype_with(
     }
     match func.inline() {
         Inline::Default => {}
-        Inline::Always => line.push_str("__attribute__((always_inline)) inline "),
+        // Without `inline`: the function is still one that another
+        // unit calls.
+        Inline::Always => line.push_str("__attribute__((always_inline)) "),
         Inline::Never => line.push_str("__attribute__((noinline)) "),
     }
     line.push_str(linkage(func.link(), false));

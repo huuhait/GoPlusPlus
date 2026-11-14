@@ -2,6 +2,7 @@
 
 mod builder;
 mod ctype;
+mod inline;
 mod ir;
 mod lower;
 mod print;
@@ -10,6 +11,7 @@ mod verify;
 
 pub use builder::{BuildError, FuncBuilder};
 pub use ctype::{CRefusal, CTypeRules, MAX_BYTES, MAX_DEPTH, MAX_FIELDS};
+pub use inline::{MAX_STATEMENTS, inline_trivial};
 pub use ir::*;
 pub use lower::{Checked, Imported, Summaries, check_instances, lower_package, lower_with};
 pub use print::print_module;

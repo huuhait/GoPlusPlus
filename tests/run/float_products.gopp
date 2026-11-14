@@ -1,0 +1,36 @@
+// A product and the sum that takes it are two operations, each rounded
+// by itself, as Go has it on amd64: nothing is fused, at any level, and
+// not across the call of a small function that is put into its caller.
+package main
+
+func mul(x, y float64) float64 { return x * y }
+
+func mul32(x, y float32) float32 { return x * y }
+
+@NoInline
+func sum(x, y, z float64) float64 { return x*y + z }
+
+@NoInline
+func through(x, y, z float64) float64 { return mul(x, y) + z }
+
+@NoInline
+func minus(x, y, z float64) float64 { return z - x*y }
+
+@NoInline
+func sum32(x, y, z float32) float32 { return mul32(x, y) + z }
+
+@NoInline
+func parts() (float64, float64, float32, float32) {
+	// (1 + 2^-30) * (1 - 2^-30) is 1 - 2^-60, which rounds to 1.
+	return 1 + 1.0/(1<<30), 1 - 1.0/(1<<30), 1 + 1.0/(1<<13), 1 - 1.0/(1<<13)
+}
+
+func main() {
+	x, y, a, b := parts()
+	println(sum(x, y, -1) == 0)
+	println(through(x, y, -1) == 0)
+	println(minus(x, y, 1) == 0)
+	println(sum32(a, b, -1) == 0)
+	// What fusing would give is another number.
+	println(x*y == 1, x != 1, y != 1)
+}
