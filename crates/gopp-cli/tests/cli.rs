@@ -1706,6 +1706,93 @@ fn a_program_runs_the_generic_code_of_the_packages_that_it_imports() {
     assert_eq!(ran.status.code(), Some(0));
 }
 
+// rule: GEN-13, EXP-16
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
+fn a_program_uses_the_operators_of_a_generic_type_of_another_package() {
+    let vecs = r#"package vecs
+
+type Number interface {
+	~int | ~float64
+}
+
+type Vec[T Number] struct{ X, Y T }
+
+@Operator
+func (a Vec[T]) Add(b Vec[T]) Vec[T] { return Vec[T]{a.X + b.X, a.Y + b.Y} }
+
+@Operator
+@Right
+func (a Vec[T]) Mul(k T) Vec[T] { return Vec[T]{a.X * k, a.Y * k} }
+
+@Operator
+func (a Vec[T]) Eq(b Vec[T]) bool { return a.X == b.X && a.Y == b.Y }
+
+@Operator
+func (a Vec[T]) Iter() func(yield func(T) bool) {
+	return func(yield func(T) bool) {
+		if yield(a.X) {
+			yield(a.Y)
+		}
+	}
+}
+
+type Plain struct{ N int }
+
+@Operator
+func (p Plain) Add(q Plain) Plain { return Plain{p.N + q.N} }
+
+@Operator
+func (p *Plain) AddAssign(q Plain) { p.N += q.N * 2 }
+"#;
+    let text = r#"package main
+
+import "vecs"
+
+func two() int { return 2 }
+
+func main() {
+	a := vecs.Vec[int]{1, 2}
+	b := a + vecs.Vec[int]{10, 20}
+	c := two() * b
+	println(b.X, b.Y, c.X, c.Y, a == b, c == vecs.Vec[int]{22, 44})
+	f := vecs.Vec[float64]{0.5, 1.5} + vecs.Vec[float64]{1, 1}
+	println(f.X, f.Y)
+	sum := 0
+	for x := range c {
+		sum += x
+	}
+	println(sum)
+	vs := []vecs.Vec[int]{a, b}
+	vs[two()-1] += a
+	println(vs[1].X)
+	p := vecs.Plain{1} + vecs.Plain{2}
+	p += vecs.Plain{5}
+	println(p.N)
+	switch c {
+	case vecs.Vec[int]{22, 44}:
+		println("found")
+	}
+}
+"#;
+    let dir = TempDir::new().unwrap();
+    let root = library(&dir, &[("vecs/vecs.gopp", vecs)]);
+    let file = write_source(&dir, "main.gopp", text);
+    let program = dir.path().join("program");
+    let mut build = gopp();
+    build.env("GOPPROOT", &root).arg("build").arg("-o");
+    let built = run_beside(build.arg(&program).arg(&file));
+    assert_eq!(stderr(&built), "");
+    assert_eq!(built.status.code(), Some(0));
+    let ran = run_beside(&mut Command::new(&program));
+    let expected = "11 22 22 44 false true\n+1.500000e+000 +2.500000e+000\n66\n12\n13\nfound\n";
+    assert_eq!(stderr(&ran), expected);
+    assert_eq!(ran.status.code(), Some(0));
+}
+
 /// The samples of the specification that are built today.
 const BUILT_SAMPLES: &[&str] = &["01-hello"];
 
