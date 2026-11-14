@@ -54,6 +54,9 @@ pub(super) enum Event {
     /// What the sources from the first number to the second say is put
     /// where the function does not follow it.
     Left(u32, u32, Span),
+    /// The pointer with the number is taken into what a value owns
+    /// apart from itself.
+    Borrowed(u32),
 }
 
 /// A variable that is read where it may hold no value.
@@ -299,6 +302,7 @@ pub(super) struct Walk<'a> {
     pub params: Vec<Option<LocalId>>,
     pub funcs: Vec<bool>,
     pub changes: Vec<borrows::Change>,
+    pub borrows: Vec<borrows::Borrow>,
     /// The changes that a loop around them refuses.
     pub broken: Vec<borrows::Broken>,
     /// The variables that the statements around declare, each
@@ -364,6 +368,7 @@ pub(super) fn of(
         params: Vec::new(),
         funcs: Vec::new(),
         changes: Vec::new(),
+        borrows: Vec::new(),
         broken: Vec::new(),
         frames: Vec::new(),
         loops: Vec::new(),
@@ -662,6 +667,29 @@ impl<'a> Checker<'a> {
                 self.emit(diagnostic);
             }
         }
+        for reached in &found.reached {
+            if !self.report_once((reached.at, Code::OwnBorrowIntoArena)) {
+                continue;
+            }
+            let several = "a pointer to its value was read through another pointer or came from \
+                           a call, so a second pointer may reach the value and free what is \
+                           pointed into";
+            let whole = text(reached.at);
+            let message = match reached.given {
+                None => format!(
+                    "cannot point into {}: {several}",
+                    whole.strip_prefix('&').unwrap_or(&whole)
+                ),
+                Some(given) => format!(
+                    "cannot give {} to {whole}: the function points into what the value owns, \
+                     and {several}",
+                    text(given)
+                ),
+            };
+            let fix = "use the index each time, or copy the part out, change it and store it back";
+            let diagnostic = Diagnostic::new(Code::OwnBorrowIntoArena, reached.at, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixAlias, None, fix.to_owned()));
+        }
         for aliased in &found.aliased {
             if !self.report_once((aliased.at, Code::OwnAliasAtCall)) {
                 continue;
@@ -901,6 +929,7 @@ impl<'a> Walk<'a> {
         self.events.clear();
         self.sources.clear();
         self.changes.clear();
+        self.borrows.clear();
         self.broken.clear();
         self.calls.clear();
         self.args.clear();
@@ -1056,6 +1085,7 @@ impl<'a> Walk<'a> {
             ExprKind::Unary { op, x } => {
                 if *op == UnaryOp::Addr {
                     self.reached.extend(self.root(*x));
+                    self.borrowing(*x, span, false);
                 }
                 rest.push(Todo::Part(*x));
             }
@@ -1629,6 +1659,7 @@ impl<'a> Walk<'a> {
         let holds = self.events[self.given..].iter().any(|event| match event {
             Event::Holds(_, from, to, _) => to > from,
             Event::Returned(..) | Event::Stored(..) | Event::Called(_) | Event::Left(..) => true,
+            Event::Borrowed(_) => true,
             // What is changed through a pointer, those who call the
             // function are told.
             Event::Changed(change) => self.changes[*change as usize]
@@ -1745,7 +1776,8 @@ impl<'a> Walk<'a> {
                     | Event::Returned(..)
                     | Event::Stored(..)
                     | Event::Called(_)
-                    | Event::Left(..) => continue,
+                    | Event::Left(..)
+                    | Event::Borrowed(_) => continue,
                 };
                 let Some(&member) = members.get(&local) else {
                     continue;
@@ -1787,7 +1819,8 @@ impl<'a> Walk<'a> {
             | Event::Returned(..)
             | Event::Stored(..)
             | Event::Called(_)
-            | Event::Left(..) => None,
+            | Event::Left(..)
+            | Event::Borrowed(_) => None,
         };
         for at in self.not_read_later(before, after, asked, effect) {
             if let Event::Given(local, expr) = self.events[at]
@@ -1819,7 +1852,8 @@ impl<'a> Walk<'a> {
             | Event::Returned(..)
             | Event::Stored(..)
             | Event::Called(_)
-            | Event::Left(..) => None,
+            | Event::Left(..)
+            | Event::Borrowed(_) => None,
         };
         // What a function literal uses or a pointer leads to may be read
         // at any time.

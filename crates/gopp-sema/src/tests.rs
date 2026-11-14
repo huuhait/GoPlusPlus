@@ -7123,6 +7123,119 @@ func bad5(m map[int]int) {
     assert_eq!(said, expected);
 }
 
+// rule: OWN-B10
+#[test]
+fn nothing_is_pointed_into_that_a_value_with_several_pointers_owns_apart() {
+    // `a` was read through a pointer, and `g` came from a call: another
+    // pointer may reach their values. So no pointer is taken into what
+    // such a value owns apart from itself: an element or a view of a
+    // slice, an element as a `&` range variable or as the receiver of
+    // a method, what a `Unique` holds; and they are not given to a
+    // function that takes one (`first` says so, `visit` is not known).
+    // By index, as a value, into the value itself, and through a
+    // parameter of the function, all is fine (`fine`, `views`); a
+    // function that gives back a view of what it is given gives
+    // nothing deeper (`tail`).
+    let text = "package p
+
+type Item struct{ Count int }
+
+func (i *Item) Bump() { i.Count++ }
+
+type Node struct {
+	Items []Item
+	Arr   [2]Item
+	Count int
+	Next  Option[*Node]
+	Own   Unique[Item]
+}
+
+type Plain struct {
+	n    int
+	next Option[*Plain]
+}
+
+func first(n *Node) *Item { return &n.Items[0] }
+
+func count(n *Node) int { return len(n.Items) }
+
+func find() *Node
+
+func bad(n *Node, visit func(*Node)) int {
+	a, ok := n.Next.Get()
+	if !ok {
+		return 0
+	}
+	p := &a.Items[0]
+	v := &a.Items[0:1]
+	for _, &x := range a.Items {
+		x.Count++
+	}
+	a.Items[0].Bump()
+	q := &a.Own.Count
+	r := first(a)
+	visit(a)
+	g := find()
+	s := &g.Items[0]
+	return p.Count + len(v) + *q + r.Count + s.Count
+}
+
+func fine(n *Node, m *Plain) int {
+	a, ok := n.Next.Get()
+	if !ok {
+		return 0
+	}
+	a.Items[0] = Item{}
+	a.Items[0].Count++
+	a.Items = append(a.Items, Item{})
+	x := a.Items[0]
+	c := &a.Count
+	e := &a.Arr[1]
+	p := &n.Items[0]
+	total := count(a) + x.Count + *c + e.Count + p.Count
+	if b, ok := m.next.Get(); ok {
+		d := &b.n
+		total += *d
+	}
+	return total
+}
+
+func tail(xs *[]int) *[]int { return &xs[1:] }
+
+func views(xs *[]int, n *Node) int {
+	v := tail(tail(xs))
+	p := &v[0]
+	w := &n.Items[1:]
+	return *p + len(w)
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(
+            |message| match message.split_once(": a pointer to its value") {
+                Some((start, _)) => start.to_owned(),
+                None => message.replace(
+                    ", and a pointer to its value was read through another pointer or came from a \
+                 call, so a second pointer may reach the value and free what is pointed into",
+                    "",
+                ),
+            },
+        )
+        .collect();
+    let expected = [
+        "a.gopp:31:7: cannot point into a.Items[0]",
+        "a.gopp:32:7: cannot point into a.Items[0:1]",
+        "a.gopp:33:21: cannot point into a.Items",
+        "a.gopp:36:2: cannot point into a.Items[0]",
+        "a.gopp:37:7: cannot point into a.Own.Count",
+        "a.gopp:38:7: cannot give a to first: the function points into what the value owns",
+        "a.gopp:39:2: cannot give a to visit: the function points into what the value owns",
+        "a.gopp:39:2: cannot call visit: it may change n, and p points into n and is used later",
+        "a.gopp:41:7: cannot point into g.Items[0]",
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
@@ -7231,6 +7344,23 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
              {{\n\ttotal := 0\n\tp := &xs[0]\n{calls}\treturn total\n}}\n"
         )
     };
+    // Many pointers into the elements of what a parameter points to,
+    // and as many calls of a function that takes one.
+    let parts = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\tp{i} := &b.xs[{}]\n\ttotal += p{i}.n + at(b, {}).n\n",
+                    i % 8,
+                    i % 8
+                )
+            })
+            .collect();
+        format!(
+            "{head}type B struct{{ xs []T }}\nfunc at(b *B, i int) *T {{ return &b.xs[i] }}\nfunc \
+             use(b *B) int {{\n\ttotal := 0\n{each}\treturn total\n}}\n"
+        )
+    };
     // Each function stores through the next, and the last one itself;
     // every one is called with a holder and a value of its own.
     let stores = |count: usize, up: bool| {
@@ -7272,6 +7402,7 @@ fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(generic(n)));
     linear::assert_near_linear(&sizes, |n| steps(literals(n)));
     linear::assert_near_linear(&sizes, |n| steps(pairs(n)));
+    linear::assert_near_linear(&sizes, |n| steps(parts(n)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(stores(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(unknown(n)));

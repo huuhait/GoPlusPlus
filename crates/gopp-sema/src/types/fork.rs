@@ -65,6 +65,7 @@ impl Inner {
             holding: self.holding.clone(),
             leading: self.leading.clone(),
             lending: self.lending.clone(),
+            owning: self.owning.clone(),
             kept: self.kept.clone(),
             lends: self.lends.clone(),
             open_abstracts: open_abstracts

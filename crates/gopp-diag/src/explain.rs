@@ -580,6 +580,19 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "func bad(h *Holder) {\n\tx := 1\n\th.p = &x // error\n}\n\nfunc set(h \
              *Holder, p *int) { h.p = p } // ok",
         ),
+        OwnBorrowIntoArena => (
+            "A pointer is taken into what a value owns apart from itself (an element of a \
+             slice, an entry of a map, what a `Unique` or a `Shared` field holds, the value \
+             of an interface), and the value is reached through a pointer that was read \
+             through another pointer or came from a call. Two such pointers may reach the \
+             same value, and the compiler does not tell them apart: through the other, the \
+             slice could grow or the field be replaced, and the pointer would point to what \
+             is freed.",
+            "Use the index each time, or copy the part out, change it and store it back. A \
+             pointer to a field of the value itself is fine.",
+            "n := list.head\np := &n.Items[0]   // error\nn.Items[0].Count++ // ok\nq := \
+             &n.Count      // ok",
+        ),
         OwnAliasAtCall => (
             "Two pointers that one call is given, or the receiver of a method and a pointer \
              among its arguments, may point to the same place or to a place and a part of \

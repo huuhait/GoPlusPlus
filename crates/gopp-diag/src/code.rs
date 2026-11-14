@@ -348,6 +348,7 @@ codes! {
     488 AttrPlacement "err_attr_placement",
     489 AttrArgs "err_attr_args",
     490 OwnLostWrite "err_own_lost_write",
+    491 OwnBorrowIntoArena "err_own_borrow_into_arena",
     492 OwnSharedWrite "err_own_shared_write",
     493 ValueUnchecked "err_value_unchecked",
     494 InvalidHandleType "err_invalid_handle_type",

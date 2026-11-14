@@ -34,6 +34,15 @@ pub struct Lends {
     /// For each parameter: whether the function may change what the
     /// parameter reaches through pointers.
     pub changes: Vec<bool>,
+    /// For each parameter: whether the function points into what the
+    /// value behind it owns apart from itself (OWN-B10).
+    pub borrows: Vec<bool>,
+    /// For each parameter that a result may point into: whether it may
+    /// point into what is read through pointers behind the parameter,
+    /// and not only into what the parameter points to.
+    pub deep: Vec<bool>,
+    /// Whether a result may point to what no parameter leads to.
+    pub outside: bool,
 }
 
 impl Lends {
@@ -406,6 +415,61 @@ impl Types {
         found
     }
 
+    /// Whether a value of the type owns something apart from itself
+    /// where it is: a slice, a map, an interface value, a `Unique` or a
+    /// `Shared`, in itself, a field, an element of an array or an
+    /// option (OWN-B10). With `behind`, whether a pointer in it points
+    /// to a value that does. A type parameter stands for a type that
+    /// may.
+    pub fn owns_apart(&self, ty: TypeId, behind: bool) -> bool {
+        self.owns(ty, behind, &mut (FxHashSet::default(), 0))
+    }
+
+    /// `owns_apart`, kept as `holds` keeps what it finds.
+    fn owns(&self, ty: TypeId, behind: bool, seen: &mut (FxHashSet<TypeId>, usize)) -> bool {
+        if let Some(known) = self.read(|inner| inner.owning.get(&(ty, behind)).copied()) {
+            return known;
+        }
+        if !seen.0.insert(ty) {
+            seen.1 += 1;
+            return false;
+        }
+        let before = seen.1;
+        self.steps
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut parts: Vec<TypeId> = Vec::new();
+        let found = match &*self.get(self.underlying(ty)) {
+            Type::Slice(_)
+            | Type::Map { .. }
+            | Type::Interface { .. }
+            | Type::Unique(_)
+            | Type::Shared(_) => !behind,
+            Type::Param(_) => true,
+            Type::Pointer(to) => behind && self.owns_apart(*to, false),
+            Type::Struct(fields) => {
+                parts.extend(fields.iter().map(|field| field.ty));
+                parts.extend(self.parents(ty));
+                false
+            }
+            Type::Array { elem, .. } | Type::Option(elem) => {
+                parts.push(*elem);
+                false
+            }
+            Type::Tuple(all) => {
+                parts.extend(all.iter());
+                false
+            }
+            _ => false,
+        };
+        let found =
+            found || (parts.into_iter()).any(|part| super::deep(|| self.owns(part, behind, seen)));
+        seen.0.remove(&ty);
+        if found || seen.1 == before {
+            self.write(|inner| inner.owning.insert((ty, behind), found));
+        }
+        found
+    }
+
     /// Whether a value of the type leads to a place that may be given
     /// a pointer: it holds a pointer to what holds one. A type
     /// parameter stands for a type that may.
@@ -471,6 +535,7 @@ impl Types {
             inner.holding.clear();
             inner.leading.clear();
             inner.lending.clear();
+            inner.owning.clear();
             inner.open_abstracts.clear();
         });
     }
