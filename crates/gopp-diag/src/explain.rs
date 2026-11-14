@@ -637,6 +637,17 @@ pub fn explain(code: Code) -> Option<Explanation> {
              *Conn) Name() string { return \"conn\" }\n\nfunc dup(c *Conn) Unique[Conn] { \
              return c.Clone() } // error",
         ),
+        DropUsesReceiver => (
+            "The `drop` method of a type with a type table uses its receiver for more than \
+             its fields: it calls a method on it, or gives it away. A value ends child \
+             first, so when this method runs the value may be a part of a child whose \
+             fields have ended, and a method that the child replaces would use them.",
+            "Use the fields of the receiver: call the methods of a field, or a function \
+             that is given the fields.",
+            "type Shape struct{ log Log }\n\n@Virtual\nfunc (s *Shape) Name() string { \
+             return \"shape\" }\n\nfunc (s *Shape) drop() { s.log.Write(s.Name()) } // \
+             error\n\nfunc (s *Shape) drop() { s.log.Write(\"shape\") } // ok",
+        ),
         GoCapture => (
             "A function literal that `go` runs uses a variable of the function around it \
              that something else still touches: the function after the `go` statement, a \

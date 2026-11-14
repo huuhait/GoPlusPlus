@@ -8270,6 +8270,81 @@ var child Child
     assert_eq!(said, expected);
 }
 
+// rule: OWN-R2, EXP-14
+#[test]
+fn the_drop_method_of_a_type_with_a_table_only_reaches_the_fields_of_its_receiver() {
+    // A value ends child first. When the `drop` method of `Shape` runs
+    // for the part of a `Tile`, the fields of the `Tile` have ended,
+    // and `Tile`'s `Name` would use them: the receiver is not called
+    // (`Shape`), not given away and not reached through `base`
+    // (`Tile`). Its fields are used as they are, in a function literal
+    // too. A type without a type table may do all of it (`Plain`).
+    let text = "package p
+
+type Log struct{ lines []string }
+
+func (l *Log) Write(line string) { l.lines = append(l.lines, line) }
+
+func note(s *Shape) {}
+
+type Shape struct {
+	name string
+	log  Log
+}
+
+@Virtual
+func (s *Shape) Name() string { return s.name }
+
+func (s *Shape) Flush() {}
+
+func (s *Shape) drop() {
+	s.log.Write(s.name)
+	s.log.Write(s.Name())
+	s.Flush()
+	note(s)
+	each := func() { (s).log.Write(s.name + \"!\") }
+	each()
+}
+
+@Extends(Shape)
+type Tile struct{ color string }
+
+@Override
+func (t *Tile) Name() string { return t.color }
+
+func (t *Tile) drop() {
+	base.Flush()
+	t.log.Write(t.color + base.name)
+	var whole *Shape = t
+	_ = whole
+}
+
+type Plain struct{ log Log }
+
+func (p *Plain) Name() string { return \"plain\" }
+
+func (p *Plain) drop() { p.log.Write(p.Name()) }
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let refused = |at: &str, name: &str, of: &str| {
+        format!(
+            "a.gopp:{at}: cannot use {name} here: the drop method of {of} only reaches the \
+             fields of {name}, because {of} has a type table and {name} may be a part of a \
+             child that has ended"
+        )
+    };
+    let expected = [
+        refused("21:14", "s", "Shape"),
+        refused("22:2", "s", "Shape"),
+        refused("23:7", "s", "Shape"),
+        refused("35:7", "t", "Tile"),
+        refused("37:21", "t", "Tile"),
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: TYP-20, CLO-2
 #[test]
 fn a_function_literal_that_names_base_uses_the_receiver() {

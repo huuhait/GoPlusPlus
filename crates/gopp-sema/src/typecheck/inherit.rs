@@ -315,6 +315,54 @@ impl<'a> Checker<'a> {
         self.error(Code::CloneNotCopied, sel.span, message);
     }
 
+    /// The `drop` method of a type with a type table uses its receiver
+    /// only to reach its fields (OWN-R2). A value ends child first, so
+    /// the receiver may be a part of a child whose fields have ended:
+    /// a method of it, or a function that is given it, could call what
+    /// that child replaces. `base.M()` gives the receiver to a method
+    /// too.
+    pub(super) fn drop_reaches_fields(&mut self, cx: &Cx<'a>, receiver: &ast::Param, name: Ident) {
+        let tabled = self.receiver_of.filter(|&of| self.types.has_table(of));
+        let (Some(of), Some(named)) = (tabled, receiver.name) else {
+            return;
+        };
+        if self.names.resolve(&name.name) != "drop" {
+            return;
+        }
+        let declared = |local: &crate::object::Local| local.span == named.span;
+        let Some(local) = cx.body.locals.iter().position(declared) else {
+            return;
+        };
+        let local = Ref::Local(crate::object::LocalId(local as u32));
+        let mut reached = FxHashSet::default();
+        let mut whole = Vec::new();
+        for (&selector, selection) in &self.selections {
+            let ExprKind::Selector { x, sel } = cx.tree.exprs[selector].kind else {
+                continue;
+            };
+            match selection.kind {
+                SelectionKind::Field => drop(reached.insert(self.unparen(cx, x))),
+                SelectionKind::BaseMethod => whole.push(sel.span),
+                _ => {}
+            }
+        }
+        for (expr, used) in &cx.body.uses {
+            if *used == local && !reached.contains(expr) {
+                whole.push(cx.tree.exprs[*expr].span);
+            }
+        }
+        whole.sort_by_key(|span| span.lo);
+        let (shown, receiver) = (self.type_string(of), self.names.resolve(&named.name));
+        let message = format!(
+            "cannot use {receiver} here: the drop method of {shown} only reaches the fields of \
+             {receiver}, because {shown} has a type table and {receiver} may be a part of a \
+             child that has ended"
+        );
+        for span in whole {
+            self.error(Code::DropUsesReceiver, span, message.clone());
+        }
+    }
+
     /// Whether the method `name` of the type `holder` is one that each
     /// type has for itself, so that a child replaces none with its own
     /// and two parents may both have one: `drop`, which ends the part

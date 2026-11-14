@@ -473,10 +473,8 @@ impl FuncCx<'_, '_> {
     /// `whole`; the part is of the type `head`. It says how far the
     /// part is from the start of the value and names the record of
     /// `whole`, and has for each method of `head` that may be replaced
-    /// the code that runs for a value of `whole`. For a method without a
-    /// body that is code which ends the program: no value is of a type
-    /// that leaves one open, and only a part whose child has ended has
-    /// the table of such a type.
+    /// the code that runs for a value of `whole`: null for a method
+    /// without a body.
     fn table(
         &mut self,
         whole: CheckedTypeId,
@@ -537,14 +535,16 @@ impl FuncCx<'_, '_> {
             if !matches!(found.member, Member::Method { .. }) {
                 return Ok(Err("a method that its type does not have"));
             }
-            let Some(declared) = shared.slot_method(found.holder, name) else {
+            let Some(method) = shared.method(found.holder, name) else {
+                // A method without a body is never called: no value is
+                // of a type that leaves one open.
                 parts.push(Constant {
                     kind: ConstantKind::Zero,
                     ty: bytes,
                 });
                 continue;
             };
-            let sig = match slot_sig(shared, self.memo, self.b.types(), declared) {
+            let sig = match slot_sig(shared, self.memo, self.b.types(), method.sig) {
                 Ok(sig) => sig,
                 Err(what) => return Ok(Err(what)),
             };
@@ -635,62 +635,6 @@ impl FuncCx<'_, '_> {
         self.b.goto(done)?;
         self.b.switch_to(done);
         Ok(Ok(()))
-    }
-
-    /// The part at the place, of the parent `parent`, is about to end
-    /// after the child that it is a part of (OWN-R2): for the `drop`
-    /// methods that run now it is a value of the parent, so a call
-    /// through its tables runs what the parent has, not a method of the
-    /// child, whose fields have ended. Gives each word that was changed
-    /// with what it had: the tables of the whole value say where it
-    /// starts, which a `Weak` handle of a part asks after the value
-    /// ended, so `ended_as` puts them back.
-    pub(super) fn ends_as(
-        &mut self,
-        part: &Place,
-        parent: CheckedTypeId,
-    ) -> Built<Result<Vec<(Place, Operand)>, &'static str>> {
-        let shared = self.shared;
-        let types = shared.types;
-        let drops = |ty: CheckedTypeId| matches!(&*types.get(ty), CheckedType::Named { id, .. } if types.drops(*id));
-        let runs = drops(parent) || types.ancestors(parent).into_iter().any(drops);
-        if !types.has_table(parent) || !runs {
-            return Ok(Ok(Vec::new()));
-        }
-        let bytes = self.bytes_ty();
-        let mut had = Vec::new();
-        for (way, head) in shared.tables_of(parent) {
-            let table = match self.table(parent, &way, head)? {
-                Ok(table) => table,
-                Err(what) => return Ok(Err(what)),
-            };
-            let mut at = part.clone();
-            for &step in &way {
-                at = self.part(&at, step)?;
-            }
-            let word = self.table_word(&at)?;
-            let before = self
-                .b
-                .assign_temp(Rvalue::Use(Operand::Copy(word.clone())))?;
-            had.push((word.clone(), Operand::Copy(Place::local(before))));
-            let record = self.b.module().globals[table].ty;
-            let address = Operand::Const(Constant {
-                kind: ConstantKind::Global(table),
-                ty: self.b.types().ptr(record),
-            });
-            self.b
-                .assign(word, Rvalue::Cast(CastKind::PtrToPtr, address, bytes))?;
-        }
-        Ok(Ok(had))
-    }
-
-    /// The part that `ends_as` made a value of its parent has ended:
-    /// its tables are those of the whole value again.
-    pub(super) fn ended_as(&mut self, had: Vec<(Place, Operand)>) -> Built {
-        for (word, before) in had {
-            self.b.assign(word, Rvalue::Use(before))?;
-        }
-        Ok(())
     }
 
     /// The call of a method that may be replaced, through a pointer or
@@ -990,7 +934,7 @@ impl FuncCx<'_, '_> {
     /// The body of what a table has for the method `name` of the type
     /// `ty`: the receiver that it is given is `by` bytes before that of
     /// the method. What the method only reads of what the call gave
-    /// away ends here. A method without a body ends the program.
+    /// away ends here.
     pub fn adjusted_body(
         &mut self,
         ty: CheckedTypeId,
@@ -1000,15 +944,6 @@ impl FuncCx<'_, '_> {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         let shared = self.shared;
-        if shared.marks_of(ty, name).has(Marks::ABSTRACT) {
-            let of = shared.types.runtime_name(ty, shared.names);
-            let of = self.b.const_str(of.as_bytes());
-            let method = self.b.const_str(shared.names.resolve(&name).as_bytes());
-            let string = self.b.operand_ty(&of);
-            self.runtime_call("_gopp_panic_open", &[string, string], vec![of, method])?;
-            self.b.unreachable()?;
-            return Ok(Ok(()));
-        }
         let Some(checked) = shared.method(ty, name).map(|method| method.sig) else {
             return Ok(Err("a method that its type does not have"));
         };

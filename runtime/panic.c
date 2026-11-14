@@ -435,18 +435,6 @@ static const gopp_type runtime_error = {
   raise_kept();
 }
 
-// A method without a body is called: the part of a parent that leaves
-// it open runs its `drop` after the child that had the method ended.
-[[noreturn]] void _gopp_panic_open(gopp_string of, gopp_string method) {
-  _gopp_keep_start();
-  _gopp_write_text("method ");
-  _gopp_write_string(of);
-  _gopp_write_text(".");
-  _gopp_write_string(method);
-  _gopp_write_text(" has no body: it is called while the value ends");
-  raise_kept();
-}
-
 [[noreturn]] void _gopp_fail_convert(gopp_string iface, const gopp_type *have,
                                      gopp_string missing) {
   _gopp_keep_start();

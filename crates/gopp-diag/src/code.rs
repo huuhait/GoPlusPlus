@@ -379,6 +379,7 @@ codes! {
     520 FuncSharesCapture "err_func_shares_capture",
     521 ExtendsNotCopied "err_extends_not_copied",
     522 CloneNotCopied "err_clone_not_copied",
+    523 DropUsesReceiver "err_drop_uses_receiver",
 }
 
 impl Code {

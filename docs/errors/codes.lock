@@ -525,3 +525,4 @@ E0519 note_go_fix_share
 E0520 err_func_shares_capture
 E0521 err_extends_not_copied
 E0522 err_clone_not_copied
+E0523 err_drop_uses_receiver

@@ -11,16 +11,14 @@ type Base struct{ name string }
 @Virtual
 func (b *Base) Label() string { return "base " + b.name }
 
-func (b *Base) drop() { println("drop", b.Label()) }
+func (b *Base) drop() { println("drop base", b.name) }
 
 type Side struct{ side string }
 
 @Virtual
 func (s *Side) Mark() string { return "side " + s.side }
 
-func (s *Side) Show() string { return s.Mark() }
-
-func (s *Side) drop() { println("drop", s.Show()) }
+func (s *Side) drop() { println("drop side", s.side) }
 
 func (s Side) Clone() Side { return Side{s.side} }
 
@@ -45,7 +43,7 @@ type Grand struct{ more Res }
 @Override
 func (g *Grand) Label() string { return "grand " + g.name + g.more.name }
 
-func (g *Grand) drop() { println("drop grand:", g.Label(), g.Mark()) }
+func (g *Grand) drop() { println("drop grand", g.name, g.more.name, g.held.name) }
 
 func (g Grand) Clone() Grand {
 	return Grand{name: g.name, side: g.side, extra: g.extra, held: g.held, more: g.more}

@@ -746,8 +746,8 @@ pub(super) fn lower_adjusted<'a>(
     symbol: &str,
     (ty, name, by): (CheckedTypeId, Spur, i64),
 ) {
-    let sig = match shared.slot_method(ty, name) {
-        Some(method) => super::table::slot_sig(shared, memo, &mut module.types, method),
+    let sig = match shared.method(ty, name) {
+        Some(method) => super::table::slot_sig(shared, memo, &mut module.types, method.sig),
         None => Err("a method that its type does not have"),
     };
     let sig = match sig {

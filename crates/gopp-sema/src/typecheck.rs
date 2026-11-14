@@ -3766,6 +3766,9 @@ impl<'a> Checker<'a> {
                 self.signature_locals(&cx, *ty);
                 let sig = self.typ(&cx, *ty);
                 self.function_body(&cx, *ty, sig, block);
+                if let Some(receiver) = receiver {
+                    self.drop_reaches_fields(&cx, receiver, *name);
+                }
                 self.const_fn = None;
                 self.around.clear();
                 self.receiver_of = None;
