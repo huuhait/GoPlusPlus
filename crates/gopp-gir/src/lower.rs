@@ -19,6 +19,7 @@ mod merge;
 mod operator;
 mod option;
 mod panic;
+mod ranged;
 mod slice;
 mod stmt;
 mod table;
@@ -32,7 +33,9 @@ use gopp_mangle::{Entity, Locals, Namer, symbol_of};
 use gopp_sema::types::{NamedId, Type as CheckedType, TypeId as CheckedTypeId, Types};
 use gopp_sema::{Body, LocalKind, ObjId, ObjKind, Package, Ref};
 use gopp_span::{SourceFile, Span};
-use gopp_syntax::ast::{DeclId, DeclKind, ExprId, ExprKind, File, Param, UnaryOp};
+use gopp_syntax::ast::{
+    DeclId, DeclKind, ExprId, ExprKind, File, Param, StmtId, StmtKind, UnaryOp,
+};
 use gopp_target::TargetLayout;
 use lasso::{Spur, ThreadedRodeo};
 use rayon::prelude::*;
@@ -465,6 +468,14 @@ pub(crate) struct Shared<'a> {
     /// The function literals of the package, each by its file and its
     /// expression.
     literals: FxHashMap<(u32, ExprId), Literal>,
+    /// The `range` statements of the package, each by its file: the body
+    /// of one over a function is a function, with a number after those
+    /// of the literals that are written in the same function.
+    ranges: FxHashMap<(u32, StmtId), Literal>,
+    /// For each declaration of a file with functions: its `range`
+    /// statements, its statements with labels and its jumps to labels,
+    /// in the order of the source.
+    jumps: FxHashMap<(u32, usize), Vec<StmtId>>,
     /// For the symbol of each function of the package: which of its
     /// parameters it does not own, the receiver first. A caller lends
     /// its arguments to those.
@@ -586,6 +597,14 @@ pub(crate) struct Memo<'a> {
     /// are lowered after the function that is lowered now.
     pub literals: Vec<(&'a Job, ExprId)>,
     queued: rustc_hash::FxHashSet<(*const Job, ExprId)>,
+    /// The bodies of the loops over functions that the functions of the
+    /// run have, which are lowered as the literals are; and what the
+    /// function with the loop says of each.
+    pub ranges: Vec<(&'a Job, StmtId)>,
+    pub ranged: FxHashMap<(*const Job, StmtId), std::rc::Rc<ranged::Ranged>>,
+    /// The places where the body of a job names its variables, in the
+    /// order of the source, and its receiver.
+    pub named: FxHashMap<*const Job, std::rc::Rc<ranged::Named>>,
     /// The type that every interface value has, once an interface type
     /// is lowered.
     pub iface: Option<TypeId>,
@@ -681,6 +700,9 @@ impl<'a> Memo<'a> {
             func_types: rustc_hash::FxHashSet::default(),
             literals: Vec::new(),
             queued: rustc_hash::FxHashSet::default(),
+            ranges: Vec::new(),
+            ranged: FxHashMap::default(),
+            named: FxHashMap::default(),
             iface: None,
             infos: FxHashMap::default(),
             itypes: FxHashMap::default(),
@@ -736,6 +758,22 @@ impl<'a> Memo<'a> {
             None => shared.home_node(&mut self.namer, job)?,
         };
         self.namer.closure(within, literal.ordinal).ok()
+    }
+
+    /// The symbol of the body of the loop over a function that is
+    /// written in the function of the job: that of a literal there,
+    /// with its number.
+    pub fn range_body(&mut self, shared: &Shared<'_>, job: &Job, stmt: StmtId) -> Option<String> {
+        let body = shared.ranges.get(&(job.file, stmt))?;
+        if body.at != job.at {
+            return None;
+        }
+        let within = match body.within {
+            Some(within) => self.literal_node(shared, job, within)?,
+            None => shared.home_node(&mut self.namer, job)?,
+        };
+        let node = self.namer.closure(within, body.ordinal).ok()?;
+        Some(self.namer.symbol(node))
     }
 
     /// The symbol of the function that makes the deferred calls of a
@@ -858,6 +896,8 @@ impl<'a> Shared<'a> {
             no_body: Body::default(),
             no_facts: facts::Facts::default(),
             literals: FxHashMap::default(),
+            ranges: FxHashMap::default(),
+            jumps: FxHashMap::default(),
             lent: FxHashMap::default(),
             worked: FxHashMap::default(),
         };
@@ -1130,6 +1170,62 @@ impl<'a> Shared<'a> {
                 self.literals.insert((file, id), literal);
                 open.push((hi, id));
             }
+            // The `range` statements, after the literals: the literal
+            // that each is written in is the last that is open there.
+            let mut literals: Vec<(u32, u32, ExprId)> = (tree.exprs.iter())
+                .filter(|(id, _)| self.literals.contains_key(&(file, *id)))
+                .map(|(id, expr)| (expr.span.lo, expr.span.hi, id))
+                .collect();
+            literals.sort_unstable_by_key(|&(lo, hi, _)| (lo, std::cmp::Reverse(hi)));
+            let mut ranges: Vec<(u32, u32, StmtId)> = (tree.stmts.iter())
+                .filter(|(_, stmt)| matches!(stmt.kind, StmtKind::Range { .. }))
+                .map(|(id, stmt)| (stmt.span.lo, stmt.span.hi, id))
+                .collect();
+            ranges.sort_unstable();
+            let (mut next, mut open) = (0, Vec::new());
+            for (lo, hi, id) in ranges {
+                while let Some(&(start, end, literal)) = literals.get(next).filter(|l| l.0 <= lo) {
+                    while open.last().is_some_and(|&(end, _)| end <= start) {
+                        open.pop();
+                    }
+                    open.push((end, literal));
+                    next += 1;
+                }
+                while open.last().is_some_and(|&(end, _)| end <= lo) {
+                    open.pop();
+                }
+                let before = jobs.partition_point(|&(start, _, _)| start <= lo);
+                let around = before.checked_sub(1).map(|at| jobs[at]);
+                let Some((_, _, at)) = around.filter(|&(_, end, _)| hi <= end) else {
+                    continue;
+                };
+                let within = open.last().map(|&(_, within)| within);
+                let ordinal = count.entry((at, within)).or_default();
+                *ordinal += 1;
+                let body = Literal {
+                    at,
+                    within,
+                    ordinal: *ordinal,
+                };
+                self.ranges.insert((file, id), body);
+            }
+            // What a loop over a function is asked for: the loops, the
+            // labels and the jumps to labels of each declaration.
+            let mut asked: Vec<(u32, u32, StmtId)> = (tree.stmts.iter())
+                .filter(|(_, stmt)| {
+                    let jump = matches!(stmt.kind, StmtKind::Branch { label: Some(_), .. });
+                    jump || matches!(stmt.kind, StmtKind::Range { .. } | StmtKind::Labeled { .. })
+                })
+                .map(|(id, stmt)| (stmt.span.lo, stmt.span.hi, id))
+                .collect();
+            asked.sort_unstable();
+            for (lo, hi, id) in asked {
+                let before = jobs.partition_point(|&(start, _, _)| start <= lo);
+                let around = before.checked_sub(1).map(|at| jobs[at]);
+                if let Some((_, _, at)) = around.filter(|&(_, end, _)| hi <= end) {
+                    self.jumps.entry((file, at)).or_default().push(id);
+                }
+            }
         }
     }
 
@@ -1266,6 +1362,14 @@ impl<'a> Shared<'a> {
     }
 
     /// What the checker recorded for the body of the function of a job.
+    /// The `range` statements, the statements with labels and the jumps
+    /// to labels of the declaration of the job, in the order of the
+    /// source.
+    pub fn jumps(&self, job: &Job) -> &[StmtId] {
+        let known = self.jumps.get(&(job.file, job.at));
+        known.map_or(&[], Vec::as_slice)
+    }
+
     pub fn body(&self, job: &Job) -> &Body {
         match job.made {
             Some(at) => &self.instances[at].body,
@@ -2218,8 +2322,14 @@ impl<'a> Shared<'a> {
         for job in jobs {
             func::lower_function(self, &mut module, &mut memo, job);
             // The literals of the function, and those of the literals.
-            while let Some((job, literal)) = memo.literals.pop() {
-                func::lower_literal(self, &mut module, &mut memo, job, literal);
+            loop {
+                if let Some((job, literal)) = memo.literals.pop() {
+                    func::lower_literal(self, &mut module, &mut memo, job, literal);
+                } else if let Some((job, stmt)) = memo.ranges.pop() {
+                    func::lower_ranged(self, &mut module, &mut memo, job, stmt);
+                } else {
+                    break;
+                }
             }
         }
         Part {

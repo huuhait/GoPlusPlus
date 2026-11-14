@@ -34,7 +34,7 @@ pub(super) type DeferredValue = (TypeId, Option<CheckedTypeId>);
 impl FuncCx<'_, '_> {
     /// The type of the code of a function value of the type: that of
     /// its first word.
-    fn code_type(&mut self, ty: TypeId) -> Option<TypeId> {
+    pub(super) fn code_type(&mut self, ty: TypeId) -> Option<TypeId> {
         match self.kind(ty) {
             Type::Tuple(parts) if self.memo.func_types.contains(&ty) => parts.first().copied(),
             _ => None,
@@ -150,20 +150,7 @@ impl FuncCx<'_, '_> {
         // environment in this frame, with the address of each variable
         // where it is, or of its cell (CLO-1).
         if self.framed(expr) {
-            let word = self.b.types().int(64, false);
-            let mut parts = vec![self.b.const_int(word, u64::MAX)?];
-            for &local in &captured {
-                let slot = match self.cells.get(&local) {
-                    Some(&cell) => cell,
-                    None => {
-                        let var = self.var(local)?;
-                        let place = self.var_place(var)?;
-                        let address = Rvalue::AddrOf(place, crate::Mutability::Mut);
-                        self.b.assign_temp(address)?
-                    }
-                };
-                parts.push(Operand::Copy(Place::local(slot)));
-            }
+            let parts = self.frame_parts(&captured)?;
             let env = self.slot_of(Rvalue::Aggregate(AggKind::Tuple, parts))?;
             let env = self.record(env)?;
             let code = Operand::Const(Constant {
@@ -219,6 +206,27 @@ impl FuncCx<'_, '_> {
         Ok(Rvalue::Aggregate(AggKind::Tuple, vec![code, made]))
     }
 
+    /// The parts of an environment in this frame for the variables:
+    /// its count, which says that it is never freed, and the address of
+    /// each variable where it is, or of its cell.
+    pub(super) fn frame_parts(&mut self, captured: &[CheckedLocalId]) -> Built<Vec<Operand>> {
+        let word = self.b.types().int(64, false);
+        let mut parts = vec![self.b.const_int(word, u64::MAX)?];
+        for &local in captured {
+            let slot = match self.cells.get(&local) {
+                Some(&cell) => cell,
+                None => {
+                    let var = self.var(local)?;
+                    let place = self.var_place(var)?;
+                    let address = Rvalue::AddrOf(place, crate::Mutability::Mut);
+                    self.b.assign_temp(address)?
+                }
+            };
+            parts.push(Operand::Copy(Place::local(slot)));
+        }
+        Ok(parts)
+    }
+
     /// At the start of the code of a function literal: the variables
     /// that it uses of the functions around it are other names of what
     /// the cells of its environment hold.
@@ -228,7 +236,8 @@ impl FuncCx<'_, '_> {
         }
         let captured = self.captured.clone();
         if self.in_frame {
-            return self.open_frame(&captured);
+            let given = Operand::Copy(Place::local(self.b.param(0)));
+            return self.open_frame(given, &captured, &[]).map(drop);
         }
         let env_ty = self.env_type(&captured);
         let to = self.b.types().ptr(env_ty);
@@ -248,10 +257,16 @@ impl FuncCx<'_, '_> {
     }
 
     /// At the start of the code of a literal whose environment is in a
-    /// frame: each variable is another name of what the address in the
-    /// environment leads to, the variable itself or what its cell
-    /// holds.
-    fn open_frame(&mut self, captured: &[CheckedLocalId]) -> Built {
+    /// frame, at the address `given`: each variable is another name of
+    /// what the address in the environment leads to, the variable
+    /// itself or what its cell holds. The environment has parts of the
+    /// types `more` after those; it is given back.
+    pub(super) fn open_frame(
+        &mut self,
+        given: Operand,
+        captured: &[CheckedLocalId],
+        more: &[TypeId],
+    ) -> Built<Place> {
         let word = self.b.types().int(64, false);
         let mut fields = vec![word];
         let mut kinds = Vec::with_capacity(captured.len());
@@ -265,9 +280,9 @@ impl FuncCx<'_, '_> {
             fields.push(self.b.types().ptr(held));
             kinds.push(of);
         }
+        fields.extend_from_slice(more);
         let env_ty = self.b.types().tuple(&fields);
         let to = self.b.types().ptr(env_ty);
-        let given = Operand::Copy(Place::local(self.b.param(0)));
         let env = self
             .b
             .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given, to))?;
@@ -286,7 +301,7 @@ impl FuncCx<'_, '_> {
                 }
             }
         }
-        Ok(())
+        Ok(env)
     }
 
     /// The next pass of a loop goes on with a new cell for the variable

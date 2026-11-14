@@ -14,11 +14,9 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
     let toolchain = HostToolchain::discover().unwrap();
     let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
     let mut dirs = vec![tests.join("run")];
-    dirs.extend(
-        std::fs::read_dir(tests.join("corpus"))
-            .unwrap()
-            .map(|group| group.unwrap().path()),
-    );
+    let groups = std::fs::read_dir(tests.join("corpus")).unwrap();
+    let groups = groups.map(|group| group.unwrap().path());
+    dirs.extend(groups.filter(|group| group.is_dir()));
     let mut programs: Vec<_> = dirs
         .iter()
         .flat_map(|dir| std::fs::read_dir(dir).unwrap())

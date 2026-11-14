@@ -1,0 +1,17 @@
+package main
+
+func stubborn(yield func(int) bool) {
+	for i := 0; i < 5; i++ {
+		yield(i)
+	}
+}
+
+func main() {
+	for v := range stubborn {
+		println(v)
+		if v == 1 {
+			break
+		}
+	}
+	println("not reached")
+}

@@ -121,3 +121,58 @@ void _gopp_cell_release(uint8_t *cell, void (*drop)(uint8_t *value)) {
     free(cell);
   }
 }
+
+// A range over a function (RNG-6a). The cell of the loop has what the
+// body of the loop is given: the state of the loop, and the frame of
+// the function with the loop, which is read only while the loop runs.
+typedef struct gopp_ranging {
+  uint64_t count;
+  uint64_t state;
+  uint8_t *frame;
+} gopp_ranging;
+
+// The function that walks may call the body.
+#define RANGE_READY 0
+// The body runs; it stays so if the body ends in a panic.
+#define RANGE_BODY 1
+// The body said that the loop is over.
+#define RANGE_DONE 2
+// The loop was left.
+#define RANGE_LEFT 3
+
+// The body of the loop is called: only a loop that is ready runs it,
+// as in Go.
+void _gopp_range_enter(uint8_t *loop) {
+  gopp_ranging *ranging = (gopp_ranging *)loop;
+  switch (ranging->state) {
+  case RANGE_READY:
+    ranging->state = RANGE_BODY;
+    return;
+  case RANGE_BODY:
+    _gopp_fail("runtime error: range function continued iteration after loop body panic");
+  case RANGE_DONE:
+    _gopp_fail("runtime error: range function continued iteration after function for loop body "
+               "returned false");
+  default:
+    _gopp_fail("runtime error: range function continued iteration after whole loop exit");
+  }
+}
+
+// The function that walks returned.
+void _gopp_range_exit(uint8_t *loop) {
+  gopp_ranging *ranging = (gopp_ranging *)loop;
+  if (ranging->state == RANGE_BODY) {
+    _gopp_fail("runtime error: range function recovered a loop body panic and did not resume "
+               "panicking");
+  }
+  ranging->state = RANGE_LEFT;
+}
+
+// The loop is left, by any way: `slot` has its cell, which the function
+// lets go. A function value of the body that is still kept has it too,
+// and is told so when it is called.
+void _gopp_range_end(uint8_t *slot) {
+  gopp_ranging *ranging = *(gopp_ranging **)slot;
+  ranging->state = RANGE_LEFT;
+  _gopp_cell_release((uint8_t *)ranging, 0);
+}

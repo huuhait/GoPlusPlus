@@ -1,0 +1,113 @@
+package main
+
+// A range over a function (RNG-6a): what the function yields is the
+// body's own for the pass, a method value walks its receiver, and
+// `base` in the body is the receiver of the method with the loop.
+type File struct {
+	fd   int
+	name string
+}
+
+func (f *File) drop() {
+	if f.fd != 0 {
+		println("close", f.fd, f.name)
+	}
+}
+
+func files(n int) func(func(File) bool) {
+	return func(yield func(File) bool) {
+		for i := 1; i <= n; i++ {
+			if !yield(File{fd: i, name: "f"}) {
+				println("stopped at", i)
+				return
+			}
+		}
+	}
+}
+
+type Stack struct{ items []string }
+
+func (s *Stack) Each(yield func(int, string) bool) {
+	for i := range s.items {
+		if !yield(i, s.items[i]) {
+			return
+		}
+	}
+}
+
+func (s *Stack) Join() string {
+	out := ""
+	for i, item := range s.Each {
+		if i > 0 {
+			out += "+"
+		}
+		out += item
+	}
+	return out
+}
+
+type Base struct{ scale int }
+
+func (b Base) Scaled(n int) int { return n * b.scale }
+
+@Extends(Base)
+type Meter struct{ readings []int }
+
+func (m Meter) values(yield func(int) bool) {
+	for _, r := range m.readings {
+		if !yield(r) {
+			return
+		}
+	}
+}
+
+func (m Meter) Total() int {
+	total := 0
+	for r := range m.values {
+		total += base.Scaled(r)
+	}
+	return total
+}
+
+func longest(s *Stack) Option[string] {
+	var best Option[string]
+	for _, item := range s.Each {
+		if b, ok := best.Get(); !ok || len(item) > len(b) {
+			best = item
+		}
+	}
+	return best
+}
+
+func firstBig(limit int) File {
+	for f := range files(5) {
+		if f.fd > limit {
+			return f
+		}
+	}
+	return File{}
+}
+
+func main() {
+	for f := range files(2) {
+		println("pass", f.fd)
+	}
+	for f := range files(5) {
+		if f.fd == 2 {
+			break
+		}
+	}
+	kept := firstBig(2)
+	println("kept", kept.fd)
+	s := Stack{[]string{"a", "bcd", "ef"}}
+	println(s.Join())
+	if best, ok := longest(&s).Get(); ok {
+		println(best)
+	}
+	m := Meter{Base: Base{10}, readings: []int{1, 2, 3}}
+	println(m.Total())
+	for i, item := range s.Each {
+		s.items[i] = item + item
+	}
+	println(s.Join())
+}

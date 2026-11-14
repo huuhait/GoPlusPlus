@@ -1,0 +1,18 @@
+package main
+
+var saved = func(int) bool { return false }
+
+func leaky(yield func(int) bool) {
+	saved = yield
+	yield(1)
+}
+
+func main() {
+	text := "kept"
+	for v := range leaky {
+		println(v, text)
+	}
+	println("after the loop")
+	saved(2)
+	println("not reached")
+}

@@ -1,0 +1,16 @@
+pass 1
+close 1 f
+pass 2
+close 2 f
+close 1 f
+close 2 f
+stopped at 2
+close 1 f
+close 2 f
+stopped at 3
+kept 3
+a+bcd+ef
+bcd
+60
+aa+bcdbcd+efef
+close 3 f

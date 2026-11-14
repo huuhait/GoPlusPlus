@@ -232,6 +232,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The environment of that literal is in a frame: it has the
     /// addresses of the variables, or of their cells.
     pub in_frame: bool,
+    /// What the body of a loop over a function, which is lowered as a
+    /// function of its own, has of the function with the loop.
+    pub ranged: Option<super::ranged::Leaving>,
     /// The local of each variable that is another name of what a cell
     /// holds.
     cell_vars: FxHashMap<LocalId, CheckedLocalId>,
@@ -601,6 +604,46 @@ pub(super) fn lower_literal<'a>(
     }
 }
 
+/// Adds the function of the body of a loop over a function to the
+/// module: the code of the function value that the function which
+/// walks is given, which takes an environment first.
+pub(super) fn lower_ranged<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    job: &'a Job,
+    stmt: gopp_syntax::ast::StmtId,
+) {
+    let (tree, source) = shared.files[job.file as usize];
+    let span = tree.stmts[stmt].span;
+    let known = memo.ranged.get(&(std::ptr::from_ref(job), stmt)).cloned();
+    let (Some(ranged), Some(symbol)) = (known, memo.range_body(shared, job, stmt)) else {
+        return;
+    };
+    let at = source.line_col(span.lo);
+    let loc = Span {
+        file: job.file + 1,
+        line: at.line,
+        col: at.column,
+    };
+    let body = shared.body(job);
+    let built =
+        FuncBuilder::new(module, &symbol, ranged.sig, Linkage::Internal, loc).and_then(|b| {
+            let mut cx = FuncCx::new(shared, &mut *memo, b, job.file, (body, &job.facts));
+            cx.captured = ranged.captured.clone();
+            cx.in_frame = true;
+            cx.owner = Some((job, ranged.within));
+            cx.ranged_body(stmt, &ranged)?;
+            cx.b.drop_unreached();
+            cx.b.finish().map(drop)
+        });
+    if let Err(error) = built {
+        let message = format!("{symbol} could not be lowered: {error}");
+        memo.diagnostics
+            .push(Diagnostic::new(Code::GirVerify, span, message));
+    }
+}
+
 /// Adds the code of the function with the symbol `of` and the type
 /// `ty` as a value to the module, under its symbol.
 pub(super) fn lower_value<'a>(
@@ -870,6 +913,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             cells: FxHashMap::default(),
             captured: Vec::new(),
             in_frame: false,
+            ranged: None,
             cell_vars: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
@@ -2505,6 +2549,17 @@ impl FuncCx<'_, '_> {
         match self.vars.get(&local) {
             Some(&var) => Ok(var),
             None => {
+                // The body of a loop over a function has every variable
+                // of the function with the loop that it names.
+                let declared = &self.body.locals[local.0 as usize];
+                if self
+                    .ranged
+                    .as_ref()
+                    .is_some_and(|ranged| ranged.outside(declared.span))
+                {
+                    let what = "a variable that the body of a range over a function does not name";
+                    self.unsupported(declared.span, what);
+                }
                 let var = self.declare(local)?;
                 let place = self.var_place(var)?;
                 let zero = self.zero(self.b.place_ty(&place));

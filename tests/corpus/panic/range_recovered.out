@@ -1,0 +1,4 @@
+1
+panic: runtime error: range function recovered a loop body panic and did not resume panicking
+
+exit status 2

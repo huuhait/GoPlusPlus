@@ -1,0 +1,14 @@
+package main
+
+func swallows(yield func(int) bool) {
+	defer func() { recover() }()
+	yield(1)
+}
+
+func main() {
+	for v := range swallows {
+		println(v)
+		panic("in the body")
+	}
+	println("not reached")
+}

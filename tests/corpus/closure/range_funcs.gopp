@@ -1,0 +1,190 @@
+package main
+
+func upTo(n int) func(func(int) bool) {
+	return func(yield func(int) bool) {
+		for i := 0; i < n; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+}
+
+func pairs(xs []string) func(func(int, string) bool) {
+	return func(yield func(int, string) bool) {
+		for i, x := range xs {
+			if !yield(i, x) {
+				return
+			}
+		}
+	}
+}
+
+func words(text string) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		word := ""
+		for i := 0; i < len(text); i++ {
+			if text[i] != ' ' {
+				word += string(rune(text[i]))
+				continue
+			}
+			if word != "" && !yield(word) {
+				return
+			}
+			word = ""
+		}
+		if word != "" {
+			yield(word)
+		}
+	}
+}
+
+func fib(yield func(int) bool) {
+	a, b := 0, 1
+	for yield(a) {
+		a, b = b, a+b
+	}
+}
+
+func evens(seq func(func(int) bool)) func(func(int) bool) {
+	return func(yield func(int) bool) {
+		for v := range seq {
+			if v%2 == 0 && !yield(v) {
+				return
+			}
+		}
+	}
+}
+
+func find(seq func(func(int) bool), want int) (at int, found bool) {
+	for v := range seq {
+		if v == want {
+			return at, true
+		}
+		at++
+	}
+	return -1, false
+}
+
+func firstLong(text string, n int) string {
+	for w := range words(text) {
+		if len(w) >= n {
+			return w + "!"
+		}
+	}
+	return "none"
+}
+
+func named(limit int) (total int, stopped string) {
+	for v := range fib {
+		if v > limit {
+			stopped = "over"
+			return
+		}
+		total += v
+	}
+	return total, "end"
+}
+
+func grid(rows, cols int) int {
+	count := 0
+outer:
+	for r := range upTo(rows) {
+		for c := range upTo(cols) {
+			if c > r {
+				continue outer
+			}
+			if r == 3 {
+				break outer
+			}
+			count += r*10 + c
+		}
+	}
+	return count
+}
+
+func mixed(limit int) int {
+	sum := 0
+rows:
+	for r := 0; r < 5; r++ {
+		for v := range upTo(10) {
+			switch {
+			case v == r:
+				continue rows
+			case r+v > limit:
+				break rows
+			}
+			sum += v
+		}
+	}
+	return sum
+}
+
+func main() {
+	sum := 0
+	for i := range upTo(5) {
+		sum += i
+	}
+	println(sum)
+	for i := range upTo(100) {
+		if i == 3 {
+			break
+		}
+		if i == 1 {
+			continue
+		}
+		print(i, " ")
+	}
+	println()
+	for i, s := range pairs([]string{"a", "b", "c"}) {
+		if i == 1 {
+			continue
+		}
+		print(i, s, " ")
+	}
+	println()
+	for i := range pairs([]string{"x", "y"}) {
+		print(i, " ")
+	}
+	for range upTo(3) {
+		print(".")
+	}
+	println()
+	for v := range evens(upTo(9)) {
+		print(v, " ")
+	}
+	println()
+	last := 0
+	for f := range fib {
+		if f > 1000 {
+			break
+		}
+		last = f
+	}
+	println(last)
+	println(find(upTo(10), 7))
+	println(find(evens(upTo(10)), 7))
+	println(firstLong("a bb cccc dd eeeee", 4), firstLong("a bb", 4), firstLong("", 1))
+	println(named(50))
+	println(named(1 << 62))
+	println(grid(5, 5), mixed(6))
+	joined := ""
+	var kept []func() string
+	for w := range words("go plus plus") {
+		joined += w + "/"
+		kept = append(kept, func() string { return w + w })
+	}
+	println(joined, len(kept), kept[0](), kept[2]())
+	total := 0
+	for a := range upTo(4) {
+		for b := range upTo(a) {
+			total += a * b
+		}
+	}
+	println(total)
+	var i int
+	var s string
+	for i, s = range pairs([]string{"p", "q"}) {
+	}
+	println(i, s)
+}

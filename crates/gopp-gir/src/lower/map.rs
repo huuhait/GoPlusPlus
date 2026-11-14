@@ -558,11 +558,11 @@ impl FuncCx<'_, '_> {
         };
         self.open_scope();
         if let Some(&left) = lhs.first() {
-            self.set_range_var(left, define, Operand::Copy(key))?;
+            self.set_range_var(left, define, Operand::Copy(key), false)?;
         }
         match lhs.get(1).map(|&left| (left, self.aliased(left))) {
             Some((_, Some(named))) => self.set_range_alias(named, value)?,
-            Some((left, None)) => self.set_range_var(left, define, Operand::Copy(value))?,
+            Some((left, None)) => self.set_range_var(left, define, Operand::Copy(value), false)?,
             None => {}
         }
         self.targets.push(target);

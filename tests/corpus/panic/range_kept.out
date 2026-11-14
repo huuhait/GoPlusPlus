@@ -1,0 +1,5 @@
+1 kept
+after the loop
+panic: runtime error: range function continued iteration after whole loop exit
+
+exit status 2

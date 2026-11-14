@@ -106,8 +106,14 @@ impl FuncCx<'_, '_> {
                 define,
                 x,
                 body,
-            } => self.range_stmt(label, node.span, lhs, *define, *x, body)?,
+            } => self.range_stmt((id, label), node.span, lhs, *define, *x, body)?,
             StmtKind::Go(_) => self.unsupported(node.span, "a go statement"),
+            // The deferred calls of a function are made where it is
+            // left, which the body of a loop over a function is not.
+            StmtKind::Defer(_) if self.ranged.is_some() => {
+                let what = "a defer statement in the body of a range over a function";
+                self.unsupported(node.span, what);
+            }
             StmtKind::Defer(call) => self.defer_call(id, *call)?,
             StmtKind::Send { .. } => self.unsupported(node.span, "a send"),
             StmtKind::Select { .. } => self.unsupported(node.span, "a select statement"),
@@ -247,7 +253,7 @@ impl FuncCx<'_, '_> {
     /// pass has its own variables.
     fn range_stmt(
         &mut self,
-        label: Option<Spur>,
+        (stmt, label): (StmtId, Option<Spur>),
         span: SourceSpan,
         lhs: &[ExprId],
         define: bool,
@@ -263,6 +269,10 @@ impl FuncCx<'_, '_> {
         }
         if self.holds_map(x) {
             return self.range_map(label, span, lhs, define, x, body);
+        }
+        let walked = self.ty_of(x);
+        if self.memo.func_types.contains(&walked) {
+            return self.range_func((stmt, label), span, lhs, x);
         }
         let alias = value.and_then(|value| self.aliased(value));
         let named = value.is_some_and(|value| {
@@ -372,13 +382,15 @@ impl FuncCx<'_, '_> {
             }
         };
         if let Some(key) = key {
-            self.set_range_var(key, define, slot(counter))?;
+            self.set_range_var(key, define, slot(counter), false)?;
         }
         match (value, alias, element) {
             (_, Some(named), Some(Operand::Copy(element))) => {
                 self.set_range_alias(named, element)?;
             }
-            (Some(value), None, Some(element)) => self.set_range_var(value, define, element)?,
+            (Some(value), None, Some(element)) => {
+                self.set_range_var(value, define, element, false)?
+            }
             _ => {}
         }
         self.targets.push(target);
@@ -568,7 +580,12 @@ impl FuncCx<'_, '_> {
         self.b.goto(otherwise)
     }
 
-    fn branch(&mut self, span: SourceSpan, kind: BranchKind, label: Option<Ident>) -> Built {
+    pub(super) fn branch(
+        &mut self,
+        span: SourceSpan,
+        kind: BranchKind,
+        label: Option<Ident>,
+    ) -> Built {
         let label = label.map(|label| label.name);
         let named = |target: &&Target| label.is_none() || target.label == label;
         let (to, depth) = match kind {
@@ -618,6 +635,11 @@ impl FuncCx<'_, '_> {
     /// The types of the results of the function, one for each; the
     /// last is the error of a function that can fail.
     pub fn result_parts(&mut self) -> Vec<crate::TypeId> {
+        // The body of a loop over a function returns for the function
+        // that has the loop.
+        if let Some(ranged) = &self.ranged {
+            return ranged.parts.clone();
+        }
         let ty = self.b.place_ty(&Place::local(self.b.result()));
         match self.kind(ty) {
             Type::Tuple(parts) if self.results.len() > 1 => parts.to_vec(),
@@ -695,6 +717,9 @@ impl FuncCx<'_, '_> {
     /// values, the deferred calls are made, and what the function owns
     /// ends.
     pub fn leave(&mut self, span: SourceSpan, given: Option<Vec<Rvalue>>) -> Built {
+        if self.ranged.is_some() {
+            return self.leave_loop(span, given);
+        }
         let parts = self.result_parts();
         let named: Vec<_> = self.results.clone();
         // A deferred call may read and write the results that have

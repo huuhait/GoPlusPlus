@@ -1,0 +1,36 @@
+package main
+
+func upTo(n int) func(func(int) bool) {
+	return func(yield func(int) bool) {
+		defer println("the function that walks is left")
+		for i := 0; i < n; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+}
+
+func work() (out int) {
+	defer func() {
+		if r := recover(); r != nil {
+			println("recovered")
+			out = -1
+		}
+	}()
+	xs := []int{1, 2, 3}
+	for i := range upTo(10) {
+		out += xs[i]
+	}
+	return out
+}
+
+func main() {
+	println(work())
+	for i := range upTo(3) {
+		if i == 1 {
+			panic("stop")
+		}
+		println(i)
+	}
+}

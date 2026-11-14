@@ -1788,7 +1788,8 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
     let mut checked = 0;
     let mut dirs = vec![root.join("tests/run")];
     let groups = fs::read_dir(root.join("tests/corpus")).unwrap();
-    dirs.extend(groups.map(|group| group.unwrap().path()));
+    let groups = groups.map(|group| group.unwrap().path());
+    dirs.extend(groups.filter(|group| group.is_dir()));
     for entry in dirs.iter().flat_map(|dir| fs::read_dir(dir).unwrap()) {
         let path = entry.unwrap().path();
         let is_program = path

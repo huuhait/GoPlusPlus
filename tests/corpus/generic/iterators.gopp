@@ -1,0 +1,125 @@
+package main
+
+type Number interface{ ~int | ~float64 }
+
+type Ordered interface{ ~int | ~float64 | ~string }
+
+func All[T Ordered](xs []T) func(func(int, T) bool) {
+	return func(yield func(int, T) bool) {
+		for i, x := range xs {
+			if !yield(i, x) {
+				return
+			}
+		}
+	}
+}
+
+func Values[T Ordered](xs []T) func(func(T) bool) {
+	return func(yield func(T) bool) {
+		for _, x := range xs {
+			if !yield(x) {
+				return
+			}
+		}
+	}
+}
+
+func Filter[T Ordered](seq func(func(T) bool), keep func(T) bool) func(func(T) bool) {
+	return func(yield func(T) bool) {
+		for v := range seq {
+			if keep(v) && !yield(v) {
+				return
+			}
+		}
+	}
+}
+
+func Take[T Ordered](seq func(func(T) bool), n int) func(func(T) bool) {
+	return func(yield func(T) bool) {
+		if n <= 0 {
+			return
+		}
+		taken := 0
+		for v := range seq {
+			taken++
+			if !yield(v) || taken == n {
+				return
+			}
+		}
+	}
+}
+
+func Count[T Number](from, by T) func(func(T) bool) {
+	return func(yield func(T) bool) {
+		for v := from; yield(v); v += by {
+		}
+	}
+}
+
+func Sum[T Number](seq func(func(T) bool)) T {
+	var total T
+	for v := range seq {
+		total += v
+	}
+	return total
+}
+
+func Collect[T Ordered](seq func(func(T) bool)) []T {
+	var out []T
+	for v := range seq {
+		out = append(out, v)
+	}
+	return out
+}
+
+func Max[T Ordered](seq func(func(T) bool)) (best T, found bool) {
+	for v := range seq {
+		if !found || v > best {
+			best, found = v, true
+		}
+	}
+	return
+}
+
+func IndexOf[T Ordered](xs []T, want T) int {
+	for i, x := range All(xs) {
+		if x == want {
+			return i
+		}
+	}
+	return -1
+}
+
+type Tree[T Ordered] struct {
+	items []T
+}
+
+func (t Tree[T]) Walk() func(func(T) bool) {
+	return Values(t.items)
+}
+
+func main() {
+	ints := []int{4, 8, 15, 16, 23, 42}
+	println(Sum(Values(ints)), Sum(Take(Values(ints), 2)), Sum(Take(Count(1, 1), 100)))
+	println(Sum(Take(Count(0.5, 0.25), 4)), Sum(Filter(Values(ints), func(n int) bool { return n%2 == 1 })))
+	words := []string{"pear", "fig", "apple", "kiwi"}
+	long := Collect(Filter(Values(words), func(s string) bool { return len(s) > 3 }))
+	println(len(long), long[0], long[2], IndexOf(words, "apple"), IndexOf(words, "plum"), IndexOf(ints, 16))
+	best, ok := Max(Values(words))
+	none, found := Max(Take(Values(words), 0))
+	println(best, ok, none == "", found)
+	top, _ := Max(Take(Filter(Count(1, 1), func(n int) bool { return n*n > 500 }), 3))
+	println(top)
+	for i, w := range All(words) {
+		if i == 2 {
+			break
+		}
+		print(i, w, " ")
+	}
+	println()
+	t := Tree[float64]{[]float64{1.5, 2.5}}
+	for v := range t.Walk() {
+		print(v, " ")
+	}
+	println(Sum(t.Walk()))
+}

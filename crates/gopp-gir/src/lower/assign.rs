@@ -241,8 +241,15 @@ impl FuncCx<'_, '_> {
 
     /// Gives a variable of a range clause its value for one pass of the
     /// loop: a new variable of the pass with `define`, a place that is
-    /// assigned to without it.
-    pub fn set_range_var(&mut self, left: ExprId, define: bool, value: Operand) -> Built {
+    /// assigned to without it. With `own` the value is the loop's own,
+    /// which the variable takes as it is: what a function yields.
+    pub fn set_range_var(
+        &mut self,
+        left: ExprId,
+        define: bool,
+        value: Operand,
+        own: bool,
+    ) -> Built {
         let dest = self.dest(left, define, false)?;
         let wanted = match &dest {
             Dest::Blank => return Ok(()),
@@ -269,6 +276,9 @@ impl FuncCx<'_, '_> {
         // a copy.
         // A variable that a function literal uses has a copy, in a
         // cell.
+        if own {
+            return self.put(dest, value);
+        }
         let view = matches!(&dest, Dest::New(local, _) if !self.celled(*local));
         if let (Dest::New(local, _), true, false) = (&dest, view, self.flat(wanted)) {
             let var = self.declare_view(*local)?;

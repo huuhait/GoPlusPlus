@@ -4483,6 +4483,92 @@ fn the_steps_grow_with_the_source() {
     });
 }
 
+/// Loops over functions: many of them one after another, and loops in
+/// loops whose innermost body uses a variable of each loop around it,
+/// with and without a jump to the label of the outermost.
+#[test]
+fn the_steps_grow_with_the_loops_over_functions() {
+    let seq = "func seq(yield func(int) bool) {\n\tyield(1)\n}\n";
+    let with = |body: &str| steps_of(&format!("{}\n{seq}", function(body)));
+    let sizes = [50, 100, 200, 400];
+    assert_near_linear(&sizes, |n| {
+        with(&"\tfor v := range seq {\n\t\tx += v\n\t}\n".repeat(n))
+    });
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| format!("\tfor v{at} := range seq {{\n\t\tx += v{at}\n"))
+            .collect();
+        with(&format!("{open}{}", "\t}\n".repeat(n)))
+    });
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| format!("\tfor v{at} := range seq {{\n\t\tx += v{at}\n"))
+            .collect();
+        let inside = "\t\tif x > 3 {\n\t\t\tbreak all\n\t\t}\n";
+        with(&format!("all:\n{open}{inside}{}", "\t}\n".repeat(n)))
+    });
+}
+
+// rule: RNG-6a
+#[test]
+fn a_range_over_a_function_calls_it_with_the_body_of_the_loop() {
+    let text = "package main
+
+type Counter struct{ n int }
+
+func (c *Counter) each(yield func(int) bool) {
+	for i := 0; i < c.n; i++ {
+		if !yield(i) {
+			return
+		}
+	}
+}
+
+func total(c *Counter, limit int) (sum int) {
+	for v := range c.each {
+		if v > limit {
+			return
+		}
+		sum += v
+	}
+	return sum
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let text = print_module(&lowered.module);
+    // The body is a function of its own, which asks the runtime
+    // whether it may run and says how the loop is left; the function
+    // with the loop lets the cell of the loop go by any way out.
+    assert_eq!(text.matches("@_gopp_range_enter(").count(), 1, "{text}");
+    assert_eq!(text.matches("@_gopp_range_exit(").count(), 1, "{text}");
+    assert!(text.contains("@_gopp_range_end("), "{text}");
+    // What is not lowered yet is said.
+    let refused = "package main
+
+func seq(yield func(int, *int) bool) {}
+
+func f() {
+	for _, &v := range seq {
+		v++
+	}
+	for range seq {
+		defer println(1)
+	}
+}
+";
+    let (_, messages) = lowered_with(&[("a.gopp", refused)], usize::MAX);
+    assert_eq!(
+        messages,
+        [
+            "a.gopp:6:2: not supported yet: a range over a function whose variable is the value \
+             itself",
+            "a.gopp:10:3: not supported yet: a defer statement in the body of a range over a \
+             function",
+        ]
+    );
+}
+
 /// The arguments of a function with `...`: many of one call, many
 /// calls, and calls in calls.
 #[test]
