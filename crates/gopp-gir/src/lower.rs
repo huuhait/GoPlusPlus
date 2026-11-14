@@ -604,6 +604,12 @@ pub(crate) enum Made {
     /// environment. A method with type parameters of its own is the
     /// instance of the job.
     MethodValue(Spur, Option<usize>),
+    /// The code of `base.name` as a value, for a method that a child
+    /// may replace: it calls the method of the parent itself.
+    BaseValue(Spur),
+    /// The code of `p.Clone` as a value, for a pointer to a type with
+    /// a type table: it gives a copy of the whole value.
+    CloneValue,
     /// What a type table has for the method `name` of a type: the
     /// method with a receiver that is `by` bytes before its own.
     Adjusted { name: Spur, by: i64 },
@@ -2621,7 +2627,10 @@ impl<'a> Shared<'a> {
                     Made::CThunk(of) => {
                         cabi::lower_c_thunk(self, &mut module, &mut memo, &symbol, (&of, ty));
                     }
-                    Made::MethodValue(..) | Made::MethodExpr { .. } => {
+                    Made::MethodValue(..)
+                    | Made::BaseValue(_)
+                    | Made::CloneValue
+                    | Made::MethodExpr { .. } => {
                         func::lower_bound(self, &mut module, &mut memo, &symbol, (kind, ty));
                     }
                 }

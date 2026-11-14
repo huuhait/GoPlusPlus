@@ -632,7 +632,7 @@ impl<'a> FuncCx<'a, '_> {
                 if let Some(key) = self.instance_named(expr) {
                     let named = self.shared.generic_named(self.file, self.body, expr);
                     if matches!(named, Some((_, Some(_)))) {
-                        let made = self.method_value(expr, ty)?;
+                        let made = self.method_value(expr, ty, false)?;
                         return self.fresh(expr, ty, made);
                     }
                     return self.func_value(expr, ty, key);
@@ -724,18 +724,22 @@ impl<'a> FuncCx<'a, '_> {
 
     fn selector(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
+        if let Some(pointer) = self.whole_cloned(expr) {
+            let made = self.whole_clone_value(span, ty, pointer)?;
+            return self.fresh(expr, ty, made);
+        }
         let what = match (self.body.selections.get(&expr), self.body.uses.get(&expr)) {
             (Some(selection), _) => match selection.kind {
                 SelectionKind::Field | SelectionKind::BaseField => {
                     let place = self.place(expr, &mut PlaceMode::default())?;
                     return Ok(Rvalue::Use(Operand::Copy(place)));
                 }
-                SelectionKind::Method => {
-                    let made = self.method_value(expr, ty)?;
+                SelectionKind::Method | SelectionKind::BaseMethod => {
+                    let base = selection.kind == SelectionKind::BaseMethod;
+                    let made = self.method_value(expr, ty, base)?;
                     return self.fresh(expr, ty, made);
                 }
                 SelectionKind::MethodExpr => return self.method_expr(expr, ty),
-                SelectionKind::BaseMethod => "a method of a parent as a value",
             },
             (None, Some(Ref::Member { import, member })) => {
                 match self

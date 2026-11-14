@@ -1,0 +1,75 @@
+package main
+
+type Animal struct{ name string }
+
+@Virtual
+func (a *Animal) Sound() string { return a.name + " makes a sound" }
+
+func (a Animal) Plain() string { return "plain " + a.name }
+
+@Extends(Animal)
+type Dog struct{ tricks int }
+
+@Override
+func (d *Dog) Sound() string {
+	parent := base.Sound
+	plain := base.Plain
+	return parent() + ", " + d.name + " barks, " + plain()
+}
+
+func (d *Dog) Later() func() string { return base.Sound }
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape " + s.name }
+
+@Extends(Shape)
+type Tile struct {
+	color string
+	held  Res
+}
+
+@Override
+func (t *Tile) Kind() string { return t.color + " tile " + t.held.name }
+
+func copier(s *Shape) func() Unique[Shape] { return s.Clone }
+
+func animals() {
+	d := Dog{name: "rex", tricks: 2}
+	println(d.Sound())
+	later := d.Later()
+	d.name = "max"
+	println(later())
+	var p *Animal = &d
+	own := p.Sound
+	println(own())
+}
+
+func tiles() {
+	tile := Tile{name: "t", color: "red", held: Res{"r"}}
+	var s *Shape = &tile
+	again := s.Clone
+	c := again()
+	tile.color = "blue"
+	d := again()
+	println(c.Kind(), "|", d.Kind(), "|", s.Kind())
+	u := NewUnique(Tile{name: "u", color: "green", held: Res{"h"}})
+	var p Unique[Shape] = move(u)
+	twin := p.Clone
+	e := twin()
+	println(e.Kind())
+	f := copier(s)()
+	println(f.Kind())
+}
+
+func main() {
+	animals()
+	tiles()
+}

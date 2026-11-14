@@ -1,0 +1,12 @@
+rex makes a sound, rex barks, plain rex
+max makes a sound
+max makes a sound, max barks, plain max
+red tile r' | blue tile r' | blue tile r
+green tile h'
+blue tile r'
+  end r'
+  end h'
+  end h
+  end r'
+  end r'
+  end r

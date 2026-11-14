@@ -9,6 +9,7 @@
 use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::types::{Type as CheckedType, TypeId as CheckedTypeId};
 use gopp_sema::{LocalId as CheckedLocalId, MethodValue, ObjKind, SelectionKind};
+use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{ExprId, ExprKind};
 use lasso::Spur;
 
@@ -530,8 +531,9 @@ impl FuncCx<'_, '_> {
         &mut self,
         of: (CheckedTypeId, Spur, Option<usize>),
         key: CalleeKey,
+        itself: bool,
     ) -> Built<Result<TypeId, &'static str>> {
-        if Self::bound_through(self.shared, of) {
+        if !itself && Self::bound_through(self.shared, of) {
             let value = self.memo.lower_type(self.shared, self.b.types(), of.0);
             return Ok(value.map(|value| self.b.types().ptr(value)));
         }
@@ -549,7 +551,10 @@ impl FuncCx<'_, '_> {
     /// of an interface. It lives in a cell of its own, which the
     /// environment has; a variable whose address is taken lives in a
     /// cell too, which the environment shares.
-    pub fn method_value(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
+    ///
+    /// With `base`, the value is `base.m`: the method of the parent
+    /// itself, also where a child replaces it (TYP-20).
+    pub fn method_value(&mut self, expr: ExprId, ty: TypeId, base: bool) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
         let shared = self.shared;
         // `x.m[int]` names its method by the selector in it.
@@ -577,8 +582,15 @@ impl FuncCx<'_, '_> {
             };
             return Ok(self.placeholder(span, ty, what));
         };
+        // The code of `base.m` for a method that may be replaced does
+        // not look into the table of the value.
+        let itself = base && Self::bound_through(shared, of);
         let entity = match instance.and_then(|job| shared.job_value(job)) {
             Some(entity) => entity,
+            None if itself => Entity::BaseValue {
+                receiver: holder,
+                name: sel.name,
+            },
             None => Entity::MethodValue {
                 receiver: holder,
                 name: sel.name,
@@ -605,7 +617,7 @@ impl FuncCx<'_, '_> {
                 (copy, Some(holder))
             }
             false => {
-                let wanted = match self.bound_receiver(of, key)? {
+                let wanted = match self.bound_receiver(of, key, itself)? {
                     Ok(wanted) => wanted,
                     Err(what) => return Ok(self.placeholder(span, ty, what)),
                 };
@@ -623,7 +635,6 @@ impl FuncCx<'_, '_> {
             }
         };
         let bound = self.operand_of(bound)?;
-        let of = self.b.operand_ty(&bound);
         // The variable whose address the receiver is, if it is one of
         // this function: its cell lives as long as the value.
         let address = self.body.method_values.get(&selector) == Some(&MethodValue::Address);
@@ -633,12 +644,39 @@ impl FuncCx<'_, '_> {
                 .filter(|root| self.cells.contains_key(root)),
             false => None,
         };
+        let made = match itself {
+            true => Made::BaseValue(sel.name),
+            false => Made::MethodValue(sel.name, instance),
+        };
+        self.bound_value(
+            span,
+            (symbol, made, holder),
+            code_ty,
+            (bound, checked),
+            root,
+        )
+    }
+
+    /// The function value whose code is the glue under `symbol`, made
+    /// once as `made` says for the type `holder`, and whose environment
+    /// has `bound` in a cell of its own: the receiver of a method
+    /// value. `checked` is the type that ends what is bound, if it
+    /// owns something. With `root`, the receiver is the address of
+    /// that variable, whose cell the environment shares.
+    fn bound_value(
+        &mut self,
+        span: SourceSpan,
+        (symbol, made, holder): (String, Made, CheckedTypeId),
+        code_ty: TypeId,
+        (bound, checked): (Operand, Option<CheckedTypeId>),
+        root: Option<CheckedLocalId>,
+    ) -> Built<Rvalue> {
+        let shared = self.shared;
+        let of = self.b.operand_ty(&bound);
         let asked = self.memo.funcs.contains_key(&symbol);
         let code = self.function_named(&symbol, code_ty)?;
         if !asked {
-            self.memo
-                .glues
-                .push((symbol, Made::MethodValue(sel.name, instance), holder));
+            self.memo.glues.push((symbol, made, holder));
         }
         // The cell of the receiver, which the environment has alone.
         let bytes = self.bytes_ty();
@@ -707,6 +745,111 @@ impl FuncCx<'_, '_> {
             ty: code_ty,
         });
         Ok(Rvalue::Aggregate(AggKind::Tuple, vec![code, made]))
+    }
+
+    /// `p.Clone` that is not called, for a pointer or a handle `p` of a
+    /// type with a type table (EXP-14): a function value that gives a
+    /// `Unique` with a copy of the whole value that `p` points into,
+    /// as the call `p.Clone()` does. Its environment has the address.
+    pub(super) fn whole_clone_value(
+        &mut self,
+        span: SourceSpan,
+        ty: TypeId,
+        pointer: ExprId,
+    ) -> Built<Rvalue> {
+        let types = self.shared.types;
+        let holder = self.body.types.get(&pointer).map(|typed| typed.ty);
+        let holder = holder.and_then(|of| match &*types.get(types.underlying(of)) {
+            CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
+                Some(*to)
+            }
+            _ => None,
+        });
+        let (Some(holder), Some(code_ty)) = (holder, self.code_type(ty)) else {
+            return Ok(self.placeholder(span, ty, "a method as a value"));
+        };
+        let entity = Entity::MethodValue {
+            receiver: holder,
+            name: self.shared.clone,
+        };
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
+            let what = "a method of a type without a name as a value";
+            return Ok(self.placeholder(span, ty, what));
+        };
+        // A pointer and each handle is the address of the part.
+        let place = self.place(pointer, &mut PlaceMode::default())?;
+        let bytes = self.bytes_ty();
+        let address = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(place), bytes);
+        let address = self.operand_of(address)?;
+        self.bound_value(
+            span,
+            (symbol, Made::CloneValue, holder),
+            code_ty,
+            (address, None),
+            None,
+        )
+    }
+
+    /// The type of the code of `p.Clone` as a value, for a pointer to
+    /// the type `ty`: it takes its environment and gives a `Unique` of
+    /// the type.
+    pub fn clone_value_sig(
+        shared: &Shared<'_>,
+        memo: &mut super::Memo<'_>,
+        types: &mut TypeInterner,
+        ty: CheckedTypeId,
+    ) -> Result<TypeId, &'static str> {
+        let unique = shared.types.intern(CheckedType::Unique(ty));
+        let ret = memo.lower_type(shared, types, unique)?;
+        let byte = types.int(8, false);
+        let env = types.ptr(byte);
+        Ok(types.intern(Type::Func(crate::FuncType {
+            params: [env].into(),
+            ret,
+            has_env: true,
+            cc: crate::CallConv::Go,
+        })))
+    }
+
+    /// The body of that code: the address in the cell of the
+    /// environment is copied as a `Unique` of the type is, which
+    /// copies the whole value that it points into.
+    pub fn clone_value_body(&mut self, ty: CheckedTypeId) -> Built<Result<(), &'static str>> {
+        let entry = self.b.new_block();
+        self.b.switch_to(entry);
+        let shared = self.shared;
+        let unique = shared.types.intern(CheckedType::Unique(ty));
+        let Ok(held) = self.memo.lower_type(shared, self.b.types(), unique) else {
+            return Ok(Err("a copy of a value of this type"));
+        };
+        let bytes = self.bytes_ty();
+        let word = self.b.types().int(64, false);
+        let cell = self.cell_type(bytes);
+        let cell = self.b.types().ptr(cell);
+        let drop = self.glue_sig(Glue::Drop);
+        let env_ty = self.b.types().tuple(&[word, word, cell, drop]);
+        let to = self.b.types().ptr(env_ty);
+        let given = Operand::Copy(Place::local(self.b.param(0)));
+        let env = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, given, to))?;
+        let env = self.b.deref(&Place::local(env))?;
+        let cell = self.b.field(&env, ENV_HEAD)?;
+        let cell = self.slot_of(Rvalue::Use(Operand::Copy(cell)))?;
+        let inside = self.b.deref(&cell)?;
+        let address = Operand::Copy(self.b.field(&inside, 1)?);
+        let whole = Rvalue::Cast(CastKind::PtrToPtr, address, held);
+        let glue = match self.glue(Glue::Clone, unique)? {
+            Ok(glue) => glue,
+            Err(what) => return Ok(Err(what)),
+        };
+        let copy = self.slot_of(whole)?;
+        let at = self.record(copy.clone())?;
+        self.call_glue(glue, at)?;
+        let result = Place::local(self.b.result());
+        self.b.assign(result, Rvalue::Use(Operand::Copy(copy)))?;
+        self.b.ret()?;
+        Ok(Ok(()))
     }
 
     /// The method expression `T.m` or `(*T).m`, for a place of the type
@@ -831,6 +974,7 @@ impl FuncCx<'_, '_> {
         &mut self,
         of: (CheckedTypeId, Spur, Option<usize>),
         first: Option<bool>,
+        itself: bool,
     ) -> Built<Result<(), &'static str>> {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
@@ -847,7 +991,7 @@ impl FuncCx<'_, '_> {
         };
         // How many parameters come before those of the method.
         let before = 1 + u32::from(first.is_some());
-        let through = Self::bound_through(shared, of);
+        let through = !itself && Self::bound_through(shared, of);
         let called = match dynamic || through {
             true => None,
             false => {

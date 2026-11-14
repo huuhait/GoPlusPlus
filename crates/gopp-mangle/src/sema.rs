@@ -84,6 +84,11 @@ pub enum Entity<'a> {
         name: Spur,
         args: &'a [TypeId],
     },
+    /// The code of `base.name` as a value, for a method of the parent
+    /// `receiver` that a child may replace: the method value that
+    /// calls the method of the parent itself, whatever the type of
+    /// the value is.
+    BaseValue { receiver: TypeId, name: Spur },
     /// The code of the method expression `T.name`: the method as a
     /// function that takes its receiver first. With `pointer`, that of
     /// `(*T).name` for a method that takes its receiver by value.
@@ -330,6 +335,11 @@ impl<'a> Namer<'a> {
             Entity::MethodValue { receiver, name } => {
                 let method = self.entity(Entity::Method { receiver, name })?;
                 Node::Wrap(Wrap::MethodValue, method)
+            }
+            Entity::BaseValue { receiver, name } => {
+                let method = self.entity(Entity::Method { receiver, name })?;
+                let itself = self.add(Node::Wrap(Wrap::MethodExpr, method))?;
+                Node::Wrap(Wrap::MethodValue, itself)
             }
             Entity::MethodInstanceValue {
                 receiver,

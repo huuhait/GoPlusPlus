@@ -778,8 +778,13 @@ pub(super) fn lower_bound<'a>(
     symbol: &str,
     (made, ty): (super::Made, CheckedTypeId),
 ) {
+    if let super::Made::CloneValue = made {
+        return lower_clone_value(shared, module, memo, symbol, ty);
+    }
+    let itself = matches!(made, super::Made::BaseValue(_));
     let (name, first, instance) = match made {
         super::Made::MethodValue(name, instance) => (name, None, instance),
+        super::Made::BaseValue(name) => (name, None, None),
         super::Made::MethodExpr { name, pointer } => (name, Some(pointer), None),
         _ => return,
     };
@@ -798,8 +803,41 @@ pub(super) fn lower_bound<'a>(
             0,
             (&shared.no_body, &shared.no_facts),
         );
-        let made = cx.bound_body(of, first)?;
+        let made = cx.bound_body(of, first, itself)?;
         // What cannot be made has no body: its reason is reported.
+        if made.is_err() {
+            return Ok(made);
+        }
+        cx.b.drop_unreached();
+        cx.b.finish()?;
+        Ok(made)
+    });
+    not_made(shared, memo, symbol, built);
+}
+
+/// Adds the code of `p.Clone` as a value, for a pointer to the type
+/// `ty`, to the module under its symbol.
+fn lower_clone_value<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    symbol: &str,
+    ty: CheckedTypeId,
+) {
+    let sig = match FuncCx::clone_value_sig(shared, memo, &mut module.types, ty) {
+        Ok(sig) => sig,
+        Err(what) => return not_made(shared, memo, symbol, Ok(Err(what))),
+    };
+    let link = Linkage::LinkOnceOdr;
+    let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
+        let mut cx = FuncCx::new(
+            shared,
+            &mut *memo,
+            b,
+            0,
+            (&shared.no_body, &shared.no_facts),
+        );
+        let made = cx.clone_value_body(ty)?;
         if made.is_err() {
             return Ok(made);
         }
