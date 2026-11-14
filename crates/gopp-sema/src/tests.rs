@@ -7180,6 +7180,177 @@ fn a_goroutine_is_followed_to_the_variables_that_it_may_use() {
     }
 }
 
+// rule: OWN-B2, OWN-B3
+#[test]
+fn a_pointer_into_what_a_variable_of_the_package_owns_is_followed() {
+    // A pointer into the elements of a slice of the package, or a
+    // loop over one, does not live through what frees or moves them:
+    // an `append` to the variable, a call that is given a pointer to
+    // it, a method on it, and a call of a function that changes the
+    // variable by its name, itself, in what it calls, or as a function
+    // value. A function that assigns through a pointer parameter
+    // changes what the pointer points to (`growBy`): a slice of the
+    // function is held to that too (`ofFunction`). In `good`: a write
+    // to an element, a call that changes another variable, and the
+    // same changes once the pointer is not used any more.
+    let text = "package p
+
+type Box struct{ items []int }
+
+func (b *Box) Push(n int) { b.items = append(b.items, n) }
+
+var list = []int{1}
+var box Box
+var count int
+
+func growBy(xs *[]int) {
+	xs = append(xs, 2, 3, 4, 5, 6, 7, 8, 9)
+}
+
+func grow()     { list = append(list, 2, 3, 4, 5, 6, 7, 8, 9) }
+func far()      { grow() }
+func setFirst() { list[0] = 9 }
+func bump()     { count++ }
+func push()     { box.Push(1) }
+func size() int { return len(list) }
+
+func direct() {
+	p := &list[0]
+	list = append(list, 2)
+	println(*p)
+}
+
+func byPointer() {
+	p := &list[0]
+	growBy(&list)
+	println(*p)
+}
+
+func byMethod() {
+	p := &box.items[0]
+	box.Push(2)
+	println(*p)
+}
+
+func byName() {
+	p := &list[0]
+	grow()
+	println(*p)
+}
+
+func byChain() {
+	p := &list[0]
+	far()
+	println(*p)
+}
+
+func byMethodElsewhere() {
+	p := &box.items[0]
+	push()
+	println(*p)
+}
+
+func byValue(f func()) {
+	g := grow
+	g()
+	p := &list[0]
+	f()
+	println(*p)
+}
+
+func ranged() {
+	for _, &x := range list {
+		list = append(list, x)
+	}
+	for _, x := range list {
+		grow()
+		println(x)
+	}
+}
+
+func ofFunction() {
+	own := []int{1}
+	p := &own[0]
+	growBy(&own)
+	println(*p)
+}
+
+func good() int {
+	p := &list[0]
+	setFirst()
+	bump()
+	n := *p + size()
+	list = append(list, n)
+	q := &count
+	grow()
+	box.Push(*q)
+	list[0] = 5
+	for _, x := range list {
+		bump()
+		n += x
+	}
+	own := []int{1}
+	growBy(&own)
+	r := &own[0]
+	return n + *q + *r
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| {
+            message
+                .strip_prefix("a.gopp:")
+                .unwrap_or(&message)
+                .to_owned()
+        })
+        .collect();
+    let expected = [
+        "24:2: cannot append to list: p points into it and is used later",
+        "30:2: cannot call growBy: it may change list, and p points into list and is used later",
+        "36:2: cannot call box.Push: it may change box, and p points into box and is used later",
+        "42:2: cannot call grow: it may change list, and p points into list and is used later",
+        "48:2: cannot call far: it may change list, and p points into list and is used later",
+        "54:2: cannot call push: it may change box, and p points into box and is used later",
+        "62:2: cannot call f: it may change list, and p points into list and is used later",
+        "68:3: cannot append to list: the loop ranges over list",
+        "71:3: cannot call grow: it may change list, which the loop ranges over",
+        "79:2: cannot call growBy: it may change own, and p points into own and is used later",
+    ];
+    assert_eq!(said, expected);
+}
+
+#[test]
+fn the_steps_of_pointers_into_variables_of_the_package_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // As many slices of the package, each with a pointer into its
+    // elements that is used after a call which changes another
+    // variable, and with a loop over it around such a call.
+    let held = |count: usize| {
+        let variables: String = (0..count)
+            .map(|i| format!("var l{i} = []int{{1}}\n"))
+            .collect();
+        let blocks: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\t{{\n\t\tp := &l{i}[0]\n\t\tbump()\n\t\tn += *p\n\t}}\n\tfor _, x := range \
+                     l{i} {{\n\t\tbump()\n\t\tn += x\n\t}}\n"
+                )
+            })
+            .collect();
+        format!(
+            "package p\n{variables}var count int\nfunc bump() {{ count++ }}\nfunc f() int {{\n\tn \
+             := 0\n{blocks}\treturn n\n}}\n"
+        )
+    };
+    let sizes = [100, 200, 400, 800];
+    linear::assert_near_linear(&sizes, |n| steps(held(n)));
+}
+
 // rule: CON-18
 #[test]
 fn a_write_before_the_first_goroutine_is_free() {

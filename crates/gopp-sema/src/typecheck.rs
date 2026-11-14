@@ -563,10 +563,13 @@ struct Checker<'a> {
     touching: usize,
     literal_units: FxHashMap<ExprId, usize>,
     units: Vec<touches::Unit>,
-    late_writes: Vec<(std::option::Option<crate::types::Global>, Span, Span)>,
+    late_writes: Vec<(std::option::Option<crate::types::Global>, Span, Span, bool)>,
     /// When every body is walked: the function or function literal
     /// whose pointers are looked at.
     late_within: std::option::Option<Span>,
+    /// When every body is walked: the calls that are asked what they
+    /// change of the variables of packages.
+    pending_runs: Vec<touches::Run>,
     program: crate::package::Program,
     /// While a body is walked: it is `init` or the value of a variable
     /// of the package, which run before the program has started.
@@ -758,6 +761,7 @@ pub fn declarations(
         units: Vec::new(),
         late_writes: Vec::new(),
         late_within: None,
+        pending_runs: Vec::new(),
         program: crate::package::Program::default(),
         starting: false,
         seen_as_known: FxHashMap::default(),
@@ -1162,6 +1166,7 @@ impl<'a> Checker<'a> {
         let first = units.first().and_then(|unit| unit.file.package.as_ref());
         self.late_within = None;
         self.program = self.races(units, first.map(|name| name.span));
+        self.replaced_under_pointers();
         // For those who call the functions of this package.
         for lender in lenders {
             let Some(lends) = done.get(&lender).cloned() else {

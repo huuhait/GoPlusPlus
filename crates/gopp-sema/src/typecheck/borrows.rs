@@ -52,6 +52,9 @@ pub(super) struct Places<'a> {
     pub package: &'a Package,
     pub starting: bool,
     pub names: &'a ThreadedRodeo,
+    /// The assignments to a pointer variable that store what the
+    /// pointer points to, and not the pointer.
+    pub writes_through: &'a FxHashSet<ExprId>,
     pub base: Spur,
 }
 
@@ -164,6 +167,15 @@ pub(super) struct Call {
     pub runs: bool,
 }
 
+/// A call that runs a function: which, and where. Of a method of an
+/// interface, or one that a child may replace, the name.
+#[derive(Clone, Copy)]
+pub(super) struct Ran {
+    pub callee: Callee,
+    pub method: Option<Spur>,
+    pub at: Span,
+}
+
 /// The variable that stands for what is outside the function.
 const OUTSIDE: LocalId = LocalId(u32::MAX);
 
@@ -175,6 +187,22 @@ const ONLY_READ: [(LocalId, Fixed); 2] = [
     (LocalId(u32::MAX - 2), Fixed::Shared),
     (LocalId(u32::MAX - 3), Fixed::Package(None)),
 ];
+
+/// The first of the numbers that stand for the variables of packages
+/// which a body names, counted down: each is a place like a variable of
+/// the function, one that never ends.
+const GLOBALS: u32 = u32::MAX - 16;
+
+/// Which of the variables of packages that the body names the number
+/// stands for, if it does.
+pub(super) fn global_index(root: LocalId) -> Option<usize> {
+    let stands = root.0 <= GLOBALS && root.0 > GLOBALS - (1 << 24);
+    stands.then(|| (GLOBALS - root.0) as usize)
+}
+
+/// What stands for a loan in the mark of a variable that holds a
+/// pointer into what a variable of a package owns apart.
+const MARK: u32 = u32::MAX;
 
 fn only_read(root: LocalId) -> Option<Fixed> {
     let found = ONLY_READ.iter().find(|(of, _)| *of == root);
@@ -344,6 +372,10 @@ pub(super) struct Problem {
     /// Where the body names a variable that is the only name of what
     /// `NewShared` made: a `Unique` would do.
     pub only_names: Arc<FxHashSet<u32>>,
+    /// The variables of packages that stand as places in the body, by
+    /// their numbers.
+    pub globals: Vec<crate::types::Global>,
+    pub ran: Vec<Ran>,
     /// A pointer of the body may point into what is only read; and
     /// the body runs when the program has started.
     pub marked: bool,
@@ -384,6 +416,12 @@ pub(super) struct Lent {
     /// Where a pointer that may point into what is only read is
     /// written through, and whether by a call.
     pub only_read: Vec<(Span, Fixed, bool)>,
+    /// The calls that run while a variable which is read later holds
+    /// a pointer into what a variable of a package owns apart, or
+    /// while a loop ranges over one: the call, the variable of the
+    /// package, the holder if it is one, and where the pointer or the
+    /// loop is made.
+    pub ran: Vec<(u32, u32, Option<LocalId>, Span)>,
     pub broken: Vec<Broken>,
     pub escaped: Vec<Escaped>,
     pub aliased: Vec<Aliased>,
@@ -641,6 +679,52 @@ impl<'a> Walk<'a> {
     /// the value owns apart from itself (the elements of a slice, the
     /// entries of a map, what a handle holds), if there is one.
     fn place_with(&self, expr: ExprId, apart: &mut Option<usize>) -> Option<(LocalId, Vec<Step>)> {
+        self.place_from(expr, apart, false)
+    }
+
+    /// `place`, of a place in a variable of a package: the variable
+    /// stands like one of the function. A pointer into it is followed
+    /// so, and a write to it; everywhere else it is what is outside.
+    fn global_place(&self, expr: ExprId) -> Option<(LocalId, Vec<Step>)> {
+        self.place_from(expr, &mut None, true)
+    }
+
+    /// Gives each variable of a package that the body names its
+    /// number, in the order of the source.
+    pub(super) fn name_globals(&mut self) {
+        let Some(places) = self.places else {
+            return;
+        };
+        let mut named: Vec<(u32, crate::types::Global)> = Vec::new();
+        for &expr in self.body.uses.keys() {
+            self.found.steps += 1;
+            if let Some(global) = self.global(places, expr) {
+                named.push((self.tree.exprs[expr].span.lo, global));
+            }
+        }
+        named.sort_unstable();
+        for (_, global) in named {
+            if !self.global_ids.contains_key(&global) {
+                self.global_ids.insert(global, self.globals.len() as u32);
+                self.globals.push(global);
+            }
+        }
+    }
+
+    /// What stands for the variable of a package that the expression
+    /// names.
+    fn global_root(&self, expr: ExprId) -> Option<LocalId> {
+        let global = self.global(self.places?, expr)?;
+        let index = *self.global_ids.get(&global)?;
+        Some(LocalId(GLOBALS - index))
+    }
+
+    fn place_from(
+        &self,
+        expr: ExprId,
+        apart: &mut Option<usize>,
+        globals: bool,
+    ) -> Option<(LocalId, Vec<Step>)> {
         let places = self.places?;
         let types = places.types;
         // The parts on the way to the variable, the outermost first,
@@ -648,6 +732,9 @@ impl<'a> Walk<'a> {
         let mut parts: Vec<(ExprId, ExprId)> = Vec::new();
         let mut at = self.unparen(expr);
         let root = loop {
+            if let Some(root) = self.global_root(at).filter(|_| globals) {
+                break root;
+            }
             let inner = match &self.tree.exprs[at].kind {
                 ExprKind::Name(name) => {
                     // `base` is the receiver (TYP-20).
@@ -774,7 +861,8 @@ impl<'a> Walk<'a> {
                 let types = self.places.map(|places| places.types);
                 types.is_some_and(|all| matches!(&*all.get(all.underlying(ty)), Type::Param(_)))
             });
-            if let Some((root, mut steps)) = self.place(arg).filter(|_| receiver && !value) {
+            let placed = self.place(arg).or_else(|| self.global_place(arg));
+            if let Some((root, mut steps)) = placed.filter(|_| receiver && !value) {
                 if let Some(ty) = ty {
                     self.through(ty, &mut steps);
                 }
@@ -1009,6 +1097,22 @@ impl<'a> Walk<'a> {
         if own {
             return;
         }
+        // What the call runs may change a variable of a package that
+        // it names itself.
+        if !self.globals.is_empty() {
+            let method = match &self.tree.exprs[callee].kind {
+                ExprKind::Selector { sel, .. } if places.selections.contains_key(&callee) => {
+                    Some(sel.name)
+                }
+                _ => None,
+            };
+            self.ran.push(Ran {
+                callee: self.callee(*fun),
+                method,
+                at: self.tree.exprs[callee].span,
+            });
+            self.events.push(Event::Ran(self.ran.len() as u32 - 1));
+        }
         // Only an argument that leads to a place which holds a pointer
         // can have one stored behind it; a method may be given the
         // address of its receiver.
@@ -1147,7 +1251,8 @@ impl<'a> Walk<'a> {
             // The receiver itself, where the method is given its
             // address.
             let addressed = position == 0 && by_address && !typed[position];
-            match self.place(arg).filter(|_| addressed) {
+            let placed = self.place(arg).or_else(|| self.global_place(arg));
+            match placed.filter(|_| addressed) {
                 Some((root, steps)) => {
                     found.push(Source::Place(root, steps, self.tree.exprs[arg].span));
                 }
@@ -1484,6 +1589,9 @@ impl<'a> Walk<'a> {
                     }
                     None => {
                         self.only_read_source(*x, found);
+                        if let Some((root, steps)) = self.global_place(*x) {
+                            found.push(Source::Place(root, steps, span));
+                        }
                         rest.push((*x, beyond));
                     }
                 },
@@ -1771,10 +1879,17 @@ impl<'a> Walk<'a> {
                 }
                 (local, Vec::new(), What::Declare)
             }
-            None => match self.place(inner) {
+            None => match self.place(inner).or_else(|| self.global_place(inner)) {
                 Some((root, steps)) => (root, steps, what),
                 None => return self.changed_through(inner),
             },
+        };
+        // What a pointer points to is assigned, not the pointer.
+        let through = self.places.map(|places| places.writes_through);
+        let through = through.is_some_and(|all| all.contains(&place) || all.contains(&inner));
+        let steps = match through && what != What::Declare {
+            true => [steps, vec![Step::Target]].concat(),
+            false => steps,
         };
         // Another name of an element is written: so is the element.
         if what != What::Declare && self.element_names.contains(&root) {
@@ -1848,7 +1963,8 @@ impl<'a> Walk<'a> {
         {
             inner = self.unparen(x);
         }
-        let Some((root, mut steps)) = self.place(inner) else {
+        let placed = self.place(inner).or_else(|| self.global_place(inner));
+        let Some((root, mut steps)) = placed else {
             return;
         };
         let types = places.types;
@@ -1928,7 +2044,7 @@ impl<'a> Walk<'a> {
     /// A loop ranges over the place of `x` from here on: which of the
     /// loops of the walk it is.
     pub(super) fn ranges(&mut self, x: ExprId) -> Option<u32> {
-        let (root, steps) = self.place(x)?;
+        let (root, steps) = self.place(x).or_else(|| self.global_place(x))?;
         let places = self.places?;
         // A string is counted, and what a pointer leads to is not the
         // function's to replace.
@@ -2016,6 +2132,13 @@ impl<'a> Walk<'a> {
             (true, None) => {
                 let mut found = std::mem::take(&mut self.sources);
                 self.only_read_source(x, &mut found);
+                if let Some((root, mut steps)) = self.global_place(x) {
+                    if let Some(ty) = self.type_of(self.unparen(x)) {
+                        self.through(ty, &mut steps);
+                    }
+                    steps.push(Step::At(None));
+                    found.push(Source::Place(root, steps, self.tree.exprs[x].span));
+                }
                 self.sources = found;
             }
             (false, Some((root, steps))) => {
@@ -2105,6 +2228,8 @@ impl<'a> Walk<'a> {
             seen_as: Vec::new(),
             bound: Vec::new(),
             only_names: Arc::default(),
+            globals: self.globals.clone(),
+            ran: std::mem::take(&mut self.ran),
             marked: self.marked,
             started: self.places.is_some_and(|places| !places.starting),
         }
@@ -2134,6 +2259,7 @@ impl Problem {
         let mut lent = Lent {
             written: Vec::new(),
             only_read: Vec::new(),
+            ran: Vec::new(),
             broken: Vec::new(),
             escaped: Vec::new(),
             aliased: Vec::new(),
@@ -2158,6 +2284,30 @@ impl Problem {
         let mut loops_of: FxHashMap<LocalId, Vec<u32>> = FxHashMap::default();
         for (at, loop_) in self.loops.iter().enumerate() {
             loops_of.entry(loop_.root).or_default().push(at as u32);
+        }
+        // For each call that runs something: the loops over a variable
+        // of a package that it is in.
+        let mut ran_loops: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        let mut over: Vec<u32> = (0..self.loops.len() as u32)
+            .filter(|&at| global_index(self.loops[at as usize].root).is_some())
+            .collect();
+        if !over.is_empty() {
+            over.sort_unstable_by_key(|&at| self.loops[at as usize].events.0);
+            let mut next = 0;
+            let mut open: Vec<u32> = Vec::new();
+            for (at, event) in self.events.iter().enumerate() {
+                while let Some(&looped) = over.get(next) {
+                    if self.loops[looped as usize].events.0 > at as u32 {
+                        break;
+                    }
+                    open.push(looped);
+                    next += 1;
+                }
+                open.retain(|&looped| (at as u32) < self.loops[looped as usize].events.1);
+                if let (Event::Ran(ran), false) = (event, open.is_empty()) {
+                    ran_loops.insert(*ran, open.clone());
+                }
+            }
         }
         let count = self.blocks.len();
         let (before, after) = (
@@ -2481,6 +2631,48 @@ impl Problem {
                 // a result, and not behind a pointer that leads out of
                 // the function.
                 match event {
+                    Event::Ran(ran) => {
+                        let read_later = |holder: LocalId| {
+                            let member = members.get(&holder);
+                            holder == DEFERRED
+                                || member
+                                    .is_some_and(|&member| reads.has(later[at - first], member))
+                        };
+                        // The loops over a variable of a package
+                        // around the call.
+                        for &looped in ran_loops.get(&ran).map_or(&[][..], |all| &all[..]) {
+                            known.steps += 1;
+                            let loop_ = &self.loops[looped as usize];
+                            if let Some(index) = global_index(loop_.root) {
+                                lent.ran.push((ran, index as u32, None, loop_.at));
+                            }
+                        }
+                        // The variables that hold a pointer into what
+                        // a variable of a package owns apart, and are
+                        // read later.
+                        let mut marked = Vec::new();
+                        sets.common(set, known.marks, &mut marked);
+                        for mark in marked {
+                            known.steps += 1;
+                            let holder = known.facts[mark as usize].0;
+                            if !read_later(holder) {
+                                continue;
+                            }
+                            let facts = known.of_holder.get(&holder).cloned().unwrap_or_default();
+                            for fact in facts {
+                                known.steps += 1;
+                                let loan = known.facts[fact as usize].1;
+                                if loan == MARK || !sets.has(set, fact) || !known.apart_global(loan)
+                                {
+                                    continue;
+                                }
+                                let (root, _, made) = &known.loans[loan as usize];
+                                if let Some(index) = global_index(*root) {
+                                    lent.ran.push((ran, index as u32, Some(holder), *made));
+                                }
+                            }
+                        }
+                    }
                     Event::Through(from, to, span) => {
                         let given = known.given(&sets, set, sources, (from, to));
                         let fixed = given
@@ -2736,6 +2928,7 @@ impl Problem {
             let Some(from) = param(*of) else {
                 // A result that points to what no parameter leads to.
                 lent.lends.outside |= places.is_none();
+                lent.lends.package |= places.is_none() && global_index(*of).is_some();
                 continue;
             };
             match places {
@@ -2830,6 +3023,11 @@ struct Known {
     outside: u32,
     /// The loans of what is only read.
     fixed: [u32; 2],
+    /// The marks of the variables that hold a pointer into what a
+    /// variable of a package owns apart from itself: each is a fact of
+    /// its variable with `MARK` for the loan, so that it is held and
+    /// lost with the pointer. A call asks which of them are held.
+    marks: u32,
     loans: Vec<(LocalId, Vec<Step>, Span)>,
     loan_ids: FxHashMap<(LocalId, Vec<Step>), u32>,
     facts: Vec<(LocalId, u32)>,
@@ -2855,6 +3053,7 @@ impl Known {
         let mut known = Known {
             outside: 0,
             fixed: [0; 2],
+            marks: EMPTY,
             loans: Vec::new(),
             loan_ids: FxHashMap::default(),
             facts: Vec::new(),
@@ -2899,7 +3098,17 @@ impl Known {
         let facts = self.of_holder.get(&holder).map_or(&[][..], |all| &all[..]);
         self.steps += facts.len() as u64;
         let held = facts.iter().filter(|&&fact| sets.has(set, fact));
-        into.extend(held.map(|&fact| self.facts[fact as usize].1));
+        let loans = held.map(|&fact| self.facts[fact as usize].1);
+        into.extend(loans.filter(|&loan| loan != MARK));
+    }
+
+    /// Whether the loan is of what a variable of a package owns apart
+    /// from itself: the elements of a slice, the entries of a map,
+    /// what a handle holds.
+    fn apart_global(&self, loan: u32) -> bool {
+        let (root, way, _) = &self.loans[loan as usize];
+        let mut own = way.iter().take_while(|step| **step != Step::Target);
+        global_index(*root).is_some() && own.any(|step| matches!(step, Step::At(_) | Step::Held))
     }
 
     /// The loan that stands for what is only read.
@@ -2948,7 +3157,23 @@ impl Known {
                 next
             }
         };
-        sets.put(set, fact, true)
+        let set = sets.put(set, fact, true);
+        if !self.apart_global(loan) {
+            return set;
+        }
+        let next = self.facts.len() as u32;
+        let mark = match self.fact_ids.get(&(holder, MARK)) {
+            Some(&mark) => mark,
+            None if next as usize >= ROOM => return set,
+            None => {
+                self.fact_ids.insert((holder, MARK), next);
+                self.facts.push((holder, MARK));
+                self.of_holder.entry(holder).or_default().push(next);
+                next
+            }
+        };
+        self.marks = sets.put(self.marks, mark, true);
+        sets.put(set, mark, true)
     }
 
     /// The loans in a value that is read from the variable through as

@@ -31,6 +31,20 @@ pub(super) enum Target {
     Named(Spur),
 }
 
+/// A call that runs while a pointer into what a variable of a package
+/// owns apart is used later, or while a loop ranges over the variable:
+/// if what it runs may free or move that, it is refused.
+#[derive(Clone)]
+pub(super) struct Run {
+    pub ran: super::borrows::Ran,
+    /// What is called, as it is written.
+    pub called: String,
+    pub global: Global,
+    /// The variable that holds the pointer; none for a loop.
+    pub holder: Option<String>,
+    pub made: Span,
+}
+
 /// A function, a function literal, `init` or the value of a variable
 /// of the package, with what it does itself.
 #[derive(Clone)]
@@ -43,9 +57,10 @@ pub(super) struct Unit {
     /// The unit that a function literal is written in.
     pub parent: Option<usize>,
     pub uses: Vec<Global>,
-    /// The variables that it changes, each where. With no variable:
-    /// through a pointer that may point into one.
-    pub writes: Vec<(Option<Global>, Span)>,
+    /// The variables that it changes, each where, and whether the
+    /// write may free or move what the variable owns apart. With no
+    /// variable: through a pointer that may point into one.
+    pub writes: Vec<(Option<Global>, Span, bool)>,
     pub addressed: Vec<Global>,
     /// What it calls, each with where.
     pub calls: Vec<(Target, u32)>,
@@ -151,17 +166,22 @@ impl<'a> Checker<'a> {
     /// A variable of a package is changed at `at`; with none, through
     /// a pointer that may point into one. What `init` and the value of
     /// a variable do themselves is done before the program starts.
-    pub(super) fn touch_write(&mut self, global: std::option::Option<Global>, at: Span) {
+    pub(super) fn touch_write(
+        &mut self,
+        global: std::option::Option<Global>,
+        at: Span,
+        replaces: bool,
+    ) {
         if self.memo.is_none() {
             let within = self.late_within.unwrap_or(at);
-            self.late_writes.push((global, at, within));
+            self.late_writes.push((global, at, within, replaces));
             return;
         }
         if self.starting && self.literals.is_empty() {
             return;
         }
         if let Some(unit) = self.touching() {
-            unit.writes.push((global, at));
+            unit.writes.push((global, at, replaces));
         }
     }
 
@@ -169,10 +189,16 @@ impl<'a> Checker<'a> {
     /// a package it is noted, for the end of the package; whether it
     /// is that.
     pub(super) fn noted(&mut self, fixed: Fixed, at: Span) -> bool {
+        self.noted_as(fixed, at, true)
+    }
+
+    /// `noted`, of a write that frees or moves what the variable owns
+    /// apart from itself only with `replaces`.
+    pub(super) fn noted_as(&mut self, fixed: Fixed, at: Span, replaces: bool) -> bool {
         match fixed {
             Fixed::Shared => false,
             Fixed::Package(global) => {
-                self.touch_write(global, at);
+                self.touch_write(global, at, replaces);
                 true
             }
         }
@@ -378,6 +404,7 @@ impl<'a> Checker<'a> {
             }
             reached.writes.extend(&touch.writes);
             reached.writes_any |= touch.writes_any;
+            reached.replaces.extend(&touch.replaces);
             self.steps += (touch.calls.len() + touch.methods.len() + touch.starts.len()) as u64;
             rest.extend(touch.calls.iter().map(|&key| (key, by)));
             // What a goroutine starts is reached too.
@@ -496,7 +523,7 @@ impl<'a> Checker<'a> {
         (body.span.hi, deferred)
     }
 
-    fn global_name(&self, (path, object): Global) -> String {
+    pub(super) fn global_name(&self, (path, object): Global) -> String {
         if path == self.path_of(self.package) {
             return self
                 .names
@@ -540,12 +567,12 @@ impl<'a> Checker<'a> {
         let by_span: FxHashMap<_, usize> = (units.iter().enumerate())
             .map(|(at, unit)| (within(unit.at), at))
             .collect();
-        let mut loose: Vec<(std::option::Option<Global>, Span)> = Vec::new();
-        for (global, at, inside) in std::mem::take(&mut self.late_writes) {
+        let mut loose: Vec<(std::option::Option<Global>, Span, bool)> = Vec::new();
+        for (global, at, inside, replaces) in std::mem::take(&mut self.late_writes) {
             self.steps += 1;
             match by_span.get(&within(inside)) {
-                Some(&unit) => units[unit].writes.push((global, at)),
-                None => loose.push((global, at)),
+                Some(&unit) => units[unit].writes.push((global, at, replaces)),
+                None => loose.push((global, at, replaces)),
             }
         }
         let mut keys: Vec<TouchKey> = (units.iter().enumerate())
@@ -611,14 +638,21 @@ impl<'a> Checker<'a> {
             for &(call, _) in &unit.calls {
                 self.touch_called(&keys, call, &mut touch);
             }
-            for &(global, _) in &unit.writes {
+            for &(global, _, replaces) in &unit.writes {
                 match global {
-                    Some(global) => touch.writes.push(global),
+                    Some(global) => {
+                        touch.writes.push(global);
+                        if replaces {
+                            touch.replaces.push(global);
+                        }
+                    }
                     None => touch.writes_any = true,
                 }
             }
             touch.writes.sort_unstable();
             touch.writes.dedup();
+            touch.replaces.sort_unstable();
+            touch.replaces.dedup();
             let mut seen = FxHashSet::default();
             touch.calls.retain(|key| seen.insert(*key));
             touch.methods.sort_unstable();
@@ -639,7 +673,7 @@ impl<'a> Checker<'a> {
             }
             program.addressed.extend(unit.addressed.iter().copied());
         }
-        for &(global, _) in &loose {
+        for &(global, _, _) in &loose {
             match global {
                 Some(global) => drop(program.written.insert(global)),
                 None => program.written_any = true,
@@ -730,7 +764,7 @@ impl<'a> Checker<'a> {
                         rest.calls.push(keys[child]);
                     }
                 }
-                for &(global, _) in units[at].writes.iter().filter(|(_, at)| after(at.lo)) {
+                for &(global, _, _) in units[at].writes.iter().filter(|(_, at, _)| after(at.lo)) {
                     match global {
                         Some(global) => rest.writes.push(global),
                         None => rest.writes_any = true,
@@ -764,7 +798,8 @@ impl<'a> Checker<'a> {
             .collect();
         raced.sort_unstable();
         // The writes of this package that may run then.
-        let mut writes = loose;
+        let mut writes: Vec<(std::option::Option<Global>, Span)> =
+            loose.iter().map(|&(global, at, _)| (global, at)).collect();
         for (at, unit) in units.iter().enumerate() {
             self.steps += 1;
             let runs = |span: Span| match &later {
@@ -775,7 +810,8 @@ impl<'a> Checker<'a> {
                     seen.contains(&keys[at]) || (at == *main && after)
                 }
             };
-            writes.extend(unit.writes.iter().copied().filter(|&(_, span)| runs(span)));
+            let sites = unit.writes.iter().map(|&(global, at, _)| (global, at));
+            writes.extend(sites.filter(|&(_, span)| runs(span)));
         }
         writes.sort_unstable_by_key(|&(_, at)| (at.file, at.lo, at.hi));
         writes.dedup();
@@ -849,6 +885,84 @@ impl<'a> Checker<'a> {
     }
 }
 
+impl<'a> Checker<'a> {
+    /// The calls that run while a pointer into what a variable of a
+    /// package owns apart is used, or a loop ranges over it: one whose
+    /// function may free or move that, itself or in what it calls, is
+    /// refused. Asked when what every function changes is known.
+    pub(super) fn replaced_under_pointers(&mut self) {
+        let program = std::mem::take(&mut self.program);
+        let mut known: FxHashMap<Vec<TouchKey>, Arc<Reached>> = FxHashMap::default();
+        for run in std::mem::take(&mut self.pending_runs) {
+            self.steps += 1;
+            // A function that is not known: every method of the name,
+            // or every function that is used as a value.
+            let from: Vec<TouchKey> = match (run.ran.callee, run.ran.method) {
+                (Callee::Unknown, Some(name)) => {
+                    let mut all: Vec<TouchKey> = program
+                        .methods
+                        .get(&name)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .collect();
+                    all.sort_unstable_by_key(|key| format!("{key:?}"));
+                    all
+                }
+                (Callee::Unknown, None) => Vec::new(),
+                (callee, _) => (self.touch_key(&[], Target::Known(callee)).into_iter()).collect(),
+            };
+            let reached = match known.get(&from) {
+                Some(reached) => reached.clone(),
+                None => {
+                    let reached = match from.is_empty() {
+                        // All that a function value may run.
+                        true => {
+                            let stands = TouchKey::Body(self.path_of(self.package), u32::MAX);
+                            self.reach(&program, &[(stands, None)])
+                        }
+                        false => {
+                            let from: Vec<_> = from.iter().map(|&key| (key, None)).collect();
+                            self.reach(&program, &from)
+                        }
+                    };
+                    let reached = Arc::new(reached);
+                    known.insert(from, reached.clone());
+                    reached
+                }
+            };
+            let replaced = reached.replaces.contains(&run.global)
+                || (reached.writes_any && program.addressed.contains(&run.global));
+            if !replaced || !self.report_once((run.ran.at, Code::OwnBorrowedAssign)) {
+                continue;
+            }
+            let name = self.global_name(run.global);
+            let message = match &run.holder {
+                Some(holder) => format!(
+                    "cannot call {}: it may change {name}, and {holder} points into {name} and \
+                     is used later",
+                    run.called
+                ),
+                None => format!(
+                    "cannot call {}: it may change {name}, which the loop ranges over",
+                    run.called
+                ),
+            };
+            let code = match run.holder {
+                Some(_) => Code::OwnBorrowedAssign,
+                None => Code::OwnRangeMutation,
+            };
+            let note = match run.holder {
+                Some(_) => "the pointer is made here",
+                None => "the loop is here",
+            };
+            let diagnostic = Diagnostic::new(code, run.ran.at, message);
+            self.emit(diagnostic.with_note(Code::NoteGoFixShare, Some(run.made), note.to_owned()));
+        }
+        self.program = program;
+    }
+}
+
 /// What is reached from some functions.
 #[derive(Default)]
 struct Reached {
@@ -858,6 +972,7 @@ struct Reached {
     uses: FxHashMap<Global, std::option::Option<Span>>,
     writes: FxHashSet<Global>,
     writes_any: bool,
+    replaces: FxHashSet<Global>,
     /// What the `go` statements on the way start.
     starts: Vec<TouchKey>,
 }

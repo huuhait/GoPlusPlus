@@ -69,6 +69,9 @@ pub(super) enum Event {
     /// written through: by a pointer that no variable holds, or by
     /// another name of an element.
     Through(u32, u32, Span),
+    /// The call with the number among those that run something: what
+    /// it runs may change a variable of a package.
+    Ran(u32),
 }
 
 /// A variable that is read where it may hold no value.
@@ -225,6 +228,32 @@ impl Sets {
         self.bits(node) >> (member & 63) & 1 == 1
     }
 
+    /// The members that both sets have, added to `found`.
+    pub(super) fn common(&self, a: u32, b: u32, found: &mut Vec<u32>) {
+        self.common_at(a, b, self.levels - 1, 0, found);
+    }
+
+    fn common_at(&self, a: u32, b: u32, level: u32, base: u32, found: &mut Vec<u32>) {
+        if a == EMPTY || b == EMPTY {
+            return;
+        }
+        if level == 0 {
+            let mut bits = self.bits(a) & self.bits(b);
+            while bits != 0 {
+                found.push(base | bits.trailing_zeros());
+                bits &= bits - 1;
+            }
+            return;
+        }
+        let mut both = self.children(a).0 & self.children(b).0;
+        while both != 0 {
+            let digit = both.trailing_zeros();
+            let (a, b) = (self.child(a, digit), self.child(b, digit));
+            self.common_at(a, b, level - 1, base | digit << (6 * level), found);
+            both &= both - 1;
+        }
+    }
+
     /// The members of both sets.
     pub(super) fn join(&mut self, a: u32, b: u32) -> u32 {
         self.join_at(a, b, self.levels - 1)
@@ -350,6 +379,14 @@ pub(super) struct Walk<'a> {
     pub top: bool,
     /// A pointer of the body may point into what is only read.
     pub marked: bool,
+    /// The variables of packages that the body names, each with its
+    /// number: a pointer into one, and a write to one, are followed
+    /// as with a variable of the function.
+    pub globals: Vec<crate::types::Global>,
+    pub global_ids: FxHashMap<crate::types::Global, u32>,
+    /// The calls that run something, in a body that names a variable
+    /// of a package.
+    pub ran: Vec<borrows::Ran>,
     pub params: Vec<Option<LocalId>>,
     pub funcs: Vec<bool>,
     pub changes: Vec<borrows::Change>,
@@ -437,6 +474,9 @@ pub(super) fn of(
         owner,
         top: true,
         marked: false,
+        globals: Vec::new(),
+        global_ids: FxHashMap::default(),
+        ran: Vec::new(),
         params: Vec::new(),
         funcs: Vec::new(),
         changes: Vec::new(),
@@ -450,6 +490,7 @@ pub(super) fn of(
         pointers: Vec::new(),
         given: 0,
     };
+    walk.name_globals();
     match &decl.kind {
         DeclKind::Func {
             receiver,
@@ -572,6 +613,7 @@ impl<'a> Checker<'a> {
                     package: self.package,
                     starting: self.starting,
                     names: self.names,
+                    writes_through: &self.writes_through,
                     base: self.names.get_or_intern_static("base"),
                 });
             let modes = &self.var_modes;
@@ -731,8 +773,12 @@ impl<'a> Checker<'a> {
         let walked = &problem.broken;
         use borrows::What;
         let named = |this: &Self, local: LocalId| {
-            let name = body.locals[local.0 as usize].name;
-            this.names.resolve(&name).to_owned()
+            let global = borrows::global_index(local).and_then(|at| problem.globals.get(at));
+            match (global, body.locals.get(local.0 as usize)) {
+                (Some(&global), _) => this.global_name(global),
+                (None, Some(declared)) => this.names.resolve(&declared.name).to_owned(),
+                (None, None) => "a variable".to_owned(),
+            }
         };
         let text = |at: Span| text[at.lo as usize..at.hi as usize].to_owned();
         // What a variable of a package is given to is noted, unless
@@ -781,6 +827,24 @@ impl<'a> Checker<'a> {
             };
             let diagnostic = Diagnostic::new(code, written.given, message);
             self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
+        }
+        // A call that may change a variable of a package while a
+        // pointer into what it owns is used, or a loop ranges over it:
+        // asked when all that the functions change is known.
+        for &(ran, global, holder, made) in &found.ran {
+            let (Some(ran), Some(&global)) = (
+                problem.ran.get(ran as usize),
+                problem.globals.get(global as usize),
+            ) else {
+                continue;
+            };
+            self.pending_runs.push(touches::Run {
+                ran: *ran,
+                called: text(ran.at),
+                global,
+                holder: holder.map(|holder| named(self, holder)),
+                made,
+            });
         }
         for &(at, fixed, by_call) in &found.only_read {
             if noted(self, fixed, at) || !self.report_once((at, code)) {
@@ -2115,7 +2179,7 @@ impl<'a> Walk<'a> {
         let holds = self.events[self.given..].iter().any(|event| match event {
             Event::Holds(_, from, to, _) => to > from,
             Event::Returned(..) | Event::Stored(..) | Event::Called(_) | Event::Left(..) => true,
-            Event::Borrowed(_) | Event::Through(..) => true,
+            Event::Borrowed(_) | Event::Through(..) | Event::Ran(_) => true,
             // What is changed through a pointer, those who call the
             // function are told.
             Event::Changed(change) => self.changes[*change as usize]
@@ -2348,6 +2412,7 @@ impl<'a> Walk<'a> {
                     | Event::Left(..)
                     | Event::Borrowed(_)
                     | Event::Through(..)
+                    | Event::Ran(_)
                     | Event::Written(_)
                     | Event::Fresh(_)
                     | Event::Spawned(_) => continue,
@@ -2395,6 +2460,7 @@ impl<'a> Walk<'a> {
             | Event::Left(..)
             | Event::Borrowed(_)
             | Event::Through(..)
+            | Event::Ran(_)
             | Event::Written(_)
             | Event::Fresh(_)
             | Event::Spawned(_) => None,
@@ -2432,6 +2498,7 @@ impl<'a> Walk<'a> {
             | Event::Left(..)
             | Event::Borrowed(_)
             | Event::Through(..)
+            | Event::Ran(_)
             | Event::Written(_)
             | Event::Fresh(_)
             | Event::Spawned(_) => None,

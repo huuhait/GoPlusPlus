@@ -84,6 +84,10 @@ pub struct Touch {
     /// variable which a pointer is taken into.
     pub writes: Vec<Global>,
     pub writes_any: bool,
+    /// Those of them of which it may free or move what the variable
+    /// owns apart from itself: a pointer into that does not live
+    /// through a call of the function.
+    pub replaces: Vec<Global>,
     /// What its `go` statements start.
     pub starts: Vec<TouchKey>,
     /// It calls a function value: any function that is used as a

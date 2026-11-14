@@ -464,7 +464,21 @@ impl<'a> Checker<'a> {
         let Some(fixed) = self.fixed(cx, expr) else {
             return false;
         };
-        if self.noted(fixed, cx.tree.exprs[expr].span) {
+        // A plain value in a variable of a package is written where it
+        // is; what owns something apart is freed or moved, and a new
+        // entry may move the entries of a map.
+        let entry = match cx.tree.exprs[self.unparen(cx, expr)].kind {
+            ExprKind::Index { x, .. } => self.walked_type(self.unparen(cx, x)).is_some_and(|ty| {
+                matches!(
+                    &*self.types.get(self.types.underlying(ty)),
+                    Type::Map { .. }
+                )
+            }),
+            _ => false,
+        };
+        let owns = self.walked_type(expr);
+        let owns = owns.is_none_or(|ty| self.types.owns_apart(ty, false));
+        if self.noted_as(fixed, cx.tree.exprs[expr].span, entry || owns) {
             return false;
         }
         let message = format!(
