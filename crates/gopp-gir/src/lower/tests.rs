@@ -2039,23 +2039,33 @@ func others(n int, xs []int) int {
 	return len(xs)
 }
 
-func aliases(files []File) {
+func aliases(files []File, byName map[string]Note) int {
 	for _, &f := range files {
 		defer f.close()
 	}
+	for _, &f := range byName {
+		defer f.bump()
+	}
+	return len(files) + len(byName)
 }
 
 func main() {}
+
+type Note struct{ n int }
+
+func (n *Note) bump() { n.n++ }
 ",
         )],
         usize::MAX,
     );
-    // A variable of a block that a deferred call has the address of
-    // lives as long as the function; another name of an element does
-    // not.
+    // Another name of an element of a slice is a pointer that the call
+    // keeps; an entry of a map may move when the map grows.
     assert_eq!(
         messages,
-        ["a.gopp:44:9: not supported yet: a deferred call that holds a variable of a block"]
+        [
+            "a.gopp:47:9: not supported yet: a deferred call that holds an entry of a map by another \
+          name"
+        ]
     );
 }
 

@@ -357,6 +357,9 @@ pub(super) struct Walk<'a> {
     /// innermost of those that are walked now.
     pub loops: Vec<borrows::Ranged>,
     pub looping: FxHashMap<LocalId, u32>,
+    /// The `&` variables of range clauses: each is another name of an
+    /// element, and holds a loan of it.
+    pub element_names: FxHashSet<LocalId>,
     /// How the place of the assignment that is walked is changed.
     change: borrows::What,
     /// For each result of the function, whether it is written as a
@@ -435,6 +438,7 @@ pub(super) fn of(
         frames: Vec::new(),
         loops: Vec::new(),
         looping: FxHashMap::default(),
+        element_names: FxHashSet::default(),
         change: borrows::What::Assign,
         pointers: Vec::new(),
         given: 0,
@@ -1197,6 +1201,7 @@ impl<'a> Walk<'a> {
         self.frames.clear();
         self.loops.clear();
         self.looping.clear();
+        self.element_names.clear();
         self.blocks.clear();
         self.edges.clear();
         self.labels.clear();

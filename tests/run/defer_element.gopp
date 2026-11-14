@@ -1,0 +1,47 @@
+package main
+
+// A deferred call on the `&` variable of a range clause is made on the
+// element itself when the function returns, and sees what was written
+// to the element before.
+
+type C struct{ n int }
+
+func (c *C) Up() { c.n++ }
+
+func show(c *C) { println("  show", c.n) }
+
+func all(cs *[]C) {
+	for _, &c := range cs {
+		defer c.Up()
+		defer show(&c)
+	}
+	println("  leaves", len(*cs))
+}
+
+func own() int {
+	cs := []C{{10}, {20}}
+	for i, &c := range cs {
+		if i == 1 {
+			defer show(&c)
+		}
+	}
+	cs[1].n = 21
+	return len(cs)
+}
+
+func array() int {
+	arr := [2]C{{1}, {2}}
+	for _, &c := range arr {
+		defer c.Up()
+	}
+	arr[0] = C{3}
+	return arr[0].n
+}
+
+func main() {
+	cs := []C{{1}, {2}}
+	all(&cs)
+	println(cs[0].n, cs[1].n)
+	println(own())
+	println(array())
+}

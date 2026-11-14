@@ -296,12 +296,13 @@ impl FuncCx<'_, '_> {
 
     /// `&v` in a range clause: for one pass of the loop `v` is another
     /// name of the element, which is not copied (RNG-1a).
-    pub fn set_range_alias(&mut self, named: ExprId, element: Place) -> Built {
+    pub fn set_range_alias(&mut self, named: ExprId, element: Place, of_map: bool) -> Built {
         let named = &self.tree.exprs[Shared::unparen(self.tree, named)];
         let Some(&local) = self.body.defs.get(&named.span.lo) else {
             return Ok(());
         };
         let var = self.declare_alias(local, self.b.place_ty(&element))?;
+        self.note_element_name(var, of_map);
         let address = Rvalue::AddrOf(element, crate::Mutability::Mut);
         self.b.assign(Place::local(var), address)
     }

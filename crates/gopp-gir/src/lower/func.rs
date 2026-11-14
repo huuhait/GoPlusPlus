@@ -274,6 +274,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The variables `&v` of range clauses: each holds the address of
     /// the element that it names.
     pub aliases: FxHashSet<LocalId>,
+    /// The `&` variables of range clauses, each with whether it names
+    /// an entry of a map.
+    element_names: FxHashMap<LocalId, bool>,
     /// For each result, the place of the caller for the record of a
     /// view, if the result points to a slice.
     pub views: Vec<Option<LocalId>>,
@@ -991,6 +994,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             reported: FxHashSet::default(),
             reused: None,
             aliases: FxHashSet::default(),
+            element_names: FxHashMap::default(),
             views: Vec::new(),
             outer: FxHashMap::default(),
             temps: Vec::new(),
@@ -2704,6 +2708,18 @@ impl FuncCx<'_, '_> {
             return false;
         };
         self.facts.quiet(local) && !self.aliases.contains(var) && !self.borrowed.contains(var)
+    }
+
+    /// The variable is the `&` variable of a range clause: another
+    /// name of an element, or with `of_map` of an entry of a map.
+    pub fn note_element_name(&mut self, var: LocalId, of_map: bool) {
+        self.element_names.insert(var, of_map);
+    }
+
+    /// Whether the local is the `&` variable of a range clause, and if
+    /// so whether it names an entry of a map.
+    pub fn names_element(&self, local: CheckedLocalId) -> Option<bool> {
+        self.element_names.get(self.vars.get(&local)?).copied()
     }
 
     /// A new variable for the local that is another name of a place of

@@ -561,7 +561,7 @@ impl FuncCx<'_, '_> {
             self.set_range_var(left, define, Operand::Copy(key), false)?;
         }
         match lhs.get(1).map(|&left| (left, self.aliased(left))) {
-            Some((_, Some(named))) => self.set_range_alias(named, value)?,
+            Some((_, Some(named))) => self.set_range_alias(named, value, true)?,
             Some((left, None)) => self.set_range_var(left, define, Operand::Copy(value), false)?,
             None => {}
         }

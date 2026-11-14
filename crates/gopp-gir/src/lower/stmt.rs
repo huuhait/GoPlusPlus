@@ -380,7 +380,7 @@ impl FuncCx<'_, '_> {
         }
         match (value, alias, element) {
             (_, Some(named), Some(Operand::Copy(element))) => {
-                self.set_range_alias(named, element)?;
+                self.set_range_alias(named, element, false)?;
             }
             (Some(value), None, Some(element)) => {
                 self.set_range_var(value, define, element, false)?

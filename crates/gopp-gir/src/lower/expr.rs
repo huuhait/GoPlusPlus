@@ -2525,6 +2525,19 @@ impl<'a> FuncCx<'a, '_> {
                 self.unsupported(span, what);
                 return None;
             }
+            // Another name of an element of a slice or an array is a
+            // pointer to the element, which the call keeps as it is:
+            // the checker holds the collection until the function
+            // returns. An entry of a map may move when the map grows.
+            match self.names_element(local) {
+                Some(false) => continue,
+                Some(true) => {
+                    let what = "a deferred call that holds an entry of a map by another name";
+                    self.unsupported(span, what);
+                    return None;
+                }
+                None => {}
+            }
             if self.of_block(local) && !self.in_cell(local) {
                 self.unsupported(span, "a deferred call that holds a variable of a block");
                 return None;

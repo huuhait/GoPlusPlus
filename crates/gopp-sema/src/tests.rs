@@ -6710,6 +6710,95 @@ fn the_steps_of_calls_of_function_literals_grow_with_the_input_not_faster() {
 
 // rule: PAN-3
 #[test]
+fn a_deferred_call_on_another_name_of_an_element_holds_the_collection() {
+    // The `&` variable of a range clause is another name of an element:
+    // a deferred call on it keeps a pointer to the element. The
+    // collection is not grown, replaced, ended or moved before the
+    // function returns. An element may be written, a collection behind
+    // a pointer is the caller's, and an array holds its elements itself.
+    let text = "package p
+
+type C struct{ n int }
+
+func (c *C) Up() { c.n++ }
+
+func show(c *C) {}
+
+func grows(n int) int {
+	cs := []C{{1}, {2}}
+	for _, &c := range cs {
+		defer c.Up()
+	}
+	cs = append(cs, C{n})
+	return len(cs)
+}
+
+func replaced() int {
+	cs := []C{{1}, {2}}
+	for _, &c := range cs {
+		defer show(&c)
+	}
+	cs = nil
+	return len(cs)
+}
+
+func ends(n int) {
+	if n > 0 {
+		cs := []C{{1}, {2}}
+		for _, &c := range cs {
+			defer c.Up()
+		}
+	}
+}
+
+func moved(keep func([]C)) {
+	cs := []C{{1}, {2}}
+	for _, &c := range cs {
+		defer c.Up()
+	}
+	keep(move(cs))
+}
+
+func kept() int {
+	cs := []C{{1}, {2}}
+	for _, &c := range cs {
+		defer c.Up()
+		defer show(&c)
+	}
+	cs[0].n = 5
+	return len(cs)
+}
+
+func behind(cs *[]C) {
+	for _, &c := range cs {
+		defer c.Up()
+	}
+}
+
+func array() int {
+	arr := [2]C{{1}, {2}}
+	for _, &c := range arr {
+		defer c.Up()
+	}
+	arr[0] = C{3}
+	return arr[1].n
+}
+";
+    let expected = [
+        "a.gopp:14:2: cannot append to cs: a deferred call points into it and runs when the function returns",
+        "    a.gopp:11:21: the deferred call points into it from here",
+        "a.gopp:23:2: cannot assign to cs: a deferred call points into it and runs when the function returns",
+        "    a.gopp:20:21: the deferred call points into it from here",
+        "a.gopp:33:2: cs ends here, and a deferred call points into it and runs when the function returns",
+        "    a.gopp:30:22: the deferred call points into it from here",
+        "a.gopp:41:7: cannot move cs: a deferred call points into it and runs when the function returns",
+        "    a.gopp:38:21: the deferred call points into it from here",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+// rule: PAN-3
+#[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {
     // The functions up to `generic` each do what a deferred call that
     // waits does not allow; those after it do what it allows: a move

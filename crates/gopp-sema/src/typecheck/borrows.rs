@@ -1164,6 +1164,11 @@ impl<'a> Walk<'a> {
             }
             let mut apart = None;
             match self.place_with(place, &mut apart).filter(|_| addressed) {
+                // Another name of an element: the call keeps a
+                // pointer to the element, which its collection owns.
+                Some((root, _)) if self.element_names.contains(&root) => {
+                    found.push(Source::Holder(root, 0, false));
+                }
                 Some((root, mut steps)) if addressed && elements == Some(expr) => {
                     steps.push(Step::At(None));
                     found.push(Source::Place(root, steps, span));
@@ -1750,6 +1755,7 @@ impl<'a> Walk<'a> {
         // A variable that is the element itself points into the
         // elements: of a slice or a map, into what is owned apart.
         if alias {
+            self.element_names.insert(local);
             let apart = self.type_of(self.unparen(x)).is_some_and(|ty| {
                 let types = self.places.map(|places| places.types);
                 let ty = self.through(ty, &mut Vec::new());
