@@ -6547,6 +6547,167 @@ func param(dog Shared[Dog]) {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+// rule: OWN-B2
+#[test]
+fn what_a_call_of_a_function_literal_stores_or_gives_back_is_followed() {
+    // A function literal changes a pointer of the function around it,
+    // or gives a pointer back: after a call of the literal that pointer
+    // may point to a variable that the literal takes the address of, or
+    // into what the literal reaches. The first four functions use it
+    // when that variable has ended. The others keep both for as long,
+    // change no pointer, never call the literal, or use the pointer
+    // while the variable lives.
+    let text = "package p
+
+func stores() int {
+	a := 1
+	p := &a
+	{
+		x := 2
+		f := func() { p = &x }
+		f()
+	}
+	return *p
+}
+
+func passesOn() int {
+	a := 1
+	q := &a
+	{
+		y := 2
+		p := &y
+		f := func() { q = p }
+		f()
+	}
+	return *q
+}
+
+func givesBack() int {
+	a := 1
+	p := &a
+	{
+		x := 2
+		f := func() *int { return &x }
+		p = f()
+	}
+	return *p
+}
+
+func given(run func(func())) int {
+	a := 1
+	p := &a
+	{
+		x := 2
+		run(func() { p = &x })
+	}
+	return *p
+}
+
+func sameBlock() int {
+	a, x := 1, 2
+	p := &a
+	f := func() { p = &x }
+	f()
+	return *p
+}
+
+func counts() int {
+	a := 1
+	p := &a
+	{
+		n := 0
+		f := func() {
+			n++
+			*p += n
+		}
+		f()
+		f()
+	}
+	return *p
+}
+
+func neverCalled() int {
+	a := 1
+	p := &a
+	{
+		x := 2
+		f := func() { p = &x }
+		_ = f
+	}
+	return *p
+}
+
+func usedInside() int {
+	a := 1
+	p := &a
+	total := 0
+	{
+		x := 2
+		f := func() { p = &x }
+		f()
+		total = *p
+		p = &a
+	}
+	return total + *p
+}
+";
+    let expected = [
+        "a.gopp:10:2: x ends here, and p points into it and is used later",
+        "    a.gopp:8:8: the function that is written here may give p a pointer to x",
+        "a.gopp:22:2: y ends here, and q points into it and is used later",
+        "    a.gopp:19:8: q points into y from here",
+        "a.gopp:33:2: x ends here, and p points into it and is used later",
+        "    a.gopp:31:8: the function that is written here may give p a pointer to x",
+        "a.gopp:42:3: cannot give run a function that uses p: p may hold a pointer, and the function \
+         may run when what it points to has ended",
+        "    a.gopp:42:7: the function that uses p is written here",
+        "a.gopp:42:3: cannot keep a function that uses x as a func value, which may run on another \
+         goroutine: x is changed by it or by another function",
+        "    keep it as a Local[func(...)], which stays with one goroutine, or put x in a \
+         sync.Atomic or a sync.Mutex",
+        "a.gopp:43:2: x ends here, and p points into it and is used later",
+        "    a.gopp:42:7: the function that is written here may give p a pointer to x",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+#[test]
+fn the_steps_of_calls_of_function_literals_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // Many literals, each with a pointer that it changes and a variable
+    // that it takes the address of, and each called once.
+    let siblings = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\tx{i}, y{i} := {i}, {i}\n\tp{i} := &y{i}\n\tf{i} := func() {{ p{i} = &x{i} \
+                     }}\n\tf{i}()\n\tn += *p{i}\n"
+                )
+            })
+            .collect();
+        format!("package p\nfunc f() int {{\n\tn := 0\n{each}\treturn n\n}}\n")
+    };
+    // One literal that is called many times, with a use of the pointer
+    // that it changes after each call.
+    let calls = |count: usize| {
+        let each: String = (0..count)
+            .map(|_| "\tf()\n\tn += *q\n".to_owned())
+            .collect();
+        format!(
+            "package p\nfunc f() int {{\n\tn, x, y := 0, 1, 2\n\tp, q := &x, &y\n\tf := func() {{ q \
+             = p }}\n{each}\treturn n\n}}\n"
+        )
+    };
+    let sizes = [100, 200, 400, 800];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(calls(n)));
+}
+
 // rule: PAN-3
 #[test]
 fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {

@@ -852,7 +852,15 @@ impl<'a> Checker<'a> {
                     };
                     let message =
                         format!("{owner} {ends}, and {holder} points into it and is used later");
-                    let note = format!("{holder} points into {made} from here");
+                    // A call of a function literal put the pointer
+                    // there, or gave it back.
+                    let note = match made.starts_with("func") {
+                        true => format!(
+                            "the function that is written here may give {holder} a pointer to \
+                             {owner}"
+                        ),
+                        false => format!("{holder} points into {made} from here"),
+                    };
                     Diagnostic::new(code, broken.at, message).with_note(
                         Code::NoteBorrowedHere,
                         Some(broken.made),

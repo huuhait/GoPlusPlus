@@ -66,6 +66,12 @@ pub(super) enum Step {
     /// With the second the literal may change it. With the third its
     /// type is not one that may be shared between goroutines.
     Captured(bool, bool, bool),
+    /// The variable as a function literal that takes its address has
+    /// it: nothing breaks this while the literal only holds it. A call
+    /// of the literal may give a pointer to the variable out, as its
+    /// result or in another variable that it changes: there it stands
+    /// for the variable itself.
+    Addressed,
     /// The variable as a deferred call that waits uses it: where it is,
     /// until the function returns. It is kept until then, so it may be
     /// assigned and may end; it is not moved (PAN-3).
@@ -139,6 +145,9 @@ pub(super) struct Call {
     pub at: Span,
     /// The call gives the elements of the last parameter one by one.
     pub listed: bool,
+    /// What is called may run a function value that it is given: it is
+    /// no built-in function and no conversion.
+    pub runs: bool,
 }
 
 /// The variable that stands for what is outside the function.
@@ -790,6 +799,7 @@ impl<'a> Walk<'a> {
             exprs: before.iter().chain(args.iter()).copied().collect(),
             at: self.tree.exprs[fun].span,
             listed: self.lists(expr),
+            runs: self.runs_value(fun),
         });
         self.call_ids.insert(expr, call);
         call
@@ -1426,6 +1436,9 @@ impl<'a> Walk<'a> {
                         if self.own(local) {
                             let step = Step::Captured(lends, writes, unshared);
                             found.push(Source::Place(local, vec![step], span));
+                        }
+                        if self.own(local) && capture.how == crate::object::CaptureUse::Address {
+                            found.push(Source::Place(local, vec![Step::Addressed], span));
                         }
                         if self.own(local) && reaches {
                             found.push(Source::Holder(local, 0, true));
@@ -2117,6 +2130,7 @@ impl Problem {
                                 // A function literal uses a variable
                                 // where it is: what is assigned to
                                 // it, the literal sees.
+                                Lies::Above if held[..] == [Step::Addressed] => false,
                                 Lies::Above if matches!(held[..], [Step::Captured(..)]) => {
                                     change.what == What::Move
                                         || (matches!(held[..], [Step::Captured(true, ..)])
@@ -2380,7 +2394,7 @@ impl Problem {
                 continue;
             }
             // A variable that cannot lend is kept with the literal.
-            if matches!(way[..], [Step::Captured(false, ..)]) {
+            if matches!(way[..], [Step::Captured(false, ..)] | [Step::Addressed]) {
                 continue;
             }
             let capture = matches!(way[..], [Step::Captured(..)]);
@@ -2685,8 +2699,9 @@ impl Known {
         reach: bool,
     ) -> Vec<u32> {
         let mut given: Vec<u32> = Vec::new();
-        let mut rest = vec![(first, reach)];
-        while let Some((sources, reach)) = rest.pop() {
+        let mut rest = vec![(first, reach, false)];
+        while let Some((sources, reach, runs)) = rest.pop() {
+            let from = given.len();
             for source in sources {
                 self.steps += 1;
                 match source {
@@ -2715,8 +2730,10 @@ impl Known {
                                 !lends.deep.get(position).copied().unwrap_or(true)
                             });
                             match record.pointees[position].filter(|_| direct) {
-                                Some(pointee) => rest.push((run(&of.problem.args, pointee), false)),
-                                None => rest.push((run(&of.problem.args, arg), true)),
+                                Some(pointee) => {
+                                    rest.push((run(&of.problem.args, pointee), false, false));
+                                }
+                                None => rest.push((run(&of.problem.args, arg), true, record.runs)),
                             }
                         }
                     }
@@ -2725,8 +2742,26 @@ impl Known {
                     }
                 }
             }
+            // What a call may run may give a pointer out to a variable
+            // that it takes the address of.
+            if runs {
+                self.given_out(&mut given, from);
+            }
         }
         given
+    }
+
+    /// To the loans from the number `from` on: a pointer to each
+    /// variable that a function literal among them takes the address
+    /// of, which a call of the literal may give out.
+    fn given_out(&mut self, given: &mut Vec<u32>, from: usize) {
+        for at in from..given.len() {
+            let (root, way, made) = &self.loans[given[at] as usize];
+            if way[..] == [Step::Addressed] {
+                let (root, made) = (*root, *made);
+                given.push(self.loan(root, Vec::new(), made));
+            }
+        }
     }
 
     /// The loans of the place at the way from the variable, made at
@@ -2802,6 +2837,11 @@ impl Known {
                 }
             }
             Event::Called(call) => {
+                for (holder, loans) in self.stored_by_literals(sets, set, sources, call) {
+                    for loan in loans {
+                        set = self.hold(sets, set, holder, loan);
+                    }
+                }
                 for stored in self.stored_by(sets, set, sources, call) {
                     let given = stored.given.iter().flat_map(|(_, loans)| loans);
                     let given: Vec<u32> = given.chain(&stored.own).copied().collect();
@@ -2879,7 +2919,7 @@ impl Known {
                 let (root, way, _) = &self.loans[loan as usize];
                 match way[..] {
                     [Step::Captured(_, true, _)] => written.push((*root, Vec::new(), false)),
-                    [Step::Captured(..)] => {}
+                    [Step::Captured(..)] | [Step::Addressed] => {}
                     _ => written.push((*root, way.clone(), true)),
                 }
             }
@@ -2904,7 +2944,7 @@ impl Known {
             loans.retain(|&loan| {
                 let (root, way, _) = &self.loans[loan as usize];
                 let through = way.iter().filter(|step| **step == Step::Target).count() > 1;
-                let captured = matches!(way[..], [Step::Captured(..)]);
+                let captured = matches!(way[..], [Step::Captured(..)] | [Step::Addressed]);
                 *root != OUTSIDE && !through && !captured
             });
             for (other, others) in &pointers {
@@ -2978,6 +3018,47 @@ impl Known {
                 given: others.map(|&arg| (arg, loans(arg))).collect(),
                 own,
             });
+        }
+        all
+    }
+
+    /// What a call may put into the variables that a function literal
+    /// among its arguments, or the one that is called, changes: such a
+    /// variable that may hold a pointer may hold, after the call, what
+    /// the literal reaches, and a pointer to each variable that it
+    /// takes the address of.
+    fn stored_by_literals(
+        &mut self,
+        sets: &Sets,
+        set: u32,
+        of: &Sources,
+        call: u32,
+    ) -> Vec<(LocalId, Vec<u32>)> {
+        let record = &of.problem.calls[call as usize];
+        let mut all = Vec::new();
+        for (position, &may) in record.changes.iter().enumerate() {
+            if !may {
+                continue;
+            }
+            let sources = run(&of.problem.args, record.args[position]);
+            let mut reached = self.given_by(sets, set, of, sources, true);
+            self.given_out(&mut reached, 0);
+            let changed = |this: &Self, loan: &u32| {
+                let (root, way, _) = &this.loans[*loan as usize];
+                matches!(way[..], [Step::Captured(true, true, _)]).then_some(*root)
+            };
+            let holders: Vec<LocalId> = (reached.iter())
+                .filter_map(|loan| changed(self, loan))
+                .collect();
+            for holder in holders {
+                self.steps += 1;
+                let given = reached.iter().copied().filter(|&loan| {
+                    let (root, way, _) = &self.loans[loan as usize];
+                    let marks = matches!(way[..], [Step::Captured(..)] | [Step::Addressed]);
+                    loan != self.outside && !marks && !(*root == holder && way.is_empty())
+                });
+                all.push((holder, given.collect()));
+            }
         }
         all
     }
