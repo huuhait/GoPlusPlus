@@ -1029,6 +1029,76 @@ func taken(c bool) int {
 }
 
 #[test]
+fn a_parameter_that_is_given_on_at_its_last_use_is_owned() {
+    // `keep` owns what it is given. Each function of the chain gives
+    // its parameter on as the last that it reads of it, so each owns
+    // its parameter, and the value goes through without a copy.
+    // `reads` reads its parameter again: it is lent, and makes the one
+    // copy. A receiver by value is given on like an argument.
+    let functions = [
+        "func keep(xs []int) []int { return xs }\n",
+        "func first(xs []int) []int { return keep(xs) }\n",
+        "func second(xs []int) []int { return first(xs) }\n",
+        "func third(xs []int) []int { return second(xs) }\n",
+        "func reads(xs []int) int { return len(first(xs)) + len(xs) }\n",
+        "type Bag struct{ items []int }\n",
+        "func (b Bag) Keep() Bag { return b }\n",
+        "func (b Bag) Size() int { return len(b.items) }\n",
+        "func both(b Bag) int {\n\tt := b.Keep()\n\treturn t.Size()\n}\n",
+        "func main() { println(len(third([]int{1})), reads([]int{2}), both(Bag{[]int{3}})) }\n",
+    ];
+    let text = format!("package main\n\n{}", functions.concat());
+    let mut facts = lent(&text);
+    facts.sort();
+    assert_eq!(
+        facts,
+        [
+            "main.Bag.Keep: own",
+            "main.Bag.Size: lent",
+            "main.both: own",
+            "main.first: own",
+            "main.keep: own",
+            "main.main: ",
+            "main.reads: lent",
+            "main.second: own",
+            "main.third: own",
+        ]
+    );
+    // The order of the functions changes nothing.
+    let mut turned: Vec<&str> = functions.to_vec();
+    turned.reverse();
+    let mut same = lent(&format!("package main\n\n{}", turned.concat()));
+    same.sort();
+    assert_eq!(same, facts);
+    let (lowered, messages) = lowered_with(&[("a.gopp", &text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    assert_eq!(module.matches("call const fn @_gopp_slice_copy").count(), 1);
+    let both = &module[module.find("\nfn _GPF4mainE4both(").unwrap()..];
+    let both = &both[..both.find("\n}\n").unwrap()];
+    assert_eq!(both.matches("@_GPTc").count(), 0, "{both}");
+}
+
+#[test]
+fn the_steps_grow_with_a_chain_of_functions_that_give_on() {
+    // Each function gives its parameter on to the next, and the last
+    // one owns it: every one of them owns its parameter in the end.
+    let chain = |count: usize, turned: bool| {
+        let mut functions: Vec<String> = (0..count)
+            .map(|i| format!("func f{i}(xs []int) []int {{ return f{}(xs) }}\n", i + 1))
+            .collect();
+        functions.push(format!("func f{count}(xs []int) []int {{ return xs }}\n"));
+        if turned {
+            functions.reverse();
+        }
+        steps_of(&format!("package main\n\n{}", functions.concat()))
+    };
+    let sizes = [100, 200, 400, 800];
+    assert_near_linear(&sizes, |n| chain(n, false));
+    assert_near_linear(&sizes, |n| chain(n, true));
+}
+
+#[test]
 fn a_type_with_a_drop_method_ends_by_it_and_is_copied_by_its_clone_method() {
     let text = "package main
 

@@ -1390,7 +1390,20 @@ impl<'a> Walk<'a> {
                     _ => {
                         rest.push(Todo::Called(expr));
                         values(rest, args);
-                        rest.push(Todo::Part(*fun));
+                        // A receiver by value is given like an
+                        // argument: the checker says where it is copied.
+                        let receiver = match tree.exprs[callee].kind {
+                            ExprKind::Selector { x, .. } => Some(self.unparen(x)),
+                            _ => None,
+                        };
+                        let given = receiver.filter(|x| {
+                            matches!(tree.exprs[*x].kind, ExprKind::Name(_))
+                                && self.modes.get(x) == Some(&Transfer::Copy)
+                        });
+                        rest.push(match given {
+                            Some(receiver) => Todo::Value(receiver),
+                            None => Todo::Part(*fun),
+                        });
                     }
                 }
             }

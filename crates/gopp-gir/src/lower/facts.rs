@@ -56,6 +56,13 @@ pub(crate) struct Facts {
     /// is not known where it is written.
     pub calls_values: bool,
     pub calling_values: FxHashSet<ExprId>,
+    /// The parameters that a call is given as the last that is read of
+    /// them: the variable, what is called, and which argument it is,
+    /// none for the receiver. And the same with the number of the
+    /// parameter, the symbol of the function and the number of its
+    /// parameter, for the calls of functions that are known.
+    passed: Vec<(LocalId, ExprId, Option<usize>)>,
+    pub given_on: Vec<(usize, String, usize)>,
     /// The variables whose address is taken.
     reached: FxHashSet<LocalId>,
     /// The variables that a function literal which is not framed uses
@@ -251,6 +258,39 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
     };
     let all = || receiver.iter().chain(params);
     (walk.facts.lent, walk.facts.worked) = (all().map(lent).collect(), all().map(worked).collect());
+    // The parameters that are given on, and to which parameter of which
+    // function.
+    let mut namer = Namer::new(shared.types, shared.names);
+    for (local, callee, at) in std::mem::take(&mut walk.facts.passed) {
+        let named = |param: &Param| {
+            let found = (param.name).and_then(|name| walk.body.defs.get(&name.span.lo));
+            found == Some(&local)
+        };
+        let Some(param) = all().position(named) else {
+            continue;
+        };
+        let called = match (&tree.exprs[callee].kind, walk.body.uses.get(&callee)) {
+            (ExprKind::Name(_), Some(Ref::Object(object))) => {
+                at.map(|at| (Entity::Object(shared.home(job.file), *object), at))
+            }
+            (ExprKind::Selector { sel, .. }, _) => match walk.body.selections.get(&callee) {
+                Some(selection) if selection.kind == SelectionKind::Method => {
+                    let method = Entity::Method {
+                        receiver: selection.holder,
+                        name: sel.name,
+                    };
+                    Some((method, at.map_or(0, |at| at + 1)))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((entity, position)) = called
+            && let Ok(symbol) = symbol_of(&mut namer, entity)
+        {
+            walk.facts.given_on.push((param, symbol, position));
+        }
+    }
     walk.facts
 }
 
@@ -530,6 +570,21 @@ impl Walk<'_> {
                 self.more(first);
             }
             return;
+        }
+        if self.inside == 0 {
+            let receiver = match self.tree.exprs[callee].kind {
+                ExprKind::Selector { x, .. } => Some((x, None)),
+                _ => None,
+            };
+            let given = args.iter().enumerate().map(|(at, &arg)| (arg, Some(at)));
+            for (arg, at) in receiver.into_iter().chain(given) {
+                let arg = self.unparen(arg);
+                if let (true, Some(Ref::Local(local))) =
+                    (self.body.last_uses.contains(&arg), self.body.uses.get(&arg))
+                {
+                    self.facts.passed.push((*local, callee, at));
+                }
+            }
         }
         if self.through_value(callee) {
             match self.within.last() {

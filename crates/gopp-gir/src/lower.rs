@@ -1122,6 +1122,7 @@ impl<'a> Shared<'a> {
             }
             job.facts = facts;
         }
+        self.own_what_is_given_on();
         // A literal that a function is lent is framed, which is known
         // now that every function has its facts.
         let mut facts: Vec<_> = (self.jobs.iter_mut())
@@ -1133,6 +1134,59 @@ impl<'a> Shared<'a> {
             .for_each(|(facts, job)| facts.lend(shared, job));
         for (job, facts) in self.jobs.iter_mut().zip(facts) {
             job.facts = facts;
+        }
+    }
+
+    /// A parameter that its function gives on, as the last that is
+    /// read of it, to a function which owns what it is given is the
+    /// function's own too: its value goes through without a copy. What
+    /// one function owns so, another that gives on to it may own, until
+    /// nothing changes; the order of the functions changes nothing.
+    fn own_what_is_given_on(&mut self) {
+        // For each parameter of a function, those that are given on to
+        // it: the job and its parameter.
+        let mut given: FxHashMap<(&str, usize), Vec<(usize, usize)>> = FxHashMap::default();
+        for (at, job) in self.jobs.iter().enumerate() {
+            for (param, symbol, position) in &job.facts.given_on {
+                let to = (symbol.as_str(), *position);
+                given.entry(to).or_default().push((at, *param));
+            }
+        }
+        // What is owned from the start, by a function that is known.
+        let mut owned: Vec<(usize, usize)> = Vec::new();
+        for (&(symbol, position), givers) in &given {
+            let lent = self.lent.get(symbol).and_then(|lent| lent.get(position));
+            if lent == Some(&false) {
+                owned.extend(givers);
+            }
+        }
+        let mut changed: FxHashSet<(usize, usize)> = FxHashSet::default();
+        let mut steps = given.len() as u64;
+        while let Some((at, param)) = owned.pop() {
+            steps += 1;
+            let job = &self.jobs[at];
+            if job.facts.lent.get(param) != Some(&true) || !changed.insert((at, param)) {
+                continue;
+            }
+            if let Some(givers) = given.get(&(job.symbol.as_str(), param)) {
+                owned.extend(givers);
+            }
+        }
+        drop(given);
+        if let Some(first) = self.jobs.first_mut() {
+            first.facts.steps += steps;
+        }
+        let mut changed: Vec<(usize, usize)> = changed.into_iter().collect();
+        changed.sort_unstable();
+        for (at, param) in changed {
+            let job = &mut self.jobs[at];
+            job.facts.lent[param] = false;
+            job.facts.worked[param] = false;
+            if !job.symbol.is_empty() {
+                self.lent.insert(job.symbol.clone(), job.facts.lent.clone());
+                self.worked
+                    .insert(job.symbol.clone(), job.facts.worked.clone());
+            }
         }
     }
 

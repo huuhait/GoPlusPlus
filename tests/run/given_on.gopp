@@ -1,0 +1,65 @@
+package main
+
+// A value that a function gives on at its last use goes through without
+// a copy: the function owns its parameter then, and so does the one
+// that gives on to it. A copy is made only where the value is read
+// again.
+
+type R struct{ name string }
+
+// A value that was given away is empty where it was.
+func (r *R) drop() {
+	if r.name != "" {
+		println("  end", r.name)
+	}
+}
+
+func (r R) Clone() R {
+	println("  copy", r.name)
+	return R{r.name + "'"}
+}
+
+// It changes its own copy, so it owns what it is given.
+func sink(r R) {
+	r.name += "!"
+	println("  sink", r.name)
+}
+
+func first(r R) { sink(r) }
+
+func second(r R) { first(r) }
+
+func third(r R) { second(r) }
+
+func maybe(r R, give bool) {
+	if give {
+		sink(r)
+		return
+	}
+	println("  kept", r.name)
+}
+
+func (r R) Into() { third(r) }
+
+func twice(r R) {
+	sink(r)
+	sink(r)
+}
+
+func main() {
+	println("chain")
+	third(R{"a"})
+	println("one way")
+	maybe(R{"b"}, true)
+	maybe(R{"c"}, false)
+	println("receiver")
+	d := R{"d"}
+	d.Into()
+	println("read again")
+	e := R{"e"}
+	third(e)
+	println(e.name)
+	println("twice")
+	twice(R{"f"})
+	println("done")
+}

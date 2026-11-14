@@ -1,0 +1,24 @@
+chain
+  sink a!
+  end a!
+one way
+  sink b!
+  end b!
+  kept c
+  end c
+receiver
+  sink d!
+  end d!
+read again
+  copy e
+  sink e'!
+  end e'!
+e
+twice
+  copy f
+  sink f'!
+  end f'!
+  sink f!
+  end f!
+done
+  end e
