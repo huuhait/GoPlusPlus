@@ -1,0 +1,18 @@
+red tile r' tile x/red blue tile r
+tile y/green tile y/green
+green tile q'
+  end w'
+gray tile w' gray tile w'' tile x/blue
+  end r'
+  end w''
+shape plain
+ tile '
+  end '
+  end 
+  end w'
+  end w
+  end q'
+  end q
+  end r'
+  end r'
+  end r

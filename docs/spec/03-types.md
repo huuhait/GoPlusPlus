@@ -231,7 +231,7 @@ type Card struct {
 
 **TYP-24.** *Safety interplay.* Each of these is also stated where the rule lives:
 - ownership: drop order is the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in **reverse** `@Extends` order (`Pn` down to `P1`) ([OWN-R2](04-ownership.md#42-ownership-rules-d14)); moves are of the whole value ([OWN-R3](04-ownership.md#42-ownership-rules-d14));
-- copies and `Clone`: a copy covers all parents' and the child's fields; an abstract type cannot be copied by value; a copy is always of the whole real value: through a pointer or a `Unique` of any parent `P` with a type table it is written `p.Clone()` and gives a `Unique[P]` holding a full copy of the dynamic type ([OWN-R6](04-ownership.md#42-ownership-rules-d14), ADR-0023 decision 16);
+- copies and `Clone`: a copy covers all parents' and the child's fields; an abstract type cannot be copied by value; a copy is always of the whole real value: through a pointer or a `Unique` of any parent `P` with a type table it is written `p.Clone()` and gives a `Unique[P]` holding a full copy of the dynamic type, so a child of a parent with a type table that can be copied can be copied too, which is checked where the child is declared ([OWN-R6](04-ownership.md#42-ownership-rules-d14), ADR-0023 decision 16);
 - borrow checking: an upcast pointer to any tagged ancestor is the same borrow ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021);
 - `Send` / `Sync`: a child is labeled from all its fields, all parents' fields included ([CON-12](12-concurrency.md), ADR-0022);
 - `@Required`: [TYP-17](#35-inheritance-adr-0023);

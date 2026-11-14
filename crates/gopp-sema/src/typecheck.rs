@@ -530,6 +530,10 @@ struct Checker<'a> {
     /// where the attribute is: what it may be on is checked once every
     /// type is known.
     required_fields: Vec<(TypeId, Span)>,
+    /// The types with parents and where each is declared: how they are
+    /// copied is asked once the types that need instances without end
+    /// are known.
+    children: Vec<(TypeId, Span)>,
     /// While a body is walked: the pointer variables that point into what
     /// a `Shared` holds, which is only read through them.
     read_only: FxHashSet<LocalId>,
@@ -696,6 +700,7 @@ pub fn declarations(
         narrowed: FxHashSet::default(),
         lookup_target: None,
         required_fields: Vec::new(),
+        children: Vec::new(),
         value_types: Vec::new(),
         options: Vec::new(),
         heaped: Vec::new(),
@@ -1502,6 +1507,9 @@ impl<'a> Checker<'a> {
         if self.marked {
             for (elem, span) in std::mem::take(&mut self.sent) {
                 self.sendable(elem, span);
+            }
+            for (ty, span) in std::mem::take(&mut self.children) {
+                self.copied_as_parents(ty, span);
             }
         }
         for (held, span, written) in std::mem::take(&mut self.heaped) {
@@ -2941,6 +2949,7 @@ impl<'a> Checker<'a> {
         if x.is_value()
             && let Some(method) = self.handle_method(&x, sel.name)
         {
+            self.whole_copied(&x, sel);
             return method;
         }
         let recv = x.ty;

@@ -616,6 +616,27 @@ pub fn explain(code: Code) -> Option<Explanation> {
              error\n}\n\nfunc counter() Local[func() int] {\n\tn := 0\n\treturn func() int { \
              n++; return n } // ok\n}",
         ),
+        ExtendsNotCopied => (
+            "A type cannot be copied, and a parent of it with a type table can. A `Unique` of \
+             the parent may hold a value of the child, and a copy of that handle, or \
+             `p.Clone()` through a pointer to the parent, copies the whole value.",
+            "Give the part that cannot be copied its copy method `func (f File) Clone() \
+             File`, or hold it in a `Shared`.",
+            "type File struct{ fd int }\n\nfunc (f *File) drop() {}\n\ntype Shape \
+             struct{}\n\n@Virtual\nfunc (s *Shape) Area() int { return 0 }\n\n\
+             @Extends(Shape)\ntype Sheet struct{ f File } // error\n\n@Extends(Shape)\ntype \
+             Page struct{ f Shared[File] } // ok",
+        ),
+        CloneNotCopied => (
+            "`p.Clone()` through a pointer, a `Unique` or a `Shared` of a type with a type \
+             table makes a `Unique` with a copy of the whole value that `p` points into. \
+             The type cannot be copied.",
+            "Give the type its copy method `func (t T) Clone() T`, or share the value with \
+             a `Shared`.",
+            "type Conn struct{ fd int }\n\nfunc (c *Conn) drop() {}\n\n@Virtual\nfunc (c \
+             *Conn) Name() string { return \"conn\" }\n\nfunc dup(c *Conn) Unique[Conn] { \
+             return c.Clone() } // error",
+        ),
         GoCapture => (
             "A function literal that `go` runs uses a variable of the function around it \
              that something else still touches: the function after the `go` statement, a \

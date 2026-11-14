@@ -364,7 +364,13 @@ impl Types {
             let part = match &*node {
                 Type::Named { id, args } => match self.own_copy(current, *id, args) {
                     Some(own) => return Some((current, own)),
-                    None => Some(self.underlying(current)),
+                    // The parents are parts of the value.
+                    None => Some(
+                        self.parents(current)
+                            .into_iter()
+                            .find(fails)
+                            .unwrap_or_else(|| self.underlying(current)),
+                    ),
                 },
                 Type::Param(_) => return Some((current, NotCopied::Param)),
                 Type::Unique(elem) | Type::Slice(elem) if at_all => Some(*elem),

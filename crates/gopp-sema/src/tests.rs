@@ -8101,6 +8101,116 @@ var flat Flat
     assert_eq!(categories(text), expected);
 }
 
+// rule: OWN-R6, EXP-14
+#[test]
+fn a_child_of_a_parent_that_is_copied_through_a_pointer_can_be_copied() {
+    // A `Unique[Shape]` may hold any child of `Shape`, and its copy is
+    // one of the whole value: a child that cannot be copied is refused
+    // where it is declared (`Sheet`, `Deep`), and so is one that cannot
+    // for some type argument (`Box`, `Maybe`, not `Bag`). A parent that
+    // is never copied (`Leaf`, `Never`) or has no type table (`Tail`)
+    // asks nothing, and a child whose parts can all be copied is fine
+    // (`Page`, `Kept`).
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Res struct{ fd int }
+
+func (r *Res) drop() {}
+
+func (r Res) Clone() Res { return Res{r.fd} }
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Area() int { return 0 }
+
+@Extends(Shape)
+type Sheet struct{ f File }
+
+@Extends(Shape)
+type Page struct{ r Res }
+
+@Extends(Shape)
+type Kept struct{ f Shared[File] }
+
+@Extends(Page)
+type Deep struct{ f File }
+
+@Extends(Shape)
+type Box[T any] struct{ v T }
+
+@Extends(Shape)
+type Bag[T Clone] struct{ v T }
+
+type Conn struct{ f File }
+
+@Virtual
+func (c *Conn) Name() string { return \"conn\" }
+
+@Extends(Conn)
+type Leaf struct{ g File }
+
+type Plain struct{ n int }
+
+@Extends(Plain)
+type Tail struct{ f File }
+
+type Slot[T any] struct{ v T }
+
+@Virtual
+func (s *Slot[T]) Get() *T { return &s.v }
+
+@Extends(Slot[File])
+type Never struct{ g File }
+
+@Extends(Slot[T])
+type Maybe[T any] struct{ g File }
+
+func twins(s *Shape, u Unique[Shape], sh Shared[Shape], bag *Bag[string]) {
+	a := s.Clone()
+	b := u.Clone()
+	c := sh.Clone()
+	var d Unique[Bag[string]] = bag.Clone()
+	_, _, _, _ = a, b, c, d
+}
+
+func dup(c *Conn, u Unique[Conn], p *Plain) {
+	x := c.Clone()
+	y := u.Clone()
+	z := p.Clone()
+	_, _, _ = x, y, z
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let child = |at: &str, name: &str, why: &str, parent: &str| {
+        format!(
+            "a.gopp:{at}: {name} cannot be copied ({why}), and its parent {parent} can: a \
+             Unique[{parent}] that holds a {name} is copied as a whole"
+        )
+    };
+    let file = "File has a drop method and no Clone() File";
+    let param = "T is not constrained by Clone";
+    let whole = |at: &str, of: &str, by: &str| {
+        format!("a.gopp:{at}: cannot copy the {of} that {by} points to: {file}")
+    };
+    let expected = [
+        child("19:6", "Sheet", file, "Shape"),
+        child("28:6", "Deep", file, "Page"),
+        child("31:6", "Box", param, "Shape"),
+        child("58:6", "Maybe", param, "Slot[T]"),
+        whole("69:9", "Conn", "*Conn"),
+        whole("70:9", "Conn", "Unique[Conn]"),
+        "a.gopp:71:9: p.Clone undefined (type Plain has no field or method Clone)".to_owned(),
+    ];
+    assert_eq!(said, expected);
+}
+
 // rule: TYP-20, CLO-2
 #[test]
 fn a_function_literal_that_names_base_uses_the_receiver() {

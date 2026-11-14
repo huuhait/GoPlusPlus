@@ -170,7 +170,25 @@ A plain `range` variable is a read-only name for an existing value. An assertion
 - A copy is written as an assignment, an argument or a result: `b := a`, `f(a)`, `return a` ([OWN-R3](#42-ownership-rules-d14)). The copy of what a pointer points to is `*p`. The constraint `Clone` means "can be copied"; `Copy` means "is copied by copying its bytes" ([GEN-1](10-generics.md)).
 - The copy of each type that can be copied (`OWN-C1`, `OWN-C2`): built-in scalars (the bytes), `string` (the same immutable bytes), `[]T` (a fresh backing array in the slice's allocator with a copy of each element), `map[K]V` (a fresh map in the map's allocator with a copy of each key and value), `Unique[T]` (a new `Unique[T]` holding a copy of `*u`), `Shared[T]` / `Weak[T]` / `chan` / `func` (the handle, retained), an interface value (a box of its own holding a copy of the value, [TYP-5](03-types.md)), and structs/arrays whose fields can all be copied (each field by its own rule).
 - A type with a `drop` method can be copied **only** if it defines the copy method `Clone() T` by hand (with a value receiver `func (h Handle) Clone() Handle`, whose receiver is borrowed read-only without consuming `h`); `b := a` then calls that method. Without it the type cannot be copied (`OWN-C3`). This prevents accidental duplication of OS handles. A copy may be skipped ([OWN-R3](#42-ownership-rules-d14)), so a `Clone` method must not have effects a program relies on.
-- *Types with parents.* The copy of a child copies all parent and child fields. For any ancestor `P` with a type table ([TYP-22](03-types.md#35-inheritance-adr-0023)), `p.Clone()` on a `*P`, a `Unique[P]` or a `Shared[P]` returns a `Unique[P]` holding a full copy of the dynamic type ([ADR-0023](../adr/0023-inheritance.md) decision 16). `*p` would give only the parent part ([EXP-15](06-expressions.md#69-upcasts-and-downcasts-adr-0023)).
+- *Types with parents.* The copy of a child copies all parent and child fields. For any ancestor `P` with a type table ([TYP-22](03-types.md#35-inheritance-adr-0023)), `p.Clone()` on a `*P`, a `Unique[P]` or a `Shared[P]` returns a `Unique[P]` holding a full copy of the dynamic type ([ADR-0023](../adr/0023-inheritance.md) decision 16). `*p` would give only the parent part ([EXP-15](06-expressions.md#69-upcasts-and-downcasts-adr-0023)). `p.Clone()` there is always this copy of the whole value, also when `P` has a copy method `Clone() P` of its own (that method is what `=` calls for a value of `P`, and what the copy of the whole value calls for the `P` part); it is an error when `P` cannot be copied.
+- *A child of a parent that is copied through a pointer can be copied.* A `Unique[P]` may hold a value of any child of `P`, and its copy (`b := a`, or `p.Clone()`) is a copy of that whole value. So when a parent `P` with a type table can be copied, every child of it can be copied too: a child that cannot is a compile error where it is declared. For a generic parent or child the rule holds for every type argument: if `P` can be copied for some type arguments, the child can be copied for all of its own (`@Extends(Shape) type Box[T any] struct{ v T }` is an error; `Box[T Clone]` is fine). A parent that can never be copied (it holds a value with a `drop` method and no `Clone`), or one without a type table, asks nothing of its children.
+
+```go
+type File struct{ fd int }
+func (f *File) drop() { /* close */ }
+
+type Shape struct{ name string }
+@Virtual
+func (s *Shape) Area() int { return 0 }
+
+@Extends(Shape)
+type Sheet struct{ f File }           // error: Sheet cannot be copied, and its parent Shape can
+
+@Extends(Shape)
+type Page struct{ f Shared[File] }    // ok: the copy shares the file
+
+func twin(s *Shape) Unique[Shape] { return s.Clone() }   // a copy of the Page, or of whatever s points into
+```
 
 **OWN-R7.** *Destructors are a method named `drop`* with a pointer receiver: `func (f *File) drop()`. It cannot be called directly (like `init`), and must accept the zero value safely.
 

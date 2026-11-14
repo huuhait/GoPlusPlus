@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::object::CaptureUse;
-use crate::types::{Found, Marks, NamedId, PARENT};
+use crate::types::{Found, Marks, NamedId, NotCopied, PARENT};
 
 impl<'a> Checker<'a> {
     fn marked(&self, cx: &Cx<'a>, attr: &Attribute, name: &str) -> bool {
@@ -242,6 +242,7 @@ impl<'a> Checker<'a> {
             }
         }
         self.parents_clash(ty, span, &parents);
+        self.children.push((ty, span));
         // What is left open makes the type abstract, which it says.
         if !self.types.is_abstract_marked(ty) {
             let open = self.types.open_abstracts(ty);
@@ -256,6 +257,62 @@ impl<'a> Checker<'a> {
                 self.error_with_fix(Code::AbstractUnimplemented, span, message, fix);
             }
         }
+    }
+
+    /// A `Unique` of a parent with a type table may hold a value of
+    /// `ty`, and its copy is one of the whole value (OWN-R6): where the
+    /// parent can be copied, for some type arguments at least, `ty` can.
+    pub(super) fn copied_as_parents(&mut self, ty: TypeId, span: Span) {
+        let Some((part, why)) = self.types.not_copied(ty, true) else {
+            return;
+        };
+        let copied = self.types.parents(ty).into_iter().find(|&parent| {
+            let never = self.types.not_copied(parent, true);
+            let never = never.is_some_and(|(_, why)| why != NotCopied::Param);
+            self.types.has_table(parent) && !never
+        });
+        let Some(parent) = copied else {
+            return;
+        };
+        let (shown, parent) = (self.type_string(ty), self.type_string(parent));
+        let message = format!(
+            "{shown} cannot be copied ({}), and its parent {parent} can: a Unique[{parent}] \
+             that holds a {shown} is copied as a whole",
+            self.not_copied_text(part, why, true)
+        );
+        let part = self.type_string(part);
+        let fix = match why {
+            NotCopied::Drop => format!("define func (v {part}) Clone() {part}"),
+            NotCopied::Param => format!("constrain {part} by Clone"),
+            _ => return self.error(Code::ExtendsNotCopied, span, message),
+        };
+        self.error_with_fix(
+            Code::ExtendsNotCopied,
+            span,
+            message,
+            (Code::NoteOwnFixOption, fix),
+        );
+    }
+
+    /// `p.Clone()` through a pointer or a handle `x` of a type with a
+    /// type table (EXP-14) copies a value of that type or of a child of
+    /// it: the type can be copied, and so can every child of it.
+    pub(super) fn whole_copied(&mut self, x: &Operand, sel: Ident) {
+        let (Type::Pointer(elem) | Type::Unique(elem) | Type::Shared(elem)) =
+            &*self.types.get(self.types.underlying(x.ty))
+        else {
+            return;
+        };
+        let Some((part, why)) = self.types.not_copied(*elem, true) else {
+            return;
+        };
+        let message = format!(
+            "cannot copy the {} that {} points to: {}",
+            self.type_string(*elem),
+            self.type_string(x.ty),
+            self.not_copied_text(part, why, true)
+        );
+        self.error(Code::CloneNotCopied, sel.span, message);
     }
 
     /// Two parents of `ty` have a member of one name: a field, or

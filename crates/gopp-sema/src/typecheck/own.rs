@@ -66,7 +66,9 @@ impl<'a> Checker<'a> {
     }
 
     /// A method of an option or of a `Weak`, which are no values of what
-    /// they hold: `o.IsNil()`, `o.Get()`, `w.Lock()`.
+    /// they hold: `o.IsNil()`, `o.Get()`, `w.Lock()`; and `p.Clone()`
+    /// through a pointer or a handle of a type with a type table, which
+    /// copies the whole value that `p` points into (EXP-14).
     pub(super) fn handle_method(&self, x: &Operand, name: Spur) -> Option<Operand> {
         let bool = self.types.basic(Basic::Bool);
         let results = match (
@@ -78,6 +80,11 @@ impl<'a> Checker<'a> {
             (Type::Weak(elem), "Lock") => {
                 let shared = self.types.handle(Type::Shared, *elem).ok()?;
                 vec![self.types.option(shared)]
+            }
+            (Type::Pointer(elem) | Type::Unique(elem) | Type::Shared(elem), "Clone")
+                if self.types.has_table(*elem) =>
+            {
+                vec![self.types.handle(Type::Unique, *elem).ok()?]
             }
             _ => return None,
         };

@@ -1,0 +1,62 @@
+package main
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape " + s.name }
+
+type Tagged struct{ tag string }
+
+@Virtual
+func (t *Tagged) Tag() string { return "tag " + t.tag }
+
+func (t *Tagged) Twin() Unique[Tagged] { return t.Clone() }
+
+@Extends(Shape)
+@Extends(Tagged)
+type Tile struct {
+	color string
+	held  Res
+}
+
+@Override
+func (t *Tile) Kind() string { return t.color + " tile " + t.held.name }
+
+@Override
+func (t *Tile) Tag() string { return "tile " + t.tag + "/" + t.color }
+
+func twice(s *Shape) Unique[Shape] {
+	return s.Clone().Clone()
+}
+
+func main() {
+	tile := Tile{name: "t", tag: "x", color: "red", held: Res{"r"}}
+	var s *Shape = &tile
+	var t *Tagged = &tile
+	c := s.Clone()
+	d := t.Clone()
+	tile.color = "blue"
+	println(c.Kind(), d.Tag(), s.Kind())
+	u := NewUnique(Tile{name: "u", tag: "y", color: "green", held: Res{"q"}})
+	var up Unique[Tagged] = move(u)
+	e := up.Clone()
+	println(e.Tag(), up.Tag())
+	back := e.(*Tile)
+	println(back.Kind())
+	sh := NewShared(Tile{name: "s", tag: "z", color: "gray", held: Res{"w"}})
+	var base Shared[Shape] = sh
+	f := base.Clone()
+	println(f.Kind(), twice(base).Kind(), tile.Twin().Tag())
+	plain := Shape{name: "plain"}
+	g := (&plain).Clone()
+	println(g.Kind())
+	var zero Tile
+	z := (&zero).Clone()
+	println(z.Kind())
+}

@@ -1419,6 +1419,10 @@ impl<'a> FuncCx<'a, '_> {
         if let Some(asked) = self.option_asked(callee) {
             return self.option_call(expr, asked);
         }
+        if let Some(pointer) = self.whole_cloned(callee) {
+            let made = self.whole_clone(span, expr, ty, pointer)?;
+            return self.fresh(expr, ty, made);
+        }
         if let Some(found) = self.table_called(span, callee, args, *spread)? {
             return match found {
                 Ok((called, given)) => self.call_with(expr, &called, given, args),
@@ -2012,6 +2016,42 @@ impl<'a> FuncCx<'a, '_> {
         };
         let locked = self.runtime(lock, &[bytes], bytes, vec![handle])?;
         Ok(Rvalue::Cast(CastKind::PtrToPtr, locked, ty))
+    }
+
+    /// The pointer or the handle that the call `p.Clone()` copies the
+    /// whole value of, if `callee` is such a method: one of a type with
+    /// a type table (EXP-14).
+    fn whole_cloned(&self, callee: ExprId) -> Option<ExprId> {
+        let ExprKind::Selector { x, sel } = self.tree.exprs[callee].kind else {
+            return None;
+        };
+        let types = self.shared.types;
+        let of = self.body.types.get(&x)?.ty;
+        let tabled = match &*types.get(types.underlying(of)) {
+            CheckedType::Pointer(to) | CheckedType::Unique(to) | CheckedType::Shared(to) => {
+                types.has_table(*to)
+            }
+            _ => false,
+        };
+        let named = self.shared.names.resolve(&sel.name) == "Clone";
+        (tabled && named && !self.body.selections.contains_key(&callee)).then_some(x)
+    }
+
+    /// `p.Clone()` (EXP-14, OWN-R6): a `Unique` with a copy of the whole
+    /// value that `p` points into, at the same part. A pointer and each
+    /// handle is the address of that part, so the copy is that of a
+    /// `Unique` of the type, which `ty` is.
+    fn whole_clone(
+        &mut self,
+        span: SourceSpan,
+        expr: ExprId,
+        ty: TypeId,
+        pointer: ExprId,
+    ) -> Built<Rvalue> {
+        let place = self.place(pointer, &mut PlaceMode::default())?;
+        let held = Rvalue::Cast(CastKind::PtrToPtr, Operand::Copy(place), ty);
+        let checked = self.body.types.get(&expr).map(|typed| typed.ty);
+        self.cloned_value(span, checked, held)
     }
 
     /// The instance of a generic function of the package that the

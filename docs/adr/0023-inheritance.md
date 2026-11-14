@@ -80,7 +80,7 @@ Go++ therefore provides explicit struct inheritance with `@Extends(P)`, one attr
 
 9. **Safety interplay (TYP-24).**
    - *Ownership and drop order (OWN-R2):* destruction runs child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in **reverse** `@Extends` order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse).
-   - *Clone (OWN-R6, decision 16):* auto-`Clone` covers all parent and child fields. Through `*P` or `Unique[P]` of any tagged ancestor `P`, `p.Clone()` recovers `top` via `offset_to_top`, allocates a `Unique` copy of the **entire** dynamic object, and returns `Unique[P]` pointing at its `P` subobject.
+   - *Clone (OWN-R6, decision 16):* auto-`Clone` covers all parent and child fields. Through `*P` or `Unique[P]` of any tagged ancestor `P`, `p.Clone()` recovers `top` via `offset_to_top`, allocates a `Unique` copy of the **entire** dynamic object, and returns `Unique[P]` pointing at its `P` subobject. So every child of a tagged parent that can be copied can be copied too; a child that cannot is an error where it is declared (OWN-R6).
    - *Borrow checking (ADR-0021):* any upcast pointer (`*Child` to `*P1` or `*P2`) is the same borrow of the same owner.
    - *Send / Sync (ADR-0022):* a child is labeled from all its fields, all parents' fields included.
    - *Generics (GEN-12):* an interface with `@Extends(P)` is a constraint, and several `@Extends` on it require all the parents.
