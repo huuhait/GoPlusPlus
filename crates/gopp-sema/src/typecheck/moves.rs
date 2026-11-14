@@ -65,6 +65,10 @@ pub(super) enum Event {
     Fresh(LocalId),
     /// A `go` statement runs the function literal with the number.
     Spawned(u32),
+    /// What the sources from the first number to the second give is
+    /// written through: by a pointer that no variable holds, or by
+    /// another name of an element.
+    Through(u32, u32, Span),
 }
 
 /// A variable that is read where it may hold no value.
@@ -344,6 +348,8 @@ pub(super) struct Walk<'a> {
     /// receiver first.
     pub owner: Option<borrows::Callee>,
     pub top: bool,
+    /// A pointer of the body may point into what is only read.
+    pub marked: bool,
     pub params: Vec<Option<LocalId>>,
     pub funcs: Vec<bool>,
     pub changes: Vec<borrows::Change>,
@@ -430,6 +436,7 @@ pub(super) fn of(
         plain: FxHashSet::default(),
         owner,
         top: true,
+        marked: false,
         params: Vec::new(),
         funcs: Vec::new(),
         changes: Vec::new(),
@@ -583,12 +590,14 @@ impl<'a> Checker<'a> {
         // first problem of the body.
         let mut found = found;
         let seen_as = std::mem::take(&mut self.seen_as);
+        let bound = std::mem::take(&mut self.bound);
         let only_names = Arc::new(self.only_names(cx));
         for problem in &mut found.lent {
             problem.only_names = only_names.clone();
         }
         if let Some(first) = found.lent.first_mut() {
             first.seen_as = seen_as;
+            first.bound = bound;
         }
         let named = |this: &Self, local: LocalId| {
             let name = cx.body.locals[local.0 as usize].name;
@@ -766,6 +775,25 @@ impl<'a> Checker<'a> {
             };
             let diagnostic = Diagnostic::new(code, written.given, message);
             self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
+        }
+        for &(at, fixed, by_call) in &found.only_read {
+            if !self.report_once((at, fixed.code())) {
+                continue;
+            }
+            let message = match by_call {
+                true => format!(
+                    "cannot call {}: it may write through a pointer into what is only read: {}",
+                    text(at),
+                    fixed.why()
+                ),
+                false => format!(
+                    "cannot change {}: it may be only read: {}",
+                    text(at),
+                    fixed.why()
+                ),
+            };
+            let diagnostic = Diagnostic::new(fixed.code(), at, message);
+            self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fixed.fix().to_owned()));
         }
         for broken in walked.iter().chain(&found.broken) {
             let owner = named(self, broken.of);
@@ -2085,7 +2113,7 @@ impl<'a> Walk<'a> {
         let holds = self.events[self.given..].iter().any(|event| match event {
             Event::Holds(_, from, to, _) => to > from,
             Event::Returned(..) | Event::Stored(..) | Event::Called(_) | Event::Left(..) => true,
-            Event::Borrowed(_) => true,
+            Event::Borrowed(_) | Event::Through(..) => true,
             // What is changed through a pointer, those who call the
             // function are told.
             Event::Changed(change) => self.changes[*change as usize]
@@ -2317,6 +2345,7 @@ impl<'a> Walk<'a> {
                     | Event::Called(_)
                     | Event::Left(..)
                     | Event::Borrowed(_)
+                    | Event::Through(..)
                     | Event::Written(_)
                     | Event::Fresh(_)
                     | Event::Spawned(_) => continue,
@@ -2363,6 +2392,7 @@ impl<'a> Walk<'a> {
             | Event::Called(_)
             | Event::Left(..)
             | Event::Borrowed(_)
+            | Event::Through(..)
             | Event::Written(_)
             | Event::Fresh(_)
             | Event::Spawned(_) => None,
@@ -2399,6 +2429,7 @@ impl<'a> Walk<'a> {
             | Event::Called(_)
             | Event::Left(..)
             | Event::Borrowed(_)
+            | Event::Through(..)
             | Event::Written(_)
             | Event::Fresh(_)
             | Event::Spawned(_) => None,

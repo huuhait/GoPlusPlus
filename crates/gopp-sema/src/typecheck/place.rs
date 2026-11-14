@@ -368,6 +368,46 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The method `name` of the type `holder`, written `method` at
+    /// `at`, is taken as a value on what is only read: the value has
+    /// the address of its receiver, so the method only reads through
+    /// it. `done` has what the passes say of the functions.
+    pub(super) fn bound_to_only_read(
+        &mut self,
+        (at, fixed): (Span, Fixed),
+        method: &str,
+        (holder, name): (TypeId, Spur),
+        done: &FxHashMap<borrows::Callee, Arc<crate::types::Lends>>,
+    ) {
+        let known = match &*self.types.get(holder) {
+            Type::Named { id, .. } => {
+                let known = done.get(&borrows::Callee::Method(*id, name)).cloned();
+                known.or_else(|| self.types.lends(*id, name))
+            }
+            _ => None,
+        };
+        let writes = known
+            .as_ref()
+            .is_none_or(|lends| lends.changes.first().copied().unwrap_or(false));
+        if !writes || !self.report_once((at, fixed.code())) {
+            return;
+        }
+        let message = match known {
+            Some(_) => format!(
+                "cannot use {method} as a function value: the method writes through its \
+                 receiver, and {}",
+                fixed.why()
+            ),
+            None => format!(
+                "cannot use {method} as a function value: nothing says that the method only \
+                 reads through its receiver, and {}",
+                fixed.why()
+            ),
+        };
+        let diagnostic = Diagnostic::new(fixed.code(), at, message);
+        self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fixed.fix().to_owned()));
+    }
+
     /// What a `Shared` holds is taken, at `at`, as a value of the type
     /// `parent`, a parent of its type `child`. A call of a method of
     /// the parent that only reads, or has no body, may run the method
@@ -668,6 +708,11 @@ impl<'a> Checker<'a> {
 
     /// The pointer variable `expr` is pointed at something else.
     pub(super) fn repointed(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        // What it points into from here on, the borrow pass follows.
+        let pointer = self.unparen(cx, expr);
+        if let Some(local) = self.variable(cx, pointer) {
+            self.read_only.remove(&local);
+        }
         if let (false, Some((local, false))) = (self.literals.is_empty(), self.root(cx, expr)) {
             self.capture(cx, local, CaptureUse::Write);
         }
@@ -1024,6 +1069,19 @@ impl<'a> Checker<'a> {
             }
         }
         if !called && self.memo.is_some() {
+            // The value has the address of its receiver: on what is
+            // only read, the method writes nothing through it.
+            let fixed = match pointer_receiver {
+                true => self.points_into_fixed(cx, base),
+                false => None,
+            };
+            let holder = self.selections.get(&expr).map(|selection| selection.holder);
+            if let Some((fixed, holder)) = fixed.or_else(|| self.fixed(cx, base)).zip(holder)
+                && pointer_receiver
+            {
+                let at = cx.tree.exprs[expr].span;
+                self.bound.push((at, holder, name, fixed));
+            }
             self.operator_value(cx, expr, name);
             let holds = match bound {
                 true => MethodValue::Address,

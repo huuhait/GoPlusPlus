@@ -7189,6 +7189,180 @@ func ranged() int {
     assert_eq!(said, expected);
 }
 
+// rule: CON-18, OWN-P8
+#[test]
+fn a_pointer_into_what_is_only_read_is_followed() {
+    // A pointer into a variable of the package or into what a `Shared`
+    // holds is followed like any other: where it is assigned after its
+    // declaration (`later`, `joined`), kept in a field (`kept`), given
+    // back by a function or given on to one (`returned`), and where a
+    // call writes deeper than its argument points (`poke`, `wrap`).
+    // A method that writes is no function value on such a place
+    // (`value`), and the `&` variable of a range clause over one is
+    // not written (`ranged`). In `good`: a pointer that points
+    // somewhere else by then, the same calls on what the function
+    // owns, a method that only reads, and a call that only changes
+    // the value that holds the pointer.
+    let text = "package p
+
+type Box struct {
+	n     int
+	items []int
+}
+
+type Holder struct{ p *Box }
+
+func (b *Box) Set(n int)  { b.n = n }
+func (b *Box) Get() int   { return b.n }
+func (b *Box) Self() *Box { return b }
+
+var count int
+var box Box
+
+func bump(p *int)                 { *p += 1 }
+func give() *int                  { return &count }
+func field(b *Box) *int           { return &b.n }
+func same(p *int) *int            { return p }
+func fill(h Holder)               { h.p.n = 5 }
+func poke(h *Holder)              { h.p.n = 1 }
+func wrap(h *Holder)              { poke(h) }
+func reset(h *Holder, b *Box)     { h.p = b }
+func wrapReset(h *Holder, b *Box) { reset(h, b) }
+
+func later() {
+	u := 0
+	p := &u
+	*p = 1
+	p = &count
+	*p = 2
+}
+
+func kept() {
+	h := Holder{p: &box}
+	h.p.n = 3
+	fill(h)
+	poke(&h)
+	wrap(&h)
+}
+
+func returned() {
+	*give() = 8
+	r := give()
+	*r = 9
+	bump(give())
+	q := field(&box)
+	*q = 1
+	*same(&count) = 2
+	box.Self().n = 4
+}
+
+func value() int {
+	f := box.Set
+	f(3)
+	g := box.Get
+	return g()
+}
+
+func ranged() int {
+	n := 0
+	for _, &x := range box.items {
+		x = 1
+		n += x
+	}
+	return n
+}
+
+func joined(c bool) {
+	local := Box{}
+	p := &local
+	if c {
+		p = &box
+	}
+	p.n = 3
+	q := &local
+	for i := 0; i < 2; i++ {
+		q.n = i
+		q = &box
+	}
+}
+
+func shared() int {
+	s := NewShared(Box{n: 1})
+	t := s
+	*field(s) = 4
+	q := s.Self()
+	q.n = 5
+	h := Holder{p: s}
+	h.p.n = 6
+	f := s.Set
+	f(7)
+	g := s.Get
+	for _, &x := range s.items {
+		x = 1
+	}
+	return t.n + g()
+}
+
+func good() int {
+	u := 0
+	p := &count
+	n := *p
+	p = &u
+	*p = 1
+	b := Box{}
+	q := field(&b)
+	*q = 2
+	*same(&u) = 3
+	h := Holder{p: &b}
+	h.p.n = 4
+	fill(h)
+	poke(&h)
+	f := b.Set
+	f(5)
+	k := Holder{p: &box}
+	reset(&k, &b)
+	wrapReset(&k, &b)
+	return n + *give() + *field(&box) + u + b.n + k.p.n
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .map(|message| {
+            let message = message.strip_prefix("a.gopp:").unwrap_or(&message);
+            let message = message.replace(
+                "a variable of the package is only read once the program has started",
+                "package",
+            );
+            message.replace("what a Shared holds is only read", "shared")
+        })
+        .collect();
+    let expected = [
+        "32:2: cannot change *p: it may be only read: package",
+        "37:2: cannot change h.p.n: it may be only read: package",
+        "38:2: cannot call fill: it may write through a pointer into what is only read: package",
+        "39:2: cannot call poke: it may write through a pointer into what is only read: package",
+        "40:2: cannot call wrap: it may write through a pointer into what is only read: package",
+        "44:2: cannot change *give(): it may be only read: package",
+        "46:2: cannot change *r: it may be only read: package",
+        "47:2: cannot call bump: it may write through a pointer into what is only read: package",
+        "49:2: cannot change *q: it may be only read: package",
+        "50:2: cannot change *same(&count): it may be only read: package",
+        "51:2: cannot change box.Self().n: it may be only read: package",
+        "55:7: cannot use box.Set as a function value: the method writes through its receiver, \
+         and package",
+        "64:3: cannot change x: it may be only read: package",
+        "76:2: cannot change p.n: it may be only read: package",
+        "79:3: cannot change q.n: it may be only read: package",
+        "87:2: cannot change *field(s): it may be only read: shared",
+        "89:2: cannot change q.n: it may be only read: shared",
+        "91:2: cannot change h.p.n: it may be only read: shared",
+        "92:7: cannot use s.Set as a function value: the method writes through its receiver, and \
+         shared",
+        "96:3: cannot change x: it may be only read: shared",
+    ];
+    assert_eq!(said, expected);
+}
+
 #[test]
 fn the_steps_of_what_is_only_read_grow_with_the_input_not_faster() {
     let steps = |text: String| {
@@ -7222,9 +7396,30 @@ fn the_steps_of_what_is_only_read_grow_with_the_input_not_faster() {
             count - 1
         )
     };
+    // A pointer into a variable of the package that goes from one
+    // variable to the next, through a field and through a call, and
+    // is given to a function that only reads at every step.
+    let followed = |count: usize| {
+        let steps: String = (1..count)
+            .map(|i| {
+                let before = i - 1;
+                format!(
+                    "\th{i} := Holder{{p: same(h{before}.p)}}\n\tn += read(h{i}.p) + \
+                     peek(&h{i})\n"
+                )
+            })
+            .collect();
+        format!(
+            "package p\ntype Holder struct{{ p *int }}\nvar g int\nfunc read(p *int) int {{ \
+             return *p }}\nfunc same(p *int) *int {{ return p }}\nfunc peek(h *Holder) int {{ \
+             return *h.p }}\nfunc f() int {{\n\tn := 0\n\th0 := Holder{{p: \
+             &g}}\n{steps}\treturn n\n}}\n"
+        )
+    };
     let sizes = [100, 200, 400, 800];
     linear::assert_near_linear(&sizes, |n| steps(many(n)));
     linear::assert_near_linear(&sizes, |n| steps(deep(n)));
+    linear::assert_near_linear(&sizes, |n| steps(followed(n)));
 }
 
 // rule: PAN-3
@@ -8134,6 +8329,8 @@ func fine3(h *Holder, p *T) {
          outlives mine",
         "a.gopp:87:2: cannot give what p points to to find().Set: the call may store it where it \
          outlives what p points to",
+        "a.gopp:87:2: cannot call find().Set: it may write through a pointer into what is only \
+         read: a variable of the package is only read once the program has started",
     ];
     assert_eq!(said, expected);
 }

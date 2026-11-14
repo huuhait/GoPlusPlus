@@ -540,6 +540,10 @@ struct Checker<'a> {
     /// While a body is walked: where what a `Shared` holds is taken as
     /// a value of a parent of its type, with the child and the parent.
     seen_as: Vec<(Span, TypeId, TypeId, place::Fixed)>,
+    /// While a body is walked: where a method with a pointer receiver
+    /// is taken as a value on what is only read, with the type that
+    /// declares it and its name.
+    bound: Vec<(Span, TypeId, Spur, place::Fixed)>,
     /// While a body is walked: the variables that are declared with a
     /// value which `NewShared` made.
     made_shared: FxHashSet<LocalId>,
@@ -729,6 +733,7 @@ pub fn declarations(
         required_addresses: Vec::new(),
         read_only: FxHashMap::default(),
         seen_as: Vec::new(),
+        bound: Vec::new(),
         made_shared: FxHashSet::default(),
         lent_handles: FxHashSet::default(),
         shared_writes: Vec::new(),
@@ -1121,6 +1126,10 @@ impl<'a> Checker<'a> {
             self.lent((body, text), &carried, problem, found);
             for &(at, child, parent, fixed) in &problem.seen_as {
                 self.shared_as_parent((at, fixed), child, parent, &done);
+            }
+            for &(at, holder, name, fixed) in &problem.bound {
+                let method = &text[at.lo as usize..at.hi as usize];
+                self.bound_to_only_read((at, fixed), method, (holder, name), &done);
             }
         }
         // For those who call the functions of this package.
@@ -3729,6 +3738,7 @@ impl<'a> Checker<'a> {
         self.bindings.clear();
         self.read_only.clear();
         self.seen_as.clear();
+        self.bound.clear();
         self.made_shared.clear();
         self.lent_handles.clear();
         self.say_shared_writes_left();

@@ -95,6 +95,8 @@ pub(super) enum Source {
     /// A pointer that the function does not make: into what outlives
     /// it.
     Outside,
+    /// A pointer into what is only read.
+    Fixed(Fixed),
     /// What the call with the number gives back.
     Call(u32),
 }
@@ -150,6 +152,12 @@ pub(super) struct Call {
     pub at: Span,
     /// The call gives the elements of the last parameter one by one.
     pub listed: bool,
+    /// A function of a header is called: its own types say what it
+    /// only reads.
+    pub of_header: bool,
+    /// The arguments that are function values, and the function value
+    /// that is called.
+    pub values: Vec<bool>,
     /// What is called may run a function value that it is given: it is
     /// no built-in function and no conversion.
     pub runs: bool,
@@ -157,6 +165,20 @@ pub(super) struct Call {
 
 /// The variable that stands for what is outside the function.
 const OUTSIDE: LocalId = LocalId(u32::MAX);
+
+/// What stands for all that is only read: a pointer that holds a loan
+/// of one of these may point into what a `Shared` holds, or into a
+/// variable of a package. Like what is outside, it outlives the
+/// function.
+const ONLY_READ: [(LocalId, Fixed); 2] = [
+    (LocalId(u32::MAX - 2), Fixed::Shared),
+    (LocalId(u32::MAX - 3), Fixed::Package),
+];
+
+fn only_read(root: LocalId) -> Option<Fixed> {
+    let found = ONLY_READ.iter().find(|(of, _)| *of == root);
+    found.map(|&(_, fixed)| fixed)
+}
 
 /// The variable that stands for the deferred calls of the function
 /// that wait: what they are given, they hold until the function
@@ -314,9 +336,17 @@ pub(super) struct Problem {
     /// Where the body takes what a `Shared` holds as a value of a
     /// parent of its type: the child, the parent, and where.
     pub seen_as: Vec<(Span, TypeId, TypeId, Fixed)>,
+    /// Where the body takes a method with a pointer receiver as a
+    /// value on what is only read: the type that declares the method,
+    /// and its name.
+    pub bound: Vec<(Span, TypeId, Spur, Fixed)>,
     /// Where the body names a variable that is the only name of what
     /// `NewShared` made: a `Unique` would do.
     pub only_names: Arc<FxHashSet<u32>>,
+    /// A pointer of the body may point into what is only read; and
+    /// the body runs when the program has started.
+    pub marked: bool,
+    pub started: bool,
 }
 
 /// Two pointers that one call is given and that may point to one place
@@ -350,6 +380,9 @@ pub(super) struct Written {
 /// What the passes found in a problem.
 pub(super) struct Lent {
     pub written: Vec<Written>,
+    /// Where a pointer that may point into what is only read is
+    /// written through, and whether by a call.
+    pub only_read: Vec<(Span, Fixed, bool)>,
     pub broken: Vec<Broken>,
     pub escaped: Vec<Escaped>,
     pub aliased: Vec<Aliased>,
@@ -807,6 +840,8 @@ impl<'a> Walk<'a> {
             exprs: before.iter().chain(args.iter()).copied().collect(),
             at: self.tree.exprs[fun].span,
             listed: self.lists(expr),
+            of_header: false,
+            values: Vec::new(),
             runs: self.runs_value(fun),
         });
         self.call_ids.insert(expr, call);
@@ -990,6 +1025,11 @@ impl<'a> Walk<'a> {
             let ty = self.type_of(self.unparen(*arg));
             ty.is_some_and(|ty| self.only_lends(ty))
         };
+        let value = |arg: &ExprId| {
+            let ty = self.type_of(self.unparen(*arg));
+            ty.is_some_and(|ty| matches!(&*types.get(types.underlying(ty)), Type::Func { .. }))
+        };
+        let values: Vec<bool> = before.iter().chain(args.iter()).map(value).collect();
         let mut sinks: Vec<bool> = before.iter().chain(args.iter()).map(leads).collect();
         let mut funcs: Vec<bool> = before.iter().chain(args.iter()).map(lends).collect();
         // The function value that is called is not given away, and
@@ -1093,6 +1133,8 @@ impl<'a> Walk<'a> {
         self.calls[call as usize].changes = changes;
         self.calls[call as usize].owns = owns;
         self.calls[call as usize].shared = shared;
+        self.calls[call as usize].of_header = of_header;
+        self.calls[call as usize].values = values;
         if let Some(receiver) = lent {
             self.borrowing(receiver, self.tree.exprs[receiver].span, interface);
         }
@@ -1205,6 +1247,27 @@ impl<'a> Walk<'a> {
         let to = self.sources.len() as u32;
         if from < to {
             self.events.push(Event::Holds(DEFERRED, from, to, false));
+        }
+    }
+
+    /// A pointer into the place is one into what is only read, if the
+    /// place is so.
+    fn only_read_source(&mut self, place: ExprId, found: &mut Vec<Source>) {
+        if let Some(fixed) = self.fixed(place) {
+            self.marked = true;
+            found.push(Source::Fixed(fixed));
+        }
+    }
+
+    /// A pointer that a variable of a package keeps points into one.
+    fn kept_pointer(&mut self, variable: ExprId, found: &mut Vec<Source>) {
+        let types = self.places.map(|places| places.types);
+        let ty = self.type_of(variable);
+        if types
+            .zip(ty)
+            .is_some_and(|(all, ty)| all.may_hold_pointer(ty))
+        {
+            self.only_read_source(variable, found);
         }
     }
 
@@ -1379,6 +1442,7 @@ impl<'a> Walk<'a> {
                         // around a function literal.
                         if self.type_of(expr).is_some_and(|ty| self.may_point(ty)) {
                             found.push(Source::Outside);
+                            self.kept_pointer(expr, found);
                         }
                         continue;
                     };
@@ -1394,6 +1458,10 @@ impl<'a> Walk<'a> {
                     self.through(ty, &mut steps);
                     if steps.first() == Some(&Step::Held) {
                         found.push(Source::Place(local, vec![Step::Held], span));
+                        if self.is_shared(expr) {
+                            self.marked = true;
+                            found.push(Source::Fixed(Fixed::Shared));
+                        }
                     }
                 }
                 ExprKind::Unary {
@@ -1401,13 +1469,17 @@ impl<'a> Walk<'a> {
                     x,
                 } => match self.place(*x) {
                     Some((root, steps)) => {
+                        self.only_read_source(*x, found);
                         found.push(Source::Place(root, steps, span));
                         // And what is read there.
                         if beyond {
                             rest.push((*x, true));
                         }
                     }
-                    None => rest.push((*x, beyond)),
+                    None => {
+                        self.only_read_source(*x, found);
+                        rest.push((*x, beyond));
+                    }
                 },
                 // A variable of another package.
                 ExprKind::Selector { .. }
@@ -1415,6 +1487,7 @@ impl<'a> Walk<'a> {
                         && self.type_of(expr).is_some_and(|ty| self.may_point(ty)) =>
                 {
                     found.push(Source::Outside);
+                    self.kept_pointer(expr, found);
                 }
                 ExprKind::Unary { x, .. }
                 | ExprKind::Selector { x, .. }
@@ -1434,6 +1507,12 @@ impl<'a> Walk<'a> {
                         // What it is a part of is no variable: all
                         // that is reached from that counts.
                         None => {
+                            // A method value has the address of its
+                            // receiver.
+                            let methods = self.places.map(|places| places.pointer_methods);
+                            if methods.is_some_and(|all| all.contains(&expr)) {
+                                self.only_read_source(*x, found);
+                            }
                             let mut of = *x;
                             loop {
                                 of = self.unparen(of);
@@ -1688,9 +1767,15 @@ impl<'a> Walk<'a> {
             }
             None => match self.place(inner) {
                 Some((root, steps)) => (root, steps, what),
-                None => return,
+                None => return self.changed_through(inner),
             },
         };
+        // Another name of an element is written: so is the element.
+        if what != What::Declare && self.element_names.contains(&root) {
+            let from = self.sources.len() as u32;
+            self.sources.push(Source::Holder(root, 0, false));
+            self.events.push(Event::Through(from, from + 1, span));
+        }
         let change = Change {
             root,
             steps,
@@ -1701,6 +1786,44 @@ impl<'a> Walk<'a> {
         self.changes.push(change);
         self.events
             .push(Event::Changed(self.changes.len() as u32 - 1));
+    }
+
+    /// The place, which is in no variable of the function, is changed:
+    /// through the pointer on the way to it, if there is one.
+    fn changed_through(&mut self, place: ExprId) {
+        let Some(places) = self.places else {
+            return;
+        };
+        let types = places.types;
+        let at = self.tree.exprs[place].span;
+        let mut expr = place;
+        loop {
+            let of = match self.tree.exprs[expr].kind {
+                ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Slice { x, .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => self.unparen(x),
+                _ => return,
+            };
+            let pointer = self
+                .type_of(of)
+                .is_some_and(|ty| matches!(&*types.get(types.underlying(ty)), Type::Pointer(_)));
+            if pointer {
+                let from = self.sources.len() as u32;
+                let mut found = std::mem::take(&mut self.sources);
+                self.sources_of(of, &mut found);
+                self.sources = found;
+                let to = self.sources.len() as u32;
+                if to > from {
+                    self.events.push(Event::Through(from, to, at));
+                }
+                return;
+            }
+            expr = of;
+        }
     }
 
     /// A built-in function changes what its operand names, or what the
@@ -1879,6 +2002,15 @@ impl<'a> Walk<'a> {
                 steps.push(Step::At(None));
                 let of = self.tree.exprs[x].span;
                 self.sources.push(Source::Place(root, steps, of));
+                let mut found = std::mem::take(&mut self.sources);
+                self.only_read_source(x, &mut found);
+                self.sources = found;
+            }
+            // Over a variable of the package.
+            (true, None) => {
+                let mut found = std::mem::take(&mut self.sources);
+                self.only_read_source(x, &mut found);
+                self.sources = found;
             }
             (false, Some((root, steps))) => {
                 let holds = self.local_type(local).is_some_and(|ty| self.may_point(ty));
@@ -1965,7 +2097,10 @@ impl<'a> Walk<'a> {
             locals: self.body.locals.len() as u32,
             within: self.within,
             seen_as: Vec::new(),
+            bound: Vec::new(),
             only_names: Arc::default(),
+            marked: self.marked,
+            started: self.places.is_some_and(|places| !places.starting),
         }
     }
 }
@@ -1992,6 +2127,7 @@ impl Problem {
         };
         let mut lent = Lent {
             written: Vec::new(),
+            only_read: Vec::new(),
             broken: Vec::new(),
             escaped: Vec::new(),
             aliased: Vec::new(),
@@ -2002,9 +2138,12 @@ impl Problem {
                 stores: Vec::new(),
                 keeps: vec![false; self.params.len()],
                 changes: vec![false; self.params.len()],
+                writes: vec![false; self.params.len()],
+                writes_deep: vec![false; self.params.len()],
                 borrows: vec![false; self.params.len()],
                 deep: vec![false; self.params.len()],
                 outside: false,
+                package: false,
             },
             steps: 0,
         };
@@ -2020,6 +2159,7 @@ impl Problem {
             &lists(count, &self.edges, false),
         );
         let mut known = Known::new(self.within);
+        known.started = self.started;
         let mut sets = Sets::new(ROOM);
 
         // Forward: the facts at the end of each block.
@@ -2166,12 +2306,46 @@ impl Problem {
                         if later[at - first] != EMPTY
                             || deferring
                             || !loops_of.is_empty()
-                            || told =>
+                            || told
+                            || self.marked =>
                     {
                         known.written(&sets, set, change)
                     }
                     _ => Vec::new(),
                 };
+                // What is only read is written through no pointer, and
+                // what is written deeper than a parameter points,
+                // those who call the function are told. A call writes
+                // what its function says; one that is given a pointer
+                // into what is only read is asked where the argument
+                // is written.
+                let (really, by_call) = match event {
+                    Event::Called(call) if told || self.marked => {
+                        let record = &self.calls[call as usize];
+                        let really = known.really_changed_by(&sets, set, sources, call);
+                        let asked = record.shared.iter().any(Option::is_some);
+                        (really, Some(asked))
+                    }
+                    Event::Called(_) => (Vec::new(), Some(true)),
+                    _ => {
+                        let places = written.iter().map(|(of, way, _)| (*of, way.clone()));
+                        (places.collect(), None)
+                    }
+                };
+                for (of, way) in &really {
+                    if let (Some(fixed), Some(change)) = (only_read(*of), change) {
+                        if by_call != Some(true) {
+                            lent.only_read.push((change.at, fixed, by_call.is_some()));
+                        }
+                        continue;
+                    }
+                    let param = self.params.iter().position(|param| param == &Some(*of));
+                    let pointers = way.iter().filter(|step| **step == Step::Target).count();
+                    if let Some(param) = param {
+                        lent.lends.writes[param] |= pointers > 0;
+                        lent.lends.writes_deep[param] |= pointers > 1;
+                    }
+                }
                 for (of, way, _) in &written {
                     let param = self.params.iter().position(|param| param == &Some(*of));
                     if let (true, Some(param)) = (way.contains(&Step::Target), param) {
@@ -2302,6 +2476,15 @@ impl Problem {
                 // a result, and not behind a pointer that leads out of
                 // the function.
                 match event {
+                    Event::Through(from, to, span) => {
+                        let given = known.given(&sets, set, sources, (from, to));
+                        let fixed = given
+                            .iter()
+                            .find_map(|&loan| only_read(known.loans[loan as usize].0));
+                        if let Some(fixed) = fixed {
+                            lent.only_read.push((span, fixed, false));
+                        }
+                    }
                     Event::Returned(from, to, span) => {
                         let given = known.given(&sets, set, sources, (from, to));
                         let how = (span, Leaves::Returned, self.carriers.get(&from).copied());
@@ -2535,6 +2718,16 @@ impl Problem {
                 lent.escaped.push(escaped(false));
                 continue;
             }
+            match only_read(*of) {
+                Some(Fixed::Package) => {
+                    lent.lends.package |= places.is_none();
+                    continue;
+                }
+                // What a `Shared` holds is reached through the handle,
+                // which is followed itself.
+                Some(Fixed::Shared) => continue,
+                None => {}
+            }
             let Some(from) = param(*of) else {
                 // A result that points to what no parameter leads to.
                 lent.lends.outside |= places.is_none();
@@ -2630,6 +2823,10 @@ const ROOM: usize = 1 << 24;
 struct Known {
     /// The loan of what is outside the function.
     outside: u32,
+    /// The loans of what is only read, and whether the body runs when
+    /// the program has started.
+    fixed: [u32; 2],
+    started: bool,
     loans: Vec<(LocalId, Vec<Step>, Span)>,
     loan_ids: FxHashMap<(LocalId, Vec<Step>), u32>,
     facts: Vec<(LocalId, u32)>,
@@ -2654,6 +2851,8 @@ impl Known {
     fn new(function: Span) -> Known {
         let mut known = Known {
             outside: 0,
+            fixed: [0; 2],
+            started: false,
             loans: Vec::new(),
             loan_ids: FxHashMap::default(),
             facts: Vec::new(),
@@ -2667,6 +2866,7 @@ impl Known {
             steps: 0,
         };
         known.outside = known.loan(OUTSIDE, vec![Step::Target], function);
+        known.fixed = ONLY_READ.map(|(root, _)| known.loan(root, vec![Step::Target], function));
         known
     }
 
@@ -2698,6 +2898,14 @@ impl Known {
         self.steps += facts.len() as u64;
         let held = facts.iter().filter(|&&fact| sets.has(set, fact));
         into.extend(held.map(|&fact| self.facts[fact as usize].1));
+    }
+
+    /// The loan that stands for what is only read.
+    fn marker(&self, fixed: Fixed) -> u32 {
+        match fixed {
+            Fixed::Shared => self.fixed[0],
+            Fixed::Package => self.fixed[1],
+        }
     }
 
     fn loan(&mut self, root: LocalId, way: Vec<Step>, made: Span) -> u32 {
@@ -2819,6 +3027,7 @@ impl Known {
                 self.steps += 1;
                 match source {
                     Source::Outside => given.push(self.outside),
+                    Source::Fixed(fixed) => given.push(self.marker(*fixed)),
                     Source::Holder(holder, hops, beyond) => {
                         given.extend(self.read(sets, set, *holder, *hops, *beyond));
                     }
@@ -2830,11 +3039,19 @@ impl Known {
                         if says.is_none_or(|lends| lends.outside) {
                             given.push(self.outside);
                         }
+                        if self.started && of.says(*call).is_some_and(|lends| lends.package) {
+                            given.push(self.marker(Fixed::Package));
+                        }
                         for (position, &arg) in args.iter().enumerate() {
                             let counts =
                                 known.is_none_or(|lends| lends.gives_back(position, args.len()));
                             if !counts {
                                 continue;
+                            }
+                            // A pointer into what is only read may come
+                            // back.
+                            if let Some(fixed) = record.shared[position] {
+                                given.push(self.marker(fixed));
                             }
                             // What the argument points to, where the
                             // function says that no result points
@@ -3042,6 +3259,53 @@ impl Known {
         written
     }
 
+    /// The places that the call writes, as its function says: what an
+    /// argument points to, and what is read through pointers there
+    /// only if the function writes that deep. Of a function that is
+    /// not known, what its arguments point to. A function value among
+    /// the arguments is held to this where it is made, and a function
+    /// of a header by its own types.
+    fn really_changed_by(
+        &mut self,
+        sets: &Sets,
+        set: u32,
+        of: &Sources,
+        call: u32,
+    ) -> Vec<(LocalId, Vec<Step>)> {
+        let record = &of.problem.calls[call as usize];
+        let mut written = Vec::new();
+        if record.of_header {
+            return written;
+        }
+        let says = of.says(call);
+        for (position, &may) in record.changes.iter().enumerate() {
+            let said = |all: &[bool]| all.get(position).copied().unwrap_or(false);
+            let writes = says.is_none_or(|lends| said(&lends.writes));
+            let value = record.values.get(position).copied().unwrap_or(false);
+            if !may || !writes || value {
+                continue;
+            }
+            let deep = says.is_some_and(|lends| said(&lends.writes_deep));
+            // A value that holds pointers is given with all that it
+            // reaches, to a function that says that it writes there.
+            let range = match (deep, record.pointees[position], says) {
+                (true, _, _) | (false, None, Some(_)) => record.args[position],
+                (false, Some(pointees), _) => pointees,
+                (false, None, None) => continue,
+            };
+            let sources = run(&of.problem.args, range);
+            for loan in self.given_by(sets, set, of, sources, deep) {
+                let (root, way, _) = &self.loans[loan as usize];
+                if !matches!(way[..], [Step::Captured(..)] | [Step::Addressed]) {
+                    written.push((*root, way.clone()));
+                }
+            }
+        }
+        let mut seen = FxHashSet::default();
+        written.retain(|place| seen.insert(place.clone()));
+        written
+    }
+
     /// The first two pointers that the call is given and that may point
     /// to one place: to the same place of a variable, or to a place and
     /// a part of it. What is read through a pointer, and what comes
@@ -3058,7 +3322,7 @@ impl Known {
                 let (root, way, _) = &self.loans[loan as usize];
                 let through = way.iter().filter(|step| **step == Step::Target).count() > 1;
                 let captured = matches!(way[..], [Step::Captured(..)] | [Step::Addressed]);
-                *root != OUTSIDE && !through && !captured
+                *root != OUTSIDE && only_read(*root).is_none() && !through && !captured
             });
             for (other, others) in &pointers {
                 for (&a, &b) in loans
@@ -3121,7 +3385,9 @@ impl Known {
                     reached[arg] = Some(self.given_by(sets, set, of, sources, true));
                 }
             }
-            let places = reached[sink].clone().unwrap_or_default();
+            // Nothing is stored in what is only read.
+            let mut places = reached[sink].clone().unwrap_or_default();
+            places.retain(|&place| only_read(self.loans[place as usize].0).is_none());
             let loans = |arg: usize| reached[arg].clone().unwrap_or_default();
             let apart = known.is_none() && from.contains(&sink);
             let own = Some(sink).filter(|_| apart).map(loans).unwrap_or_default();

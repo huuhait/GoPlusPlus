@@ -34,6 +34,15 @@ pub struct Lends {
     /// For each parameter: whether the function may change what the
     /// parameter reaches through pointers.
     pub changes: Vec<bool>,
+    /// For each parameter: whether the function writes through a
+    /// pointer of the parameter, itself or in a function that it
+    /// calls and that says so; and whether it writes what is read
+    /// through pointers behind what the parameter points to. A call
+    /// of a function that is not known counts for the pointers that
+    /// it is given, not for what a value that it is given holds: this
+    /// is what a pointer into what is only read is held to.
+    pub writes: Vec<bool>,
+    pub writes_deep: Vec<bool>,
     /// For each parameter: whether the function points into what the
     /// value behind it owns apart from itself (OWN-B10).
     pub borrows: Vec<bool>,
@@ -43,6 +52,9 @@ pub struct Lends {
     pub deep: Vec<bool>,
     /// Whether a result may point to what no parameter leads to.
     pub outside: bool,
+    /// Whether a result may point into a variable of a package, which
+    /// is only read once the program has started (CON-18).
+    pub package: bool,
 }
 
 impl Lends {
@@ -85,9 +97,12 @@ impl Lends {
             stores: stores.collect(),
             keeps: each(&self.keeps),
             changes: each(&self.changes),
+            writes: each(&self.writes),
+            writes_deep: each(&self.writes_deep),
             borrows: each(&self.borrows),
             deep: each(&self.deep),
             outside: self.outside,
+            package: self.package,
         }
     }
 }
