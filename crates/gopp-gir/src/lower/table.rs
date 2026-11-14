@@ -614,7 +614,9 @@ impl FuncCx<'_, '_> {
         self.b
             .switch(Operand::Copy(Place::local(set)), vec![(0, unset)], done)?;
         self.b.switch_to(unset);
-        for (way, head) in shared.tables_of(checked) {
+        // The word that says whether the value has its tables is
+        // written last: who finds it set finds the others set.
+        for (way, head) in shared.tables_of(checked).into_iter().rev() {
             let table = match self.table(checked, &way, head)? {
                 Ok(table) => table,
                 Err(what) => return Ok(Err(what)),
