@@ -3,6 +3,7 @@
 //! copy, the same elements in place, or a view of them, and the runtime
 //! makes, grows and copies the buffers.
 
+use gopp_sema::types::TypeId as CheckedTypeId;
 use gopp_sema::{Ref, Transfer};
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{ExprId, ExprKind, UnaryOp};
@@ -499,10 +500,32 @@ impl FuncCx<'_, '_> {
         };
         let args_to = *args_to;
         let to = self.header(args_to)?;
-        let Type::Slice(of) = self.kind(self.b.place_ty(&to)) else {
+        let slice = self.b.place_ty(&to);
+        let checked = self.checked_as(args_to, slice);
+        let from = self.header(*from)?;
+        let Some(copied) = self.copy_headers(span, to, from, checked)? else {
             return Ok(Rvalue::Use(self.zero(ty)));
         };
-        let from = self.header(*from)?;
+        let word = self.b.operand_ty(&copied);
+        Ok(match self.kind(ty) {
+            Type::Int { .. } if ty != word => Rvalue::Cast(CastKind::IntToInt, copied, ty),
+            _ => Rvalue::Use(copied),
+        })
+    }
+
+    /// The elements of the slice `from` are written to those of the
+    /// slice `to`, whose type the checker has as `checked`: how many,
+    /// or nothing if `to` is no slice.
+    pub fn copy_headers(
+        &mut self,
+        span: SourceSpan,
+        to: Place,
+        from: Place,
+        checked: Option<CheckedTypeId>,
+    ) -> Built<Option<Operand>> {
+        let Type::Slice(of) = self.kind(self.b.place_ty(&to)) else {
+            return Ok(None);
+        };
         let [size, _] = self.element_facts(of)?;
         let bytes = self.bytes_ty();
         let word = self.b.operand_ty(&size);
@@ -515,8 +538,6 @@ impl FuncCx<'_, '_> {
             // copies of the elements is moved over those of `to`, which
             // end first.
             false => {
-                let slice = self.b.place_ty(&to);
-                let checked = self.checked_as(args_to, slice);
                 let source = self.cloned_value(span, checked, Rvalue::Use(Operand::Copy(from)))?;
                 let source = self.slot_of(source)?;
                 let elem = checked.and_then(|slice| self.element_of(slice));
@@ -531,23 +552,31 @@ impl FuncCx<'_, '_> {
                 }
             }
         };
-        Ok(match self.kind(ty) {
-            Type::Int { .. } if ty != word => Rvalue::Cast(CastKind::IntToInt, copied, ty),
-            _ => Rvalue::Use(copied),
-        })
+        Ok(Some(copied))
     }
 
     /// `clear(s)`: every element is zero again.
     pub fn clear_slice(&mut self, span: SourceSpan, x: ExprId) -> Built<bool> {
         let of = self.header(x)?;
+        let slice = self.b.place_ty(&of);
+        let checked = self.checked_as(x, slice);
+        self.clear_header(span, of, checked)
+    }
+
+    /// Every element of the slice in the place is zero again; the
+    /// checker has its type as `checked`. Whether it is a slice.
+    pub fn clear_header(
+        &mut self,
+        span: SourceSpan,
+        of: Place,
+        checked: Option<CheckedTypeId>,
+    ) -> Built<bool> {
         let Type::Slice(elem) = self.kind(self.b.place_ty(&of)) else {
             return Ok(false);
         };
         let [size, _] = self.element_facts(elem)?;
         // Elements that hold what is freed end before they are zero.
         if !self.flat(elem) {
-            let slice = self.b.place_ty(&of);
-            let checked = self.checked_as(x, slice);
             let checked = checked.and_then(|slice| self.element_of(slice));
             if let Some(drop) = self.drop_glue(checked, span)? {
                 let word = self.b.operand_ty(&size);

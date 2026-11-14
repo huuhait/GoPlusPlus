@@ -1,0 +1,43 @@
+package main
+
+// A deferred copy: the slice that is read is kept as it is at the
+// statement, and the slice that is written is the one that its
+// variable holds when the function returns.
+
+type Name struct{ text string }
+
+func (n *Name) drop() { println("drop", n.text) }
+
+func fill(to *[]int) {
+	from := []int{1, 2, 3}
+	defer copy(to, from)
+	from[0] = 9
+}
+
+func main() {
+	dst := make([]int, 2)
+	func() {
+		src := []int{5, 6, 7}
+		defer copy(&dst, src)
+		src[0] = 8
+		dst = make([]int, 3)
+		println(dst[0], dst[1], dst[2])
+	}()
+	println(dst[0], dst[1], dst[2])
+	fill(&dst)
+	println(dst[0], dst[1], dst[2])
+	names := []string{"a", "b"}
+	func() {
+		more := []string{"x" + names[0], "y"}
+		defer copy(&names, more)
+		more[1] = "z"
+	}()
+	println(names[0], names[1])
+	func() {
+		kept := []Name{{"one"}, {"two"}}
+		defer println("cleared")
+		defer clear(kept)
+		kept[0].text = "first"
+	}()
+	println("done")
+}

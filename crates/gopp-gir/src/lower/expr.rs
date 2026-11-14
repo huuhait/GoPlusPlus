@@ -2190,9 +2190,8 @@ impl<'a> FuncCx<'a, '_> {
         };
         let other = match (built_in, &args[..]) {
             (Some(Predeclared::Panic), [_]) | (Some(Predeclared::Recover), []) => true,
-            (Some(Predeclared::Delete), [map, _]) | (Some(Predeclared::Clear), [map]) => {
-                self.holds_map(*map)
-            }
+            (Some(Predeclared::Delete), [map, _]) => self.holds_map(*map),
+            (Some(Predeclared::Clear), [_]) | (Some(Predeclared::CopyFunc), [_, _]) => true,
             _ => false,
         };
         let refused = match () {
@@ -2424,6 +2423,39 @@ impl<'a> FuncCx<'a, '_> {
                 let held = self.taken(*value, ty, held)?;
                 slots.push(self.kept(*value, ty, held)?);
                 Waits::Panic
+            }
+            (Predeclared::Clear, [of]) if !self.holds_map(*of) => {
+                let Some(held) = self.borrows(span, Some(*of), &[]) else {
+                    return Ok(());
+                };
+                borrowed = held;
+                let mut mode = PlaceMode::default();
+                let place = self.place(*of, &mut mode)?;
+                let place = self.through(place, &mut mode)?;
+                let slice = self.b.place_ty(&place);
+                if !matches!(self.kind(slice), Type::Slice(_)) {
+                    self.unsupported(span, "a defer statement of `clear` of this value");
+                    return Ok(());
+                }
+                let checked = self.checked_as(*of, slice);
+                let address = self.b.assign_temp(Rvalue::AddrOf(place, Mutability::Mut))?;
+                slots.push((address, None));
+                Waits::ClearSlice(checked)
+            }
+            (Predeclared::CopyFunc, [to, from]) => {
+                let Some(held) = self.borrows(span, None, args) else {
+                    return Ok(());
+                };
+                borrowed = held;
+                let pointer = self.ty_of(*to);
+                let slice = self.pointee(pointer);
+                let checked = self.checked_as(*to, slice);
+                for (arg, ty) in [(*to, pointer), (*from, self.ty_of(*from))] {
+                    let value = self.rvalue_as(arg, ty)?;
+                    let value = self.taken(arg, ty, value)?;
+                    slots.push(self.kept(arg, ty, value)?);
+                }
+                Waits::Copy(checked)
             }
             (Predeclared::Delete | Predeclared::Clear, [map, key @ ..]) => {
                 let Some(of) = self.map_of(*map) else {

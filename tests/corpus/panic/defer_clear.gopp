@@ -1,0 +1,51 @@
+package main
+
+// A deferred clear of a slice and of a map: the call is made when the
+// function returns, and sees what was written to the elements before.
+
+func cleared(xs []int) (sum int) {
+	defer func() {
+		for _, x := range xs {
+			sum += x
+		}
+	}()
+	defer clear(xs)
+	xs[0] = 7
+	for _, x := range xs {
+		sum += x
+	}
+	return sum
+}
+
+func names() []string {
+	out := []string{"a", "b", "c"}
+	defer println("names leaves with", len(out))
+	func() {
+		defer clear(out)
+		out[1] = "x"
+		println(out[0], out[1], out[2])
+	}()
+	return out
+}
+
+func counts() int {
+	m := map[string]int{"a": 1, "b": 2}
+	func() {
+		defer clear(m)
+		m["c"] = 3
+		println(len(m))
+	}()
+	return len(m)
+}
+
+func main() {
+	println(cleared([]int{1, 2, 3}))
+	out := names()
+	println(len(out), out[0] == "", out[1] == "", out[2] == "")
+	println(counts())
+	defer println("main leaves")
+	xs := []int{4, 5}
+	defer func() { println(xs[0], xs[1]) }()
+	defer clear(xs)
+	panic("after the clear")
+}

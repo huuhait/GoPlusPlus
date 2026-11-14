@@ -1981,11 +1981,7 @@ func main() {}
     // not.
     assert_eq!(
         messages,
-        [
-            "a.gopp:32:8: not supported yet: a defer statement of this built-in function or of a \
-             conversion",
-            "a.gopp:44:9: not supported yet: a deferred call that holds a variable of a block",
-        ]
+        ["a.gopp:44:9: not supported yet: a deferred call that holds a variable of a block"]
     );
 }
 

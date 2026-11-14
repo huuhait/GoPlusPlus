@@ -1055,6 +1055,13 @@ impl<'a> Walk<'a> {
                 .filter(|_| empties)
                 .map(|&arg| self.unparen(arg)),
         };
+        // `clear` of a slice writes the elements that the slice has
+        // when the call is made: those are kept as they are.
+        let slice = |ty: TypeId| {
+            let types = places.types;
+            matches!(&*types.get(types.underlying(ty)), Type::Slice(_))
+        };
+        let elements = addressed.filter(|&x| empties && self.type_of(x).is_some_and(slice));
         let mut kept: Vec<(ExprId, bool)> = vec![(callee, false)];
         kept.extend(args.iter().map(|&arg| (self.unparen(arg), false)));
         if let Some(place) = addressed {
@@ -1080,6 +1087,10 @@ impl<'a> Walk<'a> {
             }
             let mut apart = None;
             match self.place_with(place, &mut apart).filter(|_| addressed) {
+                Some((root, mut steps)) if addressed && elements == Some(expr) => {
+                    steps.push(Step::At(None));
+                    found.push(Source::Place(root, steps, span));
+                }
                 Some((root, steps))
                     if apart.is_none() && !steps.contains(&Step::Target) && self.own(root) =>
                 {

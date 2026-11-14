@@ -6066,7 +6066,8 @@ fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {
     // waits does not allow; those after it do what it allows: a move
     // on a way without the statement, a variable of each pass, writes
     // that the call sees, variables of blocks that the statement
-    // itself takes the address of, a value that is copied.
+    // itself takes the address of, a value that is copied. The last
+    // two clear a slice: its elements are kept as they are.
     let text = "package p
 
 type F struct{ n int }
@@ -6243,6 +6244,24 @@ func (s *S) Do(p *int, q *F) {
 	*p = 3
 	q.n = 2
 }
+
+func later() {
+	xs := []int{1}
+	defer clear(xs)
+	xs[0] = 1
+	xs = append(xs, 2)
+}
+
+func fine() {
+	xs := []int{1}
+	m := map[string]int{}
+	defer clear(xs)
+	defer clear(m)
+	defer copy(&xs, []int{3})
+	xs[0] = 1
+	m[\"a\"] = 1
+	m = map[string]int{}
+}
 ";
     let expected = [
         "a.gopp:24:7: cannot move f: a deferred call points into it and runs when the function returns",
@@ -6272,6 +6291,9 @@ func (s *S) Do(p *int, q *F) {
         "    a.gopp:87:9: the deferred call points into it from here",
         "a.gopp:95:7: cannot move x: a deferred call points into it and runs when the function returns",
         "    a.gopp:94:12: the deferred call points into it from here",
+        "a.gopp:182:2: cannot append to xs: a deferred call points into it and runs when the function \
+         returns",
+        "    a.gopp:180:14: the deferred call points into it from here",
     ];
     assert_eq!(messages("a.gopp", text), expected);
 }

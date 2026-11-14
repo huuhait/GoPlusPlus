@@ -101,6 +101,12 @@ pub(super) enum Waits {
     /// address of the place that holds the map, and the key.
     Delete(super::map::MapOf),
     Clear(super::map::MapOf),
+    /// `clear(s)` for a slice: the statement keeps the address of the
+    /// place that holds the slice. And `copy(&to, from)`: it keeps the
+    /// pointer and the slice `from`. Each with the type of the slice
+    /// that is written, as the checker has it.
+    ClearSlice(Option<CheckedTypeId>),
+    Copy(Option<CheckedTypeId>),
     /// `recover()`, which stops no panic when it is the deferred call
     /// itself, as in Go.
     Nothing,
@@ -1618,6 +1624,7 @@ impl FuncCx<'_, '_> {
         let lent = |at: usize| match &pending.what {
             Waits::Call(called) => called.lent.get(at) == Some(&true),
             Waits::Print(_) | Waits::Delete(_) | Waits::Clear(_) | Waits::Nothing => true,
+            Waits::ClearSlice(_) | Waits::Copy(_) => true,
             Waits::Value(..) => at == 0,
             // The runtime has the value of the panic.
             Waits::Panic => false,
@@ -1696,6 +1703,25 @@ impl FuncCx<'_, '_> {
                         None => None,
                     };
                     self.map_forget(map, of, key)?;
+                }
+            }
+            Waits::ClearSlice(checked) => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
+                // The slice that its place holds now.
+                if let Some(place) = slots.first() {
+                    let slice = self.b.deref(place)?;
+                    let slice = self.slot_of(Rvalue::Use(Operand::Copy(slice)))?;
+                    self.clear_header(pending.span, slice, *checked)?;
+                }
+            }
+            Waits::Copy(checked) => {
+                self.b.goto(after)?;
+                self.b.switch_to(after);
+                if let [to, from] = &slots[..] {
+                    let to = self.b.deref(to)?;
+                    let to = self.slot_of(Rvalue::Use(Operand::Copy(to)))?;
+                    self.copy_headers(pending.span, to, from.clone(), *checked)?;
                 }
             }
             Waits::Nothing => {
