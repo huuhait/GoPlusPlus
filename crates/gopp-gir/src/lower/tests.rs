@@ -3064,8 +3064,6 @@ type File struct{ fd int }
 
 func (f *File) drop() {}
 
-var later []func() int
-
 func optional[T Clone](xs []T) int {
 	var held Option[T]
 	_ = held
@@ -3078,10 +3076,10 @@ func boxed[T Clone](x T) int {
 	return 1
 }
 
-func kept[T any](first T, n int) {
+func kept[T any](later *[]Local[func() int], first T, n int) {
 	i := 0
 	for x := move(first); i < n; i++ {
-		later = append(later, func() int {
+		*later = append(*later, func() int {
 			_ = &x
 			return i
 		})
@@ -3091,11 +3089,15 @@ func kept[T any](first T, n int) {
 func through[T Clone](xs []T) int { return optional(xs) + boxed(xs[0]) }
 ";
     let said = |body: &str| {
-        reported_with_codes("a.gopp", &format!("{declared}\nfunc main() {{\n{body}}}\n"))
+        let later = "\tvar later []Local[func() int]\n\t_ = &later\n";
+        reported_with_codes(
+            "a.gopp",
+            &format!("{declared}\nfunc main() {{\n{later}{body}}}\n"),
+        )
     };
     // What the generic bodies are right for.
     let good = "\tvar maybe Option[int]\n\tprintln(optional([]int{1}), boxed(1), boxed(\"s\"), \
-                through([]string{\"a\"}))\n\tkept(1, 2)\n\tkept(\"s\", 2)\n\t_ = maybe\n";
+                through([]string{\"a\"}))\n\tkept(&later, 1, 2)\n\tkept(&later, \"s\", 2)\n\t_ = maybe\n";
     assert_eq!(said(good), [] as [&str; 0]);
     // An option of a type that has nil already, which the body of an
     // instance writes: at the use that asks for the instance.
@@ -3108,7 +3110,7 @@ func through[T Clone](xs []T) int { return optional(xs) + boxed(xs[0]) }
     assert_eq!(
         said("\tprintln(through([][]int{{1}}))\n"),
         [
-            "35:44: E0446: cannot use []int for T: an Option of it is written, and []int has nil \
+            "33:44: E0446: cannot use []int for T: an Option of it is written, and []int has nil \
           already\n    38:10: through is instantiated here"
         ]
     );
@@ -3124,13 +3126,195 @@ func through[T Clone](xs []T) int { return optional(xs) + boxed(xs[0]) }
     // A copy that the instance does not write, of a value that has
     // none: the plain function has `E0452` for it.
     assert_eq!(
-        said("\tkept(File{fd: 1}, 2)\n"),
+        said("\tkept(&later, File{fd: 1}, 2)\n"),
         [
-            "27:6: E0453: cannot copy x for the next pass of the loop: File has a drop method and no \
-          Clone() File\n    28:25: this function literal uses x and may run after the pass\n    \
+            "25:6: E0453: cannot copy x for the next pass of the loop: File has a drop method and no \
+          Clone() File\n    26:27: this function literal uses x and may run after the pass\n    \
           38:2: kept is instantiated here"
         ]
     );
+}
+
+/// What the checker and the lowering say of a program.
+fn all_said_of(text: &str) -> Vec<String> {
+    checked(&[("a.gopp", text)], |checked, messages| {
+        if !messages.is_empty() {
+            return messages;
+        }
+        let (_, reported, _) = lower_counted(checked, TargetLayout::new(64), usize::MAX);
+        reported.iter().map(|said| said.message.clone()).collect()
+    })
+}
+
+// rule: GEN-3, GEN-5, TYP-2, TYP-15, CLO-8
+#[test]
+fn an_instance_is_refused_for_the_types_that_plain_code_is_refused_for() {
+    let declared = "package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Copied struct{ fd int }
+
+func (c *Copied) drop() {}
+
+func (c Copied) Clone() Copied { return Copied{c.fd} }
+
+type Point struct{ x, y int }
+
+type Box[T any] struct {
+	v T @Required
+}
+
+func none() Option[int] { return nil }
+
+func optional[T any]() int {
+	var held Option[T]
+	_ = held
+	return 1
+}
+
+func boxed[T Clone](x T) int {
+	b := Box[T]{v: x}
+	_ = b
+	return 1
+}
+
+func kept[T any](later *[]Local[func() int], first T, n int) {
+	i := 0
+	for x := move(first); i < n; i++ {
+		*later = append(*later, func() int {
+			_ = &x
+			return i
+		})
+	}
+}
+";
+    // A rule: what says that it refuses, the plain code for a type and
+    // a value of it, and the use of the generic code for them.
+    type Written = fn(&str, &str) -> String;
+    let option: (&str, Written, Written) = (
+        "has nil already",
+        |ty, _| format!("func main() {{\n\tvar held Option[{ty}]\n\t_ = held\n}}\n"),
+        |ty, _| format!("func main() {{ println(optional[{ty}]()) }}\n"),
+    );
+    let required: (&str, Written, Written) = (
+        "@Required",
+        |ty, value| {
+            format!(
+                "type P struct {{\n\tv {ty} @Required\n}}\n\nfunc main() {{\n\tp := P{{v: \
+                 {value}}}\n\t_ = p\n}}\n"
+            )
+        },
+        |_, value| format!("func main() {{ println(boxed({value})) }}\n"),
+    );
+    let copied: (&str, Written, Written) = (
+        "cannot copy x",
+        |ty, value| {
+            format!(
+                "func plain(later *[]Local[func() int], first {ty}, n int) {{\n\ti := 0\n\tfor x \
+                 := move(first); i < n; i++ {{\n\t\t*later = append(*later, func() int \
+                 {{\n\t\t\t_ = &x\n\t\t\treturn i\n\t\t}})\n\t}}\n}}\n\nfunc main() \
+                 {{\n\tvar later []Local[func() int]\n\tplain(&later, {value}, 2)\n}}\n"
+            )
+        },
+        |_, value| {
+            format!(
+                "func main() {{\n\tvar later []Local[func() int]\n\tkept(&later, {value}, \
+                 2)\n}}\n"
+            )
+        },
+    );
+    // Each type with a value of it, and whether each rule refuses it.
+    let table: [(&str, &str, [Option<bool>; 3]); 9] = [
+        ("int", "1", [Some(false), Some(false), Some(false)]),
+        ("string", "\"s\"", [Some(false), Some(false), Some(false)]),
+        (
+            "Point",
+            "Point{1, 2}",
+            [Some(false), Some(false), Some(false)],
+        ),
+        ("[]int", "[]int{1}", [Some(true), Some(false), Some(false)]),
+        (
+            "map[string]int",
+            "map[string]int{}",
+            [Some(true), Some(false), Some(false)],
+        ),
+        (
+            "Option[int]",
+            "none()",
+            [Some(true), Some(true), Some(false)],
+        ),
+        (
+            "Copied",
+            "Copied{1}",
+            [Some(false), Some(false), Some(false)],
+        ),
+        // A value that is not copied is no value of `boxed`.
+        ("File", "File{fd: 1}", [Some(false), None, Some(true)]),
+        ("any", "any(1)", [Some(true), None, None]),
+    ];
+    for (ty, value, refused) in table {
+        for ((phrase, plain, generic), refused) in
+            [option, required, copied].into_iter().zip(refused)
+        {
+            let Some(refused) = refused else {
+                continue;
+            };
+            for (how, written) in [("plain", plain), ("generic", generic)] {
+                let said = all_said_of(&format!("{declared}\n{}", written(ty, value)));
+                // Nothing else is said of the program.
+                let of_rule = |said: &&String| said.contains(phrase) || said.starts_with("    ");
+                assert!(
+                    said.iter().all(|said| of_rule(&said)),
+                    "{how} {ty}: {said:?}"
+                );
+                assert_eq!(!said.is_empty(), refused, "{how} {ty} ({phrase}): {said:?}");
+            }
+        }
+    }
+}
+
+// rule: GEN-5
+#[test]
+fn a_generic_type_that_a_generic_function_declares_is_one_of_each_instance() {
+    let text = "package main
+
+type Number interface{ ~int | ~float64 }
+
+func made[T Number](x T) interface{} {
+	type pair[U Number] struct {
+		a T
+		b U
+	}
+	type list[U Number] struct{ items []pair[U] }
+	l := list[float64]{}
+	l.items = append(l.items, pair[float64]{x, 1.5})
+	if len(l.items) > 1 {
+		return l
+	}
+	return pair[int]{x, 2}
+}
+
+func main() {
+	println(made(1) == made(1), made(1) == made(1.5))
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    // Each instance of the function has its instances of the type: two
+    // of `pair` and one of `list` for `int`, and as many for `float64`,
+    // each with a descriptor of its own.
+    let module = print_module(&lowered.module);
+    let described = |name: &str| {
+        let start = format!("global const @_GPTiIg0_{name}IF4mainE4made");
+        module
+            .lines()
+            .filter(|line| line.starts_with(&start))
+            .count()
+    };
+    assert_eq!((described("4pair"), described("4list")), (4, 2), "{module}");
 }
 
 #[test]
@@ -3230,43 +3414,6 @@ func main() {
         ] {
             assert!(module.contains(ty), "{file}: {ty}\n{module}");
         }
-    }
-}
-
-#[test]
-fn generic_code_that_is_not_supported_yet_says_so() {
-    // A generic type that a generic function declares.
-    let text = "package main
-
-func local[T any](n int) int {
-	type pair[U any] struct {
-		a []T
-		b []U
-	}
-	var p pair[int]
-	return len(p.a) + n
-}
-
-func main() {
-	println(local[int](1))
-}
-";
-    let said = |file: &str, text: &str| {
-        let (_, messages) = lowered_with(&[(file, text)], usize::MAX);
-        let said = messages.iter();
-        let said = said.map(|message| message.split_once(": ").map_or("", |(_, what)| what));
-        said.map(str::to_owned).collect::<Vec<String>>()
-    };
-    {
-        let file = "a.gopp";
-        assert_eq!(
-            said(file, text),
-            [
-                "not supported yet: a type parameter",
-                "not supported yet: the built-in function len",
-            ],
-            "{file}"
-        );
     }
 }
 

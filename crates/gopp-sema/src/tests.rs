@@ -7630,6 +7630,67 @@ func spawn() {
     assert_eq!(said, expected);
 }
 
+// rule: CLO-2
+#[test]
+fn generic_code_keeps_no_function_that_changes_what_it_uses_either() {
+    // What a kept function does to a variable is the same for every
+    // type argument: it is said of the generic body (`keep`), as of
+    // the plain one (`plain`, `pointer`). A `Local` function may
+    // (`local`), and so may one that only reads (`reads`).
+    let text = "\
+package p
+
+type Holder struct{ p *int }
+
+func keep[T any](first T) func() int {
+	x := move(first)
+	return func() int {
+		_ = &x
+		return 1
+	}
+}
+
+func local[T any](first T) Local[func() int] {
+	x := move(first)
+	return func() int {
+		_ = &x
+		return 1
+	}
+}
+
+func reads[T Clone](first T) func() T {
+	x := first
+	return func() T { return x }
+}
+
+func plain(first int) func() int {
+	x := first
+	return func() int {
+		_ = &x
+		return 1
+	}
+}
+
+func pointer(first Holder) func() int {
+	x := first
+	return func() int {
+		_ = &x
+		return 1
+	}
+}
+";
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    let kept = |at: &str| {
+        format!(
+            "a.gopp:{at}: cannot keep a function that uses x as a func value, which may run on \
+             another goroutine: x is changed by it or by another function"
+        )
+    };
+    assert_eq!(said, [kept("7:2"), kept("28:2"), kept("36:2")]);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {

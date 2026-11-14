@@ -192,6 +192,10 @@ pub(super) struct Escaped {
     pub given: bool,
     /// The loan is the use of a variable by a function literal.
     pub captured: bool,
+    /// And the literal is kept as a plain function and changes the
+    /// variable: where only a type parameter says that the variable may
+    /// hold a pointer, that is what is said (CLO-2).
+    pub changes: bool,
     pub carrier: Option<Carrier>,
 }
 
@@ -2102,6 +2106,7 @@ impl Problem {
                 how,
                 given,
                 captured: capture,
+                changes: plain && matches!(way[..], [Step::Captured(_, true, _)]),
                 // The variable that a literal uses says whether what
                 // is found depends on a type parameter.
                 carrier: match capture {

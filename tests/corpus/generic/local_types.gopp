@@ -1,0 +1,78 @@
+package main
+
+type Number interface{ ~int | ~float64 }
+
+// A type that a generic function declares is a type of each instance.
+func Mean[T Number](xs []T) float64 {
+	type acc struct {
+		total T
+		count int
+	}
+	var a acc
+	for _, x := range xs {
+		a.total += x
+		a.count++
+	}
+	if a.count == 0 {
+		return 0
+	}
+	return float64(a.total) / float64(a.count)
+}
+
+// And so is a generic type that it declares, with the instances that
+// the function makes of it.
+func Made[T Number](x T) interface{} {
+	type pair[U Number] struct {
+		a T
+		b U
+	}
+	type list[U Number] struct{ items []pair[U] }
+	l := list[float64]{}
+	l.items = append(l.items, pair[float64]{x, 1.5})
+	if len(l.items) > 1 {
+		return l
+	}
+	return pair[int]{x, 2}
+}
+
+func Kind[T Number](x T, wide bool) interface{} {
+	type tagged[U Number] struct {
+		value U
+		from  T
+	}
+	if wide {
+		return tagged[float64]{float64(x) / 2, x}
+	}
+	return tagged[int]{int(x), x}
+}
+
+func Largest[T Number](xs []T) T {
+	type best[U Number] struct {
+		value U
+		found bool
+	}
+	var b best[T]
+	for _, x := range xs {
+		if !b.found || x > b.value {
+			b = best[T]{x, true}
+		}
+	}
+	return b.value
+}
+
+func plain(n int) int {
+	type box[U Number] struct{ v U }
+	type row struct{ a, b box[int] }
+	r := row{box[int]{n}, box[int]{n * 2}}
+	f := box[float64]{0.5}
+	return r.a.v + r.b.v + int(f.v*4)
+}
+
+func main() {
+	println(Mean([]int{1, 2, 3, 4}), Mean([]float64{0.5, 1.5}), Mean([]int{}))
+	a, b, c := Made(1), Made(2), Made(1.5)
+	println(a == Made(1), a == b, a == c, b == Made(2))
+	println(Kind(3, false) == Kind(3, false), Kind(3, false) == Kind(3, true), Kind(3, true) == Kind(3.0, true))
+	println(Largest([]int{3, 9, 4}), Largest([]float64{-1.5, -0.5}), Largest([]int{}))
+	println(plain(5))
+}

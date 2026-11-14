@@ -782,16 +782,7 @@ impl<'a> Checker<'a> {
                 (false, Some((part, why))) => self.unlabeled_text(part, why, "Sync"),
                 (false, None) => continue,
             };
-            let message = format!(
-                "cannot keep a function that uses {name} as a func value, which may run on \
-                 another goroutine: {why}"
-            );
-            let fix = format!(
-                "keep it as a Local[func(...)], which stays with one goroutine, or put {name} \
-                 in a sync.Atomic or a sync.Mutex"
-            );
-            let diagnostic = Diagnostic::new(Code::FuncSharesCapture, shared.at, message);
-            self.emit(diagnostic.with_note(Code::NoteGoFixShare, None, fix));
+            self.emit(shares_capture(shared.at, &name, &why));
         }
         for reached in &found.reached {
             if !self.report_once((reached.at, Code::OwnBorrowIntoArena)) {
@@ -933,6 +924,14 @@ impl<'a> Checker<'a> {
             let diagnostic = Diagnostic::new(code, escaped.at, message);
             if !self.against_arguments(escaped.carrier.and_then(carried), &diagnostic) {
                 self.emit(diagnostic.with_note(Code::NoteBorrowedHere, Some(escaped.made), note));
+                continue;
+            }
+            // What is said of a pointer is held against the type
+            // arguments; that the function changes the variable is true
+            // of every one of them.
+            if escaped.changes && self.report_once((escaped.at, Code::FuncSharesCapture)) {
+                let why = format!("{owner} is changed by it or by another function");
+                self.emit(shares_capture(escaped.at, &owner, &why));
             }
         }
     }
@@ -955,6 +954,20 @@ impl<'a> Checker<'a> {
         self.kept_where(&params, found.span, &why);
         true
     }
+}
+
+/// A function literal that is kept as a plain function uses the
+/// variable `name` as it may not (CLO-2).
+fn shares_capture(at: Span, name: &str, why: &str) -> Diagnostic {
+    let message = format!(
+        "cannot keep a function that uses {name} as a func value, which may run on another \
+         goroutine: {why}"
+    );
+    let fix = format!(
+        "keep it as a Local[func(...)], which stays with one goroutine, or put {name} in a \
+         sync.Atomic or a sync.Mutex"
+    );
+    Diagnostic::new(Code::FuncSharesCapture, at, message).with_note(Code::NoteGoFixShare, None, fix)
 }
 
 impl<'a> Walk<'a> {

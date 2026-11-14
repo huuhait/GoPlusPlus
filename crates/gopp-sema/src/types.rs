@@ -1417,22 +1417,24 @@ impl Types {
         }
     }
 
-    /// The type that a function declares and that is no alias and has
-    /// no type parameters, if `ty` is one.
+    /// The type that a function declares and that is no alias, if `ty`
+    /// is one: as it is declared, a generic type with its own type
+    /// parameters.
     pub fn local_type(&self, ty: TypeId) -> Option<NamedId> {
-        let Type::Named { id, args } = &*self.get(ty) else {
+        let Type::Named { id, .. } = &*self.get(ty) else {
             return None;
         };
-        let plain = self.read(|inner| {
+        let declared = self.read(|inner| {
             let named = &inner.named[id.0 as usize];
-            named.local && named.alias.is_none() && named.params.is_empty()
+            named.local && named.alias.is_none()
         });
-        (args.is_empty() && plain).then_some(*id)
+        declared.then_some(*id)
     }
 
-    /// A new type with the name and the home of `named`, for a copy of
-    /// a type that a generic function declares: each instance of the
-    /// function has its own. What it is declared as is set next.
+    /// A new type with the name, the home and the type parameters of
+    /// `named`, for a copy of a type that a generic function declares:
+    /// each instance of the function has its own. What it is declared
+    /// as is set next.
     pub fn local_copy(&self, named: NamedId) -> NamedId {
         self.write(|inner| {
             let of = &inner.named[named.0 as usize];
@@ -1444,7 +1446,7 @@ impl Types {
                 underlying: None,
                 declared_as: None,
                 invalid: of.invalid,
-                params: Vec::new(),
+                params: of.params.clone(),
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 operators: Vec::new(),
