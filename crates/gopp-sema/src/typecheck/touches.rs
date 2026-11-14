@@ -230,6 +230,27 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// An operator or a conversion runs the method `name` of the type
+    /// `holder`, at `at`. Of a type parameter, of an interface and of
+    /// a type whose child may replace the method: a method of the
+    /// name.
+    pub(super) fn touch_operator(&mut self, holder: TypeId, name: Spur, at: u32) {
+        let holder = self.types.unalias(holder);
+        let interface = matches!(
+            &*self.types.get(self.types.underlying(holder)),
+            Type::Interface { .. }
+        );
+        let target = match &*self.types.get(holder) {
+            Type::Named { id, .. } if !interface && !self.types.has_table(holder) => {
+                Target::Known(Callee::Method(*id, name))
+            }
+            _ => Target::Named(name),
+        };
+        if let Some(unit) = self.touching() {
+            unit.calls.push((target, at));
+        }
+    }
+
     /// A `go` statement starts the call.
     pub(super) fn touch_spawn(&mut self, cx: &Cx<'a>, call: ExprId) {
         let ExprKind::Call { fun, .. } = cx.tree.exprs[call].kind else {
@@ -625,6 +646,7 @@ impl<'a> Checker<'a> {
                 program.roots.insert(key);
             }
         }
+        let mut said: FxHashMap<TouchKey, Arc<Touch>> = FxHashMap::default();
         for (at, unit) in units.iter().enumerate() {
             self.steps += 1;
             let mut touch = Touch {
@@ -659,7 +681,21 @@ impl<'a> Checker<'a> {
             touch.methods.dedup();
             program.written.extend(&touch.writes);
             program.written_any |= touch.writes_any;
-            self.types.set_touch(keys[at], Arc::new(touch));
+            // Two `@Operator` methods of a type may have one name: who
+            // calls the name may run either.
+            if let Some(other) = said.get(&keys[at]) {
+                touch.uses.extend(&other.uses);
+                touch.calls.extend(&other.calls);
+                touch.writes.extend(&other.writes);
+                touch.replaces.extend(&other.replaces);
+                touch.starts.extend(&other.starts);
+                touch.methods.extend(&other.methods);
+                touch.writes_any |= other.writes_any;
+                touch.values |= other.values;
+            }
+            let touch = Arc::new(touch);
+            said.insert(keys[at], touch.clone());
+            self.types.set_touch(keys[at], touch);
             // What is not known may run a function literal, or a
             // function or a method that is used as a value.
             if unit.parent.is_some() {

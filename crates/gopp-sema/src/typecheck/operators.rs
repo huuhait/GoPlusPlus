@@ -629,6 +629,7 @@ impl<'a> Checker<'a> {
             let mut x = x.clone();
             self.convert_untyped(cx, *expr, &mut x, param, true);
         }
+        self.touch_operator(method.holder, method.name, at.lo);
         let declared = match &*self.types.get(self.types.unalias(method.holder)) {
             Type::Named { id, .. } => Some(*id),
             _ => None,
@@ -989,6 +990,8 @@ impl<'a> Checker<'a> {
         let Some(method) = self.convert_method(x.ty, target) else {
             return false;
         };
+        // Where it is written is not known here: it counts as late.
+        self.touch_operator(method.holder, method.name, u32::MAX);
         self.operators.insert(call, method);
         true
     }

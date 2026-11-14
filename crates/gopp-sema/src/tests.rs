@@ -7157,6 +7157,25 @@ fn a_goroutine_is_followed_to_the_variables_that_it_may_use() {
             "func main() {\n\tgo read()\n\thits.Add(1)\n\tprintln(n)\n}",
             &[],
         ),
+        // The method that an operator runs is called, also the one of
+        // two with the same name that takes the operand.
+        (
+            "func main() {\n\tgo sum()\n\tn++\n\tm++\n}\n\ntype V struct{ x int }\n\n@Operator\nfunc (a \
+             V) Add(b V) V { return V{a.x + b.x + n} }\n\n@Operator\nfunc (a V) Add(k int) V { return \
+             V{a.x + k} }\n\nfunc sum() int { return (V{1} + V{2}).x }",
+            &["22:2: n"],
+        ),
+        (
+            "func main() {\n\tgo sum()\n\tn++\n\tm++\n}\n\ntype V struct{ x int }\n\n@Operator\nfunc (a \
+             V) Add(b V) V { return V{a.x + b.x} }\n\n@Operator\nfunc (a V) Add(k int) V { return \
+             V{a.x + k + m} }\n\nfunc sum() int { return (V{1} + 2).x }",
+            &["23:2: m"],
+        ),
+        (
+            "func main() {\n\tgo sum()\n\tn++\n}\n\ntype V struct{ x int }\n\n@Operator\nfunc (a V) \
+             Add(b V) V { return V{a.x + b.x} }\n\nfunc sum() int { return (V{1} + V{2}).x }",
+            &[],
+        ),
     ];
     for (body, expected) in cases {
         let names = ThreadedRodeo::new();
