@@ -537,6 +537,13 @@ struct Checker<'a> {
     /// While a body is walked: the pointer variables that point into what
     /// a `Shared` holds, which is only read through them.
     read_only: FxHashSet<LocalId>,
+    /// While a body is walked: where what a `Shared` holds is taken as
+    /// a value of a parent of its type, with the child and the parent.
+    seen_as: Vec<(Span, TypeId, TypeId)>,
+    /// For a child and a parent that were asked: the method of the
+    /// child, with its type, that keeps the child from being seen as
+    /// the parent in a `Shared`.
+    seen_as_known: FxHashMap<(TypeId, TypeId), std::option::Option<(Spur, TypeId)>>,
     /// While a body is walked: the places `&x.f` where `f` is a field
     /// that is never nil, until what takes the address is known.
     required_addresses: Vec<ExprId>,
@@ -708,6 +715,8 @@ pub fn declarations(
         marked: false,
         required_addresses: Vec::new(),
         read_only: FxHashSet::default(),
+        seen_as: Vec::new(),
+        seen_as_known: FxHashMap::default(),
         operands: place::Operands::Kept,
         target: None,
         swapping: false,
@@ -1029,7 +1038,12 @@ impl<'a> Checker<'a> {
                             _ => None,
                         }
                     }
-                    Callee::Method(named, name) => self.types.lends(named, name),
+                    // A method without a body changes nothing itself:
+                    // what replaces it is held to that where a child
+                    // is seen as its parent in a `Shared`.
+                    Callee::Method(named, name) => (self.types.lends(named, name)).or_else(|| {
+                        (self.types.declares_abstract(named, name)).then(|| nothing.clone())
+                    }),
                     _ => None,
                 };
                 if let Some(known) = known {
@@ -1087,6 +1101,9 @@ impl<'a> Checker<'a> {
                 }
             };
             self.lent((body, text), &carried, &problem.broken, found);
+            for &(at, child, parent) in &problem.seen_as {
+                self.shared_as_parent(at, child, parent, &done);
+            }
         }
         // For those who call the functions of this package.
         for lender in lenders {
@@ -3693,6 +3710,7 @@ impl<'a> Checker<'a> {
         self.localized.clear();
         self.bindings.clear();
         self.read_only.clear();
+        self.seen_as.clear();
         self.flow = flow::Flow::default();
         self.local_groups.clear();
         self.shifted.clear();

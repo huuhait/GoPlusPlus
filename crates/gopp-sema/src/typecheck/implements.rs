@@ -201,6 +201,9 @@ impl<'a> Checker<'a> {
         }
         let place = to;
         let fit = self.fit_own(x, to, writes);
+        if let Some((from, to)) = fit {
+            self.note_seen_as(cx, expr, x.ty, (from, to));
+        }
         let into = fit.and_then(|(from, to)| self.types.into_interface(from, to, self.names));
         match into.filter(|&(_, from, _)| !self.open(from)) {
             Some((IntoInterface::Changed, from, to)) => {

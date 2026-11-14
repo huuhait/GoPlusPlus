@@ -42,6 +42,7 @@ The compiler cannot catch it by looking for pointers, because the same thing hap
 - **A tree or graph that is changed after it is built needs a `Mutex`, also in a single goroutine.** That is more to write, and an uncontended lock on every change.
 - **Taking the same lock twice at the same time makes the program wait forever.** The memory stays valid. The compiler reports the cases it can see (CON-20); two handles to one object are not among them.
 - Which pointer-receiver methods "only read" is a fact the compiler infers for each function and exports, as it does for parameters (ADR-0041 rule 4). A call through an interface or a function value has no such fact, so it cannot take a pointer into a `Shared[T]`.
+- A `@Virtual` or `@Abstract` method is called on what a `Shared[P]` holds by what the method of `P` does (one without a body only reads). The method that runs is a child's, so a child whose method writes where the parent's only reads is not taken as that parent in a `Shared`: the error is where the `Shared[Child]`, or a pointer into it, is converted or lent as the parent, or a method of the parent is called on it. A child may write in its methods; with one owner it is used as its parent freely (decided 2026-11-14).
 - Data that is built once and then only read is shared with no lock at all.
 
 ## Alternatives

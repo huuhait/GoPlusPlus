@@ -6182,26 +6182,29 @@ func reads() {
 
 // rule: OWN-P8
 #[test]
-fn a_method_that_a_child_may_replace_is_held_to_what_the_named_method_does() {
-    // Which method runs is not known where the call is written. What
-    // it may change is what the method of that name changes: `Sound`
-    // of `Animal` only reads, `Count` writes. `Clone` of a pointer or
-    // a handle is no method of the type, and only reads.
+fn a_child_is_seen_as_its_parent_in_a_shared_only_if_its_methods_read_like_the_parents() {
+    // Which method a call of a `@Virtual` method runs is not known
+    // where the call is written: it goes by the method of the parent.
+    // `Sound` of `Animal` only reads and `Legs` has no body, so both
+    // may be called on what a `Shared` holds, and a child whose method
+    // writes is not seen as an `Animal` there: by a declaration, an
+    // argument, a pointer that is lent, a method of the parent, a
+    // result. `Rename` of `Animal` writes, so `Cat` may write there.
+    // With one owner a `Dog` is an `Animal` like any other.
     let text = "package p
 
-type Animal struct {
-	name  string
-	calls int
-}
+type Animal struct{ name string }
 
 @Virtual
-func (a *Animal) Sound() string { return a.name }
+func (a *Animal) Sound() string { return \"...\" }
 
 @Virtual
-func (a *Animal) Count() int {
-	a.calls++
-	return a.calls
-}
+func (a *Animal) Rename(to string) { a.name = to }
+
+@Abstract
+func (a *Animal) Legs() int
+
+func (a *Animal) Twice() string { return a.Sound() + a.Sound() }
 
 @Extends(Animal)
 type Dog struct{ barks int }
@@ -6212,22 +6215,73 @@ func (d *Dog) Sound() string {
 	return \"woof\"
 }
 
-func use() {
-	s := NewShared(Dog{name: \"d\"})
-	var a Shared[Animal] = s
-	_ = a.Sound()
-	_ = a.Count()
-	u := NewUnique(Dog{name: \"u\"})
+@Override
+func (d *Dog) Legs() int { return 4 }
+
+@Extends(Animal)
+type Cat struct{ lives int }
+
+@Override
+func (c *Cat) Sound() string { return \"meow\" }
+
+@Override
+func (c *Cat) Legs() int { return 4 }
+
+@Override
+func (c *Cat) Rename(to string) { c.lives-- }
+
+func hear(a *Animal) string { return a.Sound() }
+
+func keep(a Shared[Animal]) {}
+
+func owned() {
+	u := NewUnique(Dog{name: \"rex\"})
 	_ = u.Sound()
-	_ = u.Count()
-	c := a.Clone()
-	_ = c.Count()
+	var a Unique[Animal] = move(u)
+	_ = a.Sound()
+	d := Dog{name: \"d\"}
+	_ = hear(&d)
+}
+
+func shared() Shared[Animal] {
+	dog := NewShared(Dog{name: \"rex\"})
+	var a Shared[Animal] = dog
+	_ = a.name
+	keep(dog)
+	_ = hear(dog)
+	_ = dog.Twice()
+	p := &dog.barks
+	_ = p
+	return dog
+}
+
+func cats() Shared[Animal] {
+	cat := NewShared(Cat{name: \"tom\"})
+	var a Shared[Animal] = cat
+	_ = a.Sound() + a.Twice()
+	_ = a.Legs()
+	keep(cat)
+	_ = hear(cat)
+	return cat
 }
 ";
+    let fix = "    put what Sound changes in a Mutex or an Atomic, or own the value with a Unique";
     let expected = [
-        "a.gopp:30:6: cannot call a.Count: the method writes through its receiver, and what a Shared \
-         holds is only read through it",
-        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:55:25: cannot use Dog as Animal in a Shared: Dog.Sound writes through its receiver, and what a \
+         Shared holds is only read",
+        fix,
+        "a.gopp:57:7: cannot use Dog as Animal in a Shared: Dog.Sound writes through its receiver, and what a \
+         Shared holds is only read",
+        fix,
+        "a.gopp:58:11: cannot use Dog as Animal in a Shared: Dog.Sound writes through its receiver, and what a \
+         Shared holds is only read",
+        fix,
+        "a.gopp:59:6: cannot use Dog as Animal in a Shared: Dog.Sound writes through its receiver, and what a \
+         Shared holds is only read",
+        fix,
+        "a.gopp:62:9: cannot use Dog as Animal in a Shared: Dog.Sound writes through its receiver, and what a \
+         Shared holds is only read",
+        fix,
     ];
     assert_eq!(messages("a.gopp", text), expected);
 }
@@ -6368,6 +6422,43 @@ func lent() {
         "    a.gopp:20:7: the function that uses f is written here",
     ];
     assert_eq!(messages("a.gopp", text), expected);
+}
+
+#[test]
+fn the_steps_of_children_seen_as_parents_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // A parent with many methods that its child replaces, seen as the
+    // parent once; and one small pair of types, seen so many times.
+    let methods = |count: usize| {
+        let of_parent: String = (0..count)
+            .map(|i| format!("@Virtual\nfunc (a *A) M{i}() int {{ return a.n }}\n"))
+            .collect();
+        let of_child: String = (0..count)
+            .map(|i| format!("@Override\nfunc (b *B) M{i}() int {{ return b.m + {i} }}\n"))
+            .collect();
+        format!(
+            "package p\ntype A struct{{ n int }}\n{of_parent}@Extends(A)\ntype B struct{{ m int \
+             }}\n{of_child}func f() Shared[A] {{\n\ts := NewShared(B{{}})\n\treturn s\n}}\n"
+        )
+    };
+    let places = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| format!("\tvar a{i} Shared[A] = s\n\tn += a{i}.M()\n"))
+            .collect();
+        format!(
+            "package p\ntype A struct{{ n int }}\n@Virtual\nfunc (a *A) M() int {{ return a.n \
+             }}\n@Extends(A)\ntype B struct{{ m int }}\n@Override\nfunc (b *B) M() int {{ return \
+             b.m }}\nfunc f() int {{\n\ts := NewShared(B{{}})\n\tn := 0\n{each}\treturn n\n}}\n"
+        )
+    };
+    let sizes = [100, 200, 400, 800];
+    linear::assert_near_linear(&sizes, |n| steps(methods(n)));
+    linear::assert_near_linear(&sizes, |n| steps(places(n)));
 }
 
 // rule: PAN-3

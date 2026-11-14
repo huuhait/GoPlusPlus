@@ -192,6 +192,29 @@ impl Types {
         all
     }
 
+    /// The methods that the type has of its own and of its ancestors,
+    /// the type itself first: each with the type that declares it and
+    /// its marks. A name that comes again is replaced by the one before.
+    pub fn methods_from(&self, ty: TypeId) -> Vec<(lasso::Spur, TypeId, Marks)> {
+        let mut all = Vec::new();
+        for of in std::iter::once(ty).chain(self.ancestors(ty)) {
+            all.extend(
+                (self.own_marks(of).into_iter()).map(|(method, marks)| (method.name, of, marks)),
+            );
+        }
+        all
+    }
+
+    /// Whether the declared type declares the method `name` without a
+    /// body (`@Abstract`).
+    pub fn declares_abstract(&self, named: NamedId, name: lasso::Spur) -> bool {
+        self.read(|inner| {
+            let methods = &inner.named[named.0 as usize].methods;
+            let found = methods.iter().find(|m| m.method.name == name);
+            found.is_some_and(|m| m.marks.has(Marks::ABSTRACT))
+        })
+    }
+
     /// The marks of all the methods that the declared type declares
     /// itself, together.
     fn own_marks(&self, ty: TypeId) -> Vec<(super::Method, Marks)> {

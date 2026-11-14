@@ -257,6 +257,126 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The value of `expr`, of the type `have` and read as `from`, is
+    /// given where the type `to` is taken. If that sees what a `Shared`
+    /// holds as a value of a parent of its type, it is noted: the
+    /// methods of the child that the parent's calls may run only read
+    /// (OWN-P8), which is known when every body is walked.
+    pub(super) fn note_seen_as(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        have: TypeId,
+        (from, to): (TypeId, TypeId),
+    ) {
+        if self.memo.is_none() {
+            return;
+        }
+        let held = |ty: TypeId| match &*self.types.get(self.types.underlying(ty)) {
+            Type::Pointer(of) | Type::Unique(of) | Type::Shared(of) | Type::Weak(of) => Some(*of),
+            _ => None,
+        };
+        // A place in a `Shared` is given as it is to a method.
+        let child = held(from).unwrap_or(from);
+        let Some(parent) = held(to) else {
+            return;
+        };
+        let up = self.types.ancestor_path(child, parent);
+        if up.is_none_or(|path| path.is_empty()) || !self.types.has_table(parent) {
+            return;
+        }
+        let handle = matches!(
+            &*self.types.get(self.types.underlying(have)),
+            Type::Shared(_) | Type::Weak(_)
+        );
+        if handle || self.points_into_shared(cx, expr) || self.held_shared(cx, expr) {
+            self.seen_as.push((cx.tree.exprs[expr].span, child, parent));
+        }
+    }
+
+    /// What a `Shared` holds is taken, at `at`, as a value of the type
+    /// `parent`, a parent of its type `child`. A call of a method of
+    /// the parent that only reads, or has no body, may run the method
+    /// of the child: that one only reads too, or the child is not
+    /// seen so. `done` has what the passes say of the functions.
+    pub(super) fn shared_as_parent(
+        &mut self,
+        at: Span,
+        child: TypeId,
+        parent: TypeId,
+        done: &FxHashMap<borrows::Callee, Arc<crate::types::Lends>>,
+    ) {
+        let writes = |this: &Self, of: TypeId, name: Spur| {
+            let Type::Named { id, .. } = &*this.types.get(of) else {
+                return true;
+            };
+            let known = done.get(&borrows::Callee::Method(*id, name)).cloned();
+            let known = known.or_else(|| this.types.lends(*id, name));
+            // Of a method that nothing is known of, nothing is taken.
+            known.is_none_or(|lends| lends.changes.first().copied().unwrap_or(false))
+        };
+        // What each side has under a name: the first that is found, the
+        // type itself before its ancestors.
+        let table = |this: &mut Self, of: TypeId| {
+            let mut found: FxHashMap<Spur, (TypeId, Marks)> = FxHashMap::default();
+            let mut order = Vec::new();
+            for (name, home, marks) in this.types.methods_from(of) {
+                this.steps += 1;
+                if let std::collections::hash_map::Entry::Vacant(free) = found.entry(name) {
+                    free.insert((home, marks));
+                    order.push(name);
+                }
+            }
+            (found, order)
+        };
+        let unfit = match self.seen_as_known.get(&(child, parent)) {
+            Some(known) => *known,
+            None => {
+                let (of_parent, names) = table(self, parent);
+                let (of_child, _) = table(self, child);
+                let mut unfit = None;
+                for name in names {
+                    self.steps += 1;
+                    // A method that some ancestor lets a child replace.
+                    let (home, marks) = of_parent[&name];
+                    let replaced = marks.has(Marks::VIRTUAL)
+                        || marks.has(Marks::ABSTRACT)
+                        || marks.has(Marks::OVERRIDE);
+                    let promised =
+                        replaced && (marks.has(Marks::ABSTRACT) || !writes(self, home, name));
+                    let Some(&(home, marks)) = of_child.get(&name) else {
+                        continue;
+                    };
+                    if promised && !marks.has(Marks::ABSTRACT) && writes(self, home, name) {
+                        unfit = Some((name, home));
+                        break;
+                    }
+                }
+                self.seen_as_known.insert((child, parent), unfit);
+                unfit
+            }
+        };
+        let Some((name, home)) = unfit else {
+            return;
+        };
+        if !self.report_once((at, Code::OwnSharedWrite)) {
+            return;
+        }
+        let method = self.names.resolve(&name).to_owned();
+        let message = format!(
+            "cannot use {} as {} in a Shared: {}.{method} writes through its receiver, and what a \
+             Shared holds is only read",
+            self.type_string(child),
+            self.type_string(parent),
+            self.type_string(home),
+        );
+        let fix = format!(
+            "put what {method} changes in a Mutex or an Atomic, or own the value with a Unique"
+        );
+        let diagnostic = Diagnostic::new(Code::OwnSharedWrite, at, message);
+        self.emit(diagnostic.with_note(Code::NoteOwnFixOption, None, fix));
+    }
+
     /// The place `expr` is changed, as `doing` says: not what a `Shared`
     /// holds. Whether something was said.
     pub(super) fn shared_changed(&mut self, cx: &Cx<'a>, expr: ExprId, doing: &str) -> bool {
@@ -696,6 +816,12 @@ impl<'a> Checker<'a> {
         }
         if pointer_receiver && self.memo.is_some() {
             self.pointer_methods.insert(expr);
+            // A method of a parent is given the value as that parent.
+            let holder = self.selections.get(&expr).map(|selection| selection.holder);
+            if let Some(holder) = holder {
+                let pointer = self.types.pointer(holder);
+                self.note_seen_as(cx, base, x.ty, (x.ty, pointer));
+            }
         }
         if !called && self.memo.is_some() {
             self.operator_value(cx, expr, name);

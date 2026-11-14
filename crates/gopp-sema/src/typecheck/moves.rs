@@ -572,6 +572,14 @@ impl<'a> Checker<'a> {
             )
         };
         self.steps += found.steps;
+        // What the passes say of the functions decides whether a child
+        // may be seen as its parent in a `Shared`: asked with the
+        // first problem of the body.
+        let mut found = found;
+        let seen_as = std::mem::take(&mut self.seen_as);
+        if let Some(first) = found.lent.first_mut() {
+            first.seen_as = seen_as;
+        }
         let named = |this: &Self, local: LocalId| {
             let name = cx.body.locals[local.0 as usize].name;
             this.names.resolve(&name).to_owned()

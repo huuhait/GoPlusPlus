@@ -295,6 +295,9 @@ pub(super) struct Problem {
     /// How many variables the body has, and where the function is.
     pub locals: u32,
     pub within: Span,
+    /// Where the body takes what a `Shared` holds as a value of a
+    /// parent of its type: the child, the parent, and where.
+    pub seen_as: Vec<(Span, TypeId, TypeId)>,
 }
 
 /// Two pointers that one call is given and that may point to one place
@@ -1837,6 +1840,7 @@ impl<'a> Walk<'a> {
             broken: std::mem::take(&mut self.broken),
             locals: self.body.locals.len() as u32,
             within: self.within,
+            seen_as: Vec::new(),
         }
     }
 }
