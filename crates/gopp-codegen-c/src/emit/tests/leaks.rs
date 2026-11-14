@@ -30,7 +30,11 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
                 return None;
             }
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            let unit = emit_c23(&module(&name, &text), &options(Entry::Main)).unwrap();
+            // As a program is built: the calls of its small functions
+            // are replaced by their bodies.
+            let mut module = module(&name, &text);
+            gopp_gir::inline_trivial(&mut module);
+            let unit = emit_c23(&module, &options(Entry::Main)).unwrap();
             // The C that the program calls is a file beside it.
             let mut units = vec![unit];
             units.extend(std::fs::read_to_string(path.with_extension("c")));
