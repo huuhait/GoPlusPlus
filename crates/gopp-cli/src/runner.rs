@@ -439,12 +439,9 @@ pub fn run(options: &Options) -> ExitCode {
         debug: options.debug,
     });
     let driver = ClangDriver {
-        toolchain: &toolchain,
-        target,
         opt: pipeline.clang,
-        strict: false,
         debug: pipeline.debug,
-        time_trace: false,
+        ..ClangDriver::new(&toolchain, target)
     };
     let form = match real {
         true => Form::Objects,

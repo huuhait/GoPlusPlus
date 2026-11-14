@@ -103,6 +103,17 @@ enum Command {
         /// file as a trace that Chrome reads
         #[arg(long)]
         trace: Option<PathBuf>,
+        /// The root of the files of the target, for a link for another
+        /// system: where its C library and its startup objects are
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+        /// The directory of the startup objects and of the C library of
+        /// the target
+        #[arg(long)]
+        crt_dir: Option<PathBuf>,
+        /// The dynamic loader that the program names
+        #[arg(long)]
+        dynamic_linker: Option<String>,
         /// What is made of the package
         #[arg(long, value_enum, default_value = "exe")]
         emit: EmitBuilt,
@@ -297,6 +308,9 @@ fn run() -> ExitCode {
             opt,
             pipeline_times,
             trace,
+            sysroot,
+            crt_dir,
+            dynamic_linker,
             emit,
             o,
             paths,
@@ -307,6 +321,9 @@ fn run() -> ExitCode {
             opt: opt.level(),
             pipeline_times,
             trace,
+            sysroot,
+            crt_dir,
+            dynamic_linker,
             emit,
             output: o,
             paths,

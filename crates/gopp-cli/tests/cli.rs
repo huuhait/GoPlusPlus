@@ -1,11 +1,13 @@
 #![allow(clippy::unwrap_used, reason = "test helpers outside #[test] functions")]
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Mutex, PoisonError};
 
 use gopp_testutil::samples;
+use object::{Architecture, BinaryFormat, Object, ObjectKind, ObjectSymbol};
 use tempfile::TempDir;
 
 /// Held while a script is written and while a process is started. A process
@@ -909,20 +911,70 @@ fn build_makes_an_object_for_each_target_and_links_for_its_own() {
     assert_eq!(&elf[..4], b"\x7fELF");
     let coff = made(&["-emit=obj", "-target=windows/amd64"], "sums.obj");
     assert_eq!(&coff[..2], [0x64, 0x86]);
+    // Both are objects for the processor of the target that define the
+    // functions of the package under their symbols, and need nothing
+    // but the runtime and what Clang asks of every C library.
+    for (bytes, format) in [(&elf, BinaryFormat::Elf), (&coff, BinaryFormat::Coff)] {
+        let object = object::File::parse(&bytes[..]).unwrap();
+        assert_eq!(
+            (object.format(), object.architecture()),
+            (format, Architecture::X86_64)
+        );
+        assert_eq!(object.kind(), ObjectKind::Relocatable);
+        let (defined, needed) = symbols(&object);
+        for symbol in ["_GPF4mainE3add", "_GPF4mainE4main", "main"] {
+            assert!(defined.contains(symbol), "{symbol}: {defined:?}");
+        }
+        let foreign: Vec<&String> = (needed.iter())
+            .filter(|name| !name.starts_with("_gopp_") && !OF_EVERY_C.contains(&name.as_str()))
+            .collect();
+        assert_eq!(foreign, [] as [&String; 0], "{format:?}");
+        assert!(needed.contains("_gopp_rt_init"), "{needed:?}");
+    }
     let assembly = made(&["-emit=asm", "-target=linux/amd64"], "sums.s");
     assert!(String::from_utf8_lossy(&assembly).contains("_GPF4mainE3add"));
     let (own, other, program) = match cfg!(target_os = "linux") {
         true => ("linux/amd64", "windows/amd64", "sums"),
         false => ("windows/amd64", "linux/amd64", "sums.exe"),
     };
+    // A link for the other system says what it lacks, and how the
+    // object file is made.
     let refused = build(&[&format!("-target={other}")]);
     assert_eq!(refused.status.code(), Some(1));
-    assert!(stderr(&refused).starts_with("error[E0441]: cannot link for "));
+    let said = stderr(&refused);
+    assert!(
+        said.starts_with(&format!("error[E0441]: cannot link for {other} ")),
+        "{said}"
+    );
+    assert!(said.contains("`-emit=obj` makes the object file"), "{said}");
+    let needs = match other {
+        "windows/amd64" => "the libraries of Windows",
+        _ => "`--sysroot` or `-crt-dir` says where it is",
+    };
+    assert!(said.contains(needs), "{said}");
     if cfg!(target_os = "linux") {
         made(&[&format!("-target={own}")], program);
         let ran = run(&mut Command::new(dir.path().join(program)));
         assert_eq!(ran.status.code(), Some(0));
     }
+}
+
+/// What Clang may ask of the C library of any target for code that
+/// calls no function of it.
+const OF_EVERY_C: [&str; 6] = [
+    "memcpy", "memset", "memmove", "memcmp", "__chkstk", "_setjmp",
+];
+
+/// The symbols that an object file defines for others, and those that
+/// it needs of others.
+fn symbols(object: &object::File) -> (BTreeSet<String>, BTreeSet<String>) {
+    let named = |symbol: &object::Symbol| symbol.name().unwrap_or_default().to_owned();
+    let global = |symbol: &object::Symbol| symbol.is_global() && !symbol.is_undefined();
+    let defined = object.symbols().filter(global).map(|symbol| named(&symbol));
+    let needed = (object.symbols())
+        .filter(|symbol| symbol.is_undefined() && !symbol.name().unwrap_or_default().is_empty())
+        .map(|symbol| named(&symbol));
+    (defined.collect(), needed.collect())
 }
 
 /// `run`, but only the start of the process is held against the
@@ -1715,13 +1767,10 @@ fn no_program_that_imports_a_package_leaks_or_reads_what_is_freed() {
     packages.sort();
     let of_std: Vec<String> = packages.iter().map(|dir| unit_of(dir)).collect();
     let toolchain = HostToolchain::discover().unwrap();
+    let target = gopp_target::TargetSpec::named("linux/amd64").unwrap();
     let driver = ClangDriver {
-        toolchain: &toolchain,
-        target: gopp_target::TargetSpec::named("linux/amd64").unwrap(),
         opt: OptLevel::O1,
-        strict: false,
-        debug: false,
-        time_trace: false,
+        ..ClangDriver::new(&toolchain, target)
     };
     let sanitized = |units: &[String], what: &Path| {
         let dir = TempDir::new().unwrap();
@@ -2116,4 +2165,117 @@ fn a_build_says_its_level_its_times_and_its_trace() {
     );
     let refused = run_beside(gopp().args(["build", "-opt=9"]).arg(&file));
     assert_ne!(refused.status.code(), Some(0));
+}
+
+/// A program is linked for `linux/amd64` with a C library that the
+/// build is told of, on any machine: here one that defines what the
+/// program and the runtime need and does nothing. What is made is an
+/// executable of the target that names the loader that it was told.
+#[test]
+fn a_program_links_for_linux_with_the_c_library_that_it_is_told_of() {
+    use gopp_codegen_c::driver::ClangDriver;
+    use gopp_codegen_c::runtime::{self, Form};
+    use gopp_codegen_c::toolchain::HostToolchain;
+
+    let dir = TempDir::new().unwrap();
+    let file = write_source(&dir, "sums.gopp", SUMS);
+    let stubs = dir.path().join("stubs");
+    fs::create_dir(&stubs).unwrap();
+    let program = dir.path().join("sums.elf");
+    let linked = || {
+        let mut build = gopp();
+        build.args([
+            "build",
+            "-target=linux/amd64",
+            "-dynamic-linker=/stubs/ld-gopp.so.1",
+        ]);
+        build.arg("-crt-dir").arg(&stubs).arg("-o").arg(&program);
+        run_beside(build.arg(&file))
+    };
+    // Without the files of the target the build names the first that
+    // it misses and the flags, before the linker is asked. On Linux
+    // Clang finds those of the machine itself.
+    if !cfg!(target_os = "linux") {
+        let said = stderr(&linked());
+        assert!(said.starts_with("error[E0441]: cannot link for "), "{said}");
+        assert!(
+            said.contains("crt1.o is not found") && said.contains("`-crt-dir`"),
+            "{said}"
+        );
+    }
+    // What the object of the program and those of the runtime need of
+    // others, as the files themselves say it.
+    let toolchain = HostToolchain::discover().unwrap();
+    let target = gopp_target::TargetSpec::named("linux/amd64").unwrap();
+    let driver = ClangDriver::new(&toolchain, target);
+    let object = dir.path().join("sums.o");
+    let mut build = gopp();
+    build.args(["build", "-target=linux/amd64", "-emit=obj", "-o"]);
+    assert_eq!(stderr(&run_beside(build.arg(&object).arg(&file))), "");
+    let mut objects = runtime::build(&driver, Form::Objects, &cache()).unwrap();
+    objects.push(object);
+    let (mut defined, mut needed) = (BTreeSet::new(), BTreeSet::new());
+    for path in &objects {
+        let bytes = fs::read(path).unwrap();
+        let (has, needs) = symbols(&object::File::parse(&bytes[..]).unwrap());
+        defined.extend(has);
+        needed.extend(needs);
+    }
+    let of_c: Vec<&String> = needed.difference(&defined).collect();
+    assert!(of_c.iter().any(|name| *name == "malloc"), "{of_c:?}");
+    // The C library of stubs, and startup objects that have nothing.
+    let source = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        fs::write(&path, text).unwrap();
+        path
+    };
+    let functions: String = (of_c.iter())
+        .filter(|name| !name.starts_with("_GLOBAL_OFFSET_TABLE_"))
+        .map(|name| format!("void {name}(void) {{}}\n"))
+        .collect();
+    let libc = source("libc.c", &functions);
+    let start = source("start.c", "void _start(void) {}\n");
+    let empty = source("empty.c", "");
+    let made = |from: &Path, name: &str, kind: &[&str]| {
+        let mut clang = Command::new(&toolchain.clang.path);
+        clang.arg(format!("--target={}", target.triple));
+        clang
+            .args(["-w", "-fPIC", "-nostdlib", "-fuse-ld=lld"])
+            .args(kind);
+        clang.arg(from).arg("-o").arg(stubs.join(name));
+        let ran = run_beside(&mut clang);
+        assert_eq!(ran.status.code(), Some(0), "{name}: {}", stderr(&ran));
+    };
+    made(&libc, "libc.so", &["-shared"]);
+    made(&empty, "libgcc_s.so", &["-shared"]);
+    for (from, name) in [(&start, "Scrt1.o"), (&start, "crt1.o")] {
+        made(from, name, &["-c"]);
+    }
+    for name in [
+        "crti.o",
+        "crtn.o",
+        "crtbeginS.o",
+        "crtendS.o",
+        "crtbegin.o",
+        "crtend.o",
+        "libgcc.a",
+    ] {
+        made(&empty, name, &["-c"]);
+    }
+    let built = linked();
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    let bytes = fs::read(&program).unwrap();
+    let made = object::File::parse(&bytes[..]).unwrap();
+    assert_eq!(
+        (made.format(), made.architecture()),
+        (BinaryFormat::Elf, Architecture::X86_64)
+    );
+    assert!(matches!(
+        made.kind(),
+        ObjectKind::Executable | ObjectKind::Dynamic
+    ));
+    let (defined, _) = symbols(&made);
+    assert!(defined.contains("_GPF4mainE4main") && defined.contains("_gopp_rt_init"));
+    let loader = b"/stubs/ld-gopp.so.1\0";
+    assert!(bytes.windows(loader.len()).any(|part| part == loader));
 }

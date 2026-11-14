@@ -10,12 +10,9 @@ use crate::toolchain::HostToolchain;
 
 fn driver<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> ClangDriver<'t> {
     ClangDriver {
-        toolchain,
-        target: TargetSpec::named(target).unwrap(),
         opt,
         strict: true,
-        debug: false,
-        time_trace: false,
+        ..ClangDriver::new(toolchain, TargetSpec::named(target).unwrap())
     }
 }
 

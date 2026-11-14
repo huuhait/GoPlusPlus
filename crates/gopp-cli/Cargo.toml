@@ -35,6 +35,7 @@ object.workspace = true
 
 [dev-dependencies]
 gopp-testutil = { path = "../gopp-testutil" }
+object.workspace = true
 
 # `unsafe` is allowed module by module, so the workspace `forbid` cannot apply.
 [lints.rust]

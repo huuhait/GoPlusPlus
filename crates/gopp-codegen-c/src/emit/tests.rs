@@ -600,12 +600,9 @@ fn a_cleanup_block_is_a_function_of_its_own_and_a_module_that_breaks_a_rule_is_r
 /// error.
 fn strict<'t>(toolchain: &'t HostToolchain, target: &str, opt: OptLevel) -> ClangDriver<'t> {
     ClangDriver {
-        toolchain,
-        target: TargetSpec::named(target).unwrap(),
         opt,
         strict: true,
-        debug: false,
-        time_trace: false,
+        ..ClangDriver::new(toolchain, TargetSpec::named(target).unwrap())
     }
 }
 
@@ -999,10 +996,13 @@ fn a_link_for_another_target_says_what_it_lacks() {
             &[],
         )
         .unwrap_err();
-    assert!(
-        matches!(refused, DriverError::NoSysroot { .. }),
-        "{refused}"
-    );
+    // The libraries of Windows are on Windows only; the C library of
+    // Linux is where a flag says, and none was given.
+    let lacks = match other {
+        "windows/amd64" => matches!(refused, DriverError::NoWindowsLibraries { .. }),
+        _ => matches!(refused, DriverError::NoSysroot { .. }),
+    };
+    assert!(lacks, "{refused}");
 }
 
 #[test]

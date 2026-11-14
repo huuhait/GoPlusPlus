@@ -7,7 +7,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gopp_codegen_c::driver::{ClangDriver, OptLevel, Output, TIME_TRACE_DIR};
+use gopp_codegen_c::driver::{ClangDriver, LinkInputs, OptLevel, Output, TIME_TRACE_DIR};
 use gopp_codegen_c::pipeline::{PipelineRequest, Stage, select_pipeline};
 use gopp_codegen_c::runtime::{self, Form};
 use gopp_codegen_c::toolchain::HostToolchain;
@@ -38,6 +38,12 @@ pub struct Options {
     pub pipeline_times: bool,
     /// The file for the trace of the stages.
     pub trace: Option<PathBuf>,
+    /// Where a link finds the C library of the target: its root, or
+    /// the directory of its startup objects.
+    pub sysroot: Option<PathBuf>,
+    pub crt_dir: Option<PathBuf>,
+    /// The dynamic loader that the program names.
+    pub dynamic_linker: Option<String>,
     pub emit: EmitBuilt,
     pub output: Option<PathBuf>,
     pub paths: Vec<PathBuf>,
@@ -300,12 +306,15 @@ pub fn run(options: &Options) -> ExitCode {
     };
     let compiling = clock.begin();
     let driver = ClangDriver {
-        toolchain: &toolchain,
-        target,
         opt: pipeline.clang,
-        strict: false,
         debug: pipeline.debug,
         time_trace: options.trace.is_some(),
+        link: LinkInputs {
+            sysroot: options.sysroot.as_deref(),
+            crt_dir: options.crt_dir.as_deref(),
+            loader: options.dynamic_linker.as_deref(),
+        },
+        ..ClangDriver::new(&toolchain, target)
     };
     // An executable is linked with the runtime, which is built once for
     // a target and its flags.

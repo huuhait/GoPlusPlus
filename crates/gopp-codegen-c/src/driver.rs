@@ -60,10 +60,15 @@ pub enum DriverError {
     )]
     MissingLinkInput { target: &'static str, name: String },
     #[error(
-        "cannot link for {target} on this machine yet: only the target of the machine itself is \
-         linked; `-emit=obj` makes the object file"
+        "cannot link for {target} on this machine without the C library of the target: \
+         `--sysroot` or `-crt-dir` says where it is; `-emit=obj` makes the object file"
     )]
     NoSysroot { target: String },
+    #[error(
+        "cannot link for {target} on this machine: the link needs the libraries of Windows, \
+         which are found on Windows only; `-emit=obj` makes the object file"
+    )]
+    NoWindowsLibraries { target: String },
     #[error("the runtime has no shared form for {target} yet")]
     NoSharedRuntime { target: &'static str },
 }
@@ -96,6 +101,20 @@ const ELF_LINK_FLAGS: [&str; 4] = [
 /// The files that a link for an ELF target needs of the C library.
 const ELF_LINK_INPUTS: [&str; 4] = ["crt1.o", "crti.o", "crtn.o", "libc.so"];
 
+/// Where a link for another system finds the C library of the target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkInputs<'a> {
+    /// The root of the files of the target (`--sysroot`).
+    pub sysroot: Option<&'a Path>,
+    /// The directory of the startup objects and of the C library
+    /// (`-crt-dir`).
+    pub crt_dir: Option<&'a Path>,
+    /// The dynamic loader that the program names, in the place of the
+    /// one of the table of the targets (`-dynamic-linker`).
+    pub loader: Option<&'a str>,
+}
+
+#[derive(Clone, Copy)]
 pub struct ClangDriver<'a> {
     pub toolchain: &'a HostToolchain,
     pub target: &'static TargetSpec,
@@ -108,10 +127,27 @@ pub struct ClangDriver<'a> {
     /// Clang writes where its time went, a file for each unit in the
     /// directory `TIME_TRACE_DIR` beside the unit.
     pub time_trace: bool,
+    pub link: LinkInputs<'a>,
 }
 
 /// Where Clang writes its time traces, in the directory of a unit.
 pub const TIME_TRACE_DIR: &str = "time-trace";
+
+impl<'a> ClangDriver<'a> {
+    /// A driver for the target that does not optimize, with the
+    /// warnings off and nothing for a debugger.
+    pub fn new(toolchain: &'a HostToolchain, target: &'static TargetSpec) -> Self {
+        Self {
+            toolchain,
+            target,
+            opt: OptLevel::O0,
+            strict: false,
+            debug: false,
+            time_trace: false,
+            link: LinkInputs::default(),
+        }
+    }
+}
 
 impl ClangDriver<'_> {
     /// The flags for compiling a unit that lies in `dir`.
@@ -154,10 +190,31 @@ impl ClangDriver<'_> {
         flags
     }
 
-    pub(crate) fn link_flags(&self) -> Vec<&'static str> {
-        let mut flags = vec!["-fuse-ld=lld"];
+    pub(crate) fn link_flags(&self) -> Vec<String> {
+        let mut flags = vec!["-fuse-ld=lld".to_owned()];
         if self.target.object == ObjectFormat::Elf {
-            flags.extend(ELF_LINK_FLAGS);
+            flags.extend(ELF_LINK_FLAGS.map(str::to_owned));
+        }
+        flags.extend(self.found_flags());
+        if let Some(loader) = self.link.loader {
+            flags.push(format!("-Wl,--dynamic-linker={loader}"));
+        }
+        flags
+    }
+
+    /// The flags that say where the C library of the target is. Clang
+    /// runs in the directory of the unit, so each path is a whole one.
+    fn found_flags(&self) -> Vec<String> {
+        let whole = |path: &Path| {
+            let whole = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+            whole.display().to_string()
+        };
+        let mut flags = Vec::new();
+        if let Some(sysroot) = self.link.sysroot {
+            flags.push(format!("--sysroot={}", whole(sysroot)));
+        }
+        if let Some(dir) = self.link.crt_dir {
+            flags.extend([format!("-B{}", whole(dir)), format!("-L{}", whole(dir))]);
         }
         flags
     }
@@ -191,17 +248,23 @@ impl ClangDriver<'_> {
     /// is asked: it would say less.
     pub fn check_link_inputs(&self) -> Result<(), DriverError> {
         let host = TargetSpec::host().ok();
-        if host.is_none_or(|host| host.triple != self.target.triple) {
-            return Err(DriverError::NoSysroot {
-                target: format!("{}/{}", self.target.os.name(), self.target.arch.name()),
-            });
-        }
+        let own = host.is_some_and(|host| host.triple == self.target.triple);
+        let target = format!("{}/{}", self.target.os.name(), self.target.arch.name());
         if self.target.object != ObjectFormat::Elf {
-            return Ok(());
+            return match own {
+                true => Ok(()),
+                false => Err(DriverError::NoWindowsLibraries { target }),
+            };
+        }
+        // The C library of another system is where the build says.
+        let said = self.link.sysroot.is_some() || self.link.crt_dir.is_some();
+        if !own && !said {
+            return Err(DriverError::NoSysroot { target });
         }
         for name in ELF_LINK_INPUTS {
             let mut command = self.clang(Path::new("."));
             command.arg(format!("--target={}", self.target.triple));
+            command.args(self.found_flags());
             command.arg(format!("-print-file-name={name}"));
             let found = self.run(command)?;
             // Clang answers with the name alone for what it does not
