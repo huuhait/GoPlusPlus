@@ -42,6 +42,9 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown {
             return;
         }
+        if keyword == "go" && self.called(fun) == Called::Function {
+            self.spawned(cx, call);
+        }
         let (code, what) = match self.called(fun) {
             Called::Conversion => (
                 Code::GoDeferNeedsCall,

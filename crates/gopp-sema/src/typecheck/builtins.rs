@@ -763,7 +763,6 @@ impl<'a> Checker<'a> {
                 let _ =
                     self.on_the_heap(*key, at, "a map") || self.on_the_heap(*value, at, "a map");
             }
-            Type::Chan { elem, .. } => drop(self.on_the_heap(*elem, at, "a channel")),
             _ => {}
         }
         if self.unsettled(ty) {

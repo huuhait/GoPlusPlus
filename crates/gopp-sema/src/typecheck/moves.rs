@@ -1361,7 +1361,11 @@ impl<'a> Walk<'a> {
             // statement, and so is what a channel is given.
             StmtKind::Go(x) => {
                 self.unit(&[*x]);
-                if let ExprKind::Call { fun, .. } = &tree.exprs[self.unparen(*x)].kind {
+                // A function value that is no `Local` one, which no
+                // goroutine is given.
+                if let ExprKind::Call { fun, .. } = &tree.exprs[self.unparen(*x)].kind
+                    && self.runs_function(*fun)
+                {
                     self.left(&[*fun], tree.exprs[*fun].span);
                 }
             }

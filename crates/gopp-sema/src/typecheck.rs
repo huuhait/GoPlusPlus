@@ -513,6 +513,13 @@ struct Checker<'a> {
     /// holds, with where it is written and how: it may hold no pointer,
     /// which is known once every type is (OWN-B5).
     heaped: Vec<(TypeId, Span, String)>,
+    /// The element type of each channel type that is written, with
+    /// where: it is one whose values may go to another goroutine, which
+    /// is known once every type is (CON-14).
+    sent: Vec<(TypeId, Span)>,
+    /// Whether the types that need instances without end are marked:
+    /// what a type is made of is not walked to its end before.
+    marked: bool,
     /// The type of each field that was written with `@Required`, with
     /// where the attribute is: what it may be on is checked once every
     /// type is known.
@@ -684,6 +691,8 @@ pub fn declarations(
         value_types: Vec::new(),
         options: Vec::new(),
         heaped: Vec::new(),
+        sent: Vec::new(),
+        marked: false,
         required_addresses: Vec::new(),
         read_only: FxHashSet::default(),
         operands: place::Operands::Kept,
@@ -755,6 +764,8 @@ pub fn declarations(
     // A type that needs instances without end is known before a body
     // follows its instances.
     checker.monomorph();
+    checker.marked = true;
+    checker.validate();
     let mut types_of_files = checker.bodies_aside(units);
     checker.lent_all(units, &mut types_of_files);
     checker.mono_report();
@@ -1479,6 +1490,11 @@ impl<'a> Checker<'a> {
         }
         for (of, span, in_body) in std::mem::take(&mut self.options) {
             self.option_of(of, span, in_body);
+        }
+        if self.marked {
+            for (elem, span) in std::mem::take(&mut self.sent) {
+                self.sendable(elem, span);
+            }
         }
         for (held, span, written) in std::mem::take(&mut self.heaped) {
             match self.types.held(held) {
@@ -2208,6 +2224,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::ChanType { dir, elem } => {
                 let elem = self.var_type(cx, *elem);
+                self.sent.push((elem, cx.tree.exprs[expr].span));
                 let dir = match dir {
                     ast::ChanDir::Both => ChanDir::Both,
                     ast::ChanDir::Send => ChanDir::Send,

@@ -372,6 +372,8 @@ codes! {
     513 OwnStoredOutlives "err_own_stored_outlives",
     514 OwnCaptureKept "err_own_capture_kept",
     515 OwnAliasAtCall "err_own_alias_at_call",
+    516 GoNotSend "err_go_not_send",
+    517 ChanNotSend "err_chan_not_send",
 }
 
 impl Code {

@@ -391,6 +391,88 @@ impl<'a> Checker<'a> {
         self.on_the_heap(to, cx.tree.exprs[at].span, "a variable of the package");
     }
 
+    /// The element type of a channel type that is written at `span` is
+    /// one whose values may be given to another goroutine (CON-14).
+    pub(super) fn sendable(&mut self, elem: TypeId, span: Span) {
+        use crate::types::Marker;
+        if elem == Types::INVALID || self.open(elem) {
+            return;
+        }
+        let Some((part, why)) = self.types.unlabeled(elem, Marker::Send) else {
+            return;
+        };
+        let message = format!(
+            "invalid type chan {}: a channel gives its values to another goroutine, and {}",
+            self.type_string(elem),
+            self.unlabeled_text(part, why, "Send")
+        );
+        self.error(Code::ChanNotSend, span, message);
+    }
+
+    /// The call is what a `go` statement starts: the function, its
+    /// receiver and its arguments are given to a new goroutine, so each
+    /// is a value that may be given to one (CON-1, CON-2). A method
+    /// with a pointer receiver is given a pointer to its receiver.
+    pub(super) fn spawned(&mut self, cx: &Cx<'a>, call: ExprId) {
+        use crate::types::Marker;
+        let ExprKind::Call { fun, args, .. } = &cx.tree.exprs[call].kind else {
+            return;
+        };
+        let callee = self.unparen(cx, *fun);
+        let typed = |this: &Self, expr: ExprId| {
+            let known = this.memo.as_ref().and_then(|memo| memo.get(&expr));
+            known.filter(|x| x.is_value()).map(|x| x.ty)
+        };
+        // The receiver of a method, or the function value itself.
+        let receiver = match cx.tree.exprs[callee].kind {
+            ExprKind::Selector { x, .. } if self.selections.contains_key(&callee) => Some(x),
+            _ => None,
+        };
+        if let Some(x) = receiver.filter(|_| self.pointer_methods.contains(&callee)) {
+            let x = self.unparen(cx, x);
+            let pointer = typed(self, x).is_some_and(|ty| {
+                matches!(
+                    &*self.types.get(self.types.underlying(ty)),
+                    Type::Pointer(_)
+                )
+            });
+            if !pointer {
+                let shown = self.expr_string(cx, x);
+                let message = format!(
+                    "cannot run {} in a new goroutine: the method is given a pointer to \
+                     {shown}, which the goroutine may use when {shown} has ended",
+                    self.expr_string(cx, callee)
+                );
+                let fix = format!(
+                    "run it in a function literal: go func() {{ {}() }}()",
+                    self.expr_string(cx, callee)
+                );
+                let fix = (Code::NoteOwnFixPointer, fix);
+                self.error_with_fix(Code::GoNotSend, cx.tree.exprs[callee].span, message, fix);
+                return;
+            }
+        }
+        let first = receiver.unwrap_or(callee);
+        for &given in std::iter::once(&first).chain(args.iter()) {
+            let given = self.unparen(cx, given);
+            let Some(ty) = typed(self, given) else {
+                continue;
+            };
+            if self.open(ty) {
+                continue;
+            }
+            let Some((part, why)) = self.types.unlabeled(ty, Marker::Send) else {
+                continue;
+            };
+            let message = format!(
+                "cannot give {} to a new goroutine: {}",
+                self.expr_string(cx, given),
+                self.unlabeled_text(part, why, "Send")
+            );
+            self.error(Code::GoNotSend, cx.tree.exprs[given].span, message);
+        }
+    }
+
     /// A value of the type is put on the heap, into `what`: refused if
     /// it holds a pointer, which the compiler follows only in the
     /// variables of functions (OWN-B5). Whether it was refused.

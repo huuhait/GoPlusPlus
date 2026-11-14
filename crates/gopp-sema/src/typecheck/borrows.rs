@@ -753,6 +753,13 @@ impl<'a> Walk<'a> {
         !built_in && !matches!(typed, Some(Mode::Type))
     }
 
+    /// Whether the value that is called holds a function value and no
+    /// pointer: no `Local` function, which may be made of one.
+    pub(super) fn runs_function(&self, fun: ExprId) -> bool {
+        let ty = self.type_of(self.unparen(fun));
+        ty.is_none_or(|ty| self.only_lends(ty))
+    }
+
     /// What the sources of the values say is put where the function
     /// does not follow it.
     pub(super) fn left(&mut self, values: &[ExprId], at: Span) {

@@ -724,10 +724,11 @@ fn a_type_may_not_hold_a_value_of_itself() {
         // Behind a pointer of any kind, in a slice, a map, a channel, a
         // func or an interface, nothing is held.
         (
-            "type T struct {\n\ta *T\n\tb []T\n\tc map[string]T\n\td chan T\n\te func(T) T\n\t\
+            "type T struct {\n\ta *T\n\tb []T\n\tc map[string]T\n\te func(T) T\n\t\
              f interface{ M(T) }\n\tg Option[*T]\n}",
             &[],
         ),
+        ("type C struct {\n\tn int\n\td chan C\n}", &[]),
         (
             "type T struct {\n\tb []T\n\th Unique[T]\n\ti Shared[T]\n}",
             &[],
@@ -6141,7 +6142,8 @@ func pair(p *Point) (*Point, bool) { return p, true }
         "a.gopp:31:7: cannot keep a *Point in a slice",
         "a.gopp:32:12: cannot keep a *Point in a slice that is made",
         "a.gopp:33:7: cannot keep a *Point in a map",
-        "a.gopp:34:12: cannot keep a *Point in a channel",
+        "a.gopp:34:12: invalid type chan *Point: a channel gives its values to another goroutine, \
+         and a *Point borrows what it points to",
         "a.gopp:35:17: cannot keep a Node in NewUnique",
         "a.gopp:36:17: cannot keep a Node in NewShared",
         "a.gopp:38:6: cannot keep a Node in a slice that grows",
@@ -7373,6 +7375,67 @@ again:
     assert_eq!(said, expected);
 }
 
+// rule: CON-1, CON-2, CON-14
+#[test]
+fn what_a_new_goroutine_or_a_channel_is_given_may_go_to_another_goroutine() {
+    let text = "package p
+
+type T struct{ n int }
+
+type Server struct{ n int }
+
+func (s *Server) Run()  {}
+func (s Server) Show()  {}
+
+func work(p *T)            {}
+func count(t T, name string) {}
+func call(lf Local[func()]) {}
+func share(s Shared[T])    {}
+
+func spawn(p *T, lf Local[func()], f func(), s Shared[T]) {
+	x := T{1}
+	srv := Server{}
+	go work(&x)
+	go work(p)
+	go call(lf)
+	go lf()
+	go srv.Run()
+	go count(x, \"x\")
+	go srv.Show()
+	go f()
+	go share(s)
+	go func() { srv.Run() }()
+}
+
+func pipe[A any, B Send](a chan A, b chan B) {}
+
+var pointers chan *int
+var locals chan Local[func()]
+var numbers chan int
+var values chan T
+var handles chan Shared[T]
+var calls chan func()
+";
+    let expected = [
+        "a.gopp:18:10: cannot give &x to a new goroutine: a *T borrows what it points to",
+        "a.gopp:19:10: cannot give p to a new goroutine: a *T borrows what it points to",
+        "a.gopp:20:10: cannot give lf to a new goroutine: a Local[func()] stays with one goroutine",
+        "a.gopp:21:5: cannot give lf to a new goroutine: a Local[func()] stays with one goroutine",
+        "a.gopp:22:5: cannot run srv.Run in a new goroutine: the method is given a pointer to srv, \
+         which the goroutine may use when srv has ended",
+        "a.gopp:30:28: invalid type chan A: a channel gives its values to another goroutine, and A \
+         is not constrained by Send",
+        "a.gopp:32:14: invalid type chan *int: a channel gives its values to another goroutine, \
+         and a *int borrows what it points to",
+        "a.gopp:33:12: invalid type chan Local[func()]: a channel gives its values to another \
+         goroutine, and a Local[func()] stays with one goroutine",
+    ];
+    let said: Vec<String> = (messages("a.gopp", text).into_iter())
+        .filter(|message| !message.starts_with("    "))
+        .collect();
+    assert_eq!(said, expected);
+}
+
 // rule: OWN-B3
 #[test]
 fn the_steps_of_what_functions_give_back_grow_with_the_input_not_faster() {
@@ -7554,7 +7617,6 @@ fn generic_code_keeps_a_pointer_where_plain_code_does() {
         ("()", "_ = []X{}"),
         ("()", "_ = make([]X, 0)"),
         ("()", "_ = make(map[string]X)"),
-        ("()", "_ = make(chan X)"),
         ("(v X)", "var s []X; s = append(s, v); _ = s"),
         ("(v X)", "_ = NewUnique(v)"),
         ("(v X)", "_ = NewShared(v)"),
@@ -7626,7 +7688,7 @@ fn generic_code_keeps_a_pointer_where_plain_code_does() {
         );
         assert_eq!(in_plain, in_generic, "{ty}");
         let expected: Vec<usize> = match holds {
-            true => (0..12).collect(),
+            true => (0..11).collect(),
             false => Vec::new(),
         };
         assert_eq!(in_plain, expected, "{ty}");
@@ -8543,7 +8605,7 @@ func keep(f File)   {}
 func check(f *File) {}
 func show(d Doc)    {}
 
-func good(docs []Doc, nums []int, grid [][]int, ptrs []*Doc, ch chan Doc, byName map[string]Doc) {
+func good(docs []Doc, nums []int, grid [][]int, ptrs []*Doc, ch chan Key, byName map[string]Doc) {
 	var out []Doc
 	for i, d := range docs {
 		show(d)
@@ -8574,7 +8636,7 @@ func good(docs []Doc, nums []int, grid [][]int, ptrs []*Doc, ch chan Doc, byName
 		p.Tags[0] = \"x\"
 	}
 	for d := range ch {
-		d.Title = \"x\"
+		d.N = 1
 		_ = &d
 	}
 	for i := range 3 {
@@ -8849,7 +8911,7 @@ fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
         for (at, body) in uses.iter().enumerate() {
             let (generic, of) = match constraint {
                 "" => (String::new(), ""),
-                constraint => (format!("[X {constraint}]"), "[X]"),
+                constraint => (format!("[X interface{{ {constraint}; Send }}]"), "[X]"),
             };
             let zero = format!("zero := func() X {{ return zero{of}() }}; _ = zero");
             text += &format!(
@@ -8859,7 +8921,9 @@ fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
         }
         let made = match constraint {
             "" => "func zero() X { panic(0) }\n".to_owned(),
-            constraint => format!("func zero[X {constraint}]() X {{ panic(0) }}\n"),
+            constraint => {
+                format!("func zero[X interface{{ {constraint}; Send }}]() X {{ panic(0) }}\n")
+            }
         };
         text += &made;
         let checked = messages("a.gopp", &text);
@@ -10575,7 +10639,7 @@ var (
 	array   [4]Doc
 	slice   []Point
 	table   map[string]Doc
-	channel chan *Point
+	channel chan Point
 	fn      func(*Point)
 	pointer *Point
 	unique  Unique[Doc]
@@ -10688,7 +10752,7 @@ func conv(f func(), lf Local[func()], i I, li Local[I], p Plain) {
 	i = li
 }
 
-func labels(n Node, pn *Node, t Tree, r Ring, s Shared[Node], sp Shared[I], w Weak[Tree], i I, sf Safe, e error, x any, lf Local[func()], ch chan *Node, m map[string][]int, mp map[string]*Node, u Unique[Node], o Option[Tree], f func()) {
+func labels(n Node, pn *Node, t Tree, r Ring, s Shared[Node], sp Shared[I], w Weak[Tree], i I, sf Safe, e error, x any, lf Local[func()], ch chan Node, m map[string][]int, mp map[string]*Node, u Unique[Node], o Option[Tree], f func()) {
 	spawn(n)
 	spawn(t)
 	spawn(s)
@@ -11290,7 +11354,7 @@ fn a_generic_that_would_need_instances_without_end_is_refused() {
         "func F[T any]() { F[*T]() }",
         "func F[T any]() { F[[]T]() }",
         "func F[T any]() { F[[1]T]() }",
-        "func F[T any]() { F[chan T]() }",
+        "func F[T Send]() { F[chan T]() }",
         "func F[T any]() { F[map[*T]int]() }",
         "func F[T any]() { F[map[error]T]() }",
         "func F[T any]() { F[func(T)]() }",

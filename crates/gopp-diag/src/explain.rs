@@ -593,6 +593,24 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "n := list.head\np := &n.Items[0]   // error\nn.Items[0].Count++ // ok\nq := \
              &n.Count      // ok",
         ),
+        GoNotSend => (
+            "A `go` statement gives the function, its receiver and its arguments to a new \
+             goroutine, which may run when the statement that started it is long over. Each \
+             of them is a value that may be given to another goroutine: no pointer into a \
+             variable, and no `Local` function or interface. A method with a pointer \
+             receiver is given a pointer to its receiver.",
+            "Give a copy of the value, or a `Shared`. For a method with a pointer receiver, \
+             run the call in a function literal, which keeps the variables that it uses.",
+            "go work(&x)           // error\ngo work2(x)           // ok: a copy\ngo func() { \
+             srv.Run() }() // ok, if nothing else uses srv",
+        ),
+        ChanNotSend => (
+            "The element type of a channel is not one whose values may be given to another \
+             goroutine: it is or holds a pointer, or a `Local` function or interface. What \
+             is sent on a channel is received by another goroutine.",
+            "Send the value itself, or a `Shared` of it.",
+            "var a chan *int   // error\nvar b chan int    // ok\nvar c chan Shared[Doc] // ok",
+        ),
         OwnAliasAtCall => (
             "Two pointers that one call is given, or the receiver of a method and a pointer \
              among its arguments, may point to the same place or to a place and a part of \
