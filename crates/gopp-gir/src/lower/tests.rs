@@ -4520,6 +4520,29 @@ fn the_steps_grow_with_the_loops_over_functions() {
     });
 }
 
+/// The descriptor of a struct has a row for each field, and the
+/// descriptor of every type that it is made of is said once: a struct
+/// with many fields, and a row of types of which each holds the next.
+#[test]
+fn the_steps_grow_with_the_fields_of_a_type_in_an_interface() {
+    let sizes = [50, 100, 200, 400];
+    let held = "\nfunc held() interface{} { return T0{} }\n";
+    assert_near_linear(&sizes, |n| {
+        let fields: String = (0..n).map(|at| format!("\tf{at} int\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype T0 struct {{\n{fields}}}\n{held}"
+        ))
+    });
+    assert_near_linear(&sizes, |n| {
+        let types: String = (0..n)
+            .map(|at| format!("type T{at} struct {{\n\tnext T{}\n\tn int\n}}\n\n", at + 1))
+            .collect();
+        steps_of(&format!(
+            "package main\n\n{types}type T{n} struct{{ n int }}\n{held}"
+        ))
+    });
+}
+
 // rule: RNG-6a
 #[test]
 fn a_range_over_a_function_calls_it_with_the_body_of_the_loop() {

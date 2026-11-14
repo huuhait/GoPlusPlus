@@ -9,7 +9,7 @@ global const @_GPTaN4mainE4ListN4mainE5Sized: [2]*u8 [linkonce_odr]
     const global @_GPTiN4mainE4List
     const fn @_GPTIM3LenN4mainE4List
 
-global const @_GPTiN4mainE4List: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE4List: (gopp.type, [1]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE4List
     const 32: u64
     const 4: u64
@@ -19,14 +19,55 @@ global const @_GPTiN4mainE4List: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#0 "main.List"
     const global @_GPTmN4mainE4List
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 1: u64
+    const str#1 "items"
+    const str#2 ""
+    const global @_GPTiSr
+    const 0: u64
     const 0: u64
 
 global const @_GPTmN4mainE4List: (u64, [2](string, *u8)) [linkonce_odr]
     const 2: u64
-    const str#1 "Add||_GPTiG0_0_LrELE"
+    const str#5 "Add||_GPTiG0_0_LrELE"
     const fn @_GPTIM3AddN4mainE4List
-    const str#2 "Len||_GPTiG0_0_LELiE"
+    const str#6 "Len||_GPTiG0_0_LELiE"
     const fn @_GPTIM3LenN4mainE4List
+
+global const @_GPTiSr: gopp.type [linkonce_odr]
+    const global @_GPTiSr
+    const 32: u64
+    const 0: u64
+    const fn @_GPTcSr
+    const fn @_GPTdSr
+    const zero: fn "C"(*u8, *u8) -> bool
+    const zero: fn "C"(*u8, u64) -> u64
+    const str#3 "[]string"
+    const zero: *u8
+    const 7: u64
+    const global @_GPTir
+    const zero: *u8
+    const 0: u64
+    const 0: u64
+
+global const @_GPTir: gopp.type [linkonce_odr]
+    const global @_GPTir
+    const 24: u64
+    const 2: u64
+    const fn @_GPTcr
+    const fn @_GPTdr
+    const fn @_GPTer
+    const fn @_GPThr
+    const str#4 "string"
+    const zero: *u8
+    const 5: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 fn _GPM3LenN4mainE4List(_1: _GPTiN4mainE4List) -> i64 [go, external] {
   let _0: i64
@@ -365,7 +406,7 @@ fn _GPF4mainE4main() -> () [go, external] {
   bb4:
     _18 = copy _12  ; a.gopp:22:2
     _19 = copy _18.0  ; a.gopp:22:2
-    _20 = call copy _19(copy _18.1, const str#3 "a") -> [return: bb11, unwind: cleanup bb9]  ; a.gopp:22:2
+    _20 = call copy _19(copy _18.1, const str#7 "a") -> [return: bb11, unwind: cleanup bb9]  ; a.gopp:22:2
   bb5: [cleanup]
     _21 = &mut _11  ; a.gopp:22:2
     _22 = ptr_to_ptr(copy _21) as *u8  ; a.gopp:22:2
@@ -399,7 +440,7 @@ fn _GPF4mainE4main() -> () [go, external] {
     _36 = copy _32  ; a.gopp:25:2
     _37 = copy _36.0  ; a.gopp:25:2
     _38 = &mut _35  ; a.gopp:25:2
-    _39 = call copy _37(copy _36.1, copy _38, const str#4 "x") -> [return: bb21, unwind: cleanup bb19]  ; a.gopp:25:2
+    _39 = call copy _37(copy _36.1, copy _38, const str#8 "x") -> [return: bb21, unwind: cleanup bb19]  ; a.gopp:25:2
   bb13: [cleanup]
     _40 = &mut _31  ; a.gopp:25:2
     _41 = ptr_to_ptr(copy _40) as *u8  ; a.gopp:25:2
@@ -750,6 +791,32 @@ fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
     return
 }
 
+fn _GPTer(_1: *u8, _2: *u8) -> bool [c, linkonce_odr] {
+  let _0: bool
+  let _3: *string
+  let _4: *string
+  let _5: bool
+  bb0:
+    _3 = ptr_to_ptr(copy _1) as *string
+    _4 = ptr_to_ptr(copy _2) as *string
+    _5 = call const fn @_gopp_string_eq(copy (*_3), copy (*_4)) -> [return: bb1, unwind: continue]
+  bb1:
+    _0 = copy _5
+    return
+}
+
+fn _GPThr(_1: *u8, _2: u64) -> u64 [c, linkonce_odr] {
+  let _0: u64
+  let _3: *string
+  let _4: u64
+  bb0:
+    _3 = ptr_to_ptr(copy _1) as *string
+    _4 = call const fn @_gopp_hash_string(copy (*_3), copy _2) -> [return: bb1, unwind: continue]
+  bb1:
+    _0 = copy _4
+    return
+}
+
 declare fn _gopp_string_retain(_1: string) -> () [c, external]
 
 declare fn _gopp_slice_grow(_1: *u8, _2: u64, _3: u64, _4: bool) -> () [c, external]
@@ -783,3 +850,7 @@ declare fn _gopp_slice_copy(_1: *u8, _2: u64) -> () [c, external]
 declare fn _gopp_each(_1: *u8, _2: u64, _3: u64, _4: fn "C"(*u8) -> ()) -> () [c, external]
 
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]
+
+declare fn _gopp_string_eq(_1: string, _2: string) -> bool [c, external]
+
+declare fn _gopp_hash_string(_1: string, _2: u64) -> u64 [c, external]

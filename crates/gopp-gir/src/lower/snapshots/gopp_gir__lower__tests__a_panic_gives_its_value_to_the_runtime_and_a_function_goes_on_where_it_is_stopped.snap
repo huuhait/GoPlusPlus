@@ -5,7 +5,7 @@ expression: module
 module "main"
 file 0 "a.gopp"
 
-global const @_GPTiN4mainE7Failure: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE7Failure: (gopp.type, [1]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE7Failure
     const 8: u64
     const 7: u64
@@ -15,12 +15,37 @@ global const @_GPTiN4mainE7Failure: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#1 "main.Failure"
     const global @_GPTmN4mainE7Failure
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 1: u64
+    const str#2 "code"
+    const str#3 ""
+    const global @_GPTii
+    const 0: u64
     const 0: u64
 
 global const @_GPTmN4mainE7Failure: (u64, [1](string, *u8)) [linkonce_odr]
     const 1: u64
-    const str#2 "Error||_GPTiG0_0_LELrE"
+    const str#5 "Error||_GPTiG0_0_LELrE"
     const fn @_GPTIM5ErrorN4mainE7Failure
+
+global const @_GPTii: gopp.type [linkonce_odr]
+    const global @_GPTii
+    const 8: u64
+    const 3: u64
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8, *u8) -> bool
+    const zero: fn "C"(*u8, u64) -> u64
+    const str#4 "int"
+    const zero: *u8
+    const 2: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 global const @_GPTir: gopp.type [linkonce_odr]
     const global @_GPTir
@@ -30,9 +55,13 @@ global const @_GPTir: gopp.type [linkonce_odr]
     const fn @_GPTdr
     const fn @_GPTer
     const fn @_GPThr
-    const str#3 "string"
+    const str#6 "string"
     const zero: *u8
     const 5: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 fn _GPM5ErrorN4mainE7Failure(_1: _GPTiN4mainE7Failure) -> string [go, external] {
   let _0: string
@@ -80,11 +109,11 @@ fn _GPF4mainE4fail(_1: i64) -> () [go, external] {
     _9 = copy _8  ; a.gopp:9:3
     _10 = &mut _9  ; a.gopp:9:3
     _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:9:3
-    _12 = call const fn @_gopp_panic(copy _11, const str#4 "Error||_GPTiG0_0_LELrE", const str#5 "String||_GPTiG0_0_LELrE") -> [return: bb2, unwind: continue]  ; a.gopp:9:3
+    _12 = call const fn @_gopp_panic(copy _11, const str#7 "Error||_GPTiG0_0_LELrE", const str#8 "String||_GPTiG0_0_LELrE") -> [return: bb2, unwind: continue]  ; a.gopp:9:3
   bb2:
     unreachable  ; a.gopp:9:3
   bb3:
-    _13 = const str#6 "small"  ; a.gopp:11:2
+    _13 = const str#9 "small"  ; a.gopp:11:2
     _14 = &mut _13  ; a.gopp:11:2
     _15 = ptr_to_ptr(copy _14) as *u8  ; a.gopp:11:2
     _16 = call const fn @_gopp_iface_box(copy _15, const 24: u64) -> [return: bb4, unwind: continue]  ; a.gopp:11:2
@@ -94,7 +123,7 @@ fn _GPF4mainE4fail(_1: i64) -> () [go, external] {
     _19 = copy _18  ; a.gopp:11:2
     _20 = &mut _19  ; a.gopp:11:2
     _21 = ptr_to_ptr(copy _20) as *u8  ; a.gopp:11:2
-    _22 = call const fn @_gopp_panic(copy _21, const str#7 "Error||_GPTiG0_0_LELrE", const str#8 "String||_GPTiG0_0_LELrE") -> [return: bb5, unwind: continue]  ; a.gopp:11:2
+    _22 = call const fn @_gopp_panic(copy _21, const str#10 "Error||_GPTiG0_0_LELrE", const str#11 "String||_GPTiG0_0_LELrE") -> [return: bb5, unwind: continue]  ; a.gopp:11:2
   bb5:
     unreachable  ; a.gopp:11:2
 }
@@ -198,7 +227,7 @@ fn _GPF4mainE7guarded(_1: i64) -> (i64, string) [go, external] {
   bb10:
     _21 = call const fn @_gopp_string_release(copy _3) -> [return: bb11, unwind: terminate]  ; a.gopp:24:2
   bb11:
-    _3 = const str#9 "none"  ; a.gopp:24:2
+    _3 = const str#12 "none"  ; a.gopp:24:2
     _22 = &mut _5  ; a.gopp:24:2
     _23 = ptr_to_ptr(copy _22) as *u8  ; a.gopp:24:2
     _24 = call const fn @_GPC0_F4mainE7guarded(copy _23) -> [return: bb12, unwind: cleanup bb2]  ; a.gopp:24:2

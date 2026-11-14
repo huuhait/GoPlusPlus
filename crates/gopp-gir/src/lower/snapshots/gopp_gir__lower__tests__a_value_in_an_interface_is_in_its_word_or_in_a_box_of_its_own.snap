@@ -16,8 +16,12 @@ global const @_GPTii: gopp.type [linkonce_odr]
     const str#0 "int"
     const zero: *u8
     const 2: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
-global const @_GPTiN4mainE5Point: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE5Point: (gopp.type, [2]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE5Point
     const 16: u64
     const 6: u64
@@ -27,9 +31,23 @@ global const @_GPTiN4mainE5Point: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#1 "main.Point"
     const zero: *u8
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 2: u64
+    const str#2 "x"
+    const str#3 ""
+    const global @_GPTii
+    const 0: u64
+    const 0: u64
+    const str#4 "y"
+    const str#5 ""
+    const global @_GPTii
+    const 8: u64
     const 0: u64
 
-global const @_GPTiN4mainE5Named: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE5Named: (gopp.type, [2]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE5Named
     const 56: u64
     const 4: u64
@@ -37,8 +55,54 @@ global const @_GPTiN4mainE5Named: gopp.type [linkonce_odr]
     const fn @_GPTdN4mainE5Named
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
-    const str#2 "main.Named"
+    const str#6 "main.Named"
     const zero: *u8
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 2: u64
+    const str#7 "name"
+    const str#8 ""
+    const global @_GPTir
+    const 0: u64
+    const 0: u64
+    const str#9 "list"
+    const str#10 ""
+    const global @_GPTiSi
+    const 24: u64
+    const 0: u64
+
+global const @_GPTir: gopp.type [linkonce_odr]
+    const global @_GPTir
+    const 24: u64
+    const 2: u64
+    const fn @_GPTcr
+    const fn @_GPTdr
+    const fn @_GPTer
+    const fn @_GPThr
+    const str#12 "string"
+    const zero: *u8
+    const 5: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
+
+global const @_GPTiSi: gopp.type [linkonce_odr]
+    const global @_GPTiSi
+    const 32: u64
+    const 0: u64
+    const fn @_GPTcSi
+    const fn @_GPTdSi
+    const zero: fn "C"(*u8, *u8) -> bool
+    const zero: fn "C"(*u8, u64) -> u64
+    const str#11 "[]int"
+    const zero: *u8
+    const 7: u64
+    const global @_GPTii
+    const zero: *u8
+    const 0: u64
     const 0: u64
 
 fn _GPF4mainE3box(_1: i64, _2: _GPTiN4mainE5Point, _3: _GPTiN4mainE5Named) -> (gopp.iface, gopp.iface, gopp.iface) [go, external] {
@@ -277,7 +341,7 @@ fn _GPF4mainE4look(_1: gopp.iface) -> i64 [go, external] {
     switch copy _43 [0: bb18, otherwise: bb20]  ; a.gopp:24:2
   bb18:
     _44 = ptr_to_ptr(const global @_GPTiN4mainE5Named) as *u8  ; a.gopp:24:9
-    _45 = call const fn @_gopp_panic_assert(copy _38, copy _44, const str#3 "interface {}") -> [return: bb19, unwind: continue]  ; a.gopp:24:9
+    _45 = call const fn @_gopp_panic_assert(copy _38, copy _44, const str#13 "interface {}") -> [return: bb19, unwind: continue]  ; a.gopp:24:9
   bb19:
     unreachable  ; a.gopp:24:9
   bb20:
@@ -457,6 +521,32 @@ fn _GPTdr(_1: *u8) -> () [c, linkonce_odr] {
     return
 }
 
+fn _GPTer(_1: *u8, _2: *u8) -> bool [c, linkonce_odr] {
+  let _0: bool
+  let _3: *string
+  let _4: *string
+  let _5: bool
+  bb0:
+    _3 = ptr_to_ptr(copy _1) as *string
+    _4 = ptr_to_ptr(copy _2) as *string
+    _5 = call const fn @_gopp_string_eq(copy (*_3), copy (*_4)) -> [return: bb1, unwind: continue]
+  bb1:
+    _0 = copy _5
+    return
+}
+
+fn _GPThr(_1: *u8, _2: u64) -> u64 [c, linkonce_odr] {
+  let _0: u64
+  let _3: *string
+  let _4: u64
+  bb0:
+    _3 = ptr_to_ptr(copy _1) as *string
+    _4 = call const fn @_gopp_hash_string(copy (*_3), copy _2) -> [return: bb1, unwind: continue]
+  bb1:
+    _0 = copy _4
+    return
+}
+
 declare fn _gopp_iface_box(_1: *u8, _2: u64) -> *u8 [c, external]
 
 declare fn _gopp_iface_drop(_1: *u8) -> () [c, external]
@@ -474,3 +564,7 @@ declare fn _gopp_string_retain(_1: string) -> () [c, external]
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]
 
 declare fn _gopp_string_release(_1: string) -> () [c, external]
+
+declare fn _gopp_string_eq(_1: string, _2: string) -> bool [c, external]
+
+declare fn _gopp_hash_string(_1: string, _2: u64) -> u64 [c, external]

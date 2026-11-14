@@ -163,8 +163,84 @@ impl FuncCx<'_, '_> {
             ("name", string),
             ("methods", bytes),
             ("kind", word),
+            ("elem", bytes),
+            ("key", bytes),
+            ("count", word),
+            ("fields", word),
         ];
         Memo::runtime(types, "gopp.type", &fields)
+    }
+
+    /// The type of a row of a table of fields: `gopp_field` of the
+    /// runtime.
+    fn field_type(&mut self) -> TypeId {
+        let bytes = self.bytes_ty();
+        let types = self.b.types();
+        let word = types.int(64, false);
+        let string = types.intern(Type::String);
+        let fields = [
+            ("name", string),
+            ("tag", string),
+            ("type", bytes),
+            ("offset", word),
+            ("flags", word),
+        ];
+        Memo::runtime(types, "gopp.field", &fields)
+    }
+
+    /// The fields of a struct type for its table (TYP-10), each with
+    /// where it is in a value: those of the parents first, in their
+    /// order, then its own. `base` is where a value of the type starts
+    /// in the value that the table is of.
+    fn field_rows(
+        &mut self,
+        ty: CheckedTypeId,
+        base: u64,
+        rows: &mut Vec<(gopp_sema::types::Field, u64)>,
+    ) -> Result<(), &'static str> {
+        let shared = self.shared;
+        let types = shared.types;
+        let CheckedType::Struct(fields) = &*types.get(types.underlying(ty)) else {
+            return Ok(());
+        };
+        let lowered = self.memo.lower_type(shared, self.b.types(), ty)?;
+        let parts: Vec<TypeId> = match self.kind(lowered) {
+            Type::Struct(id) => self
+                .b
+                .types()
+                .struct_fields(id)
+                .unwrap_or_default()
+                .to_vec(),
+            Type::Tuple(parts) => parts.to_vec(),
+            // A struct without fields is nothing.
+            _ => return Ok(()),
+        };
+        let mut layouts = Vec::with_capacity(parts.len());
+        for part in parts {
+            let layout = self.b.types().layout(part, shared.layout);
+            layouts.push(layout.map_err(|_| "a field without a size in an interface")?);
+        }
+        let Some((_, offsets)) = shared.layout.aggregate(&layouts) else {
+            return Err("a value of a type without a size in an interface");
+        };
+        // The address of a table comes first, then the parents.
+        let parents = types.parents(ty);
+        let table = usize::from(shared.own_table(ty));
+        self.memo.steps += (parents.len() + fields.len()) as u64;
+        for (at, &parent) in parents.iter().enumerate() {
+            let Some(&offset) = offsets.get(table + at) else {
+                return Err("a parent without a place in its type");
+            };
+            super::func::deeper(|| self.field_rows(parent, base + offset, rows))?;
+        }
+        let lead = table + parents.len();
+        for (at, field) in fields.iter().enumerate() {
+            let Some(&offset) = offsets.get(lead + at) else {
+                return Err("a field without a place in its type");
+            };
+            rows.push((field.clone(), base + offset));
+        }
+        Ok(())
     }
 
     /// Whether a value of the type of GIR is the second word of an
@@ -227,32 +303,66 @@ impl FuncCx<'_, '_> {
                 }
             }
         }
-        let methods = match self.method_table(ty)? {
-            Ok(methods) => methods,
-            Err(what) => return Ok(Err(what)),
-        };
-        // What a value of the type is, for what writes the value of a
-        // panic: as the runtime numbers the kinds.
-        let kind = match &*shared.types.get(shared.types.underlying(ty)) {
-            CheckedType::Basic(basic) => match basic {
-                Basic::Bool => 1,
-                Basic::Int | Basic::Int8 | Basic::Int16 | Basic::Int32 | Basic::Int64 => 2,
-                Basic::Uint
-                | Basic::Uint8
-                | Basic::Uint16
-                | Basic::Uint32
-                | Basic::Uint64
-                | Basic::Uintptr => 3,
-                Basic::Float32 | Basic::Float64 => 4,
-                Basic::String => 5,
-                _ => 0,
+        // The methods of an interface type are those of the value that
+        // a value of it holds, which has a descriptor of its own.
+        let methods = match shared.types.is_interface(ty) {
+            true => None,
+            false => match self.method_table(ty)? {
+                Ok(methods) => methods,
+                Err(what) => return Ok(Err(what)),
             },
-            _ => 0,
         };
+        // What a value of the type is, as the runtime numbers the kinds,
+        // and the types that it is made of: of its elements, of its
+        // keys, and how many elements an array has.
+        let under = shared.types.get(shared.types.underlying(ty));
+        let (kind, elem, key, count) = match &*under {
+            CheckedType::Basic(basic) => {
+                let kind = match basic {
+                    Basic::Bool => 1,
+                    Basic::Int | Basic::Int8 | Basic::Int16 | Basic::Int32 | Basic::Int64 => 2,
+                    Basic::Uint
+                    | Basic::Uint8
+                    | Basic::Uint16
+                    | Basic::Uint32
+                    | Basic::Uint64
+                    | Basic::Uintptr => 3,
+                    Basic::Float32 | Basic::Float64 => 4,
+                    Basic::String => 5,
+                    _ => 0,
+                };
+                (kind, None, None, 0)
+            }
+            CheckedType::Struct(_) => (6, None, None, 0),
+            CheckedType::Slice(elem) => (7, Some(*elem), None, 0),
+            CheckedType::Array { len, elem } => (8, Some(*elem), None, *len),
+            CheckedType::Map { key, value } => (9, Some(*value), Some(*key), 0),
+            CheckedType::Pointer(to) => (10, Some(*to), None, 0),
+            CheckedType::Interface { .. } => (11, None, None, 0),
+            CheckedType::Func { .. } => (12, None, None, 0),
+            CheckedType::Option(held) => (13, Some(*held), None, 0),
+            CheckedType::Unique(held) => (14, Some(*held), None, 0),
+            CheckedType::Shared(held) => (15, Some(*held), None, 0),
+            CheckedType::Weak(held) => (16, Some(*held), None, 0),
+            CheckedType::Chan { elem, .. } => (17, Some(*elem), None, 0),
+            _ => (0, None, None, 0),
+        };
+        // The fields of a struct, in a table after the descriptor
+        // (TYP-10).
+        let mut rows = Vec::new();
+        if let Err(what) = self.field_rows(ty, 0, &mut rows) {
+            return Ok(Err(what));
+        }
         if matches!(&*shared.types.get(ty), CheckedType::Named { .. }) {
             flags |= NAMED;
         }
-        let record = self.info_type();
+        let mut record = self.info_type();
+        if !rows.is_empty() {
+            let row = self.field_type();
+            let types = self.b.types();
+            let table = types.intern(Type::Array(row, rows.len() as u64));
+            record = types.tuple(&[record, table]);
+        }
         let word = self.b.types().int(64, false);
         let itself = self.b.types().ptr(record);
         let name = shared.types.runtime_name(ty, shared.names);
@@ -269,6 +379,9 @@ impl FuncCx<'_, '_> {
             parts: Vec::new(),
             defined: true,
         });
+        // A type that is made of itself finds its descriptor here.
+        self.memo.globals.insert(symbol, id);
+        self.memo.infos.insert(ty, Ok(id));
         let int = |value: u64| Constant {
             kind: ConstantKind::Int(value),
             ty: word,
@@ -304,9 +417,46 @@ impl FuncCx<'_, '_> {
             },
         });
         parts.push(int(kind));
+        parts.push(self.info_part(elem)?);
+        parts.push(self.info_part(key)?);
+        parts.push(int(count));
+        parts.push(int(rows.len() as u64));
+        for (field, offset) in rows {
+            let name = shared.names.resolve(&field.name);
+            let tag = field.tag.as_deref().unwrap_or_default();
+            for text in [name.as_bytes(), tag] {
+                if let Operand::Const(text) = self.b.const_str(text) {
+                    parts.push(text);
+                }
+            }
+            parts.push(self.info_part(Some(field.ty))?);
+            parts.push(int(offset));
+            parts.push(int(u64::from(field.required)));
+        }
         self.b.module().globals[id].parts = parts;
-        self.memo.globals.insert(symbol, id);
         Ok(Ok(id))
+    }
+
+    /// The address of the descriptor of a type that another is made
+    /// of, as a part of static data; null for no type, and for one that
+    /// has no descriptor yet.
+    fn info_part(&mut self, ty: Option<CheckedTypeId>) -> Built<Constant> {
+        let found = match ty {
+            Some(ty) => super::func::deeper(|| self.type_info(ty))?.ok(),
+            None => None,
+        };
+        Ok(match found {
+            Some(info) => {
+                let record = self.b.module().globals[info].ty;
+                let ty = self.b.types().ptr(record);
+                let kind = ConstantKind::Global(info);
+                Constant { kind, ty }
+            }
+            None => Constant {
+                kind: ConstantKind::Zero,
+                ty: self.bytes_ty(),
+            },
+        })
     }
 
     /// The address of a descriptor or of a table of methods, as a word

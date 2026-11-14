@@ -96,15 +96,47 @@ typedef struct gopp_type {
   gopp_string name;
   const gopp_methods *methods;
   uint64_t kind;
+  // What the type is made of: the type of its elements, or of what a
+  // pointer, an option or a handle leads to; the type of the keys of a
+  // map; how many elements an array has; and how many fields a struct
+  // has. Null for a type that has no descriptor yet.
+  const struct gopp_type *elem;
+  const struct gopp_type *key;
+  uint64_t count;
+  uint64_t fields;
 } gopp_type;
 
-// What a value of a type is, for what writes the value of a panic.
+// A field of a struct type (TYP-10): its name, its tag, its type, where
+// it is in a value, and whether it is `@Required`. The fields of a type
+// follow its descriptor, those of its parents first.
+typedef struct gopp_field {
+  gopp_string name;
+  gopp_string tag;
+  const gopp_type *type;
+  uint64_t offset;
+  uint64_t flags;
+} gopp_field;
+#define GOPP_FIELD_REQUIRED 1
+
+// What a value of a type is.
 #define GOPP_KIND_OTHER 0
 #define GOPP_KIND_BOOL 1
 #define GOPP_KIND_INT 2
 #define GOPP_KIND_UINT 3
 #define GOPP_KIND_FLOAT 4
 #define GOPP_KIND_STRING 5
+#define GOPP_KIND_STRUCT 6
+#define GOPP_KIND_SLICE 7
+#define GOPP_KIND_ARRAY 8
+#define GOPP_KIND_MAP 9
+#define GOPP_KIND_POINTER 10
+#define GOPP_KIND_INTERFACE 11
+#define GOPP_KIND_FUNC 12
+#define GOPP_KIND_OPTION 13
+#define GOPP_KIND_UNIQUE 14
+#define GOPP_KIND_SHARED 15
+#define GOPP_KIND_WEAK 16
+#define GOPP_KIND_CHAN 17
 
 // A function that has `defer` statements and has not returned: the
 // function that makes its deferred calls with the record that it is

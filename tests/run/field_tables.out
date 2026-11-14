@@ -1,0 +1,38 @@
+main.Doc: 192 bytes, a struct with 15 fields
+  Created int64 at 0 = 7
+  note string at 8 = "n"
+  Title string at 32 = "t" `json:"title"`
+  Pages int32 at 56 = 3 required
+  draft bool at 60 = true
+  Tags []string at 64 = a slice of string, 2 long
+  Scores [3]float32 at 96 = an array of 3 float32
+  Meta map[string]int at 112 = a map of string to int
+  In main.Inner at 120 = a struct with 2 fields
+  Next Option[Unique[main.Doc]] at 128 = an option of Unique[main.Doc]
+  Heat main.Celsius at 136 = 3660/100
+  Err error at 144 = an interface
+  Size func(int) int at 160 = a function
+  small int8 at 176 = -8
+  Wide uint64 at 184 = 1099511627776
+main.Inner: 4 bytes, a struct with 2 fields
+  ok bool at 0 = false
+  id uint16 at 2 = 9
+main.Base: 32 bytes, a struct with 2 fields
+  Created int64 at 0 = -1
+  note string at 8 = "base"
+main.Pair[string, int]: 32 bytes, a struct with 2 fields
+  Key string at 0 = "k"
+  Val int at 24 = 5
+struct { a int8; b int64; c bool; d string }: 48 bytes, a struct with 4 fields
+  a int8 at 0 = 1
+  b int64 at 8 = 2
+  c bool at 16 = true
+  d string at 24 = "anon"
+int: 8 bytes, 42
+main.Celsius: 8 bytes, 125/100
+string: 24 bytes, "text"
+[]int: 32 bytes, a slice of int, 3 long
+[2]bool: 2 bytes, an array of 2 bool
+map[string][]int: 8 bytes, a map of string to []int
+uint8: 1 bytes, 200
+struct {}: 0 bytes, a struct with 0 fields

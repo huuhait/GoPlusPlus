@@ -9,7 +9,7 @@ global const @_GPTaN4mainE7Problemu5error: [2]*u8 [linkonce_odr]
     const global @_GPTiN4mainE7Problem
     const fn @_GPTIM5ErrorN4mainE7Problem
 
-global const @_GPTiN4mainE7Problem: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE7Problem: (gopp.type, [1]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE7Problem
     const 8: u64
     const 7: u64
@@ -19,12 +19,37 @@ global const @_GPTiN4mainE7Problem: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#1 "main.Problem"
     const global @_GPTmN4mainE7Problem
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 1: u64
+    const str#2 "code"
+    const str#3 ""
+    const global @_GPTii
+    const 0: u64
     const 0: u64
 
 global const @_GPTmN4mainE7Problem: (u64, [1](string, *u8)) [linkonce_odr]
     const 1: u64
-    const str#2 "Error||_GPTiG0_0_LELrE"
+    const str#5 "Error||_GPTiG0_0_LELrE"
     const fn @_GPTIM5ErrorN4mainE7Problem
+
+global const @_GPTii: gopp.type [linkonce_odr]
+    const global @_GPTii
+    const 8: u64
+    const 3: u64
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8, *u8) -> bool
+    const zero: fn "C"(*u8, u64) -> u64
+    const str#4 "int"
+    const zero: *u8
+    const 2: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 fn _GPM5ErrorN4mainE7Problem(_1: _GPTiN4mainE7Problem) -> string [go, external] {
   let _0: string
@@ -85,10 +110,10 @@ fn _GPF4mainE4name(_1: i64) -> (string, gopp.iface) [go, external] {
     (*_5) = copy _6  ; a.gopp:16:3
     _7 = ptr_to_ptr(const global @_GPTaN4mainE7Problemu5error) as *u8  ; a.gopp:16:3
     _8 = gopp.iface {copy _7, copy _3}  ; a.gopp:16:3
-    _0 = tuple {const str#3 "", copy _8}  ; a.gopp:16:3
+    _0 = tuple {const str#6 "", copy _8}  ; a.gopp:16:3
     return  ; a.gopp:16:3
   bb2:
-    _0 = tuple {const str#4 "n", const zero: gopp.iface}  ; a.gopp:18:2
+    _0 = tuple {const str#7 "n", const zero: gopp.iface}  ; a.gopp:18:2
     return  ; a.gopp:18:2
 }
 
@@ -125,7 +150,7 @@ fn _GPF4mainE4both(_1: i64) -> (string, i64, gopp.iface) [go, external] {
     _4 = ne(copy _3.0, const zero: *u8)  ; a.gopp:22:2
     switch copy _4 [0: bb4, otherwise: bb2]  ; a.gopp:22:2
   bb2: [cold]
-    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#5 "a.gopp:22:10") -> [return: bb3, unwind: continue]  ; a.gopp:22:2
+    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#8 "a.gopp:22:10") -> [return: bb3, unwind: continue]  ; a.gopp:22:2
   bb3:
     _0 = tuple {const zero: string, const zero: i64, copy _3}  ; a.gopp:22:10
     return  ; a.gopp:22:10
@@ -160,7 +185,7 @@ fn _GPF4mainE4both(_1: i64) -> (string, i64, gopp.iface) [go, external] {
     _16 = ne(copy _15.0, const zero: *u8)  ; a.gopp:23:2
     switch copy _16 [0: bb20, otherwise: bb14]  ; a.gopp:23:2
   bb14: [cold]
-    _17 = call const fn @_gopp_err_trace(copy _15.0, copy _15.1, const str#6 "a.gopp:23:15") -> [return: bb15, unwind: cleanup bb9]  ; a.gopp:23:2
+    _17 = call const fn @_gopp_err_trace(copy _15.0, copy _15.1, const str#9 "a.gopp:23:15") -> [return: bb15, unwind: cleanup bb9]  ; a.gopp:23:2
   bb15:
     _0 = tuple {const zero: string, const zero: i64, copy _15}  ; a.gopp:23:15
     _18 = copy _8  ; a.gopp:23:15
@@ -201,7 +226,7 @@ fn _GPF4mainE5check(_1: i64) -> gopp.iface [go, external] {
     _4 = ne(copy _3.0, const zero: *u8)  ; a.gopp:27:2
     switch copy _4 [0: bb4, otherwise: bb2]  ; a.gopp:27:2
   bb2: [cold]
-    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#7 "a.gopp:27:2") -> [return: bb3, unwind: continue]  ; a.gopp:27:2
+    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#10 "a.gopp:27:2") -> [return: bb3, unwind: continue]  ; a.gopp:27:2
   bb3:
     _0 = copy _3  ; a.gopp:27:2
     return  ; a.gopp:27:2
@@ -234,7 +259,7 @@ fn _GPF4mainE5plain(_1: i64) -> i64 [go, external] {
     _4 = ne(copy _3.0, const zero: *u8)  ; a.gopp:31:2
     switch copy _4 [0: bb7, otherwise: bb2]  ; a.gopp:31:2
   bb2: [cold]
-    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#8 "a.gopp:31:9") -> [return: bb3, unwind: continue]  ; a.gopp:31:9
+    _5 = call const fn @_gopp_err_trace(copy _3.0, copy _3.1, const str#11 "a.gopp:31:9") -> [return: bb3, unwind: continue]  ; a.gopp:31:9
   bb3:
     _6 = copy _3.0  ; a.gopp:31:9
     _7 = ptr_to_ptr(copy _6) as *[2]*u8  ; a.gopp:31:9
@@ -247,7 +272,7 @@ fn _GPF4mainE5plain(_1: i64) -> i64 [go, external] {
     _13 = ptr_to_ptr(copy _12) as *u8  ; a.gopp:31:9
     _14 = call const fn @_gopp_iface_drop(copy _13) -> [return: bb5, unwind: terminate]  ; a.gopp:31:9
   bb5:
-    _15 = call const fn @_gopp_panic_must(const str#9 "half(n)", const str#10 "a.gopp:31:9", copy _11) -> [return: bb6, unwind: continue]  ; a.gopp:31:9
+    _15 = call const fn @_gopp_panic_must(const str#12 "half(n)", const str#13 "a.gopp:31:9", copy _11) -> [return: bb6, unwind: continue]  ; a.gopp:31:9
   bb6:
     unreachable  ; a.gopp:31:9
   bb7:

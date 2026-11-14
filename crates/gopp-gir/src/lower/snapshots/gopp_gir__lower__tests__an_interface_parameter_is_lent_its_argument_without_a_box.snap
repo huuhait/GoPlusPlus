@@ -11,7 +11,7 @@ global const @_GPTaN4mainE4RectN4mainE5Shape: [2]*u8 [linkonce_odr]
     const global @_GPTiN4mainE4Rect
     const fn @_GPTIM4AreaN4mainE4Rect
 
-global const @_GPTiN4mainE4Rect: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE4Rect: (gopp.type, [2]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE4Rect
     const 16: u64
     const 6: u64
@@ -21,14 +21,44 @@ global const @_GPTiN4mainE4Rect: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#0 "main.Rect"
     const global @_GPTmN4mainE4Rect
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 2: u64
+    const str#1 "w"
+    const str#2 ""
+    const global @_GPTii
+    const 0: u64
+    const 0: u64
+    const str#3 "h"
+    const str#4 ""
+    const global @_GPTii
+    const 8: u64
     const 0: u64
 
 global const @_GPTmN4mainE4Rect: (u64, [2](string, *u8)) [linkonce_odr]
     const 2: u64
-    const str#1 "Area||_GPTiG0_0_LELiE"
+    const str#6 "Area||_GPTiG0_0_LELiE"
     const fn @_GPTIM4AreaN4mainE4Rect
-    const str#2 "grow|main|_GPTiG0_0_LELE"
+    const str#7 "grow|main|_GPTiG0_0_LELE"
     const fn @_GPTIM4growN4mainE4Rect
+
+global const @_GPTii: gopp.type [linkonce_odr]
+    const global @_GPTii
+    const 8: u64
+    const 3: u64
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8, *u8) -> bool
+    const zero: fn "C"(*u8, u64) -> u64
+    const str#5 "int"
+    const zero: *u8
+    const 2: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 global const @_GPTiSi: gopp.type [linkonce_odr]
     const global @_GPTiSi
@@ -38,8 +68,12 @@ global const @_GPTiSi: gopp.type [linkonce_odr]
     const fn @_GPTdSi
     const zero: fn "C"(*u8, *u8) -> bool
     const zero: fn "C"(*u8, u64) -> u64
-    const str#3 "[]int"
+    const str#8 "[]int"
     const zero: *u8
+    const 7: u64
+    const global @_GPTii
+    const zero: *u8
+    const 0: u64
     const 0: u64
 
 fn _GPM4AreaN4mainE4Rect(_1: _GPTiN4mainE4Rect) -> i64 [go, external] {

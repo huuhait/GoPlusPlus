@@ -26,7 +26,7 @@ global const @_GPTaN4mainE6SquareN4mainE10NamedShape: [3]*u8 [linkonce_odr]
     const fn @_GPTIM4AreaN4mainE6Square
     const fn @_GPTIM4NameN4mainE6Square
 
-global const @_GPTiN4mainE6Square: gopp.type [linkonce_odr]
+global const @_GPTiN4mainE6Square: (gopp.type, [1]gopp.field) [linkonce_odr]
     const global @_GPTiN4mainE6Square
     const 8: u64
     const 7: u64
@@ -36,16 +36,41 @@ global const @_GPTiN4mainE6Square: gopp.type [linkonce_odr]
     const zero: fn "C"(*u8, u64) -> u64
     const str#8 "main.Square"
     const global @_GPTmN4mainE6Square
+    const 6: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 1: u64
+    const str#9 "side"
+    const str#10 ""
+    const global @_GPTii
+    const 0: u64
     const 0: u64
 
 global const @_GPTmN4mainE6Square: (u64, [3](string, *u8)) [linkonce_odr]
     const 3: u64
-    const str#9 "Area||_GPTiG0_0_LELiE"
+    const str#12 "Area||_GPTiG0_0_LELiE"
     const fn @_GPTIM4AreaN4mainE6Square
-    const str#10 "Name||_GPTiG0_0_LELrE"
+    const str#13 "Name||_GPTiG0_0_LELrE"
     const fn @_GPTIM4NameN4mainE6Square
-    const str#11 "grow|main|_GPTiG0_0_LELE"
+    const str#14 "grow|main|_GPTiG0_0_LELE"
     const fn @_GPTIM4growN4mainE6Square
+
+global const @_GPTii: gopp.type [linkonce_odr]
+    const global @_GPTii
+    const 8: u64
+    const 3: u64
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8) -> ()
+    const zero: fn "C"(*u8, *u8) -> bool
+    const zero: fn "C"(*u8, u64) -> u64
+    const str#11 "int"
+    const zero: *u8
+    const 2: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 global const @_GPTaN4mainE6SquareN4mainE5Named: [2]*u8 [linkonce_odr]
     const global @_GPTiN4mainE6Square

@@ -1,0 +1,76 @@
+package main
+
+// The descriptor of a type says what the type is made of, and a struct
+// type has a table of its fields after it (TYP-10): the C side reads a
+// value by them.
+@Extern("C")
+func c_describe(value *interface{}, room *byte, size int) int
+
+type Celsius float64
+
+type Inner struct {
+	ok bool
+	id uint16
+}
+
+type Base struct {
+	Created int64
+	note    string
+}
+
+type Named interface{ Name() string }
+
+@Extends(Base)
+type Doc struct {
+	Title  string `json:"title"`
+	Pages  int32 @Required
+	draft  bool
+	Tags   []string
+	Scores [3]float32
+	Meta   map[string]int
+	In     Inner
+	Next   Option[Unique[Doc]]
+	Heat   Celsius
+	Err    error
+	Size   func(int) int
+	small  int8
+	Wide   uint64
+}
+
+type Pair[K ~string, V ~int] struct {
+	Key K
+	Val V
+}
+
+func describe(value interface{}) {
+	room := make([]byte, 4096)
+	n := c_describe(&value, &room[0], len(room))
+	print(string(room[:n]))
+}
+
+func main() {
+	doc := Doc{
+		Created: 7, note: "n", Title: "t", Pages: 3, draft: true,
+		Tags: []string{"a", "b"}, Scores: [3]float32{1.5, 2.5, 3.5},
+		Meta: map[string]int{"k": 1}, In: Inner{true, 65535},
+		Heat: 36.6, Size: func(n int) int { return n }, small: -8, Wide: 1 << 40,
+	}
+	describe(doc)
+	describe(Inner{false, 9})
+	describe(Base{-1, "base"})
+	describe(Pair[string, int]{"k", 5})
+	describe(struct {
+		a int8
+		b int64
+		c bool
+		d string
+	}{1, 2, true, "anon"})
+	describe(42)
+	describe(Celsius(1.25))
+	describe("text")
+	describe([]int{1, 2, 3})
+	describe([2]bool{true, false})
+	describe(map[string][]int{})
+	describe(uint8(200))
+	describe(struct{}{})
+}

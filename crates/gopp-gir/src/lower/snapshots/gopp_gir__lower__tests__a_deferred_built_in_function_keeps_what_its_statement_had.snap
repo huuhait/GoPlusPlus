@@ -16,6 +16,10 @@ global const @_GPTir: gopp.type [linkonce_odr]
     const str#0 "string"
     const zero: *u8
     const 5: u64
+    const zero: *u8
+    const zero: *u8
+    const 0: u64
+    const 0: u64
 
 fn _GPF4mainE4fail(_1: **gopp.map, _2: string, _3: string) -> () [go, external] {
   let _0: ()
