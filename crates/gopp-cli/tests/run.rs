@@ -186,7 +186,11 @@ fn every_program_of_tests_run_does_what_its_files_say() {
 #[test]
 #[ignore = "long: builds every run test once more, for a debugger"]
 fn every_program_does_the_same_when_it_is_built_for_a_debugger() {
-    let wrong = wrong_among(&programs(|_| true), &["--debug"]);
+    let programs = programs(|_| true);
+    let wrong = wrong_among(&programs, &["--debug"]);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    // And when Clang optimizes what is built so.
+    let wrong = wrong_by(&programs, &["--debug", "--opt=2"], same_but_inlined);
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
