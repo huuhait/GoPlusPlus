@@ -1860,6 +1860,71 @@ fn an_argument_is_lent_to_a_function_of_another_package_that_only_reads_it() {
     assert!(lowered("len(reads.Keep(xs))").contains("_gopp_slice_copy"));
 }
 
+// rule: TYP-5, TYP-7
+#[test]
+fn a_value_of_a_type_of_another_package_is_called_and_kept_through_an_interface() {
+    let dir = TempDir::new().unwrap();
+    let shapes = "package shapes
+
+type Shape interface {
+	Area() int
+	Name() string
+}
+
+type Square struct{ Side int }
+
+func (s Square) Area() int    { return s.Side * s.Side }
+func (s Square) Name() string { return \"square\" }
+
+type Counter struct{ n int }
+
+func (c Counter) Area() int    { return c.n }
+func (c Counter) Name() string { return \"counter\" }
+
+var kept interface{}
+
+func Keep(v interface{}) { kept = v }
+
+func Kept() interface{} { return kept }
+
+func Read(s Shape) int { return s.Area() }
+";
+    let root = library(&dir, &[("shapes/shapes.gopp", shapes)]);
+    let text = "package main
+
+import \"shapes\"
+
+type Named interface{ Name() string }
+
+func main() {
+	var s shapes.Shape = shapes.Square{3}
+	println(s.Area(), s.Name(), shapes.Read(shapes.Square{4}))
+	var n Named = shapes.Square{1}
+	var v interface{} = shapes.Counter{}
+	if shape, ok := v.(shapes.Shape); ok {
+		println(n.Name(), shape.Name(), shape.Area())
+	}
+	xs := []int{1, 2}
+	shapes.Keep(xs)
+	xs[0] = 9
+	if back, ok := shapes.Kept().([]int); ok {
+		println(back[0], xs[0])
+	}
+}
+";
+    let file = write_source(&dir, "main.gopp", text);
+    let program = dir.path().join("main.bin");
+    let mut build = gopp();
+    build.env("GOPPROOT", &root).arg("build").arg("-o");
+    let built = run_beside(build.arg(&program).arg(&file));
+    assert_eq!(stderr(&built), "");
+    let ran = run_beside(&mut Command::new(&program));
+    // The method of a type of another package is found through a table
+    // that is made here and while the program runs; a function of
+    // another package that keeps its parameter has a copy of its own.
+    assert_eq!(stderr(&ran), "9 square 16\nsquare counter 0\n1 9\n");
+}
+
 /// What `gdb` says of the program of the text when it is given the
 /// commands, one after the other.
 #[cfg(target_os = "linux")]
