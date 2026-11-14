@@ -563,7 +563,10 @@ struct Checker<'a> {
     touching: usize,
     literal_units: FxHashMap<ExprId, usize>,
     units: Vec<touches::Unit>,
-    late_writes: Vec<(std::option::Option<crate::types::Global>, Span)>,
+    late_writes: Vec<(std::option::Option<crate::types::Global>, Span, Span)>,
+    /// When every body is walked: the function or function literal
+    /// whose pointers are looked at.
+    late_within: std::option::Option<Span>,
     program: crate::package::Program,
     /// While a body is walked: it is `init` or the value of a variable
     /// of the package, which run before the program has started.
@@ -754,6 +757,7 @@ pub fn declarations(
         literal_units: FxHashMap::default(),
         units: Vec::new(),
         late_writes: Vec::new(),
+        late_within: None,
         program: crate::package::Program::default(),
         starting: false,
         seen_as_known: FxHashMap::default(),
@@ -1145,6 +1149,7 @@ impl<'a> Checker<'a> {
                     found.map(|&(_, ty)| ty)
                 }
             };
+            self.late_within = Some(problem.within);
             self.lent((body, text), &carried, problem, found);
             for &(at, child, parent, fixed) in &problem.seen_as {
                 self.shared_as_parent((at, fixed), child, parent, &done);
@@ -1155,7 +1160,8 @@ impl<'a> Checker<'a> {
             }
         }
         let first = units.first().and_then(|unit| unit.file.package.as_ref());
-        self.program = self.races(first.map(|name| name.span));
+        self.late_within = None;
+        self.program = self.races(units, first.map(|name| name.span));
         // For those who call the functions of this package.
         for lender in lenders {
             let Some(lends) = done.get(&lender).cloned() else {
@@ -2788,7 +2794,7 @@ impl<'a> Checker<'a> {
                     self.signature_locals(cx, *ty);
                     self.literals.push((expr, cx.tree.exprs[expr].span));
                     let target = self.target.take();
-                    let outer = self.touch_enter(expr);
+                    let outer = self.touch_enter(expr, cx.tree.exprs[expr].span);
                     self.function_body(cx, *ty, sig, body);
                     self.touch_leave(outer);
                     self.target = target;
@@ -3768,7 +3774,7 @@ impl<'a> Checker<'a> {
         self.read_only.clear();
         self.seen_as.clear();
         self.bound.clear();
-        self.touch_start();
+        self.touch_start(tree.decl_nodes[decl].span);
         self.made_shared.clear();
         self.lent_handles.clear();
         self.say_shared_writes_left();

@@ -79,6 +79,13 @@ pub enum TouchKey {
 pub struct Touch {
     pub uses: Vec<Global>,
     pub calls: Vec<TouchKey>,
+    /// The variables that it changes itself outside `init`; and
+    /// whether it writes through a pointer that may point into any
+    /// variable which a pointer is taken into.
+    pub writes: Vec<Global>,
+    pub writes_any: bool,
+    /// What its `go` statements start.
+    pub starts: Vec<TouchKey>,
     /// It calls a function value: any function that is used as a
     /// value may run.
     pub values: bool,

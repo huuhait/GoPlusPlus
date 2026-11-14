@@ -7180,6 +7180,81 @@ fn a_goroutine_is_followed_to_the_variables_that_it_may_use() {
     }
 }
 
+// rule: CON-18
+#[test]
+fn a_write_before_the_first_goroutine_is_free() {
+    // In the package `main` the compiler knows where the program
+    // starts. What `main` does before the statement that may start
+    // its first goroutine runs alone, with the functions that are
+    // called only there: a write there is free. From that statement
+    // on, in a loop around it, in a deferred call, behind a label
+    // that a jump may go back to, and where `init` starts a goroutine
+    // already, a write to what a goroutine uses is refused.
+    let conf = "package conf\n\nvar Level = 1\n\nfunc Read() int { return Level }\n\nfunc Set(v int) { \
+                Level = v }\n";
+    let declared = "package main\n\nimport \"conf\"\n\nvar n int\nvar m int\n\nfunc read() int { return n + \
+                    conf.Level*0 }\nfunc setup()    { n = 2 }\nfunc start()    { go read() }\n";
+    let cases: &[(&str, &[&str])] = &[
+        ("func main() {\n\tn = 1\n\tgo read()\n}", &[]),
+        ("func main() {\n\tgo read()\n\tn = 1\n}", &["14:2: n"]),
+        ("func main() {\n\tsetup()\n\tgo read()\n}", &[]),
+        ("func main() {\n\tgo read()\n\tsetup()\n}", &["9:19: n"]),
+        (
+            "func main() {\n\tsetup()\n\tgo read()\n\tsetup()\n}",
+            &["9:19: n"],
+        ),
+        (
+            "func main() {\n\tfor i := 0; i < 2; i++ {\n\t\tn = i\n\t\tgo read()\n\t}\n}",
+            &["14:3: n"],
+        ),
+        (
+            "func main() {\n\tdefer setup()\n\tgo read()\n}",
+            &["9:19: n"],
+        ),
+        ("func main() {\n\tn = 1\n\tstart()\n\tm = 1\n}", &[]),
+        ("func main() {\n\tstart()\n\tn = 1\n}", &["14:2: n"]),
+        (
+            "func init() { go read() }\n\nfunc main() {\n\tn = 1\n}",
+            &["15:2: n"],
+        ),
+        ("func main() {\n\tconf.Set(2)\n\tgo read()\n}", &[]),
+        (
+            "func main() {\n\tgo read()\n\tconf.Set(2)\n}",
+            &[
+                "13:5: cannot start this goroutine: it may use conf.Level, which is changed outside init",
+            ],
+        ),
+        (
+            "func main() {\n\tn = 1\n\tgo func() { n++ }()\n}",
+            &["14:14: n"],
+        ),
+        (
+            "func main() {\n\tn = 1\nagain:\n\tm++\n\tgo read()\n\tif m < 2 {\n\t\tgoto again\n\t}\n}",
+            &[],
+        ),
+        (
+            "func main() {\nagain:\n\tn++\n\tgo read()\n\tif n < 2 {\n\t\tgoto again\n\t}\n}",
+            &["14:2: n"],
+        ),
+    ];
+    for (body, expected) in cases {
+        let names = ThreadedRodeo::new();
+        let loader = with_packages(&names, &[("conf", conf)]);
+        let text = format!("{declared}\n{body}\n");
+        let checked = check_texts("main", &[("a.gopp", &text)], &loader, &names);
+        let said: Vec<String> = (checked.messages.iter())
+            .filter(|message| !message.starts_with("    "))
+            .map(|message| {
+                let message = message.strip_prefix("a.gopp:").unwrap_or(message);
+                let end = " here: a goroutine may use it at the same time";
+                let message = message.strip_suffix(end).unwrap_or(message);
+                message.replace(" cannot change ", " ")
+            })
+            .collect();
+        assert_eq!(said, *expected, "{body}");
+    }
+}
+
 #[test]
 fn the_steps_of_what_goroutines_may_use_grow_with_the_input_not_faster() {
     let steps = |text: String| {
@@ -7205,8 +7280,26 @@ fn the_steps_of_what_goroutines_may_use_grow_with_the_input_not_faster() {
         let started: String = (0..count).map(|i| format!("\tgo f{i}()\n")).collect();
         format!("package p\n{variables}{functions}func main() {{\n{started}}}\n")
     };
+    // A program: `main` calls as many functions that each set a
+    // variable, and then starts as many goroutines that each read one.
+    let program = |count: usize| {
+        let variables: String = (0..count).map(|i| format!("var g{i} int\n")).collect();
+        let functions: String = (0..count)
+            .map(|i| format!("func s{i}() {{ g{i} = {i} }}\nfunc r{i}() int {{ return g{i} }}\n"))
+            .collect();
+        let set: String = (0..count).map(|i| format!("\ts{i}()\n")).collect();
+        let started: String = (0..count).map(|i| format!("\tgo r{i}()\n")).collect();
+        format!("package main\n{variables}{functions}func main() {{\n{set}{started}}}\n")
+    };
+    let of_program = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("main", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
     let sizes = [100, 200, 400, 800];
     linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    linear::assert_near_linear(&sizes, |n| of_program(program(n)));
 }
 
 // rule: OWN-P8

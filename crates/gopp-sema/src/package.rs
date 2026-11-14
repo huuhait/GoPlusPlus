@@ -15,6 +15,9 @@ use crate::object::{FileInfo, ObjId, Object};
 /// plain write (CON-18).
 #[derive(Clone, Debug, Default)]
 pub struct Program {
+    /// A goroutine may be started before `main` runs: by `init` or
+    /// by the value of a variable.
+    pub early: bool,
     /// What the `go` statements start.
     pub roots: FxHashSet<crate::types::TouchKey>,
     /// The functions that are used as values, with the function

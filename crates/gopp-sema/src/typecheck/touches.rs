@@ -33,9 +33,13 @@ pub(super) enum Target {
 
 /// A function, a function literal, `init` or the value of a variable
 /// of the package, with what it does itself.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct Unit {
     pub owner: Option<Callee>,
+    /// Where it is written; and whether it is `init` or the value of
+    /// a variable, which run before the program has started.
+    pub at: Span,
+    pub starting: bool,
     /// The unit that a function literal is written in.
     pub parent: Option<usize>,
     pub uses: Vec<Global>,
@@ -43,29 +47,44 @@ pub(super) struct Unit {
     /// through a pointer that may point into one.
     pub writes: Vec<(Option<Global>, Span)>,
     pub addressed: Vec<Global>,
-    pub calls: Vec<Target>,
+    /// What it calls, each with where.
+    pub calls: Vec<(Target, u32)>,
     pub spawns: Vec<(Target, Span)>,
     /// The functions that it uses as values.
     pub values: Vec<Target>,
 }
 
+impl Unit {
+    fn new(at: Span, parent: Option<usize>) -> Unit {
+        Unit {
+            owner: None,
+            at,
+            starting: false,
+            parent,
+            uses: Vec::new(),
+            writes: Vec::new(),
+            addressed: Vec::new(),
+            calls: Vec::new(),
+            spawns: Vec::new(),
+            values: Vec::new(),
+        }
+    }
+}
+
 impl<'a> Checker<'a> {
-    /// The body of a declaration is walked from here on.
-    pub(super) fn touch_start(&mut self) {
-        self.touched = vec![Unit::default()];
+    /// The body of the declaration at `at` is walked from here on.
+    pub(super) fn touch_start(&mut self, at: Span) {
+        self.touched = vec![Unit::new(at, None)];
         self.touching = 0;
         self.literal_units.clear();
     }
 
     /// A function literal is entered. The unit that was walked comes
     /// back, for `touch_leave`.
-    pub(super) fn touch_enter(&mut self, literal: ExprId) -> usize {
+    pub(super) fn touch_enter(&mut self, literal: ExprId, at: Span) -> usize {
         let outer = self.touching;
         self.literal_units.insert(literal, self.touched.len());
-        self.touched.push(Unit {
-            parent: Some(outer),
-            ..Unit::default()
-        });
+        self.touched.push(Unit::new(at, Some(outer)));
         self.touching = self.touched.len() - 1;
         outer
     }
@@ -134,7 +153,8 @@ impl<'a> Checker<'a> {
     /// a variable do themselves is done before the program starts.
     pub(super) fn touch_write(&mut self, global: std::option::Option<Global>, at: Span) {
         if self.memo.is_none() {
-            self.late_writes.push((global, at));
+            let within = self.late_within.unwrap_or(at);
+            self.late_writes.push((global, at, within));
             return;
         }
         if self.starting && self.literals.is_empty() {
@@ -178,8 +198,9 @@ impl<'a> Checker<'a> {
     /// The function `fun` is called.
     pub(super) fn touch_call(&mut self, cx: &Cx<'a>, fun: ExprId) {
         let target = self.target(cx, fun);
+        let at = cx.tree.exprs[fun].span.lo;
         if let Some(unit) = self.touching() {
-            unit.calls.push(target);
+            unit.calls.push((target, at));
         }
     }
 
@@ -272,8 +293,9 @@ impl<'a> Checker<'a> {
     /// function that others call by the name `owner`.
     pub(super) fn touch_end(&mut self, owner: std::option::Option<Callee>) -> Vec<Unit> {
         self.literal_units.clear();
+        let starting = self.starting;
         if let Some(unit) = self.touched.first_mut() {
-            unit.owner = owner;
+            (unit.owner, unit.starting) = (owner, starting);
         }
         std::mem::take(&mut self.touched)
     }
@@ -287,7 +309,7 @@ impl<'a> Checker<'a> {
         };
         for mut unit in units {
             unit.parent = unit.parent.map(|parent| parent + base);
-            for call in &mut unit.calls {
+            for (call, _) in &mut unit.calls {
                 *call = moved(*call);
             }
             for value in &mut unit.values {
@@ -319,25 +341,22 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The variables that a goroutine may use: all that is named in
-    /// what the `go` statements start, through the calls. A call of a
-    /// function value may run every function that is used as a value,
-    /// and a call of a method of an interface every method of its
-    /// name. Each variable comes with the `go` statement of this
-    /// package that leads to it first, if one does.
-    fn used_by_goroutines(
+    /// All that is reached from the functions, through the calls. A
+    /// call of a function value may run every function that is used
+    /// as a value, and a call of a method of an interface every
+    /// method of its name.
+    fn reach(
         &mut self,
         program: &Program,
-        roots: &[(TouchKey, std::option::Option<Span>)],
-    ) -> FxHashMap<Global, std::option::Option<Span>> {
-        let mut found: FxHashMap<Global, std::option::Option<Span>> = FxHashMap::default();
-        let mut seen: FxHashSet<TouchKey> = FxHashSet::default();
+        from: &[(TouchKey, std::option::Option<Span>)],
+    ) -> Reached {
+        let mut reached = Reached::default();
         let mut named: FxHashSet<Spur> = FxHashSet::default();
         let mut valued = false;
-        let mut rest: Vec<_> = roots.iter().rev().copied().collect();
+        let mut rest: Vec<_> = from.iter().rev().copied().collect();
         while let Some((key, by)) = rest.pop() {
             self.steps += 1;
-            if !seen.insert(key) {
+            if !reached.seen.insert(key) {
                 continue;
             }
             // What nothing is known of may run what a function value
@@ -353,18 +372,128 @@ impl<'a> Checker<'a> {
                 continue;
             };
             for &global in &touch.uses {
-                if let Entry::Vacant(free) = found.entry(global) {
+                if let Entry::Vacant(free) = reached.uses.entry(global) {
                     free.insert(by);
                 }
             }
-            self.steps += (touch.calls.len() + touch.methods.len()) as u64;
+            reached.writes.extend(&touch.writes);
+            reached.writes_any |= touch.writes_any;
+            self.steps += (touch.calls.len() + touch.methods.len() + touch.starts.len()) as u64;
             rest.extend(touch.calls.iter().map(|&key| (key, by)));
+            // What a goroutine starts is reached too.
+            reached.starts.extend(&touch.starts);
+            rest.extend(touch.starts.iter().map(|&key| (key, by)));
             for name in touch.methods.iter().filter(|name| named.insert(**name)) {
                 let methods = program.methods.get(name).into_iter().flatten();
                 rest.extend(methods.map(|&key| (key, by)));
             }
         }
-        found
+        reached
+    }
+
+    /// Whether the function may start a goroutine, itself or in what
+    /// it calls; what is not known may. `calm` has the functions that
+    /// are known not to, and gets those that are found.
+    fn may_spawn(&mut self, key: TouchKey, calm: &mut FxHashSet<TouchKey>) -> bool {
+        let mut seen: FxHashSet<TouchKey> = FxHashSet::default();
+        let mut rest = vec![key];
+        while let Some(key) = rest.pop() {
+            self.steps += 1;
+            if calm.contains(&key) || !seen.insert(key) {
+                continue;
+            }
+            let Some(touch) = self.types.touch(key) else {
+                return true;
+            };
+            if !touch.starts.is_empty() || touch.values || !touch.methods.is_empty() {
+                return true;
+            }
+            self.steps += touch.calls.len() as u64;
+            rest.extend(&touch.calls);
+        }
+        calm.extend(seen);
+        false
+    }
+
+    /// What a call adds to what its function says.
+    fn touch_called(&self, keys: &[TouchKey], call: Target, touch: &mut Touch) {
+        match (call, self.touch_key(keys, call)) {
+            (Target::Nothing, _) => {}
+            (Target::Named(name), _) => touch.methods.push(name),
+            (_, Some(key)) => touch.calls.push(key),
+            (_, None) => touch.values = true,
+        }
+    }
+
+    /// Where `main` may start its first goroutine: before the
+    /// statement there, no goroutine runs beside it. With the `defer`
+    /// statements before that place, whose calls run at the end.
+    /// `main` is the unit with the number `at`.
+    fn first_spawn(
+        &mut self,
+        files: &[crate::resolve::Unit<'a>],
+        (units, keys): (&[Unit], &[TouchKey]),
+        at: usize,
+        calm: &mut FxHashSet<TouchKey>,
+    ) -> (u32, Vec<Span>) {
+        let unit = &units[at];
+        let body = files.iter().find_map(|file| {
+            let declared = |decl: &ast::DeclId| {
+                let node = &file.file.decl_nodes[*decl];
+                match &node.kind {
+                    DeclKind::Func {
+                        body: Some(body), ..
+                    } if node.span == unit.at => Some((file.file, body)),
+                    _ => None,
+                }
+            };
+            file.file.decls.iter().find_map(declared)
+        });
+        let Some((file, body)) = body else {
+            return (unit.at.lo, Vec::new());
+        };
+        // What may start a goroutine, in the order of the source: a
+        // `go` statement, a call, a function literal.
+        let mut events: Vec<(u32, std::option::Option<TouchKey>, bool)> = Vec::new();
+        events.extend(unit.spawns.iter().map(|(_, span)| (span.lo, None, true)));
+        for &(call, lo) in &unit.calls {
+            match (call, self.touch_key(keys, call)) {
+                (Target::Nothing, _) => {}
+                (_, Some(key)) => events.push((lo, Some(key), false)),
+                (_, None) => events.push((lo, None, true)),
+            }
+        }
+        for (child, inner) in units.iter().enumerate() {
+            self.steps += 1;
+            if inner.parent == Some(at) {
+                events.push((inner.at.lo, Some(keys[child]), false));
+            }
+        }
+        events.sort_unstable_by_key(|event| event.0);
+        let mut next = 0;
+        let mut deferred = Vec::new();
+        for &stmt in &body.stmts {
+            let node = &file.stmts[stmt];
+            // A jump back to a label would run what is before it again.
+            if matches!(node.kind, StmtKind::Labeled { .. }) {
+                return (node.span.lo, deferred);
+            }
+            let waits = matches!(node.kind, StmtKind::Defer(_));
+            if waits {
+                deferred.push(node.span);
+            }
+            while let Some(&(lo, key, spawns)) = events.get(next).filter(|e| e.0 < node.span.hi) {
+                next += 1;
+                self.steps += 1;
+                if lo < node.span.lo || waits {
+                    continue;
+                }
+                if spawns || key.is_some_and(|key| self.may_spawn(key, calm)) {
+                    return (node.span.lo, deferred);
+                }
+            }
+        }
+        (body.span.hi, deferred)
     }
 
     fn global_name(&self, (path, object): Global) -> String {
@@ -394,11 +523,31 @@ impl<'a> Checker<'a> {
     /// When every body of the package is walked: says what each of its
     /// functions names and calls, follows what the `go` statements
     /// start, and refuses the writes to a variable that a goroutine
-    /// may use. `first` is where the package starts, for what is found
-    /// between two packages that it imports.
-    pub(super) fn races(&mut self, first: std::option::Option<Span>) -> Program {
+    /// may use. In the package `main`, a write that runs before the
+    /// first goroutine may be started is none of them. `first` is
+    /// where the package starts, for what is found between two
+    /// packages that it imports.
+    pub(super) fn races(
+        &mut self,
+        files: &[crate::resolve::Unit<'a>],
+        first: std::option::Option<Span>,
+    ) -> Program {
         let path = self.path_of(self.package);
-        let units = std::mem::take(&mut self.units);
+        let mut units = std::mem::take(&mut self.units);
+        // The writes that were found when every body was walked go to
+        // the function that they are in.
+        let within = |at: Span| (at.file, at.lo, at.hi);
+        let by_span: FxHashMap<_, usize> = (units.iter().enumerate())
+            .map(|(at, unit)| (within(unit.at), at))
+            .collect();
+        let mut loose: Vec<(std::option::Option<Global>, Span)> = Vec::new();
+        for (global, at, inside) in std::mem::take(&mut self.late_writes) {
+            self.steps += 1;
+            match by_span.get(&within(inside)) {
+                Some(&unit) => units[unit].writes.push((global, at)),
+                None => loose.push((global, at)),
+            }
+        }
         let mut keys: Vec<TouchKey> = (units.iter().enumerate())
             .map(|(at, unit)| match unit.owner {
                 Some(Callee::Func(object)) => TouchKey::Func(path, object),
@@ -422,30 +571,60 @@ impl<'a> Checker<'a> {
                 inner[parent].push(keys[at]);
             }
         }
+        // What a `go` statement starts. Of a function value or of a
+        // method of an interface, a function that calls it stands in.
         let mut program = Program::default();
         let mut roots: Vec<(TouchKey, std::option::Option<Span>)> = Vec::new();
-        let mut writes: Vec<(std::option::Option<Global>, Span)> = Vec::new();
+        let mut starts: Vec<Vec<TouchKey>> = vec![Vec::new(); units.len()];
+        let mut started_at: Vec<(usize, TouchKey, Span)> = Vec::new();
+        for (at, unit) in units.iter().enumerate() {
+            for &(target, span) in &unit.spawns {
+                self.steps += 1;
+                let key = match (target, self.touch_key(&keys, target)) {
+                    (Target::Nothing, _) => continue,
+                    (_, Some(key)) => key,
+                    (target, None) => {
+                        let mut stands = Touch::default();
+                        self.touch_called(&keys, target, &mut stands);
+                        let key = TouchKey::Body(path, keys.len() as u32);
+                        keys.push(key);
+                        self.types.set_touch(key, Arc::new(stands));
+                        key
+                    }
+                };
+                starts[at].push(key);
+                started_at.push((at, key, span));
+                roots.push((key, Some(span)));
+                program.roots.insert(key);
+            }
+        }
         for (at, unit) in units.iter().enumerate() {
             self.steps += 1;
             let mut touch = Touch {
                 uses: unit.uses.clone(),
                 calls: std::mem::take(&mut inner[at]),
+                starts: std::mem::take(&mut starts[at]),
                 ..Touch::default()
             };
             touch.uses.sort_unstable();
             touch.uses.dedup();
-            for &call in &unit.calls {
-                match (call, self.touch_key(&keys, call)) {
-                    (Target::Nothing, _) => {}
-                    (Target::Named(name), _) => touch.methods.push(name),
-                    (_, Some(key)) => touch.calls.push(key),
-                    (_, None) => touch.values = true,
+            for &(call, _) in &unit.calls {
+                self.touch_called(&keys, call, &mut touch);
+            }
+            for &(global, _) in &unit.writes {
+                match global {
+                    Some(global) => touch.writes.push(global),
+                    None => touch.writes_any = true,
                 }
             }
+            touch.writes.sort_unstable();
+            touch.writes.dedup();
             let mut seen = FxHashSet::default();
             touch.calls.retain(|key| seen.insert(*key));
             touch.methods.sort_unstable();
             touch.methods.dedup();
+            program.written.extend(&touch.writes);
+            program.written_any |= touch.writes_any;
             self.types.set_touch(keys[at], Arc::new(touch));
             // What is not known may run a function literal, or a
             // function or a method that is used as a value.
@@ -458,40 +637,9 @@ impl<'a> Checker<'a> {
             if let Some(Callee::Method(_, name)) = unit.owner {
                 program.methods.entry(name).or_default().insert(keys[at]);
             }
-            writes.extend(unit.writes.iter().copied());
             program.addressed.extend(unit.addressed.iter().copied());
         }
-        // What a `go` statement starts. Of a function value or of a
-        // method of an interface, a function that calls it stands in.
-        for unit in &units {
-            for &(target, span) in &unit.spawns {
-                self.steps += 1;
-                let key = match (target, self.touch_key(&keys, target)) {
-                    (Target::Nothing, _) => continue,
-                    (_, Some(key)) => key,
-                    (target, None) => {
-                        let stands = Touch {
-                            values: !matches!(target, Target::Named(_)),
-                            methods: match target {
-                                Target::Named(name) => vec![name],
-                                _ => Vec::new(),
-                            },
-                            ..Touch::default()
-                        };
-                        let key = TouchKey::Body(path, keys.len() as u32);
-                        keys.push(key);
-                        self.types.set_touch(key, Arc::new(stands));
-                        key
-                    }
-                };
-                roots.push((key, Some(span)));
-                program.roots.insert(key);
-            }
-        }
-        writes.append(&mut self.late_writes);
-        writes.sort_unstable_by_key(|&(_, at)| (at.file, at.lo, at.hi));
-        writes.dedup();
-        for &(global, _) in &writes {
+        for &(global, _) in &loose {
             match global {
                 Some(global) => drop(program.written.insert(global)),
                 None => program.written_any = true,
@@ -517,21 +665,120 @@ impl<'a> Checker<'a> {
             program.written.extend(&of.written);
             program.written_any |= of.written_any;
             program.addressed.extend(&of.addressed);
+            program.early |= of.early;
             refused.extend(&of.refused);
         }
-        let used = match roots.is_empty() {
-            true => FxHashMap::default(),
-            false => self.used_by_goroutines(&program, &roots),
+        program.refused = refused;
+        if roots.is_empty() {
+            return program;
+        }
+        let mut calm: FxHashSet<TouchKey> = FxHashSet::default();
+        for (at, unit) in units.iter().enumerate() {
+            if unit.starting && unit.parent.is_none() && !program.early {
+                program.early = self.may_spawn(keys[at], &mut calm);
+            }
+        }
+        // In the package `main` the program starts at `main`, after
+        // `init` and the values of the variables: only what is reached
+        // from there runs, and only its `go` statements start
+        // goroutines. A write may run beside a goroutine if a
+        // goroutine reaches it, or `main` once it may have started
+        // one. In another package nothing says who calls its
+        // functions when: every write and every `go` statement count.
+        let main = units.iter().position(|unit| match unit.owner {
+            Some(Callee::Func(object)) => {
+                self.names.resolve(&self.package.object(object).name) == "main"
+            }
+            _ => false,
+        });
+        let main = main.filter(|_| self.package.name == "main");
+        let mut later: std::option::Option<(usize, u32, Vec<Span>, FxHashSet<TouchKey>)> = None;
+        let (used, written, written_any) = match main {
+            Some(at) => {
+                let before: Vec<_> = (units.iter().enumerate())
+                    .filter(|(_, unit)| unit.starting && unit.parent.is_none())
+                    .map(|(at, _)| (keys[at], None))
+                    .collect();
+                let mut all = before.clone();
+                all.push((keys[at], None));
+                let live = self.reach(&program, &all);
+                // Each with a `go` statement that runs.
+                let mut spans: FxHashMap<TouchKey, Span> = FxHashMap::default();
+                for &(unit, key, span) in &started_at {
+                    if live.seen.contains(&keys[unit]) {
+                        spans.entry(key).or_insert(span);
+                    }
+                }
+                let roots: Vec<_> = (live.starts.iter())
+                    .map(|key| (*key, spans.get(key).copied()))
+                    .collect();
+                let used = self.reach(&program, &roots).uses;
+                let (cut, deferred) = match program.early {
+                    true => (units[at].at.lo, Vec::new()),
+                    false => self.first_spawn(files, (&units, &keys), at, &mut calm),
+                };
+                let after = |lo: u32| {
+                    lo >= cut || deferred.iter().any(|wait| wait.lo <= lo && lo < wait.hi)
+                };
+                let mut rest = Touch::default();
+                for &(call, _) in units[at].calls.iter().filter(|(_, lo)| after(*lo)) {
+                    self.touch_called(&keys, call, &mut rest);
+                }
+                // A function literal of `main` may run at any time.
+                for (child, unit) in units.iter().enumerate() {
+                    if unit.parent == Some(at) {
+                        rest.calls.push(keys[child]);
+                    }
+                }
+                for &(global, _) in units[at].writes.iter().filter(|(_, at)| after(at.lo)) {
+                    match global {
+                        Some(global) => rest.writes.push(global),
+                        None => rest.writes_any = true,
+                    }
+                }
+                let key = TouchKey::Body(path, keys.len() as u32);
+                keys.push(key);
+                self.types.set_touch(key, Arc::new(rest));
+                let mut from = roots;
+                from.push((key, None));
+                // A goroutine that `init` starts runs beside all that
+                // `init` does.
+                if program.early {
+                    from.extend(before);
+                }
+                let reached = self.reach(&program, &from);
+                later = Some((at, cut, deferred, reached.seen));
+                (used, reached.writes, reached.writes_any)
+            }
+            None => {
+                let used = self.reach(&program, &roots).uses;
+                (used, program.written.clone(), program.written_any)
+            }
         };
-        let written = |global: &Global| {
-            program.written.contains(global)
-                || (program.written_any && program.addressed.contains(global))
+        let is_written = |global: &Global| {
+            written.contains(global) || (written_any && program.addressed.contains(global))
         };
         let mut raced: Vec<Global> = (used.keys())
-            .filter(|global| written(global) && !refused.contains(global))
+            .filter(|global| is_written(global) && !program.refused.contains(global))
             .copied()
             .collect();
         raced.sort_unstable();
+        // The writes of this package that may run then.
+        let mut writes = loose;
+        for (at, unit) in units.iter().enumerate() {
+            self.steps += 1;
+            let runs = |span: Span| match &later {
+                None => true,
+                Some((main, cut, deferred, seen)) => {
+                    let after = span.lo >= *cut
+                        || (deferred.iter()).any(|wait| wait.lo <= span.lo && span.lo < wait.hi);
+                    seen.contains(&keys[at]) || (at == *main && after)
+                }
+            };
+            writes.extend(unit.writes.iter().copied().filter(|&(_, span)| runs(span)));
+        }
+        writes.sort_unstable_by_key(|&(_, at)| (at.file, at.lo, at.hi));
+        writes.dedup();
         // What a pointer that is not followed to one variable may
         // point into: the first of these are named.
         let through: Vec<Global> = (raced.iter())
@@ -597,8 +844,20 @@ impl<'a> Checker<'a> {
             let diagnostic = Diagnostic::new(Code::ConGlobalWrite, at, message);
             self.emit(diagnostic.with_note(Code::NoteGoFixShare, None, fix.to_owned()));
         }
-        refused.extend(raced);
-        program.refused = refused;
+        program.refused.extend(raced);
         program
     }
+}
+
+/// What is reached from some functions.
+#[derive(Default)]
+struct Reached {
+    seen: FxHashSet<TouchKey>,
+    /// The variables that are named, each with the `go` statement of
+    /// this package that leads to it first, if one does.
+    uses: FxHashMap<Global, std::option::Option<Span>>,
+    writes: FxHashSet<Global>,
+    writes_any: bool,
+    /// What the `go` statements on the way start.
+    starts: Vec<TouchKey>,
 }
