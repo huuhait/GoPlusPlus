@@ -1,0 +1,91 @@
+package main
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("  end", r.name) }
+
+func (r Res) Clone() Res { return Res{r.name + "'"} }
+
+type Shape struct{ name string }
+
+@Virtual
+func (s *Shape) Kind() string { return "shape" }
+
+@Virtual
+func (s *Shape) Add(n int, label string) string { return label + s.name }
+
+@Abstract
+func (s *Shape) Area() int
+
+@Virtual
+func (s *Shape) Take(r Res) string { return "shape takes " + r.name }
+
+func (s *Shape) Describe() string { return s.name + " is a " + s.Kind() }
+
+type Tagged struct{ tag string }
+
+@Virtual
+func (t *Tagged) Tag() string { return "tag " + t.tag }
+
+@Extends(Shape)
+@Extends(Tagged)
+type Tile struct{ color string }
+
+@Override
+func (t *Tile) Kind() string { return t.color + " tile" }
+
+@Override
+func (t *Tile) Add(n int, label string) string { return label + t.color + string(rune('0'+n)) }
+
+@Override
+func (t *Tile) Area() int { return 4 }
+
+@Override
+func (t *Tile) Tag() string { return "tile " + t.tag + "/" + t.color }
+
+@Override
+func (t *Tile) Take(r Res) string { return "tile reads " + r.name }
+
+@Extends(Tile)
+type Slab struct{ weight int }
+
+@Override
+func (s *Slab) Kind() string { return "slab of " + base.Kind() }
+
+@Override
+func (s *Slab) Area() int { return 9 }
+
+func kind(s *Shape) func() string { return s.Kind }
+
+func call(f func() string) string { return f() }
+
+func main() {
+	tile := Tile{name: "t", tag: "x", color: "red"}
+	var s *Shape = &tile
+	var t *Tagged = &tile
+	f := s.Kind
+	g := t.Tag
+	h := s.Add
+	a := s.Area
+	println(f(), g(), h(1, "add "), a())
+	e := (*Shape).Kind
+	area := (*Shape).Area
+	println(e(s), area(s), call(kind(s)))
+	k := tile.Kind
+	tile.color = "blue"
+	println(k(), f())
+	slab := Slab{name: "s", tag: "y", color: "gray", weight: 3}
+	fresh := slab.Describe
+	own := slab.Kind
+	tag := slab.Tag
+	var up *Tile = &slab
+	println(fresh(), own(), tag(), kind(up)(), call(up.Kind), area(up), (*Tile).Area(up))
+	take := s.Take
+	println(take(Res{"a"}))
+	r := Res{"b"}
+	println(take(r), r.name)
+	u := NewUnique(Slab{name: "u", tag: "z", color: "green"})
+	var p Unique[Shape] = move(u)
+	ku := p.Kind
+	println(ku(), call(p.Kind))
+}

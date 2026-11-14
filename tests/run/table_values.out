@@ -1,0 +1,10 @@
+red tile tile x/red add red1 4
+red tile 4 red tile
+blue tile blue tile
+s is a slab of gray tile slab of gray tile tile y/gray slab of gray tile slab of gray tile 9 9
+  end a
+tile reads a
+  end b'
+tile reads b' b
+slab of green tile slab of green tile
+  end b

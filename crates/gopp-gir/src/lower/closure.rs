@@ -446,8 +446,36 @@ impl FuncCx<'_, '_> {
             let method = methods.iter().find(|method| method.name == name)?;
             return Some((method.sig, true));
         }
-        let method = shared.method(ty, name)?;
-        Some((method.sig, false))
+        Some((shared.slot_method(ty, name)?, false))
+    }
+
+    /// Whether the code of a method value or of a method expression
+    /// finds the method `name` of the type `ty` in the table of the
+    /// receiver (EXP-14): a method that may be replaced runs as the
+    /// type of the value has it, which is known when it is called.
+    fn bound_through(
+        shared: &Shared<'_>,
+        (ty, name, instance): (CheckedTypeId, Spur, Option<usize>),
+    ) -> bool {
+        instance.is_none() && shared.replaced(ty, name)
+    }
+
+    /// The type of the receiver that the code of a method value has in
+    /// its cell: what the method takes, which is the address of a
+    /// value for a method that the table of the value has.
+    fn bound_receiver(
+        &mut self,
+        of: (CheckedTypeId, Spur, Option<usize>),
+        key: CalleeKey,
+    ) -> Built<Result<TypeId, &'static str>> {
+        if Self::bound_through(self.shared, of) {
+            let value = self.memo.lower_type(self.shared, self.b.types(), of.0);
+            return Ok(value.map(|value| self.b.types().ptr(value)));
+        }
+        Ok(match self.callee(key)? {
+            Ok(called) => (called.params.first().copied()).ok_or("a method without a receiver"),
+            Err(what) => Err(what),
+        })
     }
 
     /// The method value `x.m`, for a place of the type `ty` (CLO-5):
@@ -476,11 +504,6 @@ impl FuncCx<'_, '_> {
             return Ok(self.placeholder(span, ty, "a method as a value"));
         };
         let (holder, path) = (selection.holder, &selection.path[..]);
-        // Which method runs is known only when the value is called.
-        if selection.indirect && shared.replaced(holder, sel.name) {
-            let what = "a method that may be replaced as a value";
-            return Ok(self.placeholder(span, ty, what));
-        }
         let of = (holder, sel.name, instance);
         let Some((_, dynamic)) = Self::bound_method(shared, of) else {
             let generic = matches!(&*shared.types.get(holder),
@@ -519,12 +542,9 @@ impl FuncCx<'_, '_> {
                 (copy, Some(holder))
             }
             false => {
-                let called = match self.callee(key)? {
-                    Ok(called) => called,
+                let wanted = match self.bound_receiver(of, key)? {
+                    Ok(wanted) => wanted,
                     Err(what) => return Ok(self.placeholder(span, ty, what)),
-                };
-                let Some(&wanted) = called.params.first() else {
-                    return Ok(self.placeholder(span, ty, "a method as a value"));
                 };
                 if !path.is_empty() {
                     self.parts.insert(x, holder);
@@ -641,17 +661,24 @@ impl FuncCx<'_, '_> {
             return Ok(self.placeholder(span, ty, "a method as a value"));
         };
         let holder = selection.holder;
+        let through = Self::bound_through(shared, (holder, sel.name, None));
         let method = match selection.path.is_empty() {
             true => shared.method(holder, sel.name),
             false => None,
         };
-        let Some(method) = method else {
-            let what = "a method of an interface or of an embedded type as a function";
-            return Ok(self.placeholder(span, ty, what));
+        // A method that may be replaced takes an address.
+        let takes_address = match (method, through && selection.path.is_empty()) {
+            (Some(method), _) => {
+                matches!(&*types.get(method.receiver), CheckedType::Pointer(_))
+            }
+            (None, true) => true,
+            (None, false) => {
+                let what = "a method of an interface or of an embedded type as a function";
+                return Ok(self.placeholder(span, ty, what));
+            }
         };
         // Whether the function takes an address and the method a value.
         let by_address = matches!(&*types.get(selection.recv), CheckedType::Pointer(_));
-        let takes_address = matches!(&*types.get(method.receiver), CheckedType::Pointer(_));
         let pointer = by_address && !takes_address;
         let entity = Entity::MethodExpr {
             receiver: holder,
@@ -661,7 +688,7 @@ impl FuncCx<'_, '_> {
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             return Ok(self.placeholder(span, ty, "a method without a symbol as a function"));
         };
-        if let Err(what) = self.callee(CalleeKey::Method(holder, sel.name))? {
+        if !through && let Err(what) = self.callee(CalleeKey::Method(holder, sel.name))? {
             return Ok(self.placeholder(span, ty, what));
         }
         let asked = self.memo.funcs.contains_key(&symbol);
@@ -699,11 +726,14 @@ impl FuncCx<'_, '_> {
         let byte = types.int(8, false);
         let mut params = vec![types.ptr(byte)];
         if let Some(pointer) = first {
-            let receiver = shared.method(ty, name);
-            let Some(receiver) = receiver.map(|method| method.receiver) else {
-                return Err("a method that its type does not have");
+            let receiver = match shared.method(ty, name) {
+                Some(method) => memo.lower_type(shared, types, method.receiver)?,
+                None if Self::bound_through(shared, of) => {
+                    let value = memo.lower_type(shared, types, ty)?;
+                    types.ptr(value)
+                }
+                None => return Err("a method that its type does not have"),
             };
-            let receiver = memo.lower_type(shared, types, receiver)?;
             params.push(match pointer {
                 true => types.ptr(receiver),
                 false => receiver,
@@ -746,7 +776,8 @@ impl FuncCx<'_, '_> {
         };
         // How many parameters come before those of the method.
         let before = 1 + u32::from(first.is_some());
-        let called = match dynamic {
+        let through = Self::bound_through(shared, of);
+        let called = match dynamic || through {
             true => None,
             false => {
                 let key = instance.map_or(CalleeKey::Method(ty, name), CalleeKey::Instance);
@@ -761,9 +792,11 @@ impl FuncCx<'_, '_> {
         let held = match first {
             Some(_) => Place::local(self.b.param(1)),
             None => {
+                let value = self.memo.lower_type(shared, self.b.types(), ty).ok();
                 let of = match &called {
                     Some(called) => called.params.first().copied(),
-                    None => self.memo.lower_type(shared, self.b.types(), ty).ok(),
+                    None if through => value.map(|value| self.b.types().ptr(value)),
+                    None => value,
                 };
                 let Some(of) = of else {
                     return Ok(Err("a method without a receiver"));
@@ -786,6 +819,17 @@ impl FuncCx<'_, '_> {
             }
         };
         let (callee, receiver, ret) = match &called {
+            // The address of a value: the method that the type of the
+            // value has is in its table, and takes what follows as its
+            // own, as a call through a table gives it.
+            None if through => {
+                self.not_nil(&held)?;
+                let value = self.b.deref(&held)?;
+                match self.table_entry(value, ty, name, checked)? {
+                    Ok((code, receiver)) => (code, receiver, own.1.ret),
+                    Err(what) => return Ok(Err(what)),
+                }
+            }
             None => {
                 let methods = shared.types.interface_methods(ty, shared.names);
                 let slot = methods

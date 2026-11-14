@@ -724,9 +724,6 @@ impl FuncCx<'_, '_> {
         {
             of = *to;
         }
-        let Some((way, slot)) = shared.slot_of(of, sel.name) else {
-            return Ok(Some(Err("a method that no table has")));
-        };
         let Some(checked) = self.body.types.get(&callee).map(|typed| typed.ty) else {
             return Ok(Some(Err("a method without a type")));
         };
@@ -744,18 +741,53 @@ impl FuncCx<'_, '_> {
             Ok(_) => return Ok(Some(Err("a function type"))),
             Err(what) => return Ok(Some(Err(what))),
         };
-        let code = match slot_sig(shared, self.memo, self.b.types(), checked) {
-            Ok(code) => code,
-            Err(what) => return Ok(Some(Err(what))),
-        };
         let mut mode = PlaceMode {
             held: args.iter().any(|&arg| self.has_effects(arg)),
             ..PlaceMode::default()
         };
         let base = self.place(x, &mut mode)?;
         let value = self.through(base, &mut mode)?;
+        let (entry, receiver) = match self.table_entry(value, of, sel.name, checked)? {
+            Ok(found) => found,
+            Err(what) => return Ok(Some(Err(what))),
+        };
+        let _ = span;
+        let mut params = vec![self.bytes_ty()];
+        params.extend(plain.params.iter());
+        let called = Called {
+            code: Code::Known(entry),
+            views: plain.params.len() - declared,
+            lent: std::rc::Rc::from([]),
+            worked: std::rc::Rc::from([]),
+            params: params.into(),
+            ret: plain.ret,
+            rest,
+        };
+        Ok(Some(Ok((called, vec![receiver]))))
+    }
+
+    /// What a call of the method `name` runs for the value at the
+    /// place, which the code names as one of the type `of`: the code
+    /// that the table of the part whose type declares the method first
+    /// has for it, and the address of that part, which the code takes
+    /// as its receiver. `checked` is the type of the method.
+    pub(super) fn table_entry(
+        &mut self,
+        value: Place,
+        of: CheckedTypeId,
+        name: Spur,
+        checked: CheckedTypeId,
+    ) -> Built<Result<(Operand, Operand), &'static str>> {
+        let shared = self.shared;
+        let Some((way, slot)) = shared.slot_of(of, name) else {
+            return Ok(Err("a method that no table has"));
+        };
+        let code = match slot_sig(shared, self.memo, self.b.types(), checked) {
+            Ok(code) => code,
+            Err(what) => return Ok(Err(what)),
+        };
         if let Err(what) = self.set_tables(&value, of)? {
-            return Ok(Some(Err(what)));
+            return Ok(Err(what));
         }
         let mut part = value;
         for &step in &way {
@@ -781,19 +813,7 @@ impl FuncCx<'_, '_> {
         let entry = self
             .b
             .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, entry, code))?;
-        let _ = span;
-        let mut params = vec![bytes];
-        params.extend(plain.params.iter());
-        let called = Called {
-            code: Code::Known(Operand::Copy(Place::local(entry))),
-            views: plain.params.len() - declared,
-            lent: std::rc::Rc::from([]),
-            worked: std::rc::Rc::from([]),
-            params: params.into(),
-            ret: plain.ret,
-            rest,
-        };
-        Ok(Some(Ok((called, vec![receiver]))))
+        Ok(Ok((Operand::Copy(Place::local(entry)), receiver)))
     }
 
     /// The way from the struct `child` to the part of its ancestor
