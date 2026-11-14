@@ -155,6 +155,15 @@ fn every_program_of_tests_run_does_what_its_files_say() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// A program that is built for a debugger has its variables in blocks
+/// of C and does the same.
+#[test]
+#[ignore = "long: builds every run test once more, for a debugger"]
+fn every_program_does_the_same_when_it_is_built_for_a_debugger() {
+    let wrong = wrong_among(&programs(|_| true), &["--debug"]);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// What crosses to C is passed as C passes it at every level of
 /// Clang: the C side is compiled with the program.
 #[test]

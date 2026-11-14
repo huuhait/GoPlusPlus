@@ -13,6 +13,7 @@ use lasso::ThreadedRodeo;
 use rayon::prelude::*;
 
 mod calls;
+mod debug;
 mod leaks;
 
 use super::{EmitError, EmitOptions, Entry, emit_c23, emit_counted};

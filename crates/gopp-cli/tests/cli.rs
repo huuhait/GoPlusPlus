@@ -1799,6 +1799,25 @@ fn an_argument_is_lent_to_a_function_of_another_package_that_only_reads_it() {
     assert!(lowered("len(reads.Keep(xs))").contains("_gopp_slice_copy"));
 }
 
+/// What `gdb` says of the program of the text when it is given the
+/// commands, one after the other.
+#[cfg(target_os = "linux")]
+fn debugged(dir: &TempDir, text: &str, flags: &[&str], commands: &[&str]) -> String {
+    let file = write_source(dir, "steps.gopp", text);
+    let program = dir.path().join("steps.bin");
+    let mut build = gopp();
+    build.arg("build").args(flags).arg("-o").arg(&program);
+    let built = run_beside(build.arg(&file));
+    assert_eq!(stderr(&built), "");
+    let mut gdb = Command::new("gdb");
+    gdb.args(["-q", "-nx", "-batch"]);
+    for command in commands {
+        gdb.args(["-ex", command]);
+    }
+    let ran = run_beside(gdb.arg(&program));
+    format!("{}{}", stdout(&ran), stderr(&ran))
+}
+
 /// A debugger stops at a line of the source, names the lines of the
 /// calls that led there, and goes on line by line; without debug
 /// information it knows no line.
@@ -1808,22 +1827,8 @@ fn a_debugger_stops_and_steps_by_the_lines_of_the_source() {
     let dir = TempDir::new().unwrap();
     let text = "package main\n\nfunc add(a int, b int) int {\n\tsum := a + b\n\treturn sum\n}\n\n\
                 func main() {\n\tx := 3\n\ty := add(x, 4)\n\tprintln(y)\n}\n";
-    let file = write_source(&dir, "steps.gopp", text);
-    let session = |flags: &[&str]| {
-        let program = dir.path().join("steps.bin");
-        let mut build = gopp();
-        build.arg("build").args(flags).arg("-o").arg(&program);
-        let built = run_beside(build.arg(&file));
-        assert_eq!(stderr(&built), "");
-        let mut gdb = Command::new("gdb");
-        gdb.args(["-q", "-nx", "-batch"]);
-        for command in ["break steps.gopp:4", "run", "bt", "next", "info line"] {
-            gdb.args(["-ex", command]);
-        }
-        let ran = run_beside(gdb.arg(&program));
-        format!("{}{}", stdout(&ran), stderr(&ran))
-    };
-    let said = session(&[]);
+    let commands = ["break steps.gopp:4", "run", "bt", "next", "info line"];
+    let said = debugged(&dir, text, &[], &commands);
     let at = |line: u32| format!("steps.gopp:{line}\n");
     assert!(
         said.contains("Breakpoint 1, ") && said.contains(&at(4)),
@@ -1835,6 +1840,76 @@ fn a_debugger_stops_and_steps_by_the_lines_of_the_source() {
     assert!(callers[1].ends_with("steps.gopp:10"), "{said}");
     assert!(said.contains("\n5\t\treturn sum\n"), "{said}");
     assert!(said.contains("Line 5 of \""), "{said}");
-    let said = session(&["-no-debug"]);
+    let said = debugged(&dir, text, &["-no-debug"], &commands);
     assert!(!said.contains("Breakpoint 1, "), "{said}");
+}
+
+/// A debugger knows the variables of the source by their names, each
+/// where its scope is: two variables of one name are two variables.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_debugger_knows_the_variables_of_each_scope_by_their_names() {
+    let dir = TempDir::new().unwrap();
+    let text = "package main
+
+func add(a int, b int) int {
+	sum := a + b
+	for i := 0; i < 2; i++ {
+		twice := i * 2
+		println(twice)
+	}
+	for i := 10; i < 12; i++ {
+		println(i)
+	}
+	return sum
+}
+
+func greet(name string, linux int) string {
+	text := \"hi \" + name
+	println(linux)
+	return text
+}
+
+func main() {
+	println(add(3, 4))
+	println(greet(\"bob\", 5))
+}
+";
+    let commands = [
+        "break steps.gopp:7",
+        "break steps.gopp:10",
+        "break steps.gopp:17",
+        "run",
+        "info args",
+        "info locals",
+        "p sum + twice + i",
+        "delete 1",
+        "continue",
+        "p i",
+        "p twice",
+        "delete 2",
+        "continue",
+        "p linux",
+        "p name.len",
+        "p gopp_own->text.len",
+        "p *gopp_own->text.ptr@6",
+    ];
+    let said = debugged(&dir, text, &[], &commands);
+    assert!(said.contains("\na = 3\nb = 4\n"), "{said}");
+    // The innermost block first.
+    assert!(said.contains("\ntwice = 0\ni = 0\n"), "{said}");
+    assert!(said.contains("\nsum = 7\n"), "{said}");
+    assert!(said.contains("\n$1 = 7\n"), "{said}");
+    // The `i` of the second loop, where the first loop has no variable.
+    assert!(said.contains("\n$2 = 10\n"), "{said}");
+    assert!(
+        said.contains("No symbol \"twice\" in current context."),
+        "{said}"
+    );
+    // A parameter under a name that a header has a macro for, a
+    // string, and what the function ends when a panic leaves it.
+    assert!(said.contains("\n$3 = 5\n"), "{said}");
+    assert!(said.contains("\n$4 = 3\n"), "{said}");
+    assert!(said.contains("\n$5 = 6\n"), "{said}");
+    assert!(said.contains("\n$6 = \"hi bob\"\n"), "{said}");
 }

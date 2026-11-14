@@ -142,6 +142,10 @@ enum Command {
         /// How much Clang optimizes the programs
         #[arg(long, value_enum, default_value = "0")]
         opt: Opt,
+        /// Build the programs with what a debugger reads, as `gopp
+        /// build` does
+        #[arg(long)]
+        debug: bool,
         #[arg(long, hide = true)]
         executor: Option<PathBuf>,
         #[arg(long, hide = true, default_value_t = 10_000)]
@@ -300,6 +304,7 @@ fn run() -> ExitCode {
             summary,
             real,
             opt,
+            debug,
             executor,
             startup_timeout_ms,
             schedule,
@@ -317,6 +322,7 @@ fn run() -> ExitCode {
             summary,
             real,
             opt: opt.level(),
+            debug,
             executor,
             startup_timeout_ms,
             schedule,

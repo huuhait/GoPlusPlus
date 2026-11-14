@@ -39,10 +39,10 @@ The runner is written for Linux. On `windows/amd64`, and with `-real` or `GOPP_F
 ```text
 gopp test-run [FILE|DIR ...] [-manifest FILE|-] [-o FILE] [-j N] [-executors N]
               [-timeout-ms T] [-max-output BYTES] [-work-dir DIR] [-merge-output] [-summary]
-              [-real] [-opt=0|1|2|3|s|z]
+              [-real] [-opt=0|1|2|3|s|z] [-debug]
 ```
 
-`-opt` says how much Clang optimizes the programs of the run, and the runtime that they are linked with; it is `0` unless it is given. Positional arguments name single-file or directory programs; `-manifest` reads `JobSpec` JSONL lines (`-` for stdin). Exit status is `0` when every job produced a `JobResult` (regardless of whether tested programs exited non-zero or panicked), and `1` only on internal runner failure (`outcome: "internal"`). A program of the command line has the name of its file as its `id`. `-work-dir` keeps what was built and written: `DIR/<number of the job>/` has `unit.c`, `module.so` (or `program`), `stdout` and `stderr`. `-summary` prints the counts and the times to standard error. Hidden test flags exercise edge cases deterministically: `-executor PATH` (the program started as the worker), `-startup-timeout-ms`, and `-schedule forward|reverse|shuffle:SEED`, which builds every job first and then gives them to the executors in that order.
+`-opt` says how much Clang optimizes the programs of the run, and the runtime that they are linked with; it is `0` unless it is given. `-debug` builds the programs with what a debugger reads, as `gopp build` does ([debug-info.md](debug-info.md)). Positional arguments name single-file or directory programs; `-manifest` reads `JobSpec` JSONL lines (`-` for stdin). Exit status is `0` when every job produced a `JobResult` (regardless of whether tested programs exited non-zero or panicked), and `1` only on internal runner failure (`outcome: "internal"`). A program of the command line has the name of its file as its `id`. `-work-dir` keeps what was built and written: `DIR/<number of the job>/` has `unit.c`, `module.so` (or `program`), `stdout` and `stderr`. `-summary` prints the counts and the times to standard error. Hidden test flags exercise edge cases deterministically: `-executor PATH` (the program started as the worker), `-startup-timeout-ms`, and `-schedule forward|reverse|shuffle:SEED`, which builds every job first and then gives them to the executors in that order.
 
 ## JSONL v1 protocol
 

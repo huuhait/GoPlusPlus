@@ -49,6 +49,7 @@ pub struct Options {
     pub summary: bool,
     pub real: bool,
     pub opt: OptLevel,
+    pub debug: bool,
     pub executor: Option<PathBuf>,
     pub startup_timeout_ms: u64,
     pub schedule: Option<String>,
@@ -198,7 +199,7 @@ impl Run<'_> {
             imports: &paths,
             swiftcall: target.swiftcall,
             aborts: false,
-            debug: false,
+            debug: self.driver.debug,
         };
         let codegen = |error: String| format!("error[{}]: {error}\n", Code::Codegen);
         let unit =
@@ -424,7 +425,7 @@ pub fn run(options: &Options) -> ExitCode {
         target,
         opt: options.opt,
         strict: false,
-        debug: false,
+        debug: options.debug,
     };
     let form = match real {
         true => Form::Objects,

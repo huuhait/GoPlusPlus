@@ -120,6 +120,13 @@ impl ClangDriver<'_> {
         if self.debug && self.target.object == ObjectFormat::Elf {
             flags.extend(["-gdwarf-5".to_owned(), "-fno-omit-frame-pointer".to_owned()]);
         }
+        // A unit for a debugger declares each variable in a block of C
+        // for its scope. The block is no lifetime: a variable keeps its
+        // value while the function runs, as one that is declared at
+        // the top of the function does.
+        if self.debug {
+            flags.extend(["-Xclang".to_owned(), "-disable-lifetime-markers".to_owned()]);
+        }
         flags.push(format!("-ffile-prefix-map={}=.", dir.display()));
         // Clang writes the time into a COFF object unless it is told
         // that no incremental linker reads it.

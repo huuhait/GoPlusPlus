@@ -11,14 +11,11 @@ use gopp_gir::{
 
 use gopp_target::{Header, SLICE, STRING};
 
+use super::names::{Names, locals_of, places_of, places_of_end};
 use super::number::{float_literal, int_literal, int_tag};
 use super::{Cx, EmitError, global_name, linkage, quoted};
 
 type Written<T = ()> = Result<T, EmitError>;
-
-fn local_name(local: LocalId) -> String {
-    format!("_{}", local.into_raw().into_u32())
-}
 
 /// The name of the part `at` of a type whose parts have names in C.
 fn member(names: &[&'static str], at: u32) -> &'static str {
@@ -41,6 +38,18 @@ pub(super) fn prototype(
     at: usize,
     func: &Function,
     declares: bool,
+) -> Written<String> {
+    prototype_with(cx, at, func, declares, &|number| format!("_{number}"))
+}
+
+/// `prototype`, with what `named` calls the parameter that is the local
+/// of each number.
+fn prototype_with(
+    cx: &Cx<'_>,
+    at: usize,
+    func: &Function,
+    declares: bool,
+    named: &dyn Fn(usize) -> String,
 ) -> Written<String> {
     let Type::Func(sig) = cx.kind(func.sig()) else {
         let what = "a function without a function type";
@@ -80,7 +89,7 @@ pub(super) fn prototype(
         if go_call && sig.has_env && number == 0 {
             line.push_str("GOPP_ENV ");
         }
-        let _ = write!(line, "{} _{}", cx.spelled(param), number + 1);
+        let _ = write!(line, "{} {}", cx.spelled(param), named(number + 1));
     }
     if first {
         line.push_str("void");
@@ -135,14 +144,6 @@ impl Guard {
         let mut states = vec![0; func.blocks().len()];
         let mut shared = vec![false; func.locals().len()];
         let mut next = 0;
-        let mut uses = |place: &Place| {
-            shared[place.local.into_raw().into_u32() as usize] = true;
-            for step in &place.projections {
-                if let ProjectionKind::Index(at) = step.kind {
-                    shared[at.into_raw().into_u32() as usize] = true;
-                }
-            }
-        };
         for (_, block) in func.blocks().iter() {
             *steps += 1;
             for (target, unwinds) in block.term.kind.successors() {
@@ -155,43 +156,16 @@ impl Guard {
             if !block.cleanup {
                 continue;
             }
-            let mut reads = |operand: &Operand| {
-                if let Operand::Copy(place) | Operand::Move(place) = operand {
-                    uses(place);
-                }
+            let mut uses = |place: &Place| {
+                locals_of(place, |local| {
+                    shared[local.into_raw().into_u32() as usize] = true
+                });
             };
             for stmt in &block.stmts {
                 *steps += 1;
-                let StatementKind::Assign(assigned) = &stmt.kind else {
-                    continue;
-                };
-                let (dest, value) = &**assigned;
-                match value {
-                    Rvalue::Use(of) | Rvalue::Unary(_, of) | Rvalue::Cast(_, of, _) => reads(of),
-                    Rvalue::Binary(_, a, b) => [a, b].into_iter().for_each(&mut reads),
-                    Rvalue::Aggregate(_, parts) => parts.iter().for_each(&mut reads),
-                    Rvalue::AddrOf(place, _) | Rvalue::Len(place) => {
-                        reads(&Operand::Copy(place.clone()));
-                    }
-                }
-                reads(&Operand::Copy(dest.clone()));
+                places_of(stmt, &mut uses);
             }
-            match &block.term.kind {
-                TerminatorKind::Switch { on, .. } => reads(on),
-                TerminatorKind::Call {
-                    callee, args, dest, ..
-                } => {
-                    reads(callee);
-                    args.iter().for_each(&mut reads);
-                    reads(&Operand::Copy(dest.clone()));
-                }
-                TerminatorKind::Assert { cond, args, .. } => {
-                    reads(cond);
-                    args.iter().for_each(&mut reads);
-                }
-                TerminatorKind::Drop { place, .. } => reads(&Operand::Copy(place.clone())),
-                _ => {}
-            }
+            places_of_end(&block.term, &mut uses);
         }
         Some(Self { states, shared })
     }
@@ -212,7 +186,15 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         unwinding: false,
         name: name.clone(),
         line: (0, 0),
+        names: Names::plain(func),
     };
+    // A function of the source has the names of its variables for a
+    // debugger.
+    if cx.line(func.loc()).is_some() {
+        let none = vec![false; func.locals().len()];
+        let shared = writer.guard.as_ref().map_or(&none, |guard| &guard.shared);
+        writer.names = Names::of_source(cx, func, shared, &mut writer.steps);
+    }
     let Type::Func(sig) = cx.kind(func.sig()) else {
         return Err(unsupported(func, "a function without a function type"));
     };
@@ -236,7 +218,7 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         for (id, local) in func.locals().iter() {
             let shared = guard.shared[id.into_raw().into_u32() as usize];
             if shared && !cx.empty(local.ty) {
-                let field = format!("_{}", id.into_raw().into_u32());
+                let field = &writer.names.of[id.into_raw().into_u32() as usize];
                 let _ = writeln!(writer.out, "  {} {field};", cx.spelled(local.ty));
             }
         }
@@ -258,9 +240,26 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
         writer.unwinding = false;
         writer.out.push_str("}\n\n");
     }
+    // A name of the source is no macro of a header here.
+    let mut taken: Vec<&str> = (writer.names.of.iter().enumerate())
+        .filter(|(number, name)| **name != format!("_{number}"))
+        .map(|(_, name)| &**name)
+        .collect();
+    taken.sort_unstable();
+    taken.dedup();
+    for name in taken {
+        let _ = writeln!(writer.out, "#undef {name}");
+    }
     writer.line = (0, 0);
     writer.at(func.loc());
-    let _ = writeln!(writer.out, "{} {{", prototype(cx, at, func, false)?);
+    // A parameter that a cleanup block uses is copied into the record
+    // under its name, so it has none of its own.
+    let param = |number: usize| match writer.shared_at(number) {
+        true => format!("_{number}"),
+        false => writer.names.of[number].clone(),
+    };
+    let head = prototype_with(cx, at, func, false, &param)?;
+    let _ = writeln!(writer.out, "{head} {{");
     let mut given = String::new();
     for (number, (id, local)) in func.locals().iter().enumerate() {
         writer.steps += 1;
@@ -268,8 +267,10 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
             continue;
         }
         let param = (1..=sig.params.len()).contains(&number);
+        let in_block = writer.names.block[number].is_some();
         match (writer.shared(id), param) {
             (false, true) | (true, false) => {}
+            (false, false) if in_block => {}
             (false, false) => {
                 let _ = writeln!(
                     writer.out,
@@ -306,9 +307,34 @@ pub(super) fn function(cx: &Cx<'_>, at: usize, func: &Function) -> Written<(Stri
             writer.out.push_str(owns);
         }
     }
-    writer.blocks(&targeted)?;
+    match writer.names.blocks.is_empty() {
+        true => writer.blocks(&targeted)?,
+        false => writer.scoped(&targeted)?,
+    }
     writer.out.push_str("}\n");
-    Ok((writer.out, writer.steps))
+    let text = match cx.line(func.loc()) {
+        Some(_) => stamped(&writer.out),
+        None => writer.out,
+    };
+    Ok((text, writer.steps))
+}
+
+/// The text with the line of the source before each of its lines: C
+/// counts on from a line that it is told, so a statement of several
+/// lines, and one after it that has no line of its own, would be
+/// taken for the lines that follow in the source.
+fn stamped(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 2);
+    let mut told = "";
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("#line ") {
+            told = line;
+            continue;
+        }
+        out.push_str(told);
+        out.push_str(line);
+    }
+    out
 }
 
 struct Writer<'c, 'm> {
@@ -324,6 +350,7 @@ struct Writer<'c, 'm> {
     /// The file and the line of the source that the unit was last told
     /// of.
     line: (u32, u32),
+    names: Names,
 }
 
 /// Whether the end of a block is the call by which a function with
@@ -355,16 +382,122 @@ impl Writer<'_, '_> {
 
     /// Whether the local is a part of the record of the cleanup blocks.
     fn shared(&self, local: LocalId) -> bool {
-        let at = local.into_raw().into_u32() as usize;
+        self.shared_at(local.into_raw().into_u32() as usize)
+    }
+
+    fn shared_at(&self, at: usize) -> bool {
         (self.guard.as_ref()).is_some_and(|guard| guard.shared[at])
     }
 
     /// The local as an expression of C.
     fn local(&self, local: LocalId) -> String {
+        let name = &self.names.of[local.into_raw().into_u32() as usize];
         match self.shared(local) {
-            true => format!("gopp_own->{}", local_name(local)),
-            false => local_name(local),
+            true => format!("gopp_own->{name}"),
+            false => name.clone(),
         }
+    }
+
+    /// The blocks that are no cleanup blocks of a function whose
+    /// scopes have blocks of C: each statement is written in the block
+    /// of its scope, where the variables of the scope are declared. A
+    /// block of the function that goes from one scope to another is
+    /// cut there, and a jump leads from one part to the next.
+    fn scoped(&mut self, targeted: &[bool]) -> Written {
+        let func = self.func;
+        let count = self.names.home.len();
+        let mut texts = vec![String::new(); count];
+        let whole = std::mem::take(&mut self.out);
+        for (number, (id, block)) in func.blocks().iter().enumerate() {
+            if block.cleanup {
+                continue;
+            }
+            let entered = (self.guard.as_ref()).is_some_and(|guard| guard.states[number] != 0);
+            let label = block_name(id);
+            let mut open: Option<usize> = None;
+            let mut parts = 0;
+            let assigned = block.stmts.iter().filter_map(|stmt| match &stmt.kind {
+                StatementKind::Assign(assigned) => Some((stmt.loc, stmt.scope, Some(&**assigned))),
+                _ => None,
+            });
+            let end = (block.term.loc, block.term.scope, None);
+            for (loc, scope, assigned) in assigned.chain([end]) {
+                self.steps += 1;
+                let home = self.names.home[scope.0 as usize] as usize;
+                match open {
+                    Some(at) if at == home => {}
+                    Some(at) => {
+                        parts += 1;
+                        let _ = writeln!(self.out, "  goto {label}_{parts};");
+                        texts[at].push_str(&std::mem::take(&mut self.out));
+                        let _ = writeln!(self.out, "{label}_{parts}:");
+                    }
+                    // The function starts with its first block, which
+                    // a jump from the top reaches inside a block.
+                    None if targeted[number] || entered || (number == 0 && home != 0) => {
+                        let _ = writeln!(self.out, "{label}:");
+                    }
+                    None => {}
+                }
+                if open != Some(home) {
+                    open = Some(home);
+                    self.line = (0, 0);
+                }
+                self.at(loc);
+                match assigned {
+                    Some((dest, value)) => self.assign(dest, value)?,
+                    None => self.end(&block.term.kind)?,
+                }
+            }
+            if let Some(at) = open {
+                if number == 0 && at != 0 && texts[0].is_empty() {
+                    let _ = writeln!(texts[0], "  goto {label};");
+                }
+                texts[at].push_str(&std::mem::take(&mut self.out));
+            }
+        }
+        self.out = whole;
+        let mut inside: Vec<Vec<u32>> = vec![Vec::new(); count];
+        for &(scope, around) in &self.names.blocks {
+            inside[around as usize].push(scope);
+        }
+        let mut declared: Vec<Vec<usize>> = vec![Vec::new(); count];
+        for (at, block) in self.names.block.iter().enumerate() {
+            if let Some(scope) = block {
+                declared[*scope as usize].push(at);
+            }
+        }
+        let locals: Vec<_> = func.locals().iter().map(|(_, local)| local).collect();
+        // A scope is taken twice: to open its block, and to close it.
+        let mut rest = vec![(0u32, false)];
+        while let Some((scope, closes)) = rest.pop() {
+            self.steps += 1;
+            if closes {
+                self.out.push_str("  }\n");
+                continue;
+            }
+            if scope != 0 {
+                self.out.push_str("  {\n");
+                rest.push((scope, true));
+            }
+            // Clang says nothing to a debugger of a variable that is
+            // declared where no statement leads: the variables of a
+            // block are declared after its first label.
+            let text = &texts[scope as usize];
+            let first = text.find('\n').map_or(0, |end| end + 1);
+            let labeled = match text[..first].trim_end().ends_with(':') {
+                true => first,
+                false => 0,
+            };
+            self.out.push_str(&text[..labeled]);
+            for &at in &declared[scope as usize] {
+                let ty = self.cx.spelled(locals[at].ty);
+                let _ = writeln!(self.out, "  [[maybe_unused]] {ty} {};", self.names.of[at]);
+            }
+            self.out.push_str(&text[labeled..]);
+            rest.extend(inside[scope as usize].iter().rev().map(|&kid| (kid, false)));
+        }
+        Ok(())
     }
 
     /// The blocks that unwinding runs, or the others: each with a
