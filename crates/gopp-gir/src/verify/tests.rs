@@ -453,6 +453,15 @@ fn calls_c(module: &mut Module, param: TypeId, arg: Operand) {
     *args(module, 3) = vec![arg];
 }
 
+/// Declares the function `name` of C, which takes a value of the type
+/// that `param` makes.
+fn of_c(module: &mut Module, name: &str, param: fn(&mut TypeInterner) -> TypeId) {
+    let param = param(&mut module.types);
+    let ty = sig(module, CallConv::C, &[param], param);
+    let declared = FuncBuilder::new(module, name, ty, Linkage::External, Span::default());
+    declared.unwrap().finish().unwrap();
+}
+
 fn with_env(module: &mut Module, cc: CallConv, params: &[TypeId]) {
     module.types.intern(Type::Func(FuncType {
         params: params.into(),
@@ -1046,6 +1055,33 @@ const CASES: &[(u16, Change, Change, &str)] = &[
         "V066: fn p.f: bb1 #4: the result needs a temporary of its own",
     ),
     (
+        67,
+        |m| {
+            of_c(m, "takes", |types| {
+                let (int, float) = (types.int(32, true), types.float(64));
+                let pair = types.declare_struct("pair");
+                let Type::Struct(id) = types.get(pair).clone() else {
+                    panic!();
+                };
+                types.set_fields(id, &[("a", int), ("b", float)]).unwrap();
+                pair
+            });
+        },
+        |m| of_c(m, "takes", |types| types.intern(Type::String)),
+        "V067: fn takes: parameter 0 does not cross to C: C has no type for string",
+    ),
+    (
+        67,
+        |m| of_c(m, "_gopp_takes", |types| types.intern(Type::String)),
+        |m| {
+            of_c(m, "takes", |types| {
+                let int = types.int(32, true);
+                types.intern(Type::Array(int, 4))
+            });
+        },
+        "V067: fn takes: parameter 0 does not cross to C: C passes an array only inside a struct",
+    ),
+    (
         70,
         |m| stmt(m, 5, 0).loc.file = 0,
         |m| stmt(m, 5, 0).loc.file = 2,
@@ -1258,7 +1294,7 @@ fn each_rule_passes_what_keeps_it_and_names_what_breaks_it() {
 /// The rules that the data model holds by itself, and those about parts
 /// that it does not have yet.
 const HELD: [u16; 2] = [20, 31];
-const NOT_CHECKED: [u16; 4] = [67, 72, 77, 81];
+const NOT_CHECKED: [u16; 3] = [72, 77, 81];
 
 #[test]
 fn every_rule_of_the_design_has_its_cases() {

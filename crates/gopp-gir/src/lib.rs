@@ -1,6 +1,7 @@
 //! GIR: the typed mid-level IR, its builder, verifier, and safety passes.
 
 mod builder;
+mod ctype;
 mod ir;
 mod lower;
 mod print;
@@ -8,6 +9,7 @@ mod types;
 mod verify;
 
 pub use builder::{BuildError, FuncBuilder};
+pub use ctype::{CRefusal, CTypeRules, MAX_BYTES, MAX_DEPTH, MAX_FIELDS};
 pub use ir::*;
 pub use lower::{Checked, Imported, Summaries, check_instances, lower_package, lower_with};
 pub use print::print_module;

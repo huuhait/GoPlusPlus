@@ -86,6 +86,11 @@ impl FuncCx<'_, '_> {
             Ok(called) => called,
             Err(what) => return Ok(self.placeholder(span, ty, what)),
         };
+        // The code of a function of C calls it with what it is given.
+        let in_c = self.is_c_code(called.sig);
+        if in_c && let Err(what) = self.memo.c_plain_sig(shared, self.b.types(), checked) {
+            return Ok(self.placeholder(span, ty, what));
+        }
         let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
             return Ok(self.placeholder(span, ty, "a function without a symbol as a value"));
         };
@@ -93,7 +98,11 @@ impl FuncCx<'_, '_> {
         let code = self.function_named(&symbol, code_ty)?;
         if !asked {
             let of = self.b.module().funcs[called.func].name().to_owned();
-            self.memo.glues.push((symbol, Made::Value(of), checked));
+            let made = match in_c {
+                true => Made::ValueOfC(of),
+                false => Made::Value(of),
+            };
+            self.memo.glues.push((symbol, made, checked));
         }
         Ok(self.bare(code, code_ty))
     }
@@ -375,15 +384,26 @@ impl FuncCx<'_, '_> {
         Ok(Some(Ok((called, vec![env]))))
     }
 
-    /// The body of the code of the function with the symbol `of` and
-    /// the type `ty` as a value: the function is called with what
-    /// follows the environment, and what the function only reads of it
-    /// ends here, because a call through a value gave it away.
-    pub fn value_body(&mut self, of: &str, ty: CheckedTypeId) -> Built<Result<(), &'static str>> {
+    /// The body of a function that calls the function with the symbol
+    /// `of` and the type `ty`, a function of C if `in_c` is set, with
+    /// what follows its own first `before` parameters: the code of the
+    /// function as a value, which has an environment in front, or the
+    /// function of C that calls it. What the function only reads of it
+    /// ends here, because a call that does not know the function gave
+    /// it away.
+    pub fn value_body(
+        &mut self,
+        (of, ty, in_c): (&str, CheckedTypeId, bool),
+        before: u32,
+    ) -> Built<Result<(), &'static str>> {
         let entry = self.b.new_block();
         self.b.switch_to(entry);
         let shared = self.shared;
-        let sig = match self.memo.signature(shared, self.b.types(), None, ty) {
+        let sig = match in_c {
+            true => self.memo.c_plain_sig(shared, self.b.types(), ty),
+            false => self.memo.signature(shared, self.b.types(), None, ty),
+        };
+        let sig = match sig {
             Ok(sig) => sig,
             Err(what) => return Ok(Err(what)),
         };
@@ -392,7 +412,7 @@ impl FuncCx<'_, '_> {
         };
         let function = self.function_named(of, sig)?;
         let args = (0..plain.params.len())
-            .map(|at| Operand::Copy(Place::local(self.b.param(at as u32 + 1))))
+            .map(|at| Operand::Copy(Place::local(self.b.param(at as u32 + before))))
             .collect();
         let callee = Operand::Const(Constant {
             kind: ConstantKind::Func(function),
@@ -415,7 +435,7 @@ impl FuncCx<'_, '_> {
                     continue;
                 }
                 match self.ends_quietly(param)? {
-                    Ok(ends) => self.end(Place::local(self.b.param(at as u32 + 1)), ends)?,
+                    Ok(ends) => self.end(Place::local(self.b.param(at as u32 + before)), ends)?,
                     Err(what) => return Ok(Err(what)),
                 }
             }

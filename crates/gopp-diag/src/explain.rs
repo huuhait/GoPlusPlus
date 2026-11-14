@@ -509,15 +509,26 @@ pub fn explain(code: Code) -> Option<Explanation> {
         ),
         GirExternBad => (
             "`@Extern(\"C\")` declares a function that is defined in C: it takes the string \
-             \"C\", and the function has no body and no type parameters.",
-            "Declare the function without a body.",
-            "@Extern(\"C\")\nfunc puts(s *byte) int32 // ok",
+             \"C\", and the function has no body and no type parameters. What the function \
+             takes and gives are types that C has: numbers, `bool`, pointers, and structs of \
+             them. A string, a slice, a map, an interface, a `Unique` and several results \
+             are not. Its name does not start with `_GP` or `_gopp_`: those are the names \
+             that Go++ makes.",
+            "Declare the function without a body, with types that C has: pass a string or a \
+             slice as a pointer and a length.",
+            "@Extern(\"C\")\nfunc puts(s *byte) int32 // ok\n\n\
+             @Extern(\"C\")\nfunc show(s string) // error",
         ),
         GirExportBad => (
             "`@Export(\"C\")` gives a function a C symbol so that C can call it: it takes the \
-             string \"C\", and the function has a body and no type parameters.",
-            "Give the function a body, and write it without type parameters.",
-            "@Export(\"C\")\nfunc add(a, b int32) int32 { return a + b } // ok",
+             string \"C\", and the function has a body and no type parameters. What the \
+             function takes and gives are types that C has: numbers, `bool`, pointers, and \
+             structs of them. Its name is the symbol: it does not start with `_GP` or \
+             `_gopp_`, and it is not `main`.",
+            "Give the function a body, write it without type parameters, and use types that \
+             C has.",
+            "@Export(\"C\")\nfunc add(a, b int32) int32 { return a + b } // ok\n\n\
+             @Export(\"C\")\nfunc name() string { return \"x\" } // error",
         ),
         InlineMarksConflict => (
             "A function is marked `@Inline` and `@NoInline`.",

@@ -358,6 +358,8 @@ impl Marks {
     pub const NO_BOUNDS: Self = Self(1 << 9);
     /// `@Extern("C")`: the function is defined in C.
     pub const EXTERN: Self = Self(1 << 10);
+    /// `@Export("C")`: C calls the function by its name.
+    pub const EXPORT: Self = Self(1 << 11);
 
     /// The mark of the attribute `@name`, if a method may have it.
     pub fn of(name: &str) -> Option<Self> {
@@ -373,6 +375,7 @@ impl Marks {
             "NoInline" => Self::NO_INLINE,
             "NoBounds" => Self::NO_BOUNDS,
             "Extern" => Self::EXTERN,
+            "Export" => Self::EXPORT,
             _ => return None,
         })
     }

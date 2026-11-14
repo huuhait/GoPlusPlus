@@ -5,8 +5,8 @@
 
 use std::fmt::Write;
 
-use gopp_gir::{Module, Type, TypeId};
-use gopp_target::{Layout, Part, SLICE, STRING};
+use gopp_gir::{CallConv, FuncType, Module, Type, TypeId};
+use gopp_target::{Layout, Part, SLICE, STRING, TargetLayout};
 
 use super::number::int_type;
 use super::{Cx, EmitError};
@@ -128,9 +128,43 @@ fn ordered(
     order
 }
 
+/// Which types a function of C takes or gives by value, with those
+/// inside them: the code on the other side lays them out too.
+fn crossing(cx: &Cx<'_>, steps: &mut u64) -> Vec<bool> {
+    fn of(sig: &FuncType) -> impl Iterator<Item = TypeId> + '_ {
+        sig.params.iter().chain([&sig.ret]).copied()
+    }
+    let mut rest: Vec<TypeId> = Vec::new();
+    for func in cx.module.funcs.values() {
+        match cx.kind(func.sig()) {
+            Type::Func(sig) if sig.cc == CallConv::C && !cx.of_runtime(func.name()) => {
+                rest.extend(of(sig));
+            }
+            _ => {}
+        }
+    }
+    let mut crosses = vec![false; cx.module.types.count()];
+    while let Some(ty) = rest.pop() {
+        *steps += 1;
+        if std::mem::replace(&mut crosses[ty.index()], true) {
+            continue;
+        }
+        match cx.kind(ty) {
+            Type::Func(sig) if sig.cc == CallConv::C => rest.extend(of(sig)),
+            _ => rest.extend(held(cx, ty)),
+        }
+    }
+    crosses
+}
+
 /// The declarations of the types, each after what it needs, and the
 /// checks that C lays them out as the target does.
-pub(super) fn definitions(cx: &Cx<'_>, out: &mut String, steps: &mut u64) -> Result<(), EmitError> {
+pub(super) fn definitions(
+    cx: &Cx<'_>,
+    target: TargetLayout,
+    out: &mut String,
+    steps: &mut u64,
+) -> Result<(), EmitError> {
     let types = &cx.module.types;
     out.push('\n');
     for ty in types.ids() {
@@ -209,16 +243,41 @@ pub(super) fn definitions(cx: &Cx<'_>, out: &mut String, steps: &mut u64) -> Res
                 out.push_str("  bool set;\n");
             }
             _ => {
-                for (at, field) in held(cx, ty).into_iter().enumerate() {
+                // A field that takes no room is not written, but it
+                // says where what follows it may start: an array of no
+                // elements starts where its elements would. The field
+                // after it starts there too; after the last field, the
+                // first one says it for the whole struct.
+                let fields = held(cx, ty);
+                let align = |field: &TypeId| cx.layout(*field).align;
+                let empty_run = |fields: &[TypeId]| {
+                    let run = fields.iter().rev().take_while(|&&field| cx.empty(field));
+                    run.map(align).max().unwrap_or(1)
+                };
+                let last = empty_run(&fields);
+                let mut first = true;
+                for (at, &field) in fields.iter().enumerate() {
                     *steps += 1;
-                    if !cx.empty(field) {
-                        let _ = writeln!(out, "  {} f{at};", cx.spelled(field));
+                    if cx.empty(field) {
+                        continue;
                     }
+                    let before = empty_run(&fields[..at]);
+                    let wanted = match std::mem::replace(&mut first, false) {
+                        true => before.max(last),
+                        false => before,
+                    };
+                    if wanted > align(&field) {
+                        let _ = write!(out, "  _Alignas({wanted})");
+                    } else {
+                        out.push(' ');
+                    }
+                    let _ = writeln!(out, " {} f{at};", cx.spelled(field));
                 }
             }
         }
         out.push_str("};\n");
     }
+    let crosses = crossing(cx, steps);
     for ty in structs {
         if cx.empty(ty) {
             continue;
@@ -231,6 +290,25 @@ pub(super) fn definitions(cx: &Cx<'_>, out: &mut String, steps: &mut u64) -> Res
             layout.align,
             ty.index()
         );
+        // What crosses to C has each field where C code has it.
+        if !crosses[ty.index()] || !matches!(cx.kind(ty), Type::Tuple(_) | Type::Struct(_)) {
+            continue;
+        }
+        let fields = held(cx, ty);
+        let layouts: Vec<Layout> = fields.iter().map(|&field| cx.layout(field)).collect();
+        let Some((_, offsets)) = target.aggregate(&layouts) else {
+            continue;
+        };
+        for (at, offset) in offsets.into_iter().enumerate() {
+            *steps += 1;
+            if !cx.empty(fields[at]) {
+                let _ = writeln!(
+                    out,
+                    "_Static_assert(__builtin_offsetof({name}, f{at}) == {offset}, \"the layout of T{}\");",
+                    ty.index()
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -67,10 +67,10 @@ Because `(int, error)` is 3 integer words (`int64_t` + 2-word `gopp_iface`), it 
 
 ## C-ABI thunks
 
-A C-ABI thunk is a `CallConv::C` function emitted by `gopp-codegen-c` whose body forwards to a `CallConv::Go` function:
+A C-ABI thunk is a `CallConv::C` function that the lowering makes, whose body forwards to a `CallConv::Go` function:
 
-- **`@Export("C") func f(...)`:** Exports an unmangled C symbol `f` with a standard C prototype that calls the mangled Go++ function (`_GP...`), so Go++ callers still use `swiftcall` while C callers use the C ABI. The exported C name must not start with `_GP` ([appendix A.8](../spec/appendix-a-symbol-names.md), `SYM-4`, `E0445`; `@Extern` reserved prefix is `E0442`), must name `"C"`, must have a body, cannot combine with `@Extern`, cannot be `main`, and must use valid C types (`V067`).
-- **Callbacks (`_GPTC...`):** Passing a top-level Go++ function to an `@Extern("C")` callback parameter (`fn "C"`) emits one `static inline` / weak ODR wrapper `_GPTC<mangled>` per target function so every translation unit hands C a valid C-ABI function pointer.
+- **`@Export("C") func f(...)`:** Exports an unmangled C symbol `f` with a standard C prototype that calls the mangled Go++ function (`_GP...`), so Go++ callers still use `swiftcall` while C callers use the C ABI. The exported C name must not start with `_GP` or `_gopp_` ([appendix A.8](../spec/appendix-a-symbol-names.md), `SYM-4`, `E0445`; `@Extern` reserved prefix is `E0442`), must name `"C"`, must have a body, cannot combine with `@Extern`, cannot be `main`, and must use valid C types (`V067`).
+- **Callbacks (`_GPTC...`):** Passing a top-level Go++ function to an `@Extern("C")` callback parameter (`fn "C"`) makes one wrapper `_GPTC<mangled>` per target function, in every package that gives the function to C; the linker keeps one, so every translation unit hands C a valid C-ABI function pointer.
 - **Verifier invariants:** `V067` (all `CallConv::C` declarations, thunks, and callback types use C-compatible types), `V075` (every function's `CC` equals its signature's `CC`), `V076` (indirect `fn "C"` calls pass scalars only), `V078` (`hasEnv` functions carry `CallConv::Go` and `*u8` env slot `0`).
 
 ## Integration across features

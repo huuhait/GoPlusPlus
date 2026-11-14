@@ -5144,10 +5144,325 @@ func main() {
         module.contains("call const fn @putchar(const 104: i32)"),
         "{module}"
     );
-    // What is no number and no pointer does not cross yet.
+    // As a value it is called through code with an environment in
+    // front, and still as C calls it.
+    let text = "package main
+
+@Extern(\"C\")
+func abs(x int32) int32
+
+func main() {
+	f := abs
+	println(f(-3))
+}
+";
+    let module = gir(text);
+    assert!(
+        module.contains("fn _GPTEF4mainE3abs(_1: *u8, _2: i32) -> i32 [go, linkonce_odr]"),
+        "{module}"
+    );
+    assert!(
+        module.contains("declare fn abs(_1: i32) -> i32 [c, external]"),
+        "{module}"
+    );
+    assert!(!module.contains("fn abs(_1: i32) -> i32 [go"), "{module}");
+    // Not one that takes a function: its type for C is another.
+    let text = "package main\n\n@Extern(\"C\")\nfunc each(call func(at int32))\n\n\
+                func main() {\n\tf := each\n\t_ = f\n}\n";
+    let (_, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    let expected = "a.gopp:7:7: not supported yet: a function of C as a value whose type is not \
+                    the same for Go++";
+    assert_eq!(messages, [expected]);
+}
+
+/// What the lowering says of a program whose one file declares `decls`
+/// before a `main` that does nothing.
+fn said_of(decls: &str) -> Vec<String> {
+    let text = format!("package main\n\n{decls}\n\nfunc main() {{}}\n");
+    lowered_with(&[("a.gopp", &text)], usize::MAX).1
+}
+
+#[test]
+fn a_struct_crosses_to_c_by_its_value() {
+    let text = "package main
+
+type Inner struct {
+	a int8
+	b [3]float64
+}
+
+type Outer struct {
+	p    *Inner
+	in   Inner
+	maybe Option[*int32]
+}
+
+@Extern(\"C\")
+func turn(o Outer, flag bool) Inner
+
+func main() {
+	var first Inner
+	in := turn(Outer{p: &first}, true)
+	println(in.a)
+}
+";
+    let module = gir(text);
+    assert!(
+        module.contains(
+            "declare fn turn(_1: _GPTiN4mainE5Outer, _2: bool) -> _GPTiN4mainE5Inner [c, external]"
+        ),
+        "{module}"
+    );
+    assert!(module.contains("call const fn @turn("), "{module}");
+}
+
+#[test]
+fn what_c_has_no_type_for_is_refused_where_it_is_declared() {
+    let cases = [
+        (
+            "func puts(s string) int32",
+            "puts is no function of C: parameter 1: C has no type for string",
+        ),
+        (
+            "type Named struct {\n\tn int32\n\tname []byte\n}\n\n@Extern(\"C\")\nfunc f(n int32, v Named)",
+            "f is no function of C: parameter 2: C has no type for []byte",
+        ),
+        (
+            "func f() (int32, int32)",
+            "f is no function of C: the result: C gives one value",
+        ),
+        (
+            "func f(a [4]int32)",
+            "f is no function of C: parameter 1: C passes an array only inside a struct",
+        ),
+        (
+            "func f() Unique[int32]",
+            "f is no function of C: the result: C has no type for Unique[int32]",
+        ),
+        (
+            "func f(m map[string]int32)",
+            "f is no function of C: parameter 1: C has no type for map[string]int32",
+        ),
+        (
+            "func f(o Option[int32])",
+            "f is no function of C: parameter 1: C has no type for Option[int32]",
+        ),
+        (
+            "func f(c complex64)",
+            "f is no function of C: parameter 1: C has no type for complex64",
+        ),
+        (
+            "func f(v any)",
+            "f is no function of C: parameter 1: C has no type for any",
+        ),
+        (
+            "func f(format *byte, rest ...int32)",
+            "f is no function of C: parameter 2: C has no type for []int32",
+        ),
+        (
+            "func f(e struct{})",
+            "f is no function of C: parameter 1: a value without a size has no one layout in C: \
+             a struct without fields takes no room here and four bytes in the C of Windows",
+        ),
+        (
+            "func _GPf(x int32)",
+            "C cannot know a function as _GPf: the names that start with `_GP` or `_gopp_` are \
+             those that Go++ makes",
+        ),
+        (
+            "func _gopp_rt_exit(code int32)",
+            "C cannot know a function as _gopp_rt_exit: the names that start with `_GP` or \
+             `_gopp_` are those that Go++ makes",
+        ),
+        (
+            "func f() func(int32) int32",
+            "not supported yet: a function as what a function of C gives",
+        ),
+        (
+            "func f(each func(inner func()))",
+            "not supported yet: parameter 1: parameter 1: a function that takes a function here",
+        ),
+    ];
+    for (decl, message) in cases {
+        let decl = match decl.contains("@Extern") {
+            true => decl.to_owned(),
+            false => format!("@Extern(\"C\")\n{decl}"),
+        };
+        let said = said_of(&decl);
+        let [one] = &said[..] else {
+            panic!("{decl}: {said:?}");
+        };
+        let (_, text) = one.split_once(": ").unwrap();
+        assert_eq!(text, message, "{decl}");
+    }
+    // The nearby declarations that cross.
+    let good = "type Pair struct {\n\ta int32\n\tb *string\n}\n\n\
+                @Extern(\"C\")\nfunc f(p Pair, o Option[*Pair], u uintptr, z struct{ none [0]int32; x int8 }) Pair\n\n\
+                @Extern(\"C\")\nfunc g(each func(p Pair) bool)";
+    assert_eq!(said_of(good), [""; 0]);
+    // A call says nothing more.
     let text = "package main\n\n@Extern(\"C\")\nfunc puts(s string) int32\n\nfunc main() { puts(\"x\") }\n";
     let (_, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
-    let expected = "a.gopp:6:15: not supported yet: a function of C that takes or gives what is no \
-                    number and no pointer";
-    assert_eq!(messages, [expected]);
+    assert_eq!(
+        messages,
+        ["a.gopp:4:6: puts is no function of C: parameter 1: C has no type for string"]
+    );
+}
+
+#[test]
+fn c_calls_an_exported_function_by_its_name() {
+    let text = "package main
+
+type Pair struct {
+	a int32
+	b float64
+}
+
+@Export(\"C\")
+func sum(p Pair, more int32) float64 { return float64(p.a) + p.b + float64(more) }
+
+func main() { println(sum(Pair{1, 2}, 3)) }
+";
+    let module = gir(text);
+    let thunk = "fn sum(_1: _GPTiN4mainE4Pair, _2: i32) -> f64 [c, external] {";
+    assert!(module.contains(thunk), "{module}");
+    let after = &module[module.find(thunk).unwrap()..];
+    let body = &after[..after.find("\n}\n").unwrap()];
+    assert!(
+        body.contains("call const fn @_GPF4mainE3sum(copy _1, copy _2)"),
+        "{body}"
+    );
+    // The program itself calls the function of Go++.
+    assert!(
+        module
+            .contains("fn _GPF4mainE3sum(_1: _GPTiN4mainE4Pair, _2: i32) -> f64 [go, external] {")
+    );
+    let cases = [
+        (
+            "func _GPf(x int32) int32 { return x }",
+            "C cannot know a function as _GPf: the names that start with `_GP` or `_gopp_` are \
+             those that Go++ makes",
+        ),
+        (
+            "func f(s string) {}",
+            "f is no function of C: parameter 1: C has no type for string",
+        ),
+        (
+            "func f(each func()) {}",
+            "not supported yet: parameter 1: a function that takes a function here",
+        ),
+        (
+            "func f(xs *[]int32) *[]int32 { return xs }",
+            "not supported yet: a function for C that gives a pointer to a slice",
+        ),
+    ];
+    for (decl, message) in cases {
+        let said = said_of(&format!("@Export(\"C\")\n{decl}"));
+        let [one] = &said[..] else {
+            panic!("{decl}: {said:?}");
+        };
+        let (_, text) = one.split_once(": ").unwrap();
+        assert_eq!(text, message, "{decl}");
+    }
+}
+
+#[test]
+fn a_function_that_c_is_given_is_a_function_of_c() {
+    let text = "package main
+
+@Extern(\"C\")
+func each(count int32, call func(at int32) int32) int32
+
+@Extern(\"C\")
+func abs(x int32) int32
+
+func twice(x int32) int32 { return x * 2 }
+
+func main() {
+	println(each(3, twice))
+	println(each(3, (twice)))
+	println(each(3, abs))
+}
+";
+    let module = gir(text);
+    assert!(
+        module.contains("declare fn each(_1: i32, _2: fn \"C\"(i32) -> i32) -> i32 [c, external]"),
+        "{module}"
+    );
+    // One function of C for the function, however often it is given.
+    let thunk = "fn _GPTCF4mainE5twice(_1: i32) -> i32 [c, linkonce_odr] {";
+    assert_eq!(module.matches(thunk).count(), 1, "{module}");
+    let given = "const fn @_GPTCF4mainE5twice";
+    assert_eq!(module.matches(given).count(), 2, "{module}");
+    // A function of C is given as it is.
+    assert!(module.contains("const 3: i32, const fn @abs)"), "{module}");
+    // What has an environment is not given to C.
+    let cases = [
+        (
+            "each(3, func(at int32) int32 { return at })",
+            "a.gopp:13:10",
+        ),
+        ("f := twice\n\teach(3, f)", "a.gopp:14:10"),
+        ("var b Box\n\teach(3, b.get)", "a.gopp:14:10"),
+    ];
+    for (body, at) in cases {
+        let text = format!(
+            "package main\n\n@Extern(\"C\")\nfunc each(count int32, call func(at int32) int32) int32\n\n\
+             type Box struct{{ n int32 }}\n\nfunc (b *Box) get(at int32) int32 {{ return b.n }}\n\n\
+             func twice(x int32) int32 {{ return x * 2 }}\n\nfunc main() {{\n\t{body}\n}}\n"
+        );
+        let (_, messages) = lowered_with(&[("a.gopp", &text)], usize::MAX);
+        let expected = format!(
+            "{at}: not supported yet: a function value for C that is no function of a package"
+        );
+        assert_eq!(messages, [expected], "{body}");
+    }
+}
+
+#[test]
+fn the_steps_grow_with_what_crosses_to_c() {
+    let sizes = [100, 200, 400, 800];
+    let steps = |text: &str| lowered_with(&[("a.gopp", text)], usize::MAX).0.steps;
+    // Many functions of C that take one type, in which each level holds
+    // the level below twice: the type is walked once, and refused for
+    // its fields each time.
+    assert_near_linear(&sizes, |n| {
+        let levels: String = (1..=40)
+            .map(|at| format!("type T{at} struct {{\n\ta, b T{}\n}}\n\n", at - 1))
+            .collect();
+        let funcs: String = (0..n)
+            .map(|at| format!("@Extern(\"C\")\nfunc f{at}(v T40, more int32) T40\n\n"))
+            .collect();
+        steps(&format!(
+            "package main\n\ntype T0 struct{{ x int32 }}\n\n{levels}{funcs}func main() {{}}\n"
+        ))
+    });
+    // One struct of many fields, which a function of C takes, gives
+    // and is given a function for.
+    assert_near_linear(&sizes, |n| {
+        let fields: String = (0..n).map(|at| format!("\tf{at} int32\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype Wide struct {{\n{fields}}}\n\n\
+             @Extern(\"C\")\nfunc f(w Wide, each func(w Wide) Wide) Wide\n\n\
+             func same(w Wide) Wide {{ return w }}\n\n\
+             func main() {{\n\tvar w Wide\n\tw = f(w, same)\n}}\n"
+        ))
+    });
+    // Many functions that C calls, and many that it is given.
+    assert_near_linear(&sizes, |n| {
+        let funcs: String = (0..n)
+            .map(|at| {
+                format!(
+                    "@Export(\"C\")\nfunc g{at}(p Pair, x int32) Pair {{ return Pair{{p.b, x}} }}\n\n\
+                     func h{at}(p Pair) Pair {{ return p }}\n\n"
+                )
+            })
+            .collect();
+        let calls: String = (0..n).map(|at| format!("\tp = f(p, h{at})\n")).collect();
+        steps_of(&format!(
+            "package main\n\ntype Pair struct{{ a, b int32 }}\n\n\
+             @Extern(\"C\")\nfunc f(p Pair, each func(p Pair) Pair) Pair\n\n{funcs}\
+             func main() {{\n\tvar p Pair\n{calls}}}\n"
+        ))
+    });
 }

@@ -259,6 +259,78 @@ fn values_of_several_parts_are_structs_and_what_takes_no_room_is_not_written() {
     insta::assert_snapshot!(unit("a.gopp", VALUES));
 }
 
+const OF_C: &str = "package main
+
+type Pair struct {
+	a int32
+	b float64
+	in [2]Inner
+}
+
+type Inner struct {
+	tag  int8
+	wide int64
+}
+
+@Extern(\"C\")
+func turn(p Pair, each func(in Inner) bool) Pair
+
+@Export(\"C\")
+func sum(p Pair, more int32) float64 { return float64(p.a) + p.b + float64(more) }
+
+func keep(in Inner) bool { return in.tag > 0 }
+
+func main() {
+	p := turn(Pair{a: 1}, keep)
+	println(sum(p, 2))
+}
+";
+
+#[test]
+fn what_crosses_to_c_is_declared_as_c_declares_it() {
+    let unit = unit("a.gopp", OF_C);
+    // The struct that crosses and those in it have each field where
+    // the target has it.
+    for field in ["f0) == 0", "f1) == 8", "f2) == 16"] {
+        let checked = unit.lines().any(|line| {
+            line.starts_with("_Static_assert(__builtin_offsetof(T") && line.contains(field)
+        });
+        assert!(checked, "{field}\n{unit}");
+    }
+    // The function of C, the function that C calls under its own name,
+    // and the function of C for the function that C is given.
+    let declared = |name: &str| {
+        let line = unit
+            .lines()
+            .find(|line| line.ends_with(&format!("__asm__(\"{name}\");")));
+        line.unwrap_or_else(|| panic!("{name}\n{unit}")).to_owned()
+    };
+    assert!(!declared("turn").contains("GOPP_CALL"));
+    assert!(!declared("sum").contains("GOPP_CALL"));
+    assert!(declared("_GPF4mainE3sum").starts_with("GOPP_CALL double "));
+    assert!(declared("_GPTCF4mainE4keep").starts_with("GOPP_ONCE bool "));
+    assert!(declared("_GPF4mainE4keep").starts_with("GOPP_CALL bool "));
+    // Clang takes the unit for both targets, with every check of a
+    // layout in it.
+    let toolchain = HostToolchain::discover().unwrap();
+    for target in ["linux/amd64", "windows/amd64"] {
+        let spec = TargetSpec::named(target).unwrap();
+        let options = EmitOptions {
+            layout: spec.layout(),
+            entry: Entry::None,
+            imports: &[],
+            swiftcall: spec.swiftcall,
+            aborts: false,
+        };
+        let unit = emit_c23(&module("a.gopp", OF_C), &options).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let object = dir.path().join("unit.o");
+        strict(&toolchain, target, OptLevel::O0)
+            .build(&unit, dir.path(), &object, Output::Object, &[])
+            .unwrap_or_else(|error| panic!("{target}: {error}"));
+    }
+}
+
 const INTERFACES: &str = "package main
 
 type Named struct {

@@ -4,9 +4,10 @@
 //!
 //! The data model holds two rules by itself: a block has its end
 //! (`V020`), and a place has no type but that of its steps (`V031`).
-//! Three rules are about parts that the model does not have yet and are
-//! not checked: the types that cross to C (`V067`), prologues (`V077`)
-//! and drop glue (`V081`). For the same reason `V011`, `V014`, `V073`
+//! Two rules are about parts that the model does not have yet and are
+//! not checked: prologues (`V077`) and drop glue (`V081`). Of the types
+//! that cross to C (`V067`) the bytes are not counted: a module does
+//! not say its target. For the same reason `V011`, `V014`, `V073`
 //! and `V074` say nothing of the source of a local, its glue, or where
 //! an inlined local comes from.
 
@@ -19,11 +20,16 @@ use std::fmt;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::ctype::CTypeRules;
 use crate::ir::*;
 use crate::types::{Type, TypeId, TypeInterner};
 
 /// How many leaves the static data of one global may have.
 pub(crate) const MAX_LEAVES: usize = 1 << 20;
+
+/// What the name of every function of the runtime starts with: its
+/// header declares them, with types of Go++.
+const RUNTIME_PREFIX: &str = "_gopp_";
 
 /// A rule that a module breaks, and where.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +73,7 @@ pub(crate) fn verify_counted(module: &Module) -> (Vec<VerifyError>, u64) {
     let mut whole = Verifier::new(module, None);
     whole.types();
     whole.globals();
+    whole.c_signatures();
     let mut names = FxHashSet::default();
     let funcs: Vec<(&Function, bool)> = module
         .funcs
@@ -121,6 +128,33 @@ impl<'m> Verifier<'m> {
             at: self.at,
             message,
         });
+    }
+
+    /// `V067`: what each function of C takes and gives.
+    fn c_signatures(&mut self) {
+        let types = &self.module.types;
+        let mut rules = CTypeRules::new(None);
+        for func in self.module.funcs.values() {
+            let Type::Func(sig) = types.get(func.sig) else {
+                continue;
+            };
+            if sig.cc != CallConv::C || func.name.starts_with(RUNTIME_PREFIX) {
+                continue;
+            }
+            if let Err((at, why)) = rules.signature(types, sig) {
+                let what = match at {
+                    Some(at) => format!("parameter {at}"),
+                    None => "the result".to_owned(),
+                };
+                self.func = Some(func.name.clone());
+                self.error(
+                    67,
+                    format!("{what} does not cross to C: {}", why.describe(types)),
+                );
+                self.func = None;
+            }
+        }
+        self.steps += rules.steps;
     }
 
     fn types_of(&self) -> &TypeInterner {

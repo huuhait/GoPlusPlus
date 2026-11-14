@@ -1,0 +1,117 @@
+// Functions that C calls: the C code of cabi_export.c calls each by
+// its name, with values of every kind, and checks what comes back.
+package main
+
+type Small struct {
+	a, b int32
+}
+
+type Mixed struct {
+	a int64
+	b float64
+}
+
+type Quad struct {
+	x, y, z, w float32
+}
+
+type Large struct {
+	a, b, c int64
+}
+
+type Odd struct {
+	bytes [3]byte
+}
+
+type Nested struct {
+	tag  int8
+	in   Small
+	tail [3]int16
+	d    float64
+}
+
+var calls int
+
+@Export("C")
+func g_i8(x int8) int8 { return x - 1 }
+
+@Export("C")
+func g_u16(x uint16) uint16 { return x >> 1 }
+
+@Export("C")
+func g_wide(a int8, b uint8, c int16, d uint16, e bool) int64 {
+	wide := int64(a)*1000000 + int64(b)*10000 + int64(c)*100 + int64(d)
+	if e {
+		wide++
+	}
+	return wide
+}
+
+@Export("C")
+func g_f64(x float32, y float64) float64 { return float64(x) + y }
+
+@Export("C")
+func g_not(x bool) bool { return !x }
+
+@Export("C")
+func g_count() { calls++ }
+
+@Export("C")
+func g_or(at Option[*byte], otherwise int32) int32 {
+	if p, ok := at.Get(); ok {
+		return int32(*p)
+	}
+	return otherwise
+}
+
+@Export("C")
+func g_next(at *[3]int32) *int32 {
+	at[0]++
+	return &at[1]
+}
+
+@Export("C")
+func g_small(v Small) Small { return Small{v.b, v.a + 1} }
+
+@Export("C")
+func g_mixed(v Mixed) Mixed { return Mixed{v.a * 2, v.b + 0.5} }
+
+@Export("C")
+func g_quad(v Quad) Quad { return Quad{v.w, v.z, v.y, v.x + 1} }
+
+@Export("C")
+func g_large(v Large) Large { return Large{v.c, v.a, v.b + 1} }
+
+@Export("C")
+func g_odd(v Odd) Odd { return Odd{[3]byte{v.bytes[2], v.bytes[0], v.bytes[1] + 1}} }
+
+@Export("C")
+func g_nested(v Nested) Nested {
+	return Nested{-v.tag, Small{v.in.b, v.in.a}, [3]int16{v.tail[2], v.tail[1], v.tail[0]}, v.d * 2}
+}
+
+@Export("C")
+func g_many(p1 int8, p2 float64, p3 int64, p4 float32, p5 uint16, p6 float64, p7 int32,
+	p8 float32, p9 bool, p10 float64, p11 uint8, p12 float64, p13 int64, p14 float32,
+	p15 Small, p16 float64, p17 int16, p18 Quad, p19 uint32, p20 float64,
+	p21 *int32, p22 float32, p23 Mixed, p24 int64) float64 {
+	nine := 0.0
+	if p9 {
+		nine = 9
+	}
+	return float64(p1) + 2*p2 + 3*float64(p3) + 4*float64(p4) + 5*float64(p5) + 6*p6 +
+		7*float64(p7) + 8*float64(p8) + nine + 10*p10 + 11*float64(p11) + 12*p12 +
+		13*float64(p13) + 14*float64(p14) + 15*float64(p15.a-p15.b) + 16*p16 +
+		17*float64(p17) + 18*float64(p18.x-p18.y) + 19*float64(p19) + 20*p20 +
+		21*float64(*p21) + 22*float64(p22) + 23*(float64(p23.a)+p23.b) + 24*float64(p24)
+}
+
+@Extern("C")
+func c_run() int32
+
+func main() {
+	println("first wrong:", c_run())
+	println("counted:", calls)
+	// The program calls the same functions as functions of Go++.
+	println(g_i8(5), g_small(Small{1, 2}).b)
+}

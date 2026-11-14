@@ -31,12 +31,15 @@ fn no_program_of_tests_run_leaks_or_reads_what_is_freed() {
             }
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             let unit = emit_c23(&module(&name, &text), &options(Entry::Main)).unwrap();
+            // The C that the program calls is a file beside it.
+            let mut units = vec![unit];
+            units.extend(std::fs::read_to_string(path.with_extension("c")));
             let dir = tempfile::tempdir().unwrap();
             let driver = ClangDriver {
                 strict: false,
                 ..strict(&toolchain, "linux/amd64", OptLevel::O1)
             };
-            let program = match crate::runtime::build_sanitized(&driver, &[unit], dir.path()) {
+            let program = match crate::runtime::build_sanitized(&driver, &units, dir.path()) {
                 Ok(program) => program,
                 Err(error) => return Some(format!("{name}: {error}")),
             };

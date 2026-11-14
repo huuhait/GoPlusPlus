@@ -6,6 +6,7 @@
 //! gives it. So the module is the same for any number of threads.
 
 mod assign;
+mod cabi;
 mod closure;
 mod equal;
 mod expr;
@@ -548,6 +549,11 @@ pub(crate) enum Made {
     /// The code of the function with the symbol as a value: the
     /// function with an environment in front, which it does not read.
     Value(String),
+    /// The same for a function of C, which is called as C calls it.
+    ValueOfC(String),
+    /// The function of C that calls the function with the symbol, for C
+    /// code that is given the function.
+    CThunk(String),
     /// The code of a method value: the method `name` of a declared
     /// type or of an interface type, with its receiver in the
     /// environment. A method with type parameters of its own is the
@@ -642,6 +648,11 @@ pub(crate) struct Memo<'a> {
     pub names: FxHashMap<Spur, Box<str>>,
     /// Which field of a struct has a name.
     pub fields: FxHashMap<(TypeId, Spur), Option<usize>>,
+    /// Which types of the module cross to C.
+    pub c_rules: crate::CTypeRules,
+    /// For each type that was asked: its first part that C has no type
+    /// for.
+    pub c_parts: FxHashMap<CheckedTypeId, Option<CheckedTypeId>>,
     pub diagnostics: Vec<Diagnostic>,
     pub steps: u64,
 }
@@ -685,6 +696,8 @@ impl<'a> Memo<'a> {
             callees: FxHashMap::default(),
             names: FxHashMap::default(),
             fields: FxHashMap::default(),
+            c_rules: crate::CTypeRules::new(Some(shared.layout)),
+            c_parts: FxHashMap::default(),
             diagnostics: Vec::new(),
             steps: 0,
         }
@@ -2134,7 +2147,8 @@ impl<'a> Shared<'a> {
         }
     }
 
-    /// The variables of the package, in a module that is merged first.
+    /// The variables of the package and what it declares for C, in a
+    /// module that is merged first.
     fn globals(&self) -> Part {
         let mut module = self.module();
         let locals = |named: NamedId| self.local(named);
@@ -2163,11 +2177,12 @@ impl<'a> Shared<'a> {
         // What starts the package gives the variables their first
         // values, one step after another.
         func::lower_start(self, &mut module, &mut memo);
+        cabi::lower_c_side(self, &mut module, &mut memo);
         Part {
             source: merge::Source::new(module),
             diagnostics: memo.diagnostics,
             steps: memo.steps,
-            glues: Vec::new(),
+            glues: memo.glues,
         }
     }
 
@@ -2235,7 +2250,13 @@ impl<'a> Shared<'a> {
                         func::lower_adjusted(self, &mut module, &mut memo, &symbol, (ty, name, by));
                     }
                     Made::Value(of) => {
-                        func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty));
+                        func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty), false);
+                    }
+                    Made::ValueOfC(of) => {
+                        func::lower_value(self, &mut module, &mut memo, &symbol, (&of, ty), true);
+                    }
+                    Made::CThunk(of) => {
+                        cabi::lower_c_thunk(self, &mut module, &mut memo, &symbol, (&of, ty));
                     }
                     Made::MethodValue(..) | Made::MethodExpr { .. } => {
                         func::lower_bound(self, &mut module, &mut memo, &symbol, (kind, ty));

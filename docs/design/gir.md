@@ -288,7 +288,7 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 | `V064` | `Drop` place does not have type `Unit`. |
 | `V065` | `Assert` message `Args` match `AssertKind` (`Bounds`, `SliceAlen`..`Slice3C`, `SliceConvert` carry two integer operands; others carry zero). |
 | `V066` | Aggregate-returning `Call` writes into a non-dereferenced, non-address-taken `Temp` local. |
-| `V067` | `CallConv::C` declarations, thunks, and `fn "C"` types pass and return valid C types (`CTypeRules`, [c-abi.md](c-abi.md)). |
+| `V067` | A function whose type has `CallConv::C` takes and gives C types, a `fn "C"` parameter among them (`CTypeRules`, [c-abi.md](c-abi.md)). The functions of the runtime (`_gopp_…`) are not held to it: their header declares them, with types of Go++. A module does not say its target, so the limit of bytes is checked by the lowering only. |
 | `V070` | Every non-empty `Span` references a valid `Module::Files` index. |
 | `V071` | Every `Global` has a unique symbol and a non-`Unit` type. |
 | `V072` | `Global::Parts` static data has one constant for each leaf of the global's type, in the order in which a value holds its leaves, without gaps or extras, and each constant is of a kind that its leaf takes: an integer or a boolean of the leaf's type, a string constant for a string, null or the address of a function or of a global for a pointer, `Zero` for any leaf. |

@@ -8,7 +8,7 @@ use gopp_sema::{LocalKind, ObjKind, Package, Predeclared, PredeclaredKind, Ref, 
 use gopp_span::Span as SourceSpan;
 use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind, UnaryOp};
 
-use super::func::{Built, FuncCx, deeper};
+use super::func::{Built, FuncCx, SAID, deeper};
 use super::slice::Part;
 use super::{Callee, CalleeKey, Memo, Shared};
 use crate::{
@@ -246,6 +246,9 @@ impl<'a> FuncCx<'a, '_> {
 
     /// The value of the expression, for a place of the type `ty`.
     pub fn rvalue_as(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
+        if self.is_c_code(ty) {
+            return self.callback(expr, ty);
+        }
         if let Some(of) = self.held_by(expr, ty) {
             return deeper(|| self.set_option(expr, ty, of));
         }
@@ -2679,8 +2682,13 @@ impl<'a> FuncCx<'a, '_> {
                 let sig = self
                     .memo
                     .signature(shared, self.b.types(), receiver, checked);
+                // A function of C takes each value as C does; what is
+                // wrong with its type is said where it is declared.
                 let sig = match in_c {
-                    true => sig.and_then(|sig| self.of_c(sig)),
+                    true => self
+                        .memo
+                        .c_signature(shared, self.b.types(), checked, true)
+                        .map_err(|_| SAID),
                     false => sig,
                 };
                 match sig.map(|sig| (sig, self.kind(sig))) {
@@ -2707,31 +2715,6 @@ impl<'a> FuncCx<'a, '_> {
         };
         self.memo.callees.insert((of, key), called.clone());
         Ok(called)
-    }
-
-    /// The type of a function with the signature as C calls it. What it
-    /// takes and gives is a number, a bool or a pointer for now.
-    fn of_c(&mut self, sig: TypeId) -> Result<TypeId, &'static str> {
-        let Type::Func(func) = self.kind(sig) else {
-            return Err("a function type");
-        };
-        let mut passed = |ty: TypeId| {
-            let kind = self.kind(ty);
-            matches!(
-                kind,
-                Type::Int { .. } | Type::Float { .. } | Type::Bool | Type::Ptr(_)
-            )
-        };
-        let plain = func.params.iter().all(|&param| passed(param))
-            && (func.ret == TypeInterner::UNIT || passed(func.ret));
-        if !plain {
-            return Err("a function of C that takes or gives what is no number and no pointer");
-        }
-        let func = crate::FuncType {
-            cc: crate::CallConv::C,
-            ..func
-        };
-        Ok(self.b.types().intern(Type::Func(func)))
     }
 
     /// The receiver that a method takes, of the type `wanted`: the

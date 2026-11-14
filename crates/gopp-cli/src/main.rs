@@ -135,6 +135,9 @@ enum Command {
         /// environment variable GOPP_FAST_RUN=0 says the same
         #[arg(long)]
         real: bool,
+        /// How much Clang optimizes the programs
+        #[arg(long, value_enum, default_value = "0")]
+        opt: Opt,
         #[arg(long, hide = true)]
         executor: Option<PathBuf>,
         #[arg(long, hide = true, default_value_t = 10_000)]
@@ -188,6 +191,36 @@ enum PanicMode {
     Unwind,
     /// A panic writes its message and ends the program
     Abort,
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum Opt {
+    #[value(name = "0")]
+    O0,
+    #[value(name = "1")]
+    O1,
+    #[value(name = "2")]
+    O2,
+    #[value(name = "3")]
+    O3,
+    #[value(name = "s")]
+    Os,
+    #[value(name = "z")]
+    Oz,
+}
+
+impl Opt {
+    fn level(self) -> gopp_codegen_c::driver::OptLevel {
+        use gopp_codegen_c::driver::OptLevel;
+        match self {
+            Self::O0 => OptLevel::O0,
+            Self::O1 => OptLevel::O1,
+            Self::O2 => OptLevel::O2,
+            Self::O3 => OptLevel::O3,
+            Self::Os => OptLevel::Os,
+            Self::Oz => OptLevel::Oz,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -260,6 +293,7 @@ fn run() -> ExitCode {
             merge_output,
             summary,
             real,
+            opt,
             executor,
             startup_timeout_ms,
             schedule,
@@ -276,6 +310,7 @@ fn run() -> ExitCode {
             merge_output,
             summary,
             real,
+            opt: opt.level(),
             executor,
             startup_timeout_ms,
             schedule,

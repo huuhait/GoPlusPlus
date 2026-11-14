@@ -1,0 +1,185 @@
+// Values that cross to C and come back: C code that Clang compiles
+// from cabi_values.c takes and gives each kind of them.
+package main
+
+@Extern("C")
+func c_i8(x int8) int8
+
+@Extern("C")
+func c_u8(x uint8) uint8
+
+@Extern("C")
+func c_i16(x int16) int16
+
+@Extern("C")
+func c_u16(x uint16) uint16
+
+@Extern("C")
+func c_i32(x int32) int32
+
+@Extern("C")
+func c_u32(x uint32) uint32
+
+@Extern("C")
+func c_i64(x int64) int64
+
+@Extern("C")
+func c_u64(x uint64) uint64
+
+@Extern("C")
+func c_f32(x float32) float32
+
+@Extern("C")
+func c_f64(x float64) float64
+
+@Extern("C")
+func c_not(x bool) bool
+
+@Extern("C")
+func c_wide(a int8, b uint8, c int16, d uint16, e bool) int64
+
+@Extern("C")
+func c_next(at *int32) *int32
+
+@Extern("C")
+func c_or(at Option[*byte], otherwise int32) int32
+
+type Small struct {
+	a, b int32
+}
+
+type Mixed struct {
+	a int64
+	b float64
+}
+
+type Quad struct {
+	x, y, z, w float32
+}
+
+type Two struct {
+	x, y float64
+}
+
+type Large struct {
+	a, b, c int64
+}
+
+type Odd struct {
+	bytes [3]byte
+}
+
+type Nested struct {
+	tag  int8
+	in   Small
+	tail [3]int16
+	d    float64
+}
+
+type Outer struct {
+	m  Mixed
+	q  *Quad
+	ok bool
+}
+
+// An array of no elements takes no room, and what follows it starts
+// where the array may.
+type Gap struct {
+	a    int8
+	none [0]int64
+	b    int8
+}
+
+@Extern("C")
+func c_gap(v Gap) Gap
+
+@Extern("C")
+func c_small(v Small) Small
+
+@Extern("C")
+func c_mixed(v Mixed) Mixed
+
+@Extern("C")
+func c_quad(v Quad) Quad
+
+@Extern("C")
+func c_two(v Two) Two
+
+@Extern("C")
+func c_large(v Large) Large
+
+@Extern("C")
+func c_odd(v Odd) Odd
+
+@Extern("C")
+func c_nested(v Nested) Nested
+
+@Extern("C")
+func c_outer(v Outer) Outer
+
+@Extern("C")
+func c_nothing()
+
+@Extern("C")
+func c_many(p1 int8, p2 float64, p3 int64, p4 float32, p5 uint16, p6 float64, p7 int32,
+	p8 float32, p9 bool, p10 float64, p11 uint8, p12 float64, p13 int64, p14 float32,
+	p15 Small, p16 float64, p17 int16, p18 Two, p19 uint32, p20 float64,
+	p21 *int32, p22 float32, p23 Mixed, p24 int64) float64
+
+func check(name string, ok bool) {
+	if ok {
+		println(name, "ok")
+	} else {
+		println(name, "WRONG")
+	}
+}
+
+func main() {
+	check("i8", c_i8(-128) == 127 && c_i8(5) == 4)
+	check("u8", c_u8(255) == 0 && c_u8(7) == 8)
+	check("i16", c_i16(-300) == 300)
+	check("u16", c_u16(65535) == 32767)
+	check("i32", c_i32(-7) == -21)
+	check("u32", c_u32(1) == 4294967294)
+	check("i64", c_i64(-9223372036854775807) == -9223372036854775807-1)
+	check("u64", c_u64(18446744073709551615) == 18446744073709551360)
+	check("f32", c_f32(1.25) == 2.5)
+	check("f64", c_f64(-10) == -2.5)
+	check("bool", c_not(false) && !c_not(true))
+	check("wide", c_wide(-3, 250, -7, 65000, true) == -3000000+2500000-700+65000+1)
+
+	xs := [3]int32{10, 20, 30}
+	next := c_next(&xs[0])
+	check("pointer", xs[0] == 11 && *next == 20)
+	b := byte(9)
+	check("option", c_or(&b, 1) == 9 && c_or(nil, 1) == 1)
+
+	gap := c_gap(Gap{a: 1, b: 2})
+	check("gap", gap.a == 2 && gap.b == 17)
+	small := c_small(Small{3, 4})
+	check("small", small.a == 4 && small.b == 4)
+	mixed := c_mixed(Mixed{21, 1.5})
+	check("mixed", mixed.a == 42 && mixed.b == 2)
+	quad := c_quad(Quad{1, 2, 3, 4})
+	check("quad", quad.x == 4 && quad.y == 3 && quad.z == 2 && quad.w == 2)
+	two := c_two(Two{1.5, 2.5})
+	check("two", two.x == 2.5 && two.y == -1.5)
+	large := c_large(Large{1, 2, 3})
+	check("large", large.a == 3 && large.b == 1 && large.c == 3)
+	odd := c_odd(Odd{[3]byte{1, 2, 3}})
+	check("odd", odd.bytes[0] == 3 && odd.bytes[1] == 1 && odd.bytes[2] == 3)
+	nested := c_nested(Nested{5, Small{6, 7}, [3]int16{8, 9, 10}, 1.5})
+	check("nested", nested.tag == -5 && nested.in.a == 7 && nested.in.b == 6 &&
+		nested.tail[0] == 10 && nested.tail[1] == 9 && nested.tail[2] == 8 && nested.d == 3)
+	held := Quad{1, 2, 3, 4}
+	outer := c_outer(Outer{Mixed{1, 2}, &held, false})
+	check("outer", outer.m.a == 2 && outer.m.b == 2 && outer.q == &held && held.x == 2 && outer.ok)
+	c_nothing()
+
+	at := int32(-2)
+	many := c_many(-1, 2, 3, 4, 5, 6, -7, 8, true, 10, 11, 12, -13, 14,
+		Small{20, 5}, 16, -17, Two{3, 1}, 19, 20, &at, 22, Mixed{2, 0.5}, 24)
+	want := -1.0 + 4 + 9 + 16 + 25 + 36 - 49 + 64 + 9 + 100 + 121 + 144 - 169 + 196 +
+		15*15 + 256 - 289 + 36 + 361 + 400 - 42 + 484 + 23*2.5 + 576
+	check("many", many == want)
+}

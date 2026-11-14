@@ -368,7 +368,7 @@ impl TypeInterner {
     }
 
     /// `layout`, with the layouts that are known already.
-    fn layout_with(
+    pub(crate) fn layout_with(
         &self,
         ty: TypeId,
         target: TargetLayout,

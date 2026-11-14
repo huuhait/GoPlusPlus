@@ -1,0 +1,75 @@
+// Functions that are given to C: C code of cabi_callback.c calls them
+// back, a function of Go++ through the function of C that the package
+// makes for it, and a function of C as it is.
+package main
+
+type Small struct {
+	a, b int32
+}
+
+type Large struct {
+	a, b, c int64
+}
+
+type Order func(a *int32, b *int32) int32
+
+@Extern("C")
+func c_each(count int32, call func(at int32) int32) int32
+
+@Extern("C")
+func c_triple(x int32) int32
+
+@Extern("C")
+func c_fold(xs *float64, count int, step func(sum float64, x float64) float64) float64
+
+@Extern("C")
+func c_twice(v Small, turn func(v Small) Small) Small
+
+@Extern("C")
+func c_grow(v Large, by int8, grow func(v Large, by int8, up bool) Large) Large
+
+@Extern("C")
+func c_visit(xs *int32, count int, visit func(at *int32))
+
+@Extern("C")
+func c_sort(xs *int32, count int, by Order)
+
+var seen int32
+
+func square(at int32) int32 {
+	seen++
+	return at * at
+}
+
+func add(sum float64, x float64) float64 { return sum + x }
+
+func turn(v Small) Small { return Small{v.b, v.a + 1} }
+
+func grow(v Large, by int8, up bool) Large {
+	if up {
+		return Large{v.a + int64(by), v.b, v.c}
+	}
+	return Large{v.a, v.b - int64(by), v.c * 2}
+}
+
+func double(at *int32) { *at *= 2 }
+
+func down(a *int32, b *int32) int32 { return *b - *a }
+
+func main() {
+	println(c_each(4, square), seen)
+	println(c_each(4, (square)), seen)
+	println(c_each(4, c_triple))
+	fs := [4]float64{0.5, 1.5, 2, 4}
+	println(c_fold(&fs[0], 4, add) == 8)
+	small := c_twice(Small{1, 5}, turn)
+	println(small.a, small.b)
+	large := c_grow(Large{1, 2, 3}, 4, grow)
+	println(large.a, large.b, large.c)
+	xs := [5]int32{4, 1, 5, 3, 2}
+	c_visit(&xs[0], 5, double)
+	c_sort(&xs[0], 5, down)
+	for _, x := range xs {
+		println(x)
+	}
+}

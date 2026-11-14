@@ -22,6 +22,10 @@ use crate::{
 
 pub(super) type Built<T = ()> = Result<T, BuildError>;
 
+/// In the place of what is not supported: nothing more is reported,
+/// because the declaration of what is used says what is wrong with it.
+pub(super) const SAID: &str = "";
+
 /// The stack that is left when a walk goes one level deeper, and how
 /// much is added when it is not.
 const STACK_LEFT: usize = 128 * 1024;
@@ -595,6 +599,7 @@ pub(super) fn lower_value<'a>(
     memo: &mut Memo<'a>,
     symbol: &str,
     (of, ty): (&str, CheckedTypeId),
+    in_c: bool,
 ) {
     let value = memo.lower_type(shared, &mut module.types, ty);
     let sig = value.ok().and_then(|value| match module.types.get(value) {
@@ -604,7 +609,22 @@ pub(super) fn lower_value<'a>(
     let Some(sig) = sig else {
         return not_made(shared, memo, symbol, Ok(Err("a function type")));
     };
-    let link = Linkage::LinkOnceOdr;
+    let made = (symbol, sig, Linkage::LinkOnceOdr);
+    lower_forward(shared, module, memo, made, (of, ty, in_c), 1);
+}
+
+/// Adds a function with the symbol, the type and the linkage of `made`
+/// to the module, which calls the function `of` of the type `ty`, a
+/// function of C if `in_c` is set, with what it is given after its
+/// first `before` parameters.
+pub(super) fn lower_forward<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    (symbol, sig, link): (&str, TypeId, Linkage),
+    (of, ty, in_c): (&str, CheckedTypeId, bool),
+    before: u32,
+) {
     let built = FuncBuilder::new(module, symbol, sig, link, Span::default()).and_then(|b| {
         let mut cx = FuncCx::new(
             shared,
@@ -613,7 +633,7 @@ pub(super) fn lower_value<'a>(
             0,
             (&shared.no_body, &shared.no_facts),
         );
-        let made = cx.value_body(of, ty)?;
+        let made = cx.value_body((of, ty, in_c), before)?;
         // What cannot be made has no body: its reason is reported.
         if made.is_err() {
             return Ok(made);
@@ -1616,7 +1636,8 @@ impl FuncCx<'_, '_> {
 
     /// Says once that what is at `span` is not supported yet.
     pub fn unsupported(&mut self, span: SourceSpan, what: &str) {
-        if self.reported.insert((span.lo, span.hi)) {
+        // What is wrong with a declaration is said there.
+        if what != SAID && self.reported.insert((span.lo, span.hi)) {
             let message = format!("not supported yet: {what}");
             let diagnostic = Diagnostic::new(Code::GirUnsupported, span, message);
             self.memo.diagnostics.push(diagnostic);

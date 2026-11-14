@@ -71,6 +71,9 @@ pub enum Entity<'a> {
     FuncValue(&'a Package, ObjId),
     /// The same for a generic function with its type arguments.
     InstanceValue(&'a Package, ObjId, &'a [TypeId]),
+    /// The function of C that calls a function of a package, for C
+    /// code that is given the function.
+    CabiThunk(&'a Package, ObjId),
     /// The code of the method value `x.name` for an `x` of the declared
     /// type `receiver`: the method with the receiver in its environment.
     MethodValue { receiver: TypeId, name: Spur },
@@ -315,6 +318,10 @@ impl<'a> Namer<'a> {
             Entity::FuncValue(package, id) => {
                 let function = self.entity(Entity::Object(package, id))?;
                 Node::Wrap(Wrap::MethodExpr, function)
+            }
+            Entity::CabiThunk(package, id) => {
+                let function = self.entity(Entity::Object(package, id))?;
+                Node::Wrap(Wrap::CabiThunk, function)
             }
             Entity::InstanceValue(package, id, args) => {
                 let function = self.entity(Entity::FuncInstance(package, id, args))?;

@@ -48,6 +48,7 @@ pub struct Options {
     pub merge_output: bool,
     pub summary: bool,
     pub real: bool,
+    pub opt: OptLevel,
     pub executor: Option<PathBuf>,
     pub startup_timeout_ms: u64,
     pub schedule: Option<String>,
@@ -155,11 +156,14 @@ impl Run<'_> {
 
     /// The unit of C of a job: its package, lowered, or its one file of
     /// C after the header of the runtime. The units of the packages that
-    /// it imports are written to `dir`, and are what it is built with.
+    /// it imports are written to `dir`, and are what it is built with;
+    /// so are the files of C that are named beside a package, which the
+    /// same Clang compiles with the same flags.
     fn unit(&self, job: &JobSpec, dir: &Path) -> Result<(String, Vec<PathBuf>), String> {
         let target = self.driver.target;
+        let is_c = |file: &PathBuf| file.extension().is_some_and(|extension| extension == "c");
         if let [file] = &job.inputs[..]
-            && file.extension().is_some_and(|extension| extension == "c")
+            && is_c(file)
         {
             let text = fs::read_to_string(file)
                 .map_err(|error| format!("error: {}: {error}\n", file.display()))?;
@@ -171,8 +175,10 @@ impl Run<'_> {
             };
             return Ok((format!("{header}\n{text}{start}"), Vec::new()));
         }
+        let (of_c, sources): (Vec<PathBuf>, Vec<PathBuf>) =
+            job.inputs.iter().cloned().partition(is_c);
         let mut said = String::new();
-        let Some(package) = lowered(&job.inputs, (target, false), false, &mut said) else {
+        let Some(package) = lowered(&sources, (target, false), false, &mut said) else {
             return Err(said);
         };
         if !package.is_main {
@@ -196,8 +202,13 @@ impl Run<'_> {
         let codegen = |error: String| format!("error[{}]: {error}\n", Code::Codegen);
         let unit =
             emit_c23(&package.module, &options).map_err(|error| codegen(error.to_string()))?;
-        let imported = imported_units(&package.imports, &options, dir).map_err(codegen)?;
-        Ok((unit, imported))
+        let mut with = imported_units(&package.imports, &options, dir).map_err(codegen)?;
+        for file in of_c {
+            let whole = std::path::absolute(&file)
+                .map_err(|error| format!("error: {}: {error}\n", file.display()))?;
+            with.push(whole);
+        }
+        Ok((unit, with))
     }
 
     /// Builds the program of the job: a module, or an executable.
@@ -410,7 +421,7 @@ pub fn run(options: &Options) -> ExitCode {
     let driver = ClangDriver {
         toolchain: &toolchain,
         target,
-        opt: OptLevel::O0,
+        opt: options.opt,
         strict: false,
     };
     let form = match real {

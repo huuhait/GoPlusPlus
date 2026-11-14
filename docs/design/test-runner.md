@@ -28,9 +28,10 @@ The runner is written for Linux. On `windows/amd64`, and with `-real` or `GOPP_F
                      parallel GIR + C23 + clang -shared           (dlopen / dlclose)
 ```
 
-- **`batch_compile`:** Compiles each `JobSpec` to a position-independent shared module for the host at `-O0`. Every job owns an independent arena, string interner, diagnostic sink, and GIR module — zero shared mutable state across `rayon` worker threads. The entry of a module is `int gopp_entry(void)`, which the emitter writes in the place of `main` (`Entry::Module`).
+- **`batch_compile`:** Compiles each `JobSpec` to a position-independent shared module for the host, at `-O0` unless `-opt` says another level. Every job owns an independent arena, string interner, diagnostic sink, and GIR module — zero shared mutable state across `rayon` worker threads. The entry of a module is `int gopp_entry(void)`, which the emitter writes in the place of `main` (`Entry::Module`).
 - **`executor_pool`:** Inspects each compiled shared module's undefined symbol table via `object` (`0.41.0`), dispatches it to a warm `gopp test-exec` worker over a Unix socket, and streams `JobResult` records as jobs finish so compilation and execution overlap. Each executor thread keeps one worker and starts a new one when the last program did not leave it whole. The socket is the standard input that the worker is started with; requests and answers are lines of JSON.
 - **A job of C:** a job whose one input is a `.c` file is compiled as it is, after the header of the runtime, and must define `gopp_entry` itself. The tests of the runner and of the runtime use it.
+- **C beside a program:** the inputs of a job that end in `.c` and stand beside a Go++ program are compiled by the same Clang, with the same flags, and linked with it. The run tests that cross to C use it (`tests/run/cabi_*.gopp`, each with a `.c` file of its name).
 - **`protocol`:** Versioned UTF-8 JSON Lines (`"v": 1`) shared by CLI, test harnesses, and `gopp test`.
 
 ## `gopp test-run` CLI
@@ -38,10 +39,10 @@ The runner is written for Linux. On `windows/amd64`, and with `-real` or `GOPP_F
 ```text
 gopp test-run [FILE|DIR ...] [-manifest FILE|-] [-o FILE] [-j N] [-executors N]
               [-timeout-ms T] [-max-output BYTES] [-work-dir DIR] [-merge-output] [-summary]
-              [-real]
+              [-real] [-opt=0|1|2|3|s|z]
 ```
 
-Positional arguments name single-file or directory programs; `-manifest` reads `JobSpec` JSONL lines (`-` for stdin). Exit status is `0` when every job produced a `JobResult` (regardless of whether tested programs exited non-zero or panicked), and `1` only on internal runner failure (`outcome: "internal"`). A program of the command line has the name of its file as its `id`. `-work-dir` keeps what was built and written: `DIR/<number of the job>/` has `unit.c`, `module.so` (or `program`), `stdout` and `stderr`. `-summary` prints the counts and the times to standard error. Hidden test flags exercise edge cases deterministically: `-executor PATH` (the program started as the worker), `-startup-timeout-ms`, and `-schedule forward|reverse|shuffle:SEED`, which builds every job first and then gives them to the executors in that order.
+`-opt` says how much Clang optimizes the programs of the run, and the runtime that they are linked with; it is `0` unless it is given. Positional arguments name single-file or directory programs; `-manifest` reads `JobSpec` JSONL lines (`-` for stdin). Exit status is `0` when every job produced a `JobResult` (regardless of whether tested programs exited non-zero or panicked), and `1` only on internal runner failure (`outcome: "internal"`). A program of the command line has the name of its file as its `id`. `-work-dir` keeps what was built and written: `DIR/<number of the job>/` has `unit.c`, `module.so` (or `program`), `stdout` and `stderr`. `-summary` prints the counts and the times to standard error. Hidden test flags exercise edge cases deterministically: `-executor PATH` (the program started as the worker), `-startup-timeout-ms`, and `-schedule forward|reverse|shuffle:SEED`, which builds every job first and then gives them to the executors in that order.
 
 ## JSONL v1 protocol
 

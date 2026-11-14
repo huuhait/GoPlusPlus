@@ -126,6 +126,11 @@ impl Cx<'_> {
         &self.funcs[at]
     }
 
+    /// Whether the name is that of a function of the runtime.
+    pub fn of_runtime(&self, name: &str) -> bool {
+        name.starts_with(RUNTIME_PREFIX)
+    }
+
     /// Whether the global of the number takes no room.
     pub fn empty_global(&self, at: usize) -> bool {
         self.globals.get(at).is_some_and(|&ty| self.empty(ty))
@@ -198,7 +203,7 @@ pub(crate) fn emit_counted(
     out.push_str(convention(options.swiftcall));
     out.push_str(PRELUDE);
     number::helpers(&mut out);
-    types::definitions(&cx, &mut out, &mut steps)?;
+    types::definitions(&cx, options.layout, &mut out, &mut steps)?;
 
     out.push('\n');
     for (at, text) in module.strings.iter().enumerate() {

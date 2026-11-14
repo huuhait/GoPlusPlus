@@ -2,12 +2,15 @@
 //! `gopp test-run`, and what it writes and how it ends is compared with
 //! what its files say.
 //!
-//! A program is a `.gopp` file. Its `.out` file beside it has what it
+//! A program is a `.gopp` file; a `.c` file of its name beside it is
+//! compiled and linked with it. Its `.out` file beside it has what it
 //! writes, the standard error stream in the standard output
 //! in the order of the writes; a first line `// exit: N` says the
 //! status that it ends with, which is 0 without one. The offsets of a
 //! trace are written `+0x?`. `GOPP_RUN_UPDATE=1` writes the `.out`
 //! files anew.
+
+#![allow(clippy::unwrap_used, reason = "test helpers outside #[test] functions")]
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -55,21 +58,34 @@ fn written(result: &Value) -> String {
     lines.collect()
 }
 
-#[test]
-fn every_program_of_tests_run_does_what_its_files_say() {
+/// The programs of `tests/run` whose names `wanted` takes.
+fn programs(wanted: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/run"));
     let mut programs: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "gopp"))
+        .filter(|path| wanted(&id(path)))
         .collect();
     programs.sort();
-    assert!(programs.len() >= 8);
-    let id = |program: &Path| program.file_stem().unwrap().to_str().unwrap().to_owned();
+    programs
+}
+
+fn id(program: &Path) -> String {
+    program.file_stem().unwrap().to_str().unwrap().to_owned()
+}
+
+/// Builds and runs the programs in one `gopp test-run` with the flags,
+/// and says which of them did not do what its files say.
+fn wrong_among(programs: &[PathBuf], flags: &[&str]) -> Vec<String> {
     let manifest: String = programs
         .iter()
         .map(|program| {
-            let job = json!({"v": 1, "id": id(program), "inputs": [program], "merge_output": true});
+            // A file of C beside a program is the C that it calls.
+            let of_c = program.with_extension("c");
+            let mut inputs = vec![program.clone()];
+            inputs.extend(of_c.exists().then_some(of_c));
+            let job = json!({"v": 1, "id": id(program), "inputs": inputs, "merge_output": true});
             format!("{job}\n")
         })
         .collect();
@@ -80,6 +96,7 @@ fn every_program_of_tests_run_does_what_its_files_say() {
     let output = Command::new(env!("CARGO_BIN_EXE_gopp"))
         .args(["test-run", "-manifest"])
         .arg(&jobs)
+        .args(flags)
         .env("GOPPCACHE", cache)
         .output()
         .unwrap();
@@ -93,7 +110,7 @@ fn every_program_of_tests_run_does_what_its_files_say() {
     assert_eq!(results.len(), programs.len(), "two programs of one name");
     let update = std::env::var_os("GOPP_RUN_UPDATE").is_some();
     let mut wrong = Vec::new();
-    for program in &programs {
+    for program in programs {
         let result = &results[&id(program)];
         let text = fs::read_to_string(program).unwrap();
         let status = text
@@ -127,5 +144,29 @@ fn every_program_of_tests_run_does_what_its_files_say() {
             ));
         }
     }
+    wrong
+}
+
+#[test]
+fn every_program_of_tests_run_does_what_its_files_say() {
+    let programs = programs(|_| true);
+    assert!(programs.len() >= 8);
+    let wrong = wrong_among(&programs, &[]);
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// What crosses to C is passed as C passes it at every level of
+/// Clang: the C side is compiled with the program.
+#[test]
+#[ignore = "long: builds the runtime and the programs that call C at three levels"]
+fn the_programs_that_call_c_do_the_same_at_every_level() {
+    let programs = programs(|name| name.starts_with("cabi_"));
+    assert!(programs.len() >= 3);
+    for level in ["--opt=0", "--opt=2", "--opt=3"] {
+        for real in [&[][..], &["--real"]] {
+            let flags = [&[level], real].concat();
+            let wrong = wrong_among(&programs, &flags);
+            assert!(wrong.is_empty(), "{flags:?}\n{}", wrong.join("\n"));
+        }
+    }
 }
