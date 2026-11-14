@@ -1,0 +1,4 @@
+named: false
+interface left: true
+named: false
+method value left: true

@@ -16,6 +16,7 @@ The table has the differences that the compiler implements today; it grows with 
 | `for _, row := range grid` over elements that are slices or maps, or hold them | `row` is the element's own slice: `row[0] = x` changes `grid` | `row` is a copy: nothing done to it is seen in `grid`; `for _, &row := range grid` names the element (a plain `row` is only read, so no copy is made) | [RNG-1](../spec/08-slices-and-range.md) | `tests/run/deep_copies.gopp` |
 | `m[k] = v` for a nil map `m` | `panic: assignment to entry in nil map` | the write makes the map where it is held | [OWN-P9](../spec/04-ownership.md), [EXP-7](../spec/06-expressions.md) | `tests/run/map_values.gopp` |
 | A new key in a map, or `clear` of it, while a `range` loop walks it | allowed: the loop may or may not see the key | `panic: map insert during iteration`, `panic: map clear during iteration`, on every run. Writing a key that is there and `delete` are allowed | [RNG-4](../spec/08-slices-and-range.md), [RNG-5](../spec/08-slices-and-range.md) | `tests/run/panic_map_insert.gopp`, `tests/run/panic_map_clear.gopp` |
+| `recover()` in a function that a deferred method calls through a function value, where the method is called through an interface or as a method value | stops the panic when the compiler puts the method into its wrapper, gives nil with `-gcflags=-l` | gives nil at every level: only the deferred function itself stops a panic | [PAN-1](../spec/09-errors-and-panics.md) | `tests/run/recover_through.gopp` |
 
 ## The programs that do the same
 

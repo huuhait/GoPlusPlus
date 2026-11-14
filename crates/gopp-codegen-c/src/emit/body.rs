@@ -387,6 +387,12 @@ enum Step<'s> {
 /// Whether the end of a block is the call by which a function with
 /// `defer` statements tells the runtime of itself.
 fn entered(cx: &Cx<'_>, term: &TerminatorKind) -> bool {
+    calls(cx, term, "_gopp_defer_enter")
+}
+
+/// Whether the block ends with a call of the function `name` of the
+/// runtime.
+fn calls(cx: &Cx<'_>, term: &TerminatorKind, name: &str) -> bool {
     let TerminatorKind::Call { callee, .. } = term else {
         return false;
     };
@@ -394,7 +400,7 @@ fn entered(cx: &Cx<'_>, term: &TerminatorKind) -> bool {
         Operand::Const(Constant {
             kind: ConstantKind::Func(func),
             ..
-        }) => cx.module.funcs[*func].name() == "_gopp_defer_enter",
+        }) => cx.module.funcs[*func].name() == name,
         _ => false,
     }
 }
@@ -918,6 +924,16 @@ impl Writer<'_, '_> {
                             self.name
                         );
                     }
+                    match target {
+                        Some(target) => self.jump(*target),
+                        None => self.out.push_str("  __builtin_unreachable();\n"),
+                    }
+                    return Ok(());
+                }
+                // A macro that stores one value: nothing leaves it, and
+                // it is no call that could be put into the function.
+                if calls(cx, term, "_gopp_recover_not") {
+                    self.out.push_str("  _gopp_recover_not();\n");
                     match target {
                         Some(target) => self.jump(*target),
                         None => self.out.push_str("  __builtin_unreachable();\n"),

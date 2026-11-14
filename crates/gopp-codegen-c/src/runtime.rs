@@ -575,6 +575,11 @@ __attribute__((returns_twice)) void _gopp_defer_push(uint8_t *frame);
   (_gopp_defer_push(frame), ((gopp_frame *)(frame))->mark = &(at), \\
    __builtin_setjmp((at).part) != 0)
 #endif
+
+// No panic makes the calls that follow: one store where it is written,
+// at the start of every function that calls through a function value.
+extern bool gopp_calling;
+#define _gopp_recover_not() ((void)(gopp_calling = false))
 ";
 
 pub(crate) const HEADER_NAME: &str = "gopp_rt.h";

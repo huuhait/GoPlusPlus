@@ -1,0 +1,36 @@
+package main
+
+// A method that a panic calls through an interface or as a method
+// value calls a function value, whose function calls recover: the
+// method is the deferred function, so the recover in what it calls
+// stops nothing. Go 1.25 says the same when it puts no function into
+// its caller (-gcflags=-l), and stops the panic when it does.
+
+type Handler interface{ Handle() }
+
+type Caller struct{ run func() }
+
+func (c Caller) Handle() { c.run() }
+
+func named() { println("named:", recover() != nil) }
+
+func try(name string, f func()) {
+	defer func() {
+		println(name, "left:", recover() != nil)
+	}()
+	f()
+}
+
+func main() {
+	try("interface", func() {
+		var h Handler = Caller{named}
+		defer h.Handle()
+		panic("x")
+	})
+	try("method value", func() {
+		c := Caller{named}
+		m := c.Handle
+		defer m()
+		panic("x")
+	})
+}

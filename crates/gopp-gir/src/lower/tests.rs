@@ -1408,6 +1408,8 @@ func plain() {}
 
 func named() { println(recover() != nil) }
 
+func through(f func()) { f() }
+
 func main() {
 	defer plain()
 	defer named()
@@ -1445,10 +1447,12 @@ func main() {
     // The literal that calls the helper by its name says before the
     // call that no panic makes it.
     assert_eq!(counts("_GPC1_F4mainE4main"), [0, 0, 1]);
-    // So does `main` before its own call of `named`. The function that
-    // makes its deferred calls says that a panic may make the call
-    // for a function that calls `recover` itself, and for a function
-    // value that is not a literal without it.
+    // So does `main` before its own call of `named`, and a function
+    // that calls through a function value when it starts. The function
+    // that makes the deferred calls of `main` says that a panic may
+    // make the call for a function that calls `recover` itself, and
+    // for a function value that is not a literal without it.
+    assert_eq!(counts("_GPF4mainE7through"), [0, 0, 1]);
     assert_eq!(counts("_GPF4mainE4main"), [0, 0, 1]);
     assert_eq!(counts("_GPC0_F4mainE4main"), [0, 3, 0]);
     // With `-panic=abort` no panic makes a deferred call.

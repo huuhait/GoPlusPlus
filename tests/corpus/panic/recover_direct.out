@@ -39,5 +39,13 @@ recover deferred left: true
 the new one: y
 a new panic left: false
 named: false
+value that calls a value left: true
+named: false
+value that calls by name left: true
+named: false
+literal that calls a value left: true
+in the loop: false
+loop over a function left: true
+named: false
 after a call: true
 after a call left: false

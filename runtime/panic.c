@@ -54,7 +54,8 @@ static gopp_panicking *panics;
 // A panic is about to make a deferred call: the function that it calls
 // may stop it with `recover`. A function that calls `recover` itself
 // takes this when it starts, so that no function which it calls has it.
-static bool calling;
+// Generated code takes it away itself where no panic makes a call.
+bool gopp_calling;
 
 // A panic that was stopped and now leaves the functions between where
 // it started and the function that goes on: each of them ends what it
@@ -106,7 +107,7 @@ void _gopp_panic_aborts(void) { aborts = true; }
 void _gopp_panic_reset(void) {
   frames = 0;
   panics = 0;
-  calling = false;
+  gopp_calling = false;
   unwindings = 0;
   aborts = false;
   traced = 0;
@@ -307,7 +308,7 @@ static bool listed(const gopp_frame *frame) {
     gopp_frame *frame = frames;
     panic->at = frame;
     frame->run(frame->record);
-    calling = false;
+    gopp_calling = false;
     frames = frame->next;
     if (!panic->recovered) {
       continue;
@@ -351,17 +352,19 @@ void _gopp_panic(uint8_t *value, gopp_string error_key, gopp_string string_key) 
 
 // The function that makes the deferred calls of a function makes the
 // next one: a panic calls it if the panic runs these calls.
-void _gopp_recover_may(void) { calling = _gopp_panicking(); }
+void _gopp_recover_may(void) { gopp_calling = _gopp_panicking(); }
 
-// A function that calls `recover` itself is called by its name: no
-// panic calls it.
-void _gopp_recover_not(void) { calling = false; }
+// A function that calls `recover` itself is called by its name, or a
+// function calls through a function value: no panic makes the call.
+// Generated code has this as a macro.
+#undef _gopp_recover_not
+void _gopp_recover_not(void) { gopp_calling = false; }
 
 // A function that calls `recover` itself starts: whether a panic
 // called it.
 bool _gopp_recover_enter(void) {
-  bool called = calling;
-  calling = false;
+  bool called = gopp_calling;
+  gopp_calling = false;
   return called;
 }
 

@@ -1221,9 +1221,18 @@ impl FuncCx<'_, '_> {
             Some((_, Some(literal))) => self.recovering(literal),
             None => false,
         };
+        // What a function that does not call `recover` calls through a
+        // function value or an interface, no panic calls.
+        let through_values = match self.owner {
+            Some((job, None)) => job.facts.calls_values,
+            Some((job, Some(literal))) => job.facts.calling_values.contains(&literal),
+            None => false,
+        };
         if recovers && !self.shared.aborts {
             let direct = self.runtime("_gopp_recover_enter", &[], TypeInterner::BOOL, vec![])?;
             self.direct = Some(direct);
+        } else if through_values && !self.shared.aborts {
+            self.runtime_call("_gopp_recover_not", &[], Vec::new())?;
         }
         self.stmts(&block.stmts)?;
         // The end of the body: a function with results never comes

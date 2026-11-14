@@ -20,63 +20,66 @@ fn _GPF4mainE1a() -> i64 [go, external] {
 
 fn _GPF4mainE1b() -> (i64, string, u8) [go, external] {
   let _0: (i64, string, u8)
-  let _1: (fn env(*u8, u8) -> u8, *u8)
-  let _2: *(fn env(*u8, u8) -> u8, *u8)
-  let _3: *u8
-  let _4: ()
-  let _5: (fn env(*u8, u8) -> u8, *u8) "keep"
-  let _6: i64
-  let _7: *(fn env(*u8, u8) -> u8, *u8)
-  let _8: *u8
-  let _9: ()
-  let _10: string
-  let _11: (fn env(*u8, u8) -> u8, *u8)
-  let _12: fn env(*u8, u8) -> u8
-  let _13: u8
-  let _14: string
-  let _15: bool
-  let _16: ()
-  let _17: *(fn env(*u8, u8) -> u8, *u8)
-  let _18: *u8
-  let _19: ()
+  let _1: ()
+  let _2: (fn env(*u8, u8) -> u8, *u8)
+  let _3: *(fn env(*u8, u8) -> u8, *u8)
+  let _4: *u8
+  let _5: ()
+  let _6: (fn env(*u8, u8) -> u8, *u8) "keep"
+  let _7: i64
+  let _8: *(fn env(*u8, u8) -> u8, *u8)
+  let _9: *u8
+  let _10: ()
+  let _11: string
+  let _12: (fn env(*u8, u8) -> u8, *u8)
+  let _13: fn env(*u8, u8) -> u8
+  let _14: u8
+  let _15: string
+  let _16: bool
+  let _17: ()
+  let _18: *(fn env(*u8, u8) -> u8, *u8)
+  let _19: *u8
+  let _20: ()
   bb0:
-    _1 = tuple {const fn @_GPTEIF4mainE2idhE, const zero: *u8}  ; a.gopp:14:2
-    _2 = &mut _1  ; a.gopp:14:2
-    _3 = ptr_to_ptr(copy _2) as *u8  ; a.gopp:14:2
-    _4 = call const fn @_gopp_func_clone(copy _3) -> [return: bb1, unwind: continue]  ; a.gopp:14:2
+    _1 = call const fn @_gopp_recover_not() -> [return: bb1, unwind: continue]  ; a.gopp:13:6
   bb1:
-    storage_live(_5)  ; a.gopp:14:2
-    _5 = copy _1  ; a.gopp:14:2
-    _6 = call const fn @_GPIF4mainE2idiE(const 3: i64) -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:15:9
-  bb2: [cleanup]
-    _7 = &mut _5  ; a.gopp:15:9
-    _8 = ptr_to_ptr(copy _7) as *u8  ; a.gopp:15:9
-    _9 = call const fn @_gopp_func_drop(copy _8) -> [return: bb3, unwind: terminate]  ; a.gopp:15:9
+    _2 = tuple {const fn @_GPTEIF4mainE2idhE, const zero: *u8}  ; a.gopp:14:2
+    _3 = &mut _2  ; a.gopp:14:2
+    _4 = ptr_to_ptr(copy _3) as *u8  ; a.gopp:14:2
+    _5 = call const fn @_gopp_func_clone(copy _4) -> [return: bb2, unwind: continue]  ; a.gopp:14:2
+  bb2:
+    storage_live(_6)  ; a.gopp:14:2
+    _6 = copy _2  ; a.gopp:14:2
+    _7 = call const fn @_GPIF4mainE2idiE(const 3: i64) -> [return: bb5, unwind: cleanup bb3]  ; a.gopp:15:9
   bb3: [cleanup]
+    _8 = &mut _6  ; a.gopp:15:9
+    _9 = ptr_to_ptr(copy _8) as *u8  ; a.gopp:15:9
+    _10 = call const fn @_gopp_func_drop(copy _9) -> [return: bb4, unwind: terminate]  ; a.gopp:15:9
+  bb4: [cleanup]
     resume  ; a.gopp:15:9
-  bb4:
-    _10 = call const fn @_GPIF4mainE2idrE(const str#0 "s") -> [return: bb5, unwind: cleanup bb2]  ; a.gopp:15:23
   bb5:
-    _11 = copy _5  ; a.gopp:15:2
-    _12 = copy _11.0  ; a.gopp:15:2
-    _13 = call copy _12(copy _11.1, const 4: u8) -> [return: bb10, unwind: cleanup bb6]  ; a.gopp:15:32
-  bb6: [cleanup]
-    _14 = copy _10  ; a.gopp:15:32
-    _15 = ne(copy _14.2, const zero: *u8)  ; a.gopp:15:32
-    switch copy _15 [0: bb9, otherwise: bb7]  ; a.gopp:15:32
+    _11 = call const fn @_GPIF4mainE2idrE(const str#0 "s") -> [return: bb6, unwind: cleanup bb3]  ; a.gopp:15:23
+  bb6:
+    _12 = copy _6  ; a.gopp:15:2
+    _13 = copy _12.0  ; a.gopp:15:2
+    _14 = call copy _13(copy _12.1, const 4: u8) -> [return: bb11, unwind: cleanup bb7]  ; a.gopp:15:32
   bb7: [cleanup]
-    _16 = call const fn @_gopp_string_release(copy _14) -> [return: bb8, unwind: terminate]  ; a.gopp:15:32
+    _15 = copy _11  ; a.gopp:15:32
+    _16 = ne(copy _15.2, const zero: *u8)  ; a.gopp:15:32
+    switch copy _16 [0: bb10, otherwise: bb8]  ; a.gopp:15:32
   bb8: [cleanup]
-    goto bb9  ; a.gopp:15:32
+    _17 = call const fn @_gopp_string_release(copy _15) -> [return: bb9, unwind: terminate]  ; a.gopp:15:32
   bb9: [cleanup]
-    goto bb2  ; a.gopp:15:32
-  bb10:
-    _0 = tuple {copy _6, copy _10, copy _13}  ; a.gopp:15:2
-    _17 = &mut _5  ; a.gopp:15:2
-    _18 = ptr_to_ptr(copy _17) as *u8  ; a.gopp:15:2
-    _19 = call const fn @_gopp_func_drop(copy _18) -> [return: bb11, unwind: terminate]  ; a.gopp:15:2
+    goto bb10  ; a.gopp:15:32
+  bb10: [cleanup]
+    goto bb3  ; a.gopp:15:32
   bb11:
-    storage_dead(_5)  ; a.gopp:15:2
+    _0 = tuple {copy _7, copy _11, copy _14}  ; a.gopp:15:2
+    _18 = &mut _6  ; a.gopp:15:2
+    _19 = ptr_to_ptr(copy _18) as *u8  ; a.gopp:15:2
+    _20 = call const fn @_gopp_func_drop(copy _19) -> [return: bb12, unwind: terminate]  ; a.gopp:15:2
+  bb12:
+    storage_dead(_6)  ; a.gopp:15:2
     return  ; a.gopp:15:2
 }
 
@@ -202,6 +205,8 @@ fn _GPTEIF4mainE2idhE(_1: *u8, _2: u8) -> u8 [go, linkonce_odr] {
     _0 = copy _3
     return
 }
+
+declare fn _gopp_recover_not() -> () [c, external]
 
 declare fn _gopp_func_clone(_1: *u8) -> () [c, external]
 

@@ -48,6 +48,14 @@ func again(depth int) {
 
 func generic[V any](v V) { println("generic:", recover() != nil) }
 
+var kept = named
+
+func through() { kept() }
+
+func byName() { through() }
+
+func once(yield func(int) bool) { yield(1) }
+
 func main() {
 	println("no panic:", recover() == nil)
 	try("literal", func() {
@@ -137,6 +145,29 @@ func main() {
 		}()
 		defer func() {
 			panic("y")
+		}()
+		panic("x")
+	})
+	try("value that calls a value", func() {
+		g := through
+		defer g()
+		panic("x")
+	})
+	try("value that calls by name", func() {
+		g := byName
+		defer g()
+		panic("x")
+	})
+	try("literal that calls a value", func() {
+		g := named
+		defer func() { g() }()
+		panic("x")
+	})
+	try("loop over a function", func() {
+		defer func() {
+			for range once {
+				println("in the loop:", recover() != nil)
+			}
 		}()
 		panic("x")
 	})

@@ -51,6 +51,11 @@ pub(crate) struct Facts {
     /// panic so (PAN-1).
     pub recovers: bool,
     pub recovering: FxHashSet<ExprId>,
+    /// The function calls through a function value or an interface,
+    /// and the function literals in it that do: what such a call runs
+    /// is not known where it is written.
+    pub calls_values: bool,
+    pub calling_values: FxHashSet<ExprId>,
     /// The variables whose address is taken.
     reached: FxHashSet<LocalId>,
     /// The variables that a function literal which is not framed uses
@@ -156,6 +161,8 @@ struct Walk<'a> {
     shared: &'a Shared<'a>,
     tree: &'a File,
     body: &'a Body,
+    /// The package of the function.
+    home: &'a gopp_sema::Package,
     /// The variables that the function does more to than read.
     more: FxHashSet<LocalId>,
     /// The variables of an interface type that a method is called
@@ -212,6 +219,7 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         shared,
         tree,
         body: shared.body(job),
+        home: shared.home(job.file),
         more: FxHashSet::default(),
         called: FxHashSet::default(),
         direct: Vec::new(),
@@ -523,6 +531,12 @@ impl Walk<'_> {
             }
             return;
         }
+        if self.through_value(callee) {
+            match self.within.last() {
+                Some(&literal) => drop(self.facts.calling_values.insert(literal)),
+                None => self.facts.calls_values = true,
+            }
+        }
         let ExprKind::Selector { x, .. } = &self.tree.exprs[callee].kind else {
             return;
         };
@@ -550,6 +564,41 @@ impl Walk<'_> {
         }
         if !self.takes_value(callee) {
             self.reached(*x);
+        }
+    }
+
+    /// Whether a call of `callee` runs a function that is not known
+    /// where the call is written: `callee` is no function by its name
+    /// and no method of a type that has it.
+    fn through_value(&self, callee: ExprId) -> bool {
+        // A conversion calls nothing.
+        if !self.body.types.contains_key(&callee) {
+            return false;
+        }
+        let function = |package: &gopp_sema::Package, id: gopp_sema::ObjId| {
+            let object = package.objects.get(id.0 as usize);
+            object.is_some_and(|object| matches!(object.kind, gopp_sema::ObjKind::Func))
+        };
+        match (&self.tree.exprs[callee].kind, self.body.uses.get(&callee)) {
+            (ExprKind::Name(_), Some(Ref::Object(object))) => !function(self.home, *object),
+            (ExprKind::Selector { .. }, Some(Ref::Member { import, member })) => {
+                match &self.home.object(*import).kind {
+                    gopp_sema::ObjKind::Import { package, .. } => !function(package, *member),
+                    _ => true,
+                }
+            }
+            (ExprKind::Selector { sel, .. }, _) => match self.body.selections.get(&callee) {
+                Some(selection)
+                    if matches!(
+                        selection.kind,
+                        SelectionKind::Method | SelectionKind::BaseMethod
+                    ) =>
+                {
+                    self.shared.method(selection.holder, sel.name).is_none()
+                }
+                _ => true,
+            },
+            _ => true,
         }
     }
 
