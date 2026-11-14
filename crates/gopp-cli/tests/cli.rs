@@ -2278,4 +2278,23 @@ fn a_program_links_for_linux_with_the_c_library_that_it_is_told_of() {
     assert!(defined.contains("_GPF4mainE4main") && defined.contains("_gopp_rt_init"));
     let loader = b"/stubs/ld-gopp.so.1\0";
     assert!(bytes.windows(loader.len()).any(|part| part == loader));
+    // The same files under the root of a system, where Clang looks for
+    // them itself.
+    let root = dir.path().join("root");
+    let lib = root.join("usr").join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    for entry in fs::read_dir(&stubs).unwrap() {
+        let path = entry.unwrap().path();
+        fs::copy(&path, lib.join(path.file_name().unwrap())).unwrap();
+    }
+    let under_root = dir.path().join("rooted.elf");
+    let mut build = gopp();
+    build
+        .args(["build", "-target=linux/amd64", "--sysroot"])
+        .arg(&root);
+    let built = run_beside(build.arg("-o").arg(&under_root).arg(&file));
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    let bytes = fs::read(&under_root).unwrap();
+    let made = object::File::parse(&bytes[..]).unwrap();
+    assert!(symbols(&made).0.contains("_GPF4mainE4main"));
 }
