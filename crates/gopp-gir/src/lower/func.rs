@@ -92,8 +92,9 @@ pub(super) enum Waits {
     /// `print`, or `println` if the flag is set.
     Print(bool),
     /// A function value, which is the first of what the statement
-    /// keeps: the type of its code.
-    Value(TypeId),
+    /// keeps: the type of its code, and whether its function may call
+    /// `recover` itself.
+    Value(TypeId, bool),
     /// `panic(v)`, with `v` in an interface value.
     Panic,
     /// `delete(m, k)` and `clear(m)` for a map: the statement keeps the
@@ -244,6 +245,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The function literal that a `defer` statement in such a body
     /// calls, while its value is worked out.
     pub deferring: Option<ExprId>,
+    /// Whether a panic called the function, which the function asked
+    /// when it started: it calls `recover` itself.
+    pub direct: Option<Operand>,
     /// The local of each variable that is another name of what a cell
     /// holds.
     cell_vars: FxHashMap<LocalId, CheckedLocalId>,
@@ -969,6 +973,7 @@ impl<'a, 'm> FuncCx<'a, 'm> {
             ranged: None,
             late_defers: false,
             deferring: None,
+            direct: None,
             cell_vars: FxHashMap::default(),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
@@ -1205,6 +1210,15 @@ impl FuncCx<'_, '_> {
                 Some((first, body, self.b.loc()))
             }
         };
+        let recovers = match self.owner {
+            Some((job, None)) => job.facts.recovers,
+            Some((_, Some(literal))) => self.recovering(literal),
+            None => false,
+        };
+        if recovers && !self.shared.aborts {
+            let direct = self.runtime("_gopp_recover_enter", &[], TypeInterner::BOOL, vec![])?;
+            self.direct = Some(direct);
+        }
         self.stmts(&block.stmts)?;
         // The end of the body: a function with results never comes
         // here, as the checker saw.
@@ -1604,7 +1618,7 @@ impl FuncCx<'_, '_> {
         let lent = |at: usize| match &pending.what {
             Waits::Call(called) => called.lent.get(at) == Some(&true),
             Waits::Print(_) | Waits::Delete(_) | Waits::Clear(_) | Waits::Nothing => true,
-            Waits::Value(_) => at == 0,
+            Waits::Value(..) => at == 0,
             // The runtime has the value of the panic.
             Waits::Panic => false,
         };
@@ -1618,6 +1632,16 @@ impl FuncCx<'_, '_> {
             }
         }
         let after = self.b.new_block();
+        // A panic that makes the call calls the function: its `recover`
+        // stops the panic (PAN-1).
+        let recovers = match &pending.what {
+            Waits::Call(called) => called.recovers,
+            Waits::Value(_, recovers) => *recovers,
+            _ => false,
+        };
+        if recovers && !self.shared.aborts {
+            self.runtime_call("_gopp_recover_may", &[], Vec::new())?;
+        }
         match &pending.what {
             Waits::Call(called) => {
                 let callee = Operand::Const(Constant {
@@ -1641,7 +1665,7 @@ impl FuncCx<'_, '_> {
                 let values = given.into_iter().map(|value| (value, pending.span));
                 self.print_values(*line, values.collect())?;
             }
-            Waits::Value(code_ty) => {
+            Waits::Value(code_ty, _) => {
                 self.b.goto(after)?;
                 self.b.switch_to(after);
                 if let Some(value) = slots.first() {
@@ -2581,6 +2605,11 @@ impl FuncCx<'_, '_> {
     pub fn worked_param(&self, local: CheckedLocalId) -> bool {
         let var = self.vars.get(&local);
         var.is_some_and(|var| self.worked_params.contains(var))
+    }
+
+    /// Whether the function literal calls `recover` itself.
+    pub fn recovering(&self, literal: ExprId) -> bool {
+        self.facts.recovering.contains(&literal)
     }
 
     /// Whether the variable of the local reads a value that another

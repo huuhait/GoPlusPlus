@@ -322,34 +322,35 @@ fn _GPC0_F4mainE1f(_1: *u8) -> () [c, internal] {
   let _0: ()
   let _2: *(*u8, *u8, *u8)
   let _3: *(bool, (fn env(*u8) -> i64, *u8))
-  let _4: fn env(*u8) -> i64
-  let _5: i64
-  let _6: *(fn env(*u8) -> i64, *u8)
-  let _7: *u8
-  let _8: ()
-  let _9: *(fn env(*u8) -> i64, *u8)
-  let _10: *u8
-  let _11: ()
+  let _4: ()
+  let _5: *(fn env(*u8) -> i64, *u8)
+  let _6: *u8
+  let _7: ()
+  let _8: fn env(*u8) -> i64
+  let _9: i64
+  let _10: *(fn env(*u8) -> i64, *u8)
+  let _11: *u8
+  let _12: ()
   bb0:
     _2 = ptr_to_ptr(copy _1) as *(*u8, *u8, *u8)  ; a.gopp:5:6
     _3 = ptr_to_ptr(copy (*_2).0) as *(bool, (fn env(*u8) -> i64, *u8))  ; a.gopp:5:6
     switch copy (*_3).0 [0: bb6, otherwise: bb1]  ; a.gopp:5:6
   bb1:
     (*_3).0 = const false  ; a.gopp:5:6
-    goto bb2  ; a.gopp:16:8
-  bb2:
-    _4 = copy (*_3).1.0  ; a.gopp:16:8
-    _5 = call copy _4(copy (*_3).1.1) -> [return: bb5, unwind: cleanup bb3]  ; a.gopp:16:8
+    _4 = call const fn @_gopp_recover_may() -> [return: bb4, unwind: cleanup bb2]  ; a.gopp:16:8
+  bb2: [cleanup]
+    _5 = &mut (*_3).1  ; a.gopp:16:8
+    _6 = ptr_to_ptr(copy _5) as *u8  ; a.gopp:16:8
+    _7 = call const fn @_gopp_func_drop(copy _6) -> [return: bb3, unwind: terminate]  ; a.gopp:16:8
   bb3: [cleanup]
-    _6 = &mut (*_3).1  ; a.gopp:16:8
-    _7 = ptr_to_ptr(copy _6) as *u8  ; a.gopp:16:8
-    _8 = call const fn @_gopp_func_drop(copy _7) -> [return: bb4, unwind: terminate]  ; a.gopp:16:8
-  bb4: [cleanup]
     resume  ; a.gopp:16:8
+  bb4:
+    _8 = copy (*_3).1.0  ; a.gopp:16:8
+    _9 = call copy _8(copy (*_3).1.1) -> [return: bb5, unwind: cleanup bb2]  ; a.gopp:16:8
   bb5:
-    _9 = &mut (*_3).1  ; a.gopp:16:10
-    _10 = ptr_to_ptr(copy _9) as *u8  ; a.gopp:16:10
-    _11 = call const fn @_gopp_func_drop(copy _10) -> [return: bb6, unwind: terminate]  ; a.gopp:16:10
+    _10 = &mut (*_3).1  ; a.gopp:16:10
+    _11 = ptr_to_ptr(copy _10) as *u8  ; a.gopp:16:10
+    _12 = call const fn @_gopp_func_drop(copy _11) -> [return: bb6, unwind: terminate]  ; a.gopp:16:10
   bb6:
     return  ; a.gopp:5:6
 }
@@ -409,5 +410,7 @@ declare fn _gopp_func_clone(_1: *u8) -> () [c, external]
 declare fn _gopp_string_concat(_1: string, _2: string) -> string [c, external]
 
 declare fn _gopp_defer_pop(_1: *u8) -> () [c, external]
+
+declare fn _gopp_recover_may() -> () [c, external]
 
 declare fn _gopp_slice_free(_1: *u8) -> () [c, external]

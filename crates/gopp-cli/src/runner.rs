@@ -52,6 +52,8 @@ pub struct Options {
     pub real: bool,
     pub opt: OptLevel,
     pub debug: bool,
+    /// A panic ends a program at once (`-panic=abort`).
+    pub aborts: bool,
     pub executor: Option<PathBuf>,
     pub startup_timeout_ms: u64,
     pub schedule: Option<String>,
@@ -67,6 +69,7 @@ struct Run<'a> {
     link_with: Vec<PathBuf>,
     /// A program is an executable of its own.
     real: bool,
+    aborts: bool,
     work: &'a Path,
     timeout: Duration,
     max_output: u64,
@@ -184,7 +187,7 @@ impl Run<'_> {
         let mut said = String::new();
         let lowered = lowered(
             &sources,
-            (target, false),
+            (target, self.aborts),
             false,
             &mut said,
             &mut Clock::new(),
@@ -212,7 +215,7 @@ impl Run<'_> {
             },
             imports: &paths,
             swiftcall: target.swiftcall,
-            aborts: false,
+            aborts: self.aborts,
             debug: self.pipeline.debug,
         };
         let codegen = |error: String| format!("error[{}]: {error}\n", Code::Codegen);
@@ -479,6 +482,7 @@ pub fn run(options: &Options) -> ExitCode {
             false => Vec::new(),
         },
         real,
+        aborts: options.aborts,
         work: &work,
         timeout: Duration::from_millis(options.timeout_ms),
         max_output: options.max_output,

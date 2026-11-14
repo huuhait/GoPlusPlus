@@ -9,7 +9,7 @@ use gopp_syntax::ast::ExprId;
 use lasso::Spur;
 
 use super::func::{Built, FuncCx};
-use crate::{Operand, Place, Rvalue, Type, TypeId};
+use crate::{Operand, Place, Rvalue, Type, TypeId, TypeInterner};
 
 impl FuncCx<'_, '_> {
     /// `panic(v)`: the runtime gets `v` in an interface value, which it
@@ -61,8 +61,8 @@ impl FuncCx<'_, '_> {
         self.b.const_str(&key)
     }
 
-    /// `recover()`: the value of the panic whose deferred calls run,
-    /// which is stopped by this; nil where no panic runs them. The
+    /// `recover()`: the value of the panic that called the function,
+    /// which is stopped by this; nil where no panic called it. The
     /// value is a copy of its own.
     pub fn recover(&mut self, expr: ExprId, ty: TypeId) -> Built<Rvalue> {
         let span = self.tree.exprs[expr].span;
@@ -73,7 +73,12 @@ impl FuncCx<'_, '_> {
         let value = self.slot_of(zero)?;
         let bytes = self.bytes_ty();
         let at = self.record(value.clone())?;
-        self.runtime_call("_gopp_recover", &[bytes], vec![at])?;
+        let direct = self.direct.clone().unwrap_or(self.b.const_bool(false));
+        self.runtime_call(
+            "_gopp_recover",
+            &[bytes, TypeInterner::BOOL],
+            vec![at, direct],
+        )?;
         self.fresh(expr, ty, Rvalue::Use(Operand::Copy(value)))
     }
 }

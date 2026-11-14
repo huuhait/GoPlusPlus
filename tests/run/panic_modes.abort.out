@@ -1,0 +1,10 @@
+deferred 1
+drop 1
+1
+panic: too much
+
+goroutine 1 [running]:
+main.work()
+	+0x?
+main.main()
+	+0x?

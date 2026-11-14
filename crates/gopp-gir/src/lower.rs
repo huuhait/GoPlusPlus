@@ -74,11 +74,13 @@ const SOURCE_EACH: usize = 256 * 1024;
 /// What the callers of the functions of packages know of them, by the
 /// symbol of each function: which parameters it does not own, so that a
 /// caller lends its arguments to those, and through which it calls
-/// methods. A package that imports others is lowered with theirs.
+/// methods; and the functions that call `recover` themselves. A package
+/// that imports others is lowered with theirs.
 #[derive(Clone, Debug, Default)]
 pub struct Summaries {
     lent: FxHashMap<String, Vec<bool>>,
     worked: FxHashMap<String, Vec<bool>>,
+    recovers: FxHashSet<String>,
 }
 
 impl Summaries {
@@ -92,6 +94,7 @@ impl Summaries {
         };
         self.lent.extend(pairs(&more.lent));
         self.worked.extend(pairs(&more.worked));
+        self.recovers.extend(more.recovers.iter().cloned());
     }
 }
 
@@ -200,6 +203,7 @@ fn lower_all(
     }
     shared.lent.clone_from(&imported.lent);
     shared.worked.clone_from(&imported.worked);
+    shared.recovers.clone_from(&imported.recovers);
     shared.facts();
     let source: usize = shared.jobs.iter().map(|job| job.source).sum();
     let known: u64 = shared.jobs.iter().map(|job| job.facts.steps).sum();
@@ -262,6 +266,9 @@ fn lower_all(
         }
         if let Some(worked) = shared.worked.get(&job.symbol) {
             own.worked.insert(job.symbol.clone(), worked.clone());
+        }
+        if shared.recovers.contains(&job.symbol) {
+            own.recovers.insert(job.symbol.clone());
         }
     }
     (module, diagnostics, steps, own)
@@ -484,6 +491,8 @@ pub(crate) struct Shared<'a> {
     /// parameters it calls methods through. A caller lends those a
     /// value that nothing else reads.
     pub worked: FxHashMap<String, Vec<bool>>,
+    /// The symbols of the functions that call `recover` themselves.
+    pub recovers: FxHashSet<String>,
 }
 
 /// A function that is called or a variable that is used, as the source
@@ -521,6 +530,8 @@ pub(crate) struct Callee {
     /// For a function with `...`: the type of its last parameter, a
     /// slice, as the checker has it.
     pub rest: Option<CheckedTypeId>,
+    /// The function calls `recover` itself.
+    pub recovers: bool,
 }
 
 /// What one run made.
@@ -907,6 +918,7 @@ impl<'a> Shared<'a> {
             jumps: FxHashMap::default(),
             lent: FxHashMap::default(),
             worked: FxHashMap::default(),
+            recovers: FxHashSet::default(),
         };
         // The `init` functions count in the order of the names of their
         // files, then of the source.
@@ -1104,6 +1116,9 @@ impl<'a> Shared<'a> {
             if !job.symbol.is_empty() {
                 self.lent.insert(job.symbol.clone(), facts.lent.clone());
                 self.worked.insert(job.symbol.clone(), facts.worked.clone());
+                if facts.recovers {
+                    self.recovers.insert(job.symbol.clone());
+                }
             }
             job.facts = facts;
         }

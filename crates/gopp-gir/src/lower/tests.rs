@@ -1397,6 +1397,71 @@ func main() {
     }
 }
 
+// rule: PAN-1
+#[test]
+fn only_a_function_that_a_panic_calls_stops_the_panic() {
+    let text = "package main
+
+func helper() any { return recover() }
+
+func plain() {}
+
+func named() { println(recover() != nil) }
+
+func main() {
+	defer plain()
+	defer named()
+	defer func() { println(helper() != nil) }()
+	defer func() { println(recover() != nil) }()
+	g := plain
+	defer g()
+	named()
+	panic(\"x\")
+}
+";
+    let (lowered, messages) = lowered_with(&[("a.gopp", text)], usize::MAX);
+    assert_eq!(messages, [] as [&str; 0]);
+    let module = print_module(&lowered.module);
+    let body = |symbol: &str| {
+        let start = module.find(&format!("\nfn {symbol}(")).unwrap();
+        &module[start..][..module[start..].find("\n}\n").unwrap()]
+    };
+    let calls = |body: &str, name: &str| body.matches(&format!("@{name}(")).count();
+    let counts = |symbol: &str| {
+        let body = body(symbol);
+        [
+            "_gopp_recover_enter",
+            "_gopp_recover_may",
+            "_gopp_recover_not",
+        ]
+        .map(|name| calls(body, name))
+    };
+    // A function that calls `recover` itself asks when it starts
+    // whether a panic called it; no other function does.
+    assert_eq!(counts("_GPF4mainE6helper"), [1, 0, 0]);
+    assert_eq!(counts("_GPF4mainE5named"), [1, 0, 0]);
+    assert_eq!(counts("_GPF4mainE5plain"), [0, 0, 0]);
+    assert_eq!(counts("_GPC2_F4mainE4main"), [1, 0, 0]);
+    // The literal that calls the helper by its name says before the
+    // call that no panic makes it.
+    assert_eq!(counts("_GPC1_F4mainE4main"), [0, 0, 1]);
+    // So does `main` before its own call of `named`. The function that
+    // makes its deferred calls says that a panic may make the call
+    // for a function that calls `recover` itself, and for a function
+    // value that is not a literal without it.
+    assert_eq!(counts("_GPF4mainE4main"), [0, 0, 1]);
+    assert_eq!(counts("_GPC0_F4mainE4main"), [0, 3, 0]);
+    // With `-panic=abort` no panic makes a deferred call.
+    let aborting = gir_aborting("a.gopp", text);
+    for name in [
+        "_gopp_recover_enter",
+        "_gopp_recover_may",
+        "_gopp_recover_not",
+    ] {
+        assert_eq!(calls(&aborting, name), 0, "{name}");
+    }
+}
+
 #[test]
 fn what_a_function_owns_ends_where_a_panic_leaves_it() {
     let text = "package main

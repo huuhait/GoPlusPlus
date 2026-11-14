@@ -51,6 +51,11 @@ typedef struct gopp_panicking {
 
 static gopp_panicking *panics;
 
+// A panic is about to make a deferred call: the function that it calls
+// may stop it with `recover`. A function that calls `recover` itself
+// takes this when it starts, so that no function which it calls has it.
+static bool calling;
+
 // A panic that was stopped and now leaves the functions between where
 // it started and the function that goes on: each of them ends what it
 // owns. One that starts while a value ends comes on top.
@@ -101,6 +106,7 @@ void _gopp_panic_aborts(void) { aborts = true; }
 void _gopp_panic_reset(void) {
   frames = 0;
   panics = 0;
+  calling = false;
   unwindings = 0;
   aborts = false;
   traced = 0;
@@ -301,6 +307,7 @@ static bool listed(const gopp_frame *frame) {
     gopp_frame *frame = frames;
     panic->at = frame;
     frame->run(frame->record);
+    calling = false;
     frames = frame->next;
     if (!panic->recovered) {
       continue;
@@ -342,14 +349,30 @@ void _gopp_panic(uint8_t *value, gopp_string error_key, gopp_string string_key) 
   raise(panic);
 }
 
-// `recover()`: the value of the panic whose deferred calls run, which
-// is stopped; nil if no panic runs the deferred calls of the innermost
-// function that has any.
-void _gopp_recover(uint8_t *value) {
+// The function that makes the deferred calls of a function makes the
+// next one: a panic calls it if the panic runs these calls.
+void _gopp_recover_may(void) { calling = _gopp_panicking(); }
+
+// A function that calls `recover` itself is called by its name: no
+// panic calls it.
+void _gopp_recover_not(void) { calling = false; }
+
+// A function that calls `recover` itself starts: whether a panic
+// called it.
+bool _gopp_recover_enter(void) {
+  bool called = calling;
+  calling = false;
+  return called;
+}
+
+// `recover()` in a function that a panic called, or that none did: the
+// value of the panic, which is stopped; nil if none called the function
+// or the panic is stopped already.
+void _gopp_recover(uint8_t *value, bool called) {
   gopp_iface *to = (gopp_iface *)value;
   *to = (gopp_iface){0, 0};
   gopp_panicking *panic = panics;
-  if (panic != 0 && !panic->recovered && panic->at != 0 && panic->at == frames) {
+  if (called && panic != 0 && !panic->recovered) {
     // The panic keeps its value: it is written if a later panic ends
     // the program.
     *to = panic->value;

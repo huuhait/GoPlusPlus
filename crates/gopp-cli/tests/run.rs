@@ -354,6 +354,53 @@ fn every_program_does_the_same_when_it_is_built_for_a_debugger() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// A program that stops no panic does the same when a panic ends the
+/// program at once (`-panic=abort`, PAN-7). One with a file
+/// `<name>.abort.out` ends with the status 2 there, and writes what
+/// that file says.
+#[test]
+#[ignore = "long: builds every run test and the corpus once more, for the other panic mode"]
+fn every_program_does_the_same_in_both_panic_modes() {
+    let mut named: Vec<(String, PathBuf)> = (programs(|_| true).into_iter())
+        .map(|program| (id(&program), program))
+        .collect();
+    named.extend(corpus());
+    let results = results(&named, &["--panic", "abort"]);
+    let update = std::env::var_os("GOPP_RUN_UPDATE").is_some();
+    let (mut wrong, mut same, mut aborted) = (Vec::new(), 0, 0);
+    for (id, program) in &named {
+        let result = &results[id];
+        let ended = (result["outcome"].as_str(), result["exit"].as_i64());
+        let written = written(result);
+        let golden = program.with_extension("abort.out");
+        if golden.exists() {
+            if update {
+                fs::write(&golden, &written).unwrap();
+            }
+            let expected = fs::read_to_string(&golden).unwrap();
+            if ended != (Some("exited"), Some(2)) || written != expected {
+                wrong.push(format!("{id}: ended as {ended:?} and wrote\n{written}---"));
+            }
+            aborted += 1;
+            continue;
+        }
+        // What a panic leaves or what stops one is another program
+        // without the deferred calls.
+        let text = fs::read_to_string(program).unwrap();
+        let expected = fs::read_to_string(program.with_extension("out")).unwrap_or_default();
+        let panics = ["panic: ", "fatal error: ", "exit status "];
+        if text.contains("recover()") || panics.iter().any(|said| expected.contains(said)) {
+            continue;
+        }
+        if ended != (Some("exited"), Some(0)) || written != expected {
+            wrong.push(format!("{id}: ended as {ended:?} and wrote\n{written}---"));
+        }
+        same += 1;
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert!(same >= 100 && aborted >= 1, "{same} {aborted}");
+}
+
 /// What crosses to C is passed as C passes it at every level of
 /// Clang: the C side is compiled with the program. And a product is
 /// fused with no sum at any level.

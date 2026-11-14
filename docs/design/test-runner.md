@@ -39,10 +39,10 @@ The runner is written for Linux. On `windows/amd64`, and with `-real` or `GOPP_F
 ```text
 gopp test-run [FILE|DIR ...] [-manifest FILE|-] [-o FILE] [-j N] [-executors N]
               [-timeout-ms T] [-max-output BYTES] [-work-dir DIR] [-merge-output] [-summary]
-              [-real] [-opt=0|1|2|3|s|z] [-debug]
+              [-real] [-opt=0|1|2|3|s|z] [-debug] [-panic=unwind|abort]
 ```
 
-`-opt` says how much Clang optimizes the programs of the run, and the runtime that they are linked with; it is `0` unless it is given. `-debug` builds the programs with what a debugger reads, as `gopp build` does ([debug-info.md](debug-info.md)). Positional arguments name single-file or directory programs; `-manifest` reads `JobSpec` JSONL lines (`-` for stdin). Exit status is `0` when every job produced a `JobResult` (regardless of whether tested programs exited non-zero or panicked), and `1` only on internal runner failure (`outcome: "internal"`). A program of the command line has the name of its file as its `id`. `-work-dir` keeps what was built and written: `DIR/<number of the job>/` has `unit.c`, `module.so` (or `program`), `stdout` and `stderr`. `-summary` prints the counts and the times to standard error. Hidden test flags exercise edge cases deterministically: `-executor PATH` (the program started as the worker), `-startup-timeout-ms`, and `-schedule forward|reverse|shuffle:SEED`, which builds every job first and then gives them to the executors in that order.
+`-opt` says how much Clang optimizes the programs of the run, and the runtime that they are linked with; it is `0` unless it is given. `-debug` builds the programs with what a debugger reads, as `gopp build` does ([debug-info.md](debug-info.md)). `-panic=abort` builds them so that a panic ends a program at once, as `gopp build -panic=abort` does (PAN-7). Positional arguments name single-file or directory programs; `-manifest` reads `JobSpec` JSONL lines (`-` for stdin). Exit status is `0` when every job produced a `JobResult` (regardless of whether tested programs exited non-zero or panicked), and `1` only on internal runner failure (`outcome: "internal"`). A program of the command line has the name of its file as its `id`. `-work-dir` keeps what was built and written: `DIR/<number of the job>/` has `unit.c`, `module.so` (or `program`), `stdout` and `stderr`. `-summary` prints the counts and the times to standard error. Hidden test flags exercise edge cases deterministically: `-executor PATH` (the program started as the worker), `-startup-timeout-ms`, and `-schedule forward|reverse|shuffle:SEED`, which builds every job first and then gives them to the executors in that order.
 
 ## JSONL v1 protocol
 
@@ -110,7 +110,7 @@ Because C libraries hold opaque internal state (`rand`, `strtok`, `setlocale`, `
 
 ## The run tests (`tests/run`)
 
-A program of the suite is a `.gopp` file in `tests/run`. Beside it, `NAME.out` has what it writes, the standard error stream in the standard output in the order of the writes (`merge_output`); a first line `// exit: N` in the program says the status that it ends with, 0 without one. The offsets of a trace are written `+0x?`. `crates/gopp-cli/tests/run.rs` gives every program to one `gopp test-run` and compares each result; `GOPP_RUN_UPDATE=1` writes the `.out` files anew. The suite uses the fast way by default and real executables with `GOPP_FAST_RUN=0`.
+A program of the suite is a `.gopp` file in `tests/run`. Beside it, `NAME.out` has what it writes, the standard error stream in the standard output in the order of the writes (`merge_output`); a first line `// exit: N` in the program says the status that it ends with, 0 without one. The offsets of a trace are written `+0x?`. `crates/gopp-cli/tests/run.rs` gives every program to one `gopp test-run` and compares each result; `GOPP_RUN_UPDATE=1` writes the `.out` files anew. A program with a file `NAME.abort.out` beside it ends with the status 2 when it is built with `-panic=abort` and writes what that file says; a long test builds every program that stops no panic in that mode too, and each writes the same as without it. The suite uses the fast way by default and real executables with `GOPP_FAST_RUN=0`.
 
 ## Tests and times
 

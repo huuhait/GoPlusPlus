@@ -1,0 +1,150 @@
+package main
+
+// Where recover stops a panic: only in the function that the panic
+// itself calls as a deferred call.
+
+type T struct{ name string }
+
+func (t *T) Handle() { println(t.name, "method:", recover() != nil) }
+
+func (t T) Value() { println(t.name, "value method:", recover() != nil) }
+
+type Handler interface{ Handle() }
+
+type V struct{ name string }
+
+func (v V) Handle() { println(v.name, "method:", recover() != nil) }
+
+func try(name string, f func()) {
+	defer func() {
+		println(name, "left:", recover() != nil)
+	}()
+	f()
+}
+
+func helper() any { return recover() }
+
+func named() { println("named:", recover() != nil) }
+
+func viaHelper() { println("named helper:", helper() != nil) }
+
+func withDefers() {
+	defer println("its own deferred call")
+	println("with defers:", recover() != nil)
+}
+
+func inDeferOfDeferred() {
+	defer func() {
+		println("deferred by a deferred function:", recover() != nil)
+	}()
+}
+
+func again(depth int) {
+	if depth > 0 {
+		again(depth - 1)
+	}
+	println("depth", depth, recover() != nil)
+}
+
+func generic[V any](v V) { println("generic:", recover() != nil) }
+
+func main() {
+	println("no panic:", recover() == nil)
+	try("literal", func() {
+		defer func() { println("literal:", recover() != nil) }()
+		panic("x")
+	})
+	try("helper", func() {
+		defer func() { println("helper:", helper() != nil) }()
+		panic("x")
+	})
+	try("inner literal", func() {
+		defer func() {
+			func() { println("inner literal:", recover() != nil) }()
+		}()
+		panic("x")
+	})
+	try("named", func() {
+		defer named()
+		panic("x")
+	})
+	try("named helper", func() {
+		defer viaHelper()
+		panic("x")
+	})
+	try("with defers", func() {
+		defer withDefers()
+		panic("x")
+	})
+	try("deferred by deferred", func() {
+		defer inDeferOfDeferred()
+		panic("x")
+	})
+	try("value", func() {
+		g := named
+		defer g()
+		panic("x")
+	})
+	try("literal value", func() {
+		g := func() { println("literal value:", recover() != nil) }
+		defer g()
+		panic("x")
+	})
+	try("method", func() {
+		t := T{"t"}
+		defer t.Handle()
+		panic("x")
+	})
+	try("value method", func() {
+		t := T{"t"}
+		defer t.Value()
+		panic("x")
+	})
+	try("interface", func() {
+		var h Handler = V{"h"}
+		defer h.Handle()
+		panic("x")
+	})
+	try("method value", func() {
+		t := T{"m"}
+		m := t.Handle
+		defer m()
+		panic("x")
+	})
+	try("twice", func() {
+		defer func() {
+			println("first:", recover() != nil)
+			println("second:", recover() != nil)
+		}()
+		panic("x")
+	})
+	try("itself", func() {
+		defer again(2)
+		panic("x")
+	})
+	try("generic", func() {
+		defer generic(1)
+		panic("x")
+	})
+	try("recover deferred", func() {
+		defer recover()
+		panic("x")
+	})
+	try("a new panic", func() {
+		defer func() {
+			r := recover()
+			println("the new one:", r.(string))
+		}()
+		defer func() {
+			panic("y")
+		}()
+		panic("x")
+	})
+	try("after a call", func() {
+		defer func() {
+			named()
+			println("after a call:", recover() != nil)
+		}()
+		panic("x")
+	})
+}

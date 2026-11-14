@@ -170,6 +170,9 @@ enum Command {
         /// build` does
         #[arg(long)]
         debug: bool,
+        /// What a panic does in the programs, as for `gopp build`
+        #[arg(long, value_enum, default_value = "unwind")]
+        panic: PanicMode,
         #[arg(long, hide = true)]
         executor: Option<PathBuf>,
         #[arg(long, hide = true, default_value_t = 10_000)]
@@ -341,6 +344,7 @@ fn run() -> ExitCode {
             real,
             opt,
             debug,
+            panic,
             executor,
             startup_timeout_ms,
             schedule,
@@ -359,6 +363,7 @@ fn run() -> ExitCode {
             real,
             opt: opt.level(),
             debug,
+            aborts: panic == PanicMode::Abort,
             executor,
             startup_timeout_ms,
             schedule,

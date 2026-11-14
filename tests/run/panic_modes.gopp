@@ -1,0 +1,24 @@
+package main
+
+// One program in both panic modes: with `-panic=abort` the panic ends
+// the program at once, so no deferred call is made for it, nothing that
+// a function owns ends, and `recover` stops nothing.
+
+type F struct{ n int }
+
+func (f *F) drop() { println("drop", f.n) }
+
+func work(n int) int {
+	f := F{n}
+	defer println("deferred", n)
+	if n > 1 {
+		panic("too much")
+	}
+	return f.n
+}
+
+func main() {
+	defer func() { println("recovered:", recover() != nil) }()
+	println(work(1))
+	println(work(2))
+}

@@ -1,0 +1,6 @@
+deferred 1
+drop 1
+1
+deferred 2
+recovered: true
+drop 2

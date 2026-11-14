@@ -731,6 +731,26 @@ impl<'a> Checker<'a> {
                         fix,
                     )
                 }
+                (Some(borrows::DEFERRED), _) => {
+                    let waits = "a deferred call points into it and runs when the function returns";
+                    let message = match (broken.what, does) {
+                        (What::Call, _) => format!(
+                            "cannot call {place}: it may change {owner}, and a deferred call \
+                             points into {owner} and runs when the function returns"
+                        ),
+                        (_, Some(does)) => format!("cannot {does} {place}: {waits}"),
+                        (What::Declare, None) => {
+                            format!("{owner} is declared again here, and {waits}")
+                        }
+                        (_, None) => format!("{owner} ends here, and {waits}"),
+                    };
+                    let note = "the deferred call points into it from here".to_owned();
+                    Diagnostic::new(code, broken.at, message).with_note(
+                        Code::NoteBorrowedHere,
+                        Some(broken.made),
+                        note,
+                    )
+                }
                 (Some(holder), Some(does)) => {
                     let holder = named(self, holder);
                     let message = match broken.what {
@@ -1505,7 +1525,11 @@ impl<'a> Walk<'a> {
                 self.stmt(*stmt);
             }
             StmtKind::Block(block) => self.stmts(&block.stmts),
-            StmtKind::Expr(x) | StmtKind::Defer(x) => self.unit(&[*x]),
+            StmtKind::Expr(x) => self.unit(&[*x]),
+            StmtKind::Defer(x) => {
+                self.unit(&[*x]);
+                self.deferred(*x);
+            }
             // What a new goroutine runs is kept longer than the
             // statement, and so is what a channel is given.
             StmtKind::Go(x) => {

@@ -46,6 +46,11 @@ pub(crate) struct Facts {
     /// For each parameter: it is lent, and the function calls methods
     /// through it, which may change the value that it holds.
     pub worked: Vec<bool>,
+    /// The function calls `recover` itself, and the function literals
+    /// in it that do: only a function that a panic calls stops the
+    /// panic so (PAN-1).
+    pub recovers: bool,
+    pub recovering: FxHashSet<ExprId>,
     /// The variables whose address is taken.
     reached: FxHashSet<LocalId>,
     /// The variables that a function literal which is not framed uses
@@ -172,8 +177,9 @@ struct Walk<'a> {
     waiting: FxHashSet<LocalId>,
     /// A macro call is in the body: what it names is not known.
     opaque: bool,
-    /// How many function literals are around what is walked.
+    /// How many function literals are around what is walked, and which.
     inside: u32,
+    within: Vec<ExprId>,
     facts: Facts,
 }
 
@@ -216,6 +222,7 @@ pub(super) fn of(shared: &Shared<'_>, job: &Job) -> Facts {
         waiting: FxHashSet::default(),
         opaque: false,
         inside: 0,
+        within: Vec::new(),
         facts: Facts::default(),
     };
     walk.block(block);
@@ -289,7 +296,10 @@ impl Walk<'_> {
                 Node::Expr(expr) => self.expr(expr, &mut rest, false),
                 Node::Later(expr) => self.expr(expr, &mut rest, true),
                 Node::Stmt(stmt) => self.stmt(stmt, &mut rest),
-                Node::Leave => self.inside -= 1,
+                Node::Leave => {
+                    self.inside -= 1;
+                    self.within.pop();
+                }
             }
         }
     }
@@ -301,6 +311,7 @@ impl Walk<'_> {
     fn literal(&mut self, literal: ExprId, rest: &mut Vec<Node>) {
         if let ExprKind::FuncLit { body, .. } = &self.tree.exprs[literal].kind {
             self.inside += 1;
+            self.within.push(literal);
             rest.push(Node::Leave);
             rest.extend(body.stmts.iter().map(|&stmt| Node::Stmt(stmt)));
         }
@@ -497,6 +508,12 @@ impl Walk<'_> {
             callee = inner;
         }
         if let Some(Ref::Universe(called)) = self.body.uses.get(&callee) {
+            if *called == Predeclared::Recover {
+                match self.within.last() {
+                    Some(&literal) => drop(self.facts.recovering.insert(literal)),
+                    None => self.facts.recovers = true,
+                }
+            }
             let writes = matches!(
                 called,
                 Predeclared::Clear | Predeclared::Delete | Predeclared::CopyFunc

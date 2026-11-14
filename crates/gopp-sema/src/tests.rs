@@ -6059,6 +6059,298 @@ fn the_steps_of_the_pointers_of_a_body_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&[100, 200, 400], |n| steps(loops(n)));
 }
 
+// rule: PAN-3
+#[test]
+fn a_deferred_call_holds_what_it_is_given_until_the_function_returns() {
+    // The functions up to `generic` each do what a deferred call that
+    // waits does not allow; those after it do what it allows: a move
+    // on a way without the statement, a variable of each pass, writes
+    // that the call sees, variables of blocks that the statement
+    // itself takes the address of, a value that is copied.
+    let text = "package p
+
+type F struct{ n int }
+
+func (f *F) drop() {}
+
+func (f *F) Close() {}
+
+func (f *F) Set(n int) { f.n = n }
+
+func show(f *F) {}
+
+func see(p *int) {}
+
+func take(f F) {}
+
+func keep(m map[string]int) {}
+
+func grow(xs *[]int) { *xs = append(*xs, 1) }
+
+func receiver() {
+	f := F{1}
+	defer f.Close()
+	take(move(f))
+}
+
+func address() {
+	f := F{1}
+	defer show(&f)
+	take(move(f))
+}
+
+func literal() {
+	f := F{1}
+	defer func() { println(f.n) }()
+	take(move(f))
+}
+
+func given(run func(func())) {
+	f := F{1}
+	defer run(func() { println(f.n) })
+	take(move(f))
+}
+
+func stored() {
+	f := F{1}
+	p := &f
+	defer show(p)
+	take(move(f))
+}
+
+func deleted() {
+	m := map[string]int{\"a\": 1}
+	defer delete(m, \"a\")
+	keep(move(m))
+}
+
+func element() {
+	xs := []int{1, 2}
+	defer see(&xs[0])
+	xs = append(xs, 3)
+}
+
+func replaced() {
+	xs := []int{1, 2}
+	defer see(&xs[0])
+	xs = nil
+}
+
+func changed() {
+	xs := []int{1, 2}
+	defer see(&xs[0])
+	grow(&xs)
+}
+
+func block() {
+	for i := 0; i < 2; i++ {
+		n := i
+		p := &n
+		defer see(p)
+	}
+}
+
+func around() {
+	f := F{1}
+	for i := 0; i < 2; i++ {
+		defer f.Close()
+		take(move(f))
+		f = F{2}
+	}
+}
+
+func generic[T any](x T, use func(*T), sink func(T)) {
+	defer use(&x)
+	sink(move(x))
+}
+
+func otherPath() {
+	f := F{1}
+	if f.n > 3 {
+		take(move(f))
+		return
+	}
+	defer f.Close()
+}
+
+func ownOfEachPass() {
+	for i := 0; i < 3; i++ {
+		f := F{i}
+		if i == 1 {
+			take(move(f))
+			continue
+		}
+		defer f.Close()
+	}
+}
+
+func seen() {
+	f := F{1}
+	defer f.Close()
+	defer show(&f)
+	defer func() { println(f.n) }()
+	f.Set(4)
+	f = F{2}
+	f.n = 3
+	xs := []int{1}
+	defer grow(&xs)
+	xs = append(xs, 2)
+	defer see(&xs[0])
+	xs[0] = 5
+	n := 1
+	defer see(&n)
+	n = 2
+	m := map[string]int{}
+	defer delete(m, \"a\")
+	m[\"a\"] = 1
+	m = map[string]int{\"a\": 2}
+}
+
+func kept() {
+	for i := 0; i < 2; i++ {
+		f := F{i}
+		defer f.Close()
+		n := i
+		defer see(&n)
+		defer func() { println(n) }()
+	}
+	for i := 0; i < 2; i++ {
+		defer see(&i)
+	}
+}
+
+func copied() {
+	f := F{1}
+	defer println(f.n)
+	take(move(f))
+}
+
+type S struct {
+	n  int
+	xs []int
+}
+
+func (s *S) Unlock() {}
+
+func (s *S) Do(p *int, q *F) {
+	defer s.Unlock()
+	defer see(p)
+	defer q.Close()
+	defer see(&s.n)
+	defer grow(&s.xs)
+	s.n++
+	s.xs = append(s.xs, 1)
+	*p = 3
+	q.n = 2
+}
+";
+    let expected = [
+        "a.gopp:24:7: cannot move f: a deferred call points into it and runs when the function returns",
+        "    a.gopp:23:8: the deferred call points into it from here",
+        "a.gopp:30:7: cannot move f: a deferred call points into it and runs when the function returns",
+        "    a.gopp:29:13: the deferred call points into it from here",
+        "a.gopp:36:7: cannot move f: a deferred call points into it and runs when the function returns",
+        "    a.gopp:35:8: the deferred call points into it from here",
+        "a.gopp:42:7: cannot move f: a deferred call points into it and runs when the function returns",
+        "    a.gopp:41:12: the deferred call points into it from here",
+        "a.gopp:49:7: cannot move f: a deferred call points into it and runs when the function returns",
+        "    a.gopp:47:7: the deferred call points into it from here",
+        "a.gopp:55:7: cannot move m: a deferred call points into it and runs when the function returns",
+        "    a.gopp:54:15: the deferred call points into it from here",
+        "a.gopp:61:2: cannot append to xs: a deferred call points into it and runs when the function returns",
+        "    a.gopp:60:12: the deferred call points into it from here",
+        "a.gopp:67:2: cannot assign to xs: a deferred call points into it and runs when the function returns",
+        "    a.gopp:66:12: the deferred call points into it from here",
+        "a.gopp:73:2: cannot call grow: it may change xs, and a deferred call points into xs and \
+         runs when the function returns",
+        "    a.gopp:72:12: the deferred call points into it from here",
+        "a.gopp:78:3: n is declared again here, and a deferred call points into it and runs when the function returns",
+        "    a.gopp:79:8: the deferred call points into it from here",
+        "a.gopp:81:2: n ends here, and a deferred call points into it and runs when the function returns",
+        "    a.gopp:79:8: the deferred call points into it from here",
+        "a.gopp:88:8: cannot move f: a deferred call points into it and runs when the function returns",
+        "    a.gopp:87:9: the deferred call points into it from here",
+        "a.gopp:95:7: cannot move x: a deferred call points into it and runs when the function returns",
+        "    a.gopp:94:12: the deferred call points into it from here",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+#[test]
+fn the_steps_of_deferred_calls_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    let head = "package p\ntype F struct{ n int }\nfunc (f *F) Close() {}\nfunc see(p *int) {}\n";
+    // Many variables, each with a deferred call that has its address,
+    // and a write to each when all the calls wait.
+    let siblings = |count: usize| {
+        let made: String = (0..count)
+            .map(|i| format!("\tf{i} := F{{{i}}}\n\tdefer f{i}.Close()\n"))
+            .collect();
+        let written: String = (0..count).map(|i| format!("\tf{i}.n++\n")).collect();
+        format!("{head}func f() {{\n{made}{written}}}\n")
+    };
+    // One variable that many deferred calls have the address of, with a
+    // write after each.
+    let one = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| format!("\tdefer f.Close()\n\tdefer see(&f.n)\n\tf.n = {i}\n"))
+            .collect();
+        format!("{head}func f() {{\n\tf := F{{0}}\n{each}}}\n")
+    };
+    // Many elements of one slice, each kept by a deferred call, and a
+    // write to each.
+    let elements = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| format!("\tdefer see(&xs[{i}])\n\txs[{i}]++\n"))
+            .collect();
+        format!("{head}func f(xs []int) {{\n{each}}}\n")
+    };
+    // Many pointers that are stored first, and a change of another
+    // variable after each deferred call.
+    let stored = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!("\tx{i}, y{i} := {i}, {i}\n\tp{i} := &x{i}\n\tdefer see(p{i})\n\ty{i}++\n")
+            })
+            .collect();
+        format!("{head}func f() {{\n{each}}}\n")
+    };
+    // Loops one after another, each with a variable of its pass that a
+    // deferred call and a deferred literal keep.
+    let loops = |count: usize| {
+        let each: String = (0..count)
+            .map(|i| {
+                format!(
+                    "\tfor i := 0; i < {i}; i++ {{\n\t\tf := F{{i}}\n\t\tdefer \
+                     f.Close()\n\t\tdefer func() {{ f.n++ }}()\n\t\tf.n++\n\t}}\n"
+                )
+            })
+            .collect();
+        format!("{head}func f() {{\n{each}}}\n")
+    };
+    // Blocks in blocks, each with a variable that a deferred call keeps.
+    let nested = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("{{\nf{i} := F{{{i}}}\ndefer f{i}.Close()\nf{i}.n++\n"))
+            .collect();
+        let close = "}\n".repeat(depth);
+        format!("{head}func f() {{\n{open}{close}}}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(one(n)));
+    linear::assert_near_linear(&sizes, |n| steps(elements(n)));
+    linear::assert_near_linear(&sizes, |n| steps(stored(n)));
+    linear::assert_near_linear(&sizes, |n| steps(loops(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[100, 200, 400], |n| steps(nested(n)));
+}
+
 // rule: OWN-B5
 #[test]
 fn what_holds_a_pointer_is_not_kept_on_the_heap_or_by_the_package() {

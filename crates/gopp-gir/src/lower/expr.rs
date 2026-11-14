@@ -50,6 +50,8 @@ pub(super) struct Called {
     /// For a function with `...`: the type of its last parameter, a
     /// slice, as the checker has it.
     pub rest: Option<CheckedTypeId>,
+    /// The function is known, and calls `recover` itself.
+    pub recovers: bool,
 }
 
 /// The type of the last parameter of a function type with `...`, which
@@ -1514,6 +1516,7 @@ impl<'a> FuncCx<'a, '_> {
             worked: called.worked,
             ret: called.ret,
             rest: called.rest,
+            recovers: called.recovers,
         };
         self.call_with(expr, &called, given, args)
     }
@@ -1654,6 +1657,11 @@ impl<'a> FuncCx<'a, '_> {
         // The call is placed where it is written, which a trace names.
         let around = self.b.loc();
         self.at(span);
+        // No panic calls the function here, so its `recover` stops
+        // none (PAN-1).
+        if called.recovers && !self.shared.aborts {
+            self.runtime_call("_gopp_recover_not", &[], Vec::new())?;
+        }
         let callee = match &called.code {
             Code::Known(code) => code.clone(),
             Code::Slot(value, slot, code, nilable) => {
@@ -2277,7 +2285,9 @@ impl<'a> FuncCx<'a, '_> {
                 if *unwrap && marked.is_none() {
                     return Ok(());
                 }
-                let waits = super::func::Waits::Value(code_ty);
+                let literal = matches!(self.tree.exprs[callee].kind, ExprKind::FuncLit { .. });
+                let recovers = !literal || self.recovering(callee);
+                let waits = super::func::Waits::Value(code_ty, recovers);
                 return self.waits(at, waits, slots, result, (span, borrowed, marked));
             }
         };
@@ -2775,6 +2785,7 @@ impl<'a> FuncCx<'a, '_> {
                         params: func.params.iter().copied().collect(),
                         ret: func.ret,
                         rest: rest_of(shared, checked),
+                        recovers: shared.recovers.contains(&symbol),
                     }),
                     Ok(_) => Err("a call of this function"),
                     Err(what) => Err(what),

@@ -425,6 +425,7 @@ impl FuncCx<'_, '_> {
             params: sig.params.iter().copied().collect(),
             ret: sig.ret,
             rest,
+            recovers: false,
         };
         Ok(Some(Ok((called, vec![env]))))
     }

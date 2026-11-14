@@ -1648,6 +1648,7 @@ impl<'a> FuncCx<'a, '_> {
             params: params.into(),
             ret: sig.ret,
             rest,
+            recovers: false,
         };
         Ok(Ok((called, vec![word])))
     }

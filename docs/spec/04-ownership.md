@@ -355,6 +355,8 @@ An upcast (`*Child` to `*Parent`) is the same borrow of the same place ([EXP-13]
 - `arena.Reset()`, `arena.Free()`, or ending `arena`'s scope while an arena-allocated pointer, slice or borrow-carrying struct is live (bump-allocating further values via `mem.ArenaNew` or `mem.MakeIn` adds chunk blocks without moving existing chunks, so it does **not** invalidate existing arena borrows; `mem.Arena` and `mem.DropArena` free all chunks automatically when their owning scope ends);
 - ending the owner's scope while the borrow escapes (`return &local`).
 
+A pending deferred call holds what it was given until the function returns, so its borrows are live until then ([PAN-3](09-errors-and-panics.md)).
+
 Note the contrast with plain slices and strings when **`&` is NOT used**:
 ```go
 // NO `&`: each value is its own copy

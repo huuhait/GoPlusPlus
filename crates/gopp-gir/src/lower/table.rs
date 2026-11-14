@@ -895,6 +895,7 @@ impl FuncCx<'_, '_> {
             params: params.into(),
             ret: plain.ret,
             rest,
+            recovers: false,
         };
         Ok(Some(Ok((called, vec![receiver]))))
     }

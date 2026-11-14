@@ -1,0 +1,43 @@
+no panic: true
+literal: true
+literal left: false
+helper: false
+helper left: true
+inner literal: false
+inner literal left: true
+named: true
+named left: false
+named helper: false
+named helper left: true
+with defers: true
+its own deferred call
+with defers left: false
+deferred by a deferred function: false
+deferred by deferred left: true
+named: true
+value left: false
+literal value: true
+literal value left: false
+t method: true
+method left: false
+t value method: true
+value method left: false
+h method: true
+interface left: false
+m method: true
+method value left: false
+first: true
+second: false
+twice left: false
+depth 0 false
+depth 1 false
+depth 2 true
+itself left: false
+generic: true
+generic left: false
+recover deferred left: true
+the new one: y
+a new panic left: false
+named: false
+after a call: true
+after a call left: false

@@ -4163,6 +4163,9 @@ impl<'a> Checker<'a> {
             StmtKind::Defer(x) => {
                 self.impure(tree.stmts[id].span, "has a defer statement");
                 self.suspended(cx, "defer", *x);
+                // The call may keep the address of a variable until the
+                // function returns.
+                self.lends = true;
             }
             StmtKind::IncDec { x, inc } => {
                 let operand = self.value(cx, *x);

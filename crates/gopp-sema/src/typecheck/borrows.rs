@@ -62,6 +62,10 @@ pub(super) enum Step {
     /// With the second the literal may change it. With the third its
     /// type is not one that may be shared between goroutines.
     Captured(bool, bool, bool),
+    /// The variable as a deferred call that waits uses it: where it is,
+    /// until the function returns. It is kept until then, so it may be
+    /// assigned and may end; it is not moved (PAN-3).
+    Deferred,
 }
 
 /// What a variable may get loans from.
@@ -128,6 +132,11 @@ pub(super) struct Call {
 
 /// The variable that stands for what is outside the function.
 const OUTSIDE: LocalId = LocalId(u32::MAX);
+
+/// The variable that stands for the deferred calls of the function
+/// that wait: what they are given, they hold until the function
+/// returns.
+pub(super) const DEFERRED: LocalId = LocalId(u32::MAX - 1);
 
 /// How a place is changed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1011,6 +1020,81 @@ impl<'a> Walk<'a> {
         self.events.push(Event::Called(call));
     }
 
+    /// The call of a `defer` statement waits until the function
+    /// returns, and holds until then what it is given (PAN-3): the
+    /// variables that the statement itself takes the address of or
+    /// that its function literals use, where they are, and what the
+    /// values that it keeps point into.
+    pub(super) fn deferred(&mut self, call: ExprId) {
+        let Some(places) = self.places else {
+            return;
+        };
+        let ExprKind::Call { fun, args, .. } = &self.tree.exprs[self.unparen(call)].kind else {
+            return;
+        };
+        let callee = self.unparen(*fun);
+        let from = self.sources.len() as u32;
+        let mut found = std::mem::take(&mut self.sources);
+        // The receiver of a method that is given its address, and the
+        // map that `delete` or `clear` writes.
+        let pointer = |ty: TypeId| {
+            let types = places.types;
+            matches!(&*types.get(types.underlying(ty)), Type::Pointer(_))
+        };
+        let empties = matches!(
+            self.body.uses.get(&callee),
+            Some(Ref::Universe(Predeclared::Delete | Predeclared::Clear))
+        );
+        let addressed = match &self.tree.exprs[callee].kind {
+            ExprKind::Selector { x, .. } if places.pointer_methods.contains(&callee) => {
+                let x = self.unparen(*x);
+                Some(x).filter(|&x| !self.type_of(x).is_some_and(pointer))
+            }
+            _ => args
+                .first()
+                .filter(|_| empties)
+                .map(|&arg| self.unparen(arg)),
+        };
+        let mut kept: Vec<(ExprId, bool)> = vec![(callee, false)];
+        kept.extend(args.iter().map(|&arg| (self.unparen(arg), false)));
+        if let Some(place) = addressed {
+            kept.push((place, true));
+        }
+        for (expr, mut addressed) in kept {
+            self.found.steps += 1;
+            let span = self.tree.exprs[expr].span;
+            let mut place = expr;
+            if let ExprKind::Unary {
+                op: UnaryOp::Addr,
+                x,
+            } = self.tree.exprs[expr].kind
+            {
+                (place, addressed) = (self.unparen(x), true);
+            }
+            if let ExprKind::FuncLit { .. } = self.tree.exprs[expr].kind {
+                for capture in self.captured(expr) {
+                    if self.own(capture.local) {
+                        found.push(Source::Place(capture.local, vec![Step::Deferred], span));
+                    }
+                }
+            }
+            let mut apart = None;
+            match self.place_with(place, &mut apart).filter(|_| addressed) {
+                Some((root, steps))
+                    if apart.is_none() && !steps.contains(&Step::Target) && self.own(root) =>
+                {
+                    found.push(Source::Place(root, vec![Step::Deferred], span));
+                }
+                _ => self.sources_of(expr, &mut found),
+            }
+        }
+        self.sources = found;
+        let to = self.sources.len() as u32;
+        if from < to {
+            self.events.push(Event::Holds(DEFERRED, from, to, false));
+        }
+    }
+
     /// The function that the call of `fun` runs.
     fn callee(&self, fun: ExprId) -> Callee {
         let Some(places) = self.places else {
@@ -1672,6 +1756,11 @@ impl Problem {
             }
         }
 
+        // A deferred call that waits is made when the function returns,
+        // or when a panic leaves it: what it holds is read later
+        // wherever it holds it.
+        let deferring = known.of_holder.contains_key(&DEFERRED);
+
         // Backward: the variables with loans that are read later.
         let mut members: FxHashMap<LocalId, u32> = FxHashMap::default();
         for &(holder, _) in &known.facts {
@@ -1783,7 +1872,10 @@ impl Problem {
                 let written = match (change, event) {
                     (Some(_), Event::Called(call)) => known.changed_by(&sets, set, sources, call),
                     (Some(change), _)
-                        if later[at - first] != EMPTY || !loops_of.is_empty() || told =>
+                        if later[at - first] != EMPTY
+                            || deferring
+                            || !loops_of.is_empty()
+                            || told =>
                     {
                         known.written(&sets, set, change)
                     }
@@ -1824,10 +1916,11 @@ impl Problem {
                 }
                 // Nothing is broken where no variable with a loan is read
                 // later.
-                if let Some(change) = change.filter(|_| later[at - first] != EMPTY) {
+                if let Some(change) = change.filter(|_| later[at - first] != EMPTY || deferring) {
                     let read_later = |holder: LocalId| {
                         let member = members.get(&holder);
-                        member.is_some_and(|&member| reads.has(later[at - first], member))
+                        holder == DEFERRED
+                            || member.is_some_and(|&member| reads.has(later[at - first], member))
                     };
                     let pointed = change.steps.contains(&Step::Target);
                     // A holder that is read later itself is named
@@ -1837,14 +1930,17 @@ impl Problem {
                         // The loans that the change may break, and
                         // then those who hold one of them: many may
                         // hold a loan that it does not break.
-                        let loans = known.under(*root, way).len();
-                        for at in 0..loans {
+                        for loan in known.under(*root, way).concat() {
                             known.steps += 1;
-                            let loan = known.under(*root, way)[at];
                             let (_, held, made) = &known.loans[loan as usize];
                             let lie = lies(way, held);
                             let same = matches!(lie, Lies::Same);
+                            let ends =
+                                matches!(change.what, What::End | What::Declare | What::Move);
                             let breaks = match lie {
+                                Lies::Above if held[..] == [Step::Deferred] => {
+                                    change.what == What::Move
+                                }
                                 // A pointer that the place holds is
                                 // replaced, not what it points to.
                                 // A function literal uses a variable
@@ -1868,13 +1964,22 @@ impl Problem {
                             if !breaks {
                                 continue;
                             }
+                            // A deferred call sees what is written to
+                            // the place that it points to. What breaks
+                            // it ends the place, or replaces what owns
+                            // the place apart from itself.
+                            let inside = held[way.len().min(held.len())..].iter();
+                            let mut inside = inside.take_while(|step| **step != Step::Target);
+                            let freed = matches!(lie, Lies::Above)
+                                && inside.any(|step| matches!(step, Step::At(_) | Step::Held));
+                            let waiting = ends || freed;
                             let made = *made;
                             for at in 0..known.holders[loan as usize].len() {
                                 known.steps += 1;
                                 let fact = known.holders[loan as usize][at];
                                 let holder = known.facts[fact as usize].0;
                                 let own = same && pointed && holder == change.root;
-                                if own || !sets.has(set, fact) {
+                                if own || !sets.has(set, fact) || (holder == DEFERRED && !waiting) {
                                     continue;
                                 }
                                 let broken = Broken {
@@ -2206,11 +2311,14 @@ struct Known {
     facts: Vec<(LocalId, u32)>,
     fact_ids: FxHashMap<(LocalId, u32), u32>,
     /// The facts of each variable that holds, those of the loans of
-    /// each variable, and of these the ones whose way starts with a
-    /// step (with any index for an element).
+    /// each variable.
     of_holder: FxHashMap<LocalId, Vec<u32>>,
     of_root: FxHashMap<LocalId, Vec<u32>>,
+    /// The loans of each variable whose way starts with a step: those
+    /// of an element both with its index and with none, and apart
+    /// those of an element that no constant names.
     of_part: FxHashMap<(LocalId, Step), Vec<u32>>,
+    unnamed: FxHashMap<LocalId, Vec<u32>>,
     /// The loans of each variable, and for each loan the facts of
     /// those that hold it.
     lent: FxHashMap<LocalId, Vec<u32>>,
@@ -2229,6 +2337,7 @@ impl Known {
             of_holder: FxHashMap::default(),
             of_root: FxHashMap::default(),
             of_part: FxHashMap::default(),
+            unnamed: FxHashMap::default(),
             lent: FxHashMap::default(),
             holders: Vec::new(),
             steps: 0,
@@ -2243,15 +2352,19 @@ impl Known {
     }
 
     /// The loans that a change of the place may break: those of the
-    /// place, of what it is in and of its parts. A loan of another
-    /// part of the variable is none.
-    fn under(&self, root: LocalId, way: &[Step]) -> &[u32] {
+    /// place, of what it is in and of its parts, in two runs. A loan
+    /// of another part of the variable is none, and so is one of an
+    /// element with another constant index.
+    fn under(&self, root: LocalId, way: &[Step]) -> [&[u32]; 2] {
+        let none: &[u32] = &[];
+        let part = |step| self.of_part.get(&(root, step)).map_or(none, |all| &all[..]);
         match way.first() {
-            None => self.lent.get(&root).map_or(&[], |all| &all[..]),
-            Some(&first) => {
-                let key = (root, any_index(first));
-                self.of_part.get(&key).map_or(&[], |all| &all[..])
-            }
+            None => [self.lent.get(&root).map_or(none, |all| &all[..]), none],
+            Some(&first @ Step::At(Some(_))) => [
+                part(first),
+                self.unnamed.get(&root).map_or(none, |all| &all[..]),
+            ],
+            Some(&first) => [part(any_index(first)), none],
         }
     }
 
@@ -2275,6 +2388,11 @@ impl Known {
         if let Some(&first) = key.1.first() {
             let part = (key.0, any_index(first));
             self.of_part.entry(part).or_default().push(next);
+            match first {
+                Step::At(Some(_)) => self.of_part.entry((key.0, first)).or_default().push(next),
+                Step::At(None) => self.unnamed.entry(key.0).or_default().push(next),
+                _ => {}
+            }
         }
         self.loan_ids.insert(key, next);
         next
@@ -2502,9 +2620,33 @@ impl Known {
                     }
                 }
             }
+            // A variable that ends or is declared again is another one
+            // from then on: no change reaches the one that a deferred
+            // call keeps.
+            Event::Changed(change) => {
+                let change = &sources.problem.changes[change as usize];
+                if matches!(change.what, What::End | What::Declare) {
+                    set = self.kept_apart(sets, set, change.root);
+                }
+            }
+            Event::Fresh(local) => set = self.kept_apart(sets, set, local),
             _ => {}
         }
         set
+    }
+
+    /// The set without the fact that a deferred call uses the variable
+    /// where it is.
+    fn kept_apart(&mut self, sets: &mut Sets, set: u32, local: LocalId) -> u32 {
+        if !self.of_holder.contains_key(&DEFERRED) {
+            return set;
+        }
+        let loan = self.loan_ids.get(&(local, vec![Step::Deferred]));
+        let fact = loan.and_then(|&loan| self.fact_ids.get(&(DEFERRED, loan)));
+        match fact {
+            Some(&fact) => sets.put(set, fact, false),
+            None => set,
+        }
     }
 
     /// The places that the call may change, each with whether it is
